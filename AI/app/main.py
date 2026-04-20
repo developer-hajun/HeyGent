@@ -4,7 +4,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.http.flows import router as flows_router
 from app.api.http.health import router as health_router
+from app.api.http.providers import router as providers_router
 from app.api.http.tasks import router as tasks_router
 from app.api.ws.gateway import router as ws_router
 from app.core.config import get_settings
@@ -13,8 +15,14 @@ from app.domain.approvals.queue import ApprovalQueue
 from app.domain.approvals.service import ApprovalService
 from app.domain.execution.task_engine import TaskEngine
 from app.domain.gateway.broadcaster import EventBroadcaster
+from app.domain.gateway.session_registry import SessionRegistry
 from app.domain.gateway.ws_manager import WebSocketManager
+from app.domain.integrations.notion_client import NotionClient
+from app.domain.integrations.notion_mapper import NotionMapper
+from app.domain.orchestration.flow_router import FlowRouter
 from app.domain.orchestration.orchestrator import Orchestrator
+from app.domain.providers.openai_oauth import OpenAIOAuthProvider
+from app.domain.providers.registry import ProviderRegistry
 from app.storage.sqlite import SQLiteTaskRepository
 
 
@@ -28,11 +36,19 @@ async def lifespan(app: FastAPI):
     ws_manager = WebSocketManager()
     broadcaster = EventBroadcaster(ws_manager)
     approval_service = ApprovalService(repository, ApprovalQueue())
+    provider_registry = ProviderRegistry([OpenAIOAuthProvider(settings)])
+    notion_client = NotionClient(settings.notion_api_base_url)
+    notion_mapper = NotionMapper()
+    flow_router = FlowRouter(provider_registry, notion_client, notion_mapper)
 
     app.state.settings = settings
     app.state.repository = repository
     app.state.ws_manager = ws_manager
-    app.state.orchestrator = Orchestrator()
+    app.state.session_registry = SessionRegistry()
+    app.state.provider_registry = provider_registry
+    app.state.notion_client = notion_client
+    app.state.notion_mapper = notion_mapper
+    app.state.orchestrator = Orchestrator(flow_router)
     app.state.task_engine = TaskEngine(repository, broadcaster, approval_service)
     yield
 
@@ -40,4 +56,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="HeyGent AI Backbone", lifespan=lifespan)
 app.include_router(health_router)
 app.include_router(tasks_router)
+app.include_router(providers_router)
+app.include_router(flows_router)
 app.include_router(ws_router)

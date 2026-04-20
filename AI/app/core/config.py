@@ -11,6 +11,8 @@ class Settings:
 
     app_name: str = "HeyGent AI Backbone"
     db_path: Path = Path("tmp/app.db")
+    openai_oauth_client_id: str | None = None
+    notion_api_base_url: str = "https://api.notion.com/v1"
 
 
 
@@ -21,4 +23,8 @@ def get_settings() -> Settings:
     """
 
     db_path = Path(os.getenv("HEYGENT_AI_DB_PATH", "tmp/app.db"))
-    return Settings(db_path=db_path)
+    return Settings(
+        db_path=db_path,
+        openai_oauth_client_id=os.getenv("HEYGENT_OPENAI_OAUTH_CLIENT_ID"),
+        notion_api_base_url=os.getenv("HEYGENT_NOTION_API_BASE_URL", "https://api.notion.com/v1"),
+    )

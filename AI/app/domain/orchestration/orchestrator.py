@@ -1,40 +1,31 @@
 from __future__ import annotations
 
-from app.contracts.task.step_status import StepStatus
-from app.contracts.task.task_status import TaskStatus
-from app.core.utils.ids import new_id
+from app.domain.orchestration.flow_router import FlowRouter
+from app.domain.orchestration.planner import Planner
 from app.domain.tasks.models import StepRun, TaskRun
-from app.flows.stub.approval_wait_flow import ApprovalWaitFlow
-from app.flows.stub.echo_flow import EchoFlow
 
 
 class Orchestrator:
     """요청을 flow 로 라우팅하고 초기 TaskRun, StepRun 을 만든다."""
 
-    def __init__(self) -> None:
-        self._flows = {
-            EchoFlow.flow_name: EchoFlow(),
-            ApprovalWaitFlow.flow_name: ApprovalWaitFlow(),
-        }
+    def __init__(self, flow_router: FlowRouter, planner: Planner | None = None) -> None:
+        self.flow_router = flow_router
+        self.planner = planner or Planner()
 
     def plan(self, *, flow_name: str, owner_key: str, input_payload: dict) -> tuple[TaskRun, StepRun, object]:
-        if flow_name not in self._flows:
-            raise KeyError(flow_name)
-        flow = self._flows[flow_name]
-        task = TaskRun(
-            task_run_id=new_id("task"),
-            task_type=flow.task_type,
+        flow = self.flow_router.get(flow_name)
+        planned_task = self.planner.create_task_plan(
             flow_name=flow.flow_name,
+            task_type=flow.task_type,
             owner_key=owner_key,
-            status=TaskStatus.PENDING,
             input_payload=input_payload,
-        )
-        step = StepRun(
-            step_run_id=new_id("step"),
-            task_run_id=task.task_run_id,
-            step_order=1,
             step_type=flow.step_type,
-            status=StepStatus.PENDING,
-            input_payload=input_payload,
         )
+        task, step = self.planner.materialize(planned_task)
         return task, step, flow
+
+    def get_flow(self, flow_name: str):
+        return self.flow_router.get(flow_name)
+
+    def list_flows(self) -> list[str]:
+        return self.flow_router.list_flows()
