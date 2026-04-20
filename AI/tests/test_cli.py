@@ -54,6 +54,25 @@ def test_cli_help_text_is_korean():
     help_text = parser.format_help()
 
     assert '한글 CLI' in help_text
+    assert '/help' in help_text
     assert 'list-flows' in help_text
     assert 'list-providers' in help_text
     assert '예시:' in help_text
+
+
+def test_cli_slash_help(capsys):
+    exit_code = main(['/help'])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert '[HeyGent CLI] 전체 도움말' in captured
+    assert 'create-task' in captured
+
+
+def test_cli_command_help(capsys):
+    exit_code = main(['help', 'create-task'])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert '[HeyGent CLI] create-task 도움말' in captured
+    assert '--type' in captured
