@@ -13,30 +13,62 @@ python -m uvicorn app.main:app --reload
 기본 주소는 `http://127.0.0.1:8000` 입니다.
 기본 DB 경로는 `tmp/app.db` 이고, 필요하면 `HEYGENT_AI_DB_PATH` 환경 변수로 바꿀 수 있습니다.
 
-## 테스트
+## 처음 실행 순서
+
+### 1) 서버 실행
 
 ```bash
-python -m pytest -q
+python -m uvicorn app.main:app --reload
 ```
 
-## 실행할 때 가장 먼저 보면 되는 것
+### 2) 브라우저에서 API 확인
 
 - Swagger UI: `http://127.0.0.1:8000/docs`
-- CLI 전체 도움말:
+- Health: `http://127.0.0.1:8000/health`
+
+서버를 띄운 뒤에는 보통 `/docs` 에서 API를 먼저 확인하면 됩니다.
+
+### 3) CLI 사용
+
+CLI는 **Command Line Interface** 의 줄임말입니다.
+즉, 브라우저 대신 **터미널에서 명령어로 바로 테스트하는 도구**입니다.
+
+이 프로젝트의 CLI는 아래 같은 확인용 작업에 씁니다.
+
+- flow 목록 보기
+- provider 목록 보기
+- task 생성
+- task 상태 조회
+- step 목록 조회
+- event 목록 조회
+- WAITING task 재개
+
+전체 도움말:
 
 ```bash
 python -m app.cli /help
 ```
 
-- 특정 명령 도움말:
+특정 명령 도움말:
 
 ```bash
 python -m app.cli help create-task
 python -m app.cli help resume-task
 ```
 
-README에는 필요한 시작 정보만 적고,
-자세한 사용법은 CLI 도움말에서 바로 확인하는 흐름으로 맞췄습니다.
+자주 쓰는 예시:
+
+```bash
+python -m app.cli list-flows
+python -m app.cli list-providers
+python -m app.cli create-task --type echo_flow --payload '{"message":"안녕하세요"}'
+```
+
+## 테스트
+
+```bash
+python -m pytest -q
+```
 
 ## 주요 API
 
