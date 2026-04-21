@@ -15,6 +15,8 @@ class ModelGenerateFlow:
     flow_name = "model_generate_flow"
     task_type = "model.generate"
     step_type = "model.generate.execute"
+    task_title = "모델 생성 요청"
+    step_title = "모델 응답 생성"
 
     def __init__(self, provider: BaseProvider) -> None:
         self.provider = provider
@@ -34,6 +36,11 @@ class ModelGenerateFlow:
                 "prompt": prompt,
                 "text": generated.output_text,
                 "usage": generated.usage,
+            },
+            "detail_json": {
+                "agentDetail": {"called": False, "agentId": None, "childTaskRunId": None},
+                "toolDetail": {"toolNames": [], "primaryTool": None},
+                "llmDetail": {"model": generated.provider_name, "callCount": 1},
             },
             "summary_message": "model generate flow completed",
         }

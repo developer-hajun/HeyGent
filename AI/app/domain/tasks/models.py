@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from app.domain.tasks.step_detail import build_default_step_detail
+
 
 @dataclass(slots=True)
 class TaskRun:
@@ -14,6 +16,7 @@ class TaskRun:
     flow_name: str
     owner_key: str
     status: str
+    title: str | None = None
     input_payload: dict[str, Any] = field(default_factory=dict)
     result_payload: dict[str, Any] = field(default_factory=dict)
     wait_payload: dict[str, Any] = field(default_factory=dict)
@@ -35,10 +38,14 @@ class StepRun:
     step_order: int
     step_type: str
     status: str
+    title: str | None = None
     input_payload: dict[str, Any] = field(default_factory=dict)
     output_payload: dict[str, Any] = field(default_factory=dict)
     wait_payload: dict[str, Any] = field(default_factory=dict)
+    detail_json: dict[str, Any] = field(default_factory=build_default_step_detail)
     summary_message: str | None = None
     error_message: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
     started_at: datetime | None = None
     ended_at: datetime | None = None

@@ -13,6 +13,8 @@ class NotionPageCreateFlow:
     flow_name = "notion_page_create"
     task_type = "notion.page.create"
     step_type = "notion.page.create.execute"
+    task_title = "Notion 페이지 생성"
+    step_title = "페이지 생성 및 요약"
 
     def __init__(self, notion_client: NotionClient, notion_mapper: NotionMapper, provider: BaseProvider) -> None:
         self.notion_client = notion_client
@@ -31,5 +33,10 @@ class NotionPageCreateFlow:
                 "summary": summary.output_text,
             },
             "output_payload": notion_result,
+            "detail_json": {
+                "agentDetail": {"called": False, "agentId": None, "childTaskRunId": None},
+                "toolDetail": {"toolNames": ["notion.create_page"], "primaryTool": "notion.create_page"},
+                "llmDetail": {"model": summary.provider_name, "callCount": 1},
+            },
             "summary_message": "notion page create completed",
         }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -48,22 +49,34 @@ class SQLiteTaskRepository:
                     ]
                 )
             )
-            columns = {row["name"] for row in connection.execute("PRAGMA table_info(provider_oauth_states)").fetchall()}
-            if "code_verifier" not in columns:
-                connection.execute("ALTER TABLE provider_oauth_states ADD COLUMN code_verifier TEXT")
+            self._ensure_column(connection, "provider_oauth_states", "code_verifier", "TEXT")
+            self._ensure_column(connection, "task_runs", "title", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "step_runs", "title", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "step_runs", "detail_json", "TEXT NOT NULL DEFAULT '{}'" )
+            self._ensure_column(connection, "step_runs", "created_at", "TEXT")
+            self._ensure_column(connection, "step_runs", "updated_at", "TEXT")
 
     def create_task(self, task: TaskRun) -> TaskRun:
-        now = utc_now().isoformat()
-        task.created_at = task.updated_at = utc_now()
+        now_dt = utc_now()
+        now = now_dt.isoformat()
+        task.created_at = task.updated_at = now_dt
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO task_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                """
+                INSERT INTO task_runs (
+                    task_run_id, task_type, flow_name, owner_key, status, title,
+                    input_payload, result_payload, wait_payload, error_message,
+                    progress_summary, revision, created_at, started_at, updated_at, ended_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     task.task_run_id,
                     task.task_type,
                     task.flow_name,
                     task.owner_key,
                     task.status,
+                    task.title or task.task_type,
                     json.dumps(task.input_payload),
                     json.dumps(task.result_payload),
                     json.dumps(task.wait_payload),
@@ -79,16 +92,18 @@ class SQLiteTaskRepository:
         return task
 
     def update_task(self, task: TaskRun) -> TaskRun:
-        now = utc_now().isoformat()
+        now_dt = utc_now()
+        now = now_dt.isoformat()
         with self._connect() as connection:
             connection.execute(
                 """
                 UPDATE task_runs
-                SET status=?, result_payload=?, wait_payload=?, error_message=?, progress_summary=?, revision=?, started_at=?, updated_at=?, ended_at=?
+                SET status=?, title=?, result_payload=?, wait_payload=?, error_message=?, progress_summary=?, revision=?, started_at=?, updated_at=?, ended_at=?
                 WHERE task_run_id=?
                 """,
                 (
                     task.status,
+                    task.title or task.task_type,
                     json.dumps(task.result_payload),
                     json.dumps(task.wait_payload),
                     task.error_message,
@@ -100,7 +115,7 @@ class SQLiteTaskRepository:
                     task.task_run_id,
                 ),
             )
-        task.updated_at = utc_now()
+        task.updated_at = now_dt
         return task
 
     def get_task(self, task_run_id: str) -> TaskRun | None:
@@ -109,20 +124,34 @@ class SQLiteTaskRepository:
         return self._task_from_row(row) if row else None
 
     def create_step(self, step: StepRun) -> StepRun:
+        now_dt = utc_now()
+        step.created_at = step.created_at or now_dt
+        step.updated_at = now_dt
         with self._connect() as connection:
             connection.execute(
-                "INSERT INTO step_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                """
+                INSERT INTO step_runs (
+                    step_run_id, task_run_id, step_order, step_type, status, title,
+                    input_payload, output_payload, wait_payload, detail_json,
+                    summary_message, error_message, created_at, updated_at, started_at, ended_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     step.step_run_id,
                     step.task_run_id,
                     step.step_order,
                     step.step_type,
                     step.status,
+                    step.title or step.step_type,
                     json.dumps(step.input_payload),
                     json.dumps(step.output_payload),
                     json.dumps(step.wait_payload),
+                    json.dumps(step.detail_json),
                     step.summary_message,
                     step.error_message,
+                    self._iso(step.created_at),
+                    self._iso(step.updated_at),
                     self._iso(step.started_at),
                     self._iso(step.ended_at),
                 ),
@@ -130,19 +159,23 @@ class SQLiteTaskRepository:
         return step
 
     def update_step(self, step: StepRun) -> StepRun:
+        step.updated_at = utc_now()
         with self._connect() as connection:
             connection.execute(
                 """
                 UPDATE step_runs
-                SET status=?, output_payload=?, wait_payload=?, summary_message=?, error_message=?, started_at=?, ended_at=?
+                SET status=?, title=?, output_payload=?, wait_payload=?, detail_json=?, summary_message=?, error_message=?, updated_at=?, started_at=?, ended_at=?
                 WHERE step_run_id=?
                 """,
                 (
                     step.status,
+                    step.title or step.step_type,
                     json.dumps(step.output_payload),
                     json.dumps(step.wait_payload),
+                    json.dumps(step.detail_json),
                     step.summary_message,
                     step.error_message,
+                    self._iso(step.updated_at),
                     self._iso(step.started_at),
                     self._iso(step.ended_at),
                     step.step_run_id,
@@ -367,12 +400,17 @@ class SQLiteTaskRepository:
             flow_name=row["flow_name"],
             owner_key=row["owner_key"],
             status=row["status"],
+            title=row["title"],
             input_payload=json.loads(row["input_payload"]),
             result_payload=json.loads(row["result_payload"]),
             wait_payload=json.loads(row["wait_payload"]),
             error_message=row["error_message"],
             progress_summary=row["progress_summary"],
             revision=row["revision"],
+            created_at=self._dt(row["created_at"]),
+            started_at=self._dt(row["started_at"]),
+            updated_at=self._dt(row["updated_at"]),
+            ended_at=self._dt(row["ended_at"]),
         )
 
     def _step_from_row(self, row: sqlite3.Row) -> StepRun:
@@ -382,13 +420,29 @@ class SQLiteTaskRepository:
             step_order=row["step_order"],
             step_type=row["step_type"],
             status=row["status"],
+            title=row["title"],
             input_payload=json.loads(row["input_payload"]),
             output_payload=json.loads(row["output_payload"]),
             wait_payload=json.loads(row["wait_payload"]),
+            detail_json=json.loads(row["detail_json"]),
             summary_message=row["summary_message"],
             error_message=row["error_message"],
+            created_at=self._dt(row["created_at"]),
+            updated_at=self._dt(row["updated_at"]),
+            started_at=self._dt(row["started_at"]),
+            ended_at=self._dt(row["ended_at"]),
         )
+
+    @staticmethod
+    def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, sql_type: str) -> None:
+        columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()}
+        if column_name not in columns:
+            connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {sql_type}")
 
     @staticmethod
     def _iso(value) -> str | None:
         return value.isoformat() if value is not None else None
+
+    @staticmethod
+    def _dt(value: str | None) -> datetime | None:
+        return datetime.fromisoformat(value) if value else None

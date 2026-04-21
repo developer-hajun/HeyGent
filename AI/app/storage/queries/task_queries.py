@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS task_runs (
     flow_name TEXT NOT NULL,
     owner_key TEXT NOT NULL,
     status TEXT NOT NULL,
+    title TEXT NOT NULL,
     input_payload TEXT NOT NULL,
     result_payload TEXT NOT NULL,
     wait_payload TEXT NOT NULL,

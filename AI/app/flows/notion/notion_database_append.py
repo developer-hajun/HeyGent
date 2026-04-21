@@ -13,6 +13,8 @@ class NotionDatabaseAppendFlow:
     flow_name = "notion_database_append"
     task_type = "notion.database.append"
     step_type = "notion.database.append.execute"
+    task_title = "Notion 데이터 추가"
+    step_title = "데이터베이스 항목 추가 및 요약"
 
     def __init__(self, notion_client: NotionClient, notion_mapper: NotionMapper, provider: BaseProvider) -> None:
         self.notion_client = notion_client
@@ -33,5 +35,10 @@ class NotionDatabaseAppendFlow:
                 "summary": summary.output_text,
             },
             "output_payload": notion_result,
+            "detail_json": {
+                "agentDetail": {"called": False, "agentId": None, "childTaskRunId": None},
+                "toolDetail": {"toolNames": ["notion.append_database_item"], "primaryTool": "notion.append_database_item"},
+                "llmDetail": {"model": summary.provider_name, "callCount": 1},
+            },
             "summary_message": "notion database append completed",
         }

@@ -31,6 +31,7 @@ def task_run() -> TaskRun:
         flow_name="echo_flow",
         owner_key="tester",
         status="PENDING",
+        title="Echo 응답 태스크",
         input_payload={"message": "hello"},
     )
 
@@ -43,5 +44,6 @@ def step_run() -> StepRun:
         step_order=1,
         step_type="echo.execute",
         status="PENDING",
+        title="입력 메시지 반영",
         input_payload={"message": "hello"},
     )

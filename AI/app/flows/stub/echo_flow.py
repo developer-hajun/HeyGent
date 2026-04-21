@@ -8,6 +8,8 @@ class EchoFlow:
     flow_name = "echo_flow"
     task_type = "stub.echo"
     step_type = "echo.execute"
+    task_title = "Echo 응답 태스크"
+    step_title = "입력 메시지 반영"
 
     def execute(self, *, task, step, resume_payload=None):
         """입력 payload 를 그대로 result 로 돌려준다."""
@@ -17,5 +19,10 @@ class EchoFlow:
             "step_status": StepStatus.COMPLETED,
             "result_payload": {"echo": task.input_payload},
             "output_payload": {"echo": task.input_payload},
+            "detail_json": {
+                "agentDetail": {"called": False, "agentId": None, "childTaskRunId": None},
+                "toolDetail": {"toolNames": [], "primaryTool": None},
+                "llmDetail": {"model": None, "callCount": 0},
+            },
             "summary_message": "echo flow completed",
         }

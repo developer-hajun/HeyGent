@@ -10,6 +10,7 @@ from app.domain.gateway.broadcaster import EventBroadcaster
 from app.domain.tasks.events import build_task_event
 from app.domain.tasks.models import StepRun, TaskRun
 from app.domain.tasks.repository import TaskRepository
+from app.domain.tasks.step_detail import merge_step_detail
 
 
 class TaskEngine:
@@ -25,6 +26,7 @@ class TaskEngine:
         self.repository.create_task(task)
         self.repository.create_step(step)
         await self._emit("task.created", task)
+        await self._emit("step.created", task, step)
         return await self._execute(task=task, step=step, flow=flow, resume_payload=None)
 
     async def resume(self, *, task: TaskRun, flow, approval_id: str, payload: dict) -> TaskRun:
@@ -65,6 +67,7 @@ class TaskEngine:
         task.revision += 1
         step.output_payload = outcome.get("output_payload", step.output_payload)
         step.wait_payload = outcome.get("wait_payload", {})
+        step.detail_json = merge_step_detail(step.detail_json, outcome.get("detail_json"))
         step.summary_message = outcome.get("summary_message")
         if task_status in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED}:
             task.ended_at = utc_now()

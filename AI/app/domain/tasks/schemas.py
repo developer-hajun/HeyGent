@@ -9,7 +9,9 @@ class PlannedStep:
     """Orchestrator 가 만든 실행 계획 한 줄이다."""
 
     step_type: str
+    title: str | None = None
     input_payload: dict[str, Any] = field(default_factory=dict)
+    detail_json: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -19,5 +21,6 @@ class PlannedTask:
     flow_name: str
     task_type: str
     owner_key: str
+    title: str | None = None
     input_payload: dict[str, Any] = field(default_factory=dict)
     steps: list[PlannedStep] = field(default_factory=list)

@@ -20,6 +20,8 @@ class Orchestrator:
             owner_key=owner_key,
             input_payload=input_payload,
             step_type=flow.step_type,
+            task_title=getattr(flow, "task_title", flow.task_type),
+            step_title=getattr(flow, "step_title", flow.step_type),
         )
         task, step = self.planner.materialize(planned_task)
         return task, step, flow

@@ -4,6 +4,7 @@ def test_create_echo_task_and_read_back(client):
 
     assert response.status_code == 200
     assert data["status"] == "COMPLETED"
+    assert data["title"] == "Echo 응답 태스크"
     assert data["result_payload"]["echo"] == {"message": "hello"}
 
     task_response = client.get(f"/api/v1/tasks/{data['task_run_id']}")
@@ -13,7 +14,13 @@ def test_create_echo_task_and_read_back(client):
     assert task_response.status_code == 200
     assert steps_response.status_code == 200
     assert steps_response.json()[0]["status"] == "COMPLETED"
-    assert any(event["event_type"] == "task.completed" for event in events_response.json())
+    assert steps_response.json()[0]["title"] == "입력 메시지 반영"
+    assert steps_response.json()[0]["detail_json"]["agentDetail"]["called"] is False
+    assert steps_response.json()[0]["detail_json"]["toolDetail"]["toolNames"] == []
+    assert steps_response.json()[0]["detail_json"]["llmDetail"]["callCount"] == 0
+    event_types = [event["event_type"] for event in events_response.json()]
+    assert "step.created" in event_types
+    assert "task.completed" in event_types
 
 
 def test_approval_wait_and_resume(client):
@@ -37,4 +44,5 @@ def test_approval_wait_and_resume(client):
     event_types = [event["event_type"] for event in events_response.json()]
     assert "approval.requested" in event_types
     assert "approval.resolved" in event_types
+    assert "step.created" in event_types
     assert "task.completed" in event_types

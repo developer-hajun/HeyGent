@@ -7,6 +7,7 @@ def test_echo_flow_returns_input_payload(task_run, step_run):
 
     assert outcome["result_payload"]["echo"] == task_run.input_payload
     assert outcome["task_status"] == "COMPLETED"
+    assert outcome["detail_json"]["llmDetail"]["callCount"] == 0
 
 
 def test_approval_wait_flow_waits_then_completes(task_run, step_run):
@@ -17,4 +18,5 @@ def test_approval_wait_flow_waits_then_completes(task_run, step_run):
 
     assert waiting["task_status"] == "WAITING"
     assert waiting["approval_payload"]["action"] == "approve"
+    assert waiting["detail_json"]["agentDetail"]["called"] is False
     assert completed["result_payload"]["approved"] is True
