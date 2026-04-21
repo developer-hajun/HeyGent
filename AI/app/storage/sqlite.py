@@ -337,6 +337,20 @@ class SQLiteTaskRepository:
             "updated_at": row["updated_at"],
         }
 
+    def delete_provider_token(self, provider_name: str) -> bool:
+        """provider 연결 해제 시 저장된 token 을 제거한다."""
+
+        with self._connect() as connection:
+            result = connection.execute("DELETE FROM provider_tokens WHERE provider_name=?", (provider_name,))
+        return result.rowcount > 0
+
+    def delete_provider_oauth_states(self, provider_name: str) -> int:
+        """재연결이나 연결 해제 시 남아 있던 OAuth state 를 정리한다."""
+
+        with self._connect() as connection:
+            result = connection.execute("DELETE FROM provider_oauth_states WHERE provider_name=?", (provider_name,))
+        return result.rowcount
+
     def _task_from_row(self, row: sqlite3.Row) -> TaskRun:
         return TaskRun(
             task_run_id=row["task_run_id"],

@@ -85,6 +85,30 @@ def test_cli_openai_onboarding_local(monkeypatch, tmp_path, capsys):
     assert "authorization_url" not in captured or "configuration_required" in captured
 
 
+def test_cli_provider_refresh_local(monkeypatch, tmp_path, capsys):
+    db_path = tmp_path / "cli-refresh.db"
+    monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+
+    exit_code = main(["--mode", "local", "provider-refresh", "--provider", "openai_oauth"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "[HeyGent CLI] 프로바이더 연결 갱신 결과" in captured
+    assert '"status": "configuration_required"' in captured or '"status": "not_connected"' in captured
+
+
+def test_cli_provider_disconnect_local(monkeypatch, tmp_path, capsys):
+    db_path = tmp_path / "cli-disconnect.db"
+    monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+
+    exit_code = main(["--mode", "local", "provider-disconnect", "--provider", "openai_oauth"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "[HeyGent CLI] 프로바이더 연결 해제 결과" in captured
+    assert '"status": "disconnected"' in captured
+
+
 def test_cli_help_text_is_korean():
     parser = build_parser(get_settings())
     help_text = parser.format_help()
@@ -93,6 +117,8 @@ def test_cli_help_text_is_korean():
     assert "/help" in help_text
     assert "serve" in help_text
     assert "onboard-openai" in help_text
+    assert "provider-refresh" in help_text
+    assert "provider-disconnect" in help_text
     assert "예시:" in help_text
 
 

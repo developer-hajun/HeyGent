@@ -32,6 +32,8 @@ COMMAND_ALIASES = {
     "serve": "게이트웨이 실행",
     "health": "서버 상태 확인",
     "onboard-openai": "OpenAI 연결 온보딩",
+    "provider-refresh": "프로바이더 연결 갱신",
+    "provider-disconnect": "프로바이더 연결 해제",
     "create-task": "작업 생성",
     "watch-task": "작업 조회",
     "resume-task": "승인 재개",
@@ -101,6 +103,8 @@ def _build_examples() -> str:
         "  python -m app.cli serve\n"
         "  python -m app.cli health\n"
         "  python -m app.cli onboard-openai\n"
+        "  python -m app.cli provider-refresh --provider openai_oauth\n"
+        "  python -m app.cli provider-disconnect --provider openai_oauth\n"
         "  python -m app.cli list-providers\n"
         "  python -m app.cli create-task --type model_generate_flow --payload '{\"prompt\":\"안녕하세요\"}'\n"
         "  python -m app.cli create-task --type notion_page_create --payload '{\"title\":\"백로그\",\"content\":\"정리\"}'\n"
@@ -157,6 +161,22 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     onboard_parser.add_argument("--redirect-uri", default=None, help="요청 시점에 redirect URI 를 덮어쓸 수 있습니다")
     onboard_parser.add_argument("--state", default=None, help="직접 관리할 OAuth state 값")
     command_parsers["onboard-openai"] = onboard_parser
+
+    refresh_parser = subparsers.add_parser(
+        "provider-refresh",
+        help="저장된 refresh token 으로 provider 연결을 갱신합니다",
+        description="토큰 만료 또는 만료 예정 시 저장된 refresh token 으로 access token 을 새로 갱신합니다.",
+    )
+    refresh_parser.add_argument("--provider", default="openai_oauth", help="갱신할 provider 이름")
+    command_parsers["provider-refresh"] = refresh_parser
+
+    disconnect_parser = subparsers.add_parser(
+        "provider-disconnect",
+        help="저장된 provider 연결 정보를 제거합니다",
+        description="access token, refresh token, 남은 OAuth state 를 정리하고 다시 연결 가능한 상태로 돌립니다.",
+    )
+    disconnect_parser.add_argument("--provider", default="openai_oauth", help="연결 해제할 provider 이름")
+    command_parsers["provider-disconnect"] = disconnect_parser
 
     create_parser = subparsers.add_parser(
         "create-task",
@@ -256,7 +276,8 @@ def _print_openai_onboarding(response_json: dict[str, Any], base_url: str) -> No
     print("2) py -3.11 -m app.cli serve 로 서버를 실행합니다")
     print("3) 아래 authorization_url 을 브라우저에서 엽니다")
     print("4) 로그인 후 callback 이 /providers/openai_oauth/callback 으로 돌아오면 연결이 저장됩니다")
-    print("5) 연결 후 list-providers 또는 model_generate_flow 로 실제 작업을 확인합니다\n")
+    print("5) 연결 후 list-providers 또는 model_generate_flow 로 실제 작업을 확인합니다")
+    print("6) 만료되면 provider-refresh, 끊고 다시 붙이려면 provider-disconnect 후 onboard-openai 를 사용합니다\n")
     print("흐름도")
     print("  .env 설정")
     print("      ↓")
@@ -276,6 +297,8 @@ def _print_openai_onboarding(response_json: dict[str, Any], base_url: str) -> No
         print(f"- 브라우저에서 열 URL: {response_json['authorization_url']}")
         print(f"- callback 기준 서버 주소: {base_url}")
         print("- 연결 확인: py -3.11 -m app.cli list-providers")
+        print("- 갱신: py -3.11 -m app.cli provider-refresh --provider openai_oauth")
+        print("- 연결 해제: py -3.11 -m app.cli provider-disconnect --provider openai_oauth")
         print("- 모델 작업 확인: py -3.11 -m app.cli create-task --type model_generate_flow --payload '{\"prompt\":\"안녕하세요\"}'")
 
 
@@ -301,6 +324,10 @@ def _handle_remote_command(args, settings: Settings) -> int:
                 _request_path(settings, "/providers/openai_oauth/auth"),
                 json_body={"redirect_uri": args.redirect_uri, "state": args.state},
             )
+        elif args.command == "provider-refresh":
+            response = client.request("POST", _request_path(settings, f"/providers/{args.provider}/refresh"))
+        elif args.command == "provider-disconnect":
+            response = client.request("POST", _request_path(settings, f"/providers/{args.provider}/disconnect"))
         elif args.command == "create-task":
             response = client.request(
                 "POST",

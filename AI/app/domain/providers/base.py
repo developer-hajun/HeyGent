@@ -28,5 +28,13 @@ class BaseProvider(ABC):
         """OAuth callback 이후 토큰 교환과 저장을 수행한다."""
 
     @abstractmethod
+    def refresh_connection(self) -> ProviderConnectionResponse:
+        """저장된 refresh token 으로 access token 을 갱신한다."""
+
+    @abstractmethod
+    def disconnect(self) -> ProviderConnectionResponse:
+        """저장된 provider 연결 정보를 제거한다."""
+
+    @abstractmethod
     def generate(self, prompt: str, **kwargs) -> ProviderGenerateResponse:
         """텍스트 생성 요청을 수행한다."""

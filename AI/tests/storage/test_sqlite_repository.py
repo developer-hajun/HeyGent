@@ -28,6 +28,8 @@ def test_sqlite_repository_persists_task_step_event_approval_and_provider_auth(t
     )
     token = repository.get_provider_token("openai_oauth")
     consumed_state = repository.consume_provider_oauth_state("openai_oauth", "state_123")
+    deleted_token = repository.delete_provider_token("openai_oauth")
+    cleared_states = repository.delete_provider_oauth_states("openai_oauth")
 
     assert repository.get_task("task_1") is not None
     assert repository.list_steps("task_1")[0].step_run_id == "step_1"
@@ -37,3 +39,6 @@ def test_sqlite_repository_persists_task_step_event_approval_and_provider_auth(t
     assert token["access_token"] == "token-123"
     assert "model.generate" in token["scopes"]
     assert consumed_state["status"] == "CONSUMED"
+    assert deleted_token is True
+    assert cleared_states >= 0
+    assert repository.get_provider_token("openai_oauth") is None

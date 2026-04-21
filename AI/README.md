@@ -25,6 +25,7 @@ HeyGent AI Backbone은 FastAPI 기반의 AI 게이트웨이/오케스트레이�
 - health / ready 확인
 - provider 상태 확인
 - OpenAI OAuth 온보딩 안내
+- provider refresh / disconnect
 - task 생성 / 조회 / resume
 
 ### 3) 모델 연결
@@ -104,6 +105,8 @@ onboard-openai
    ↓
 list-providers
    ↓
+provider-refresh (필요 시)
+   ↓
 create-task --type model_generate_flow
 ```
 
@@ -145,7 +148,19 @@ py -3.11 -m app.cli list-providers
 - `connected`: token 이 저장되어 실제 호출이 가능한가
 - `expires_at`: 만료 예정 시각
 
-### 4. 실제 모델 작업 확인
+### 4. 만료 시 갱신 또는 재연결
+
+```bash
+py -3.11 -m app.cli provider-refresh --provider openai_oauth
+py -3.11 -m app.cli provider-disconnect --provider openai_oauth
+py -3.11 -m app.cli onboard-openai
+```
+
+- `provider-refresh` : 저장된 refresh token 으로 access token 재발급 시도
+- `provider-disconnect` : 저장된 token 과 남은 OAuth state 제거
+- `onboard-openai` : 완전히 다시 연결 시작
+
+### 5. 실제 모델 작업 확인
 
 ```bash
 py -3.11 -m app.cli create-task --type model_generate_flow --payload '{"prompt":"안녕하세요. 연결 상태를 짧게 알려줘"}'
@@ -178,6 +193,8 @@ py -3.11 -m app.cli /help
 py -3.11 -m app.cli serve
 py -3.11 -m app.cli health
 py -3.11 -m app.cli onboard-openai
+py -3.11 -m app.cli provider-refresh --provider openai_oauth
+py -3.11 -m app.cli provider-disconnect --provider openai_oauth
 py -3.11 -m app.cli list-providers
 py -3.11 -m app.cli list-flows
 py -3.11 -m app.cli create-task --type model_generate_flow --payload '{"prompt":"안녕하세요"}'
@@ -256,6 +273,8 @@ py -3.11 -m app.cli --base-url http://127.0.0.1:8000/api/v1 list-providers
 - `POST /api/v1/providers/{provider_name}/auth` : OAuth 시작 정보 조회
 - `POST /api/v1/providers/{provider_name}/callback` : auth code callback 처리(JSON)
 - `GET /api/v1/providers/{provider_name}/callback` : 브라우저 callback 처리(HTML)
+- `POST /api/v1/providers/{provider_name}/refresh` : refresh token 기반 재연결
+- `POST /api/v1/providers/{provider_name}/disconnect` : 저장된 연결 해제
 - `POST /api/v1/providers/generate` : provider generate 호출
 
 ### Flow
@@ -289,8 +308,8 @@ Notion 자체를 제품 핵심으로 밀기 위한 것이 아니라,
 
 ## 현재 제약사항
 
-- OpenAI OAuth 는 callback 이후 token 저장과 실제 generate 1차 흐름까지만 다룹니다.
-- refresh token 자동 갱신, 다중 사용자 연결, 복수 provider 계정 관리는 아직 없습니다.
+- OpenAI OAuth 는 callback 이후 token 저장, 수동 refresh, 실제 generate 1차 흐름까지만 다룹니다.
+- refresh token 자동 백그라운드 갱신, 다중 사용자 연결, 복수 provider 계정 관리는 아직 없습니다.
 - Notion flow 는 여전히 안전한 stub 응답 중심입니다.
 - full daemon lifecycle(start/stop/restart/logs)까지는 아직 구현하지 않았습니다.
 

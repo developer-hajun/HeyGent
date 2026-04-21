@@ -63,6 +63,33 @@ def complete_provider_auth(
         raise HTTPException(status_code=502, detail=f"token exchange request failed: {error}") from error
 
 
+@router.post("/{provider_name}/refresh", response_model=ProviderConnectionResponse)
+def refresh_provider_connection(provider_name: str, context: ProviderContext = Depends(get_provider_context)) -> ProviderConnectionResponse:
+    """저장된 refresh token 으로 provider 연결을 갱신한다."""
+
+    try:
+        provider = context.registry.get(provider_name)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=f"unknown provider: {error.args[0]}") from error
+    try:
+        return provider.refresh_connection()
+    except httpx.HTTPStatusError as error:
+        raise HTTPException(status_code=502, detail=f"token refresh failed: {error.response.text}") from error
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=502, detail=f"token refresh request failed: {error}") from error
+
+
+@router.post("/{provider_name}/disconnect", response_model=ProviderConnectionResponse)
+def disconnect_provider(provider_name: str, context: ProviderContext = Depends(get_provider_context)) -> ProviderConnectionResponse:
+    """저장된 provider 연결 정보를 제거한다."""
+
+    try:
+        provider = context.registry.get(provider_name)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=f"unknown provider: {error.args[0]}") from error
+    return provider.disconnect()
+
+
 @router.get("/{provider_name}/callback")
 def complete_provider_auth_from_browser(
     provider_name: str,
@@ -86,6 +113,7 @@ def complete_provider_auth_from_browser(
               <li>expires_at: {result.expires_at or '미정'}</li>
             </ul>
             <p>이제 터미널에서 <code>py -3.11 -m app.cli list-providers</code> 또는 <code>py -3.11 -m app.cli create-task --type model_generate_flow --payload '{{"prompt":"안녕하세요"}}'</code> 로 바로 확인할 수 있습니다.</p>
+            <p>필요하면 <code>py -3.11 -m app.cli provider-refresh --provider openai_oauth</code> 로 갱신하고, <code>provider-disconnect</code> 로 연결 해제할 수 있습니다.</p>
           </body>
         </html>
         """

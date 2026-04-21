@@ -158,6 +158,74 @@ class OpenAIOAuthProvider(BaseProvider):
             },
         )
 
+    def refresh_connection(self) -> ProviderConnectionResponse:
+        """저장된 refresh token 으로 access token 을 갱신한다."""
+
+        missing_env = self.missing_env()
+        if missing_env:
+            return ProviderConnectionResponse(
+                provider_name=self.name,
+                status="configuration_required",
+                connected=False,
+                detail="token refresh 전에 필요한 환경 변수를 먼저 채워야 합니다",
+                metadata={"missing_env": missing_env},
+            )
+        if self.repository is None:
+            raise RuntimeError("provider repository is not configured")
+
+        stored = self._get_token_record()
+        if stored is None:
+            return ProviderConnectionResponse(
+                provider_name=self.name,
+                status="not_connected",
+                connected=False,
+                detail="저장된 provider token 이 없습니다. 먼저 onboard-openai 로 연결해 주세요",
+            )
+        refresh_token = stored.get("refresh_token")
+        if not refresh_token:
+            return ProviderConnectionResponse(
+                provider_name=self.name,
+                status="reconnect_required",
+                connected=False,
+                detail="refresh token 이 없어 자동 갱신이 불가능합니다. onboard-openai 로 다시 연결해 주세요",
+                scopes=stored.get("scopes", []),
+                expires_at=stored.get("expires_at"),
+            )
+
+        token_payload = self._refresh_token(refresh_token)
+        updated = self.repository.upsert_provider_token(self.name, token_payload)
+        return ProviderConnectionResponse(
+            provider_name=self.name,
+            status="refreshed",
+            connected=True,
+            detail="OpenAI access token 을 새로 갱신했습니다",
+            scopes=updated.get("scopes", []),
+            expires_at=updated.get("expires_at"),
+            metadata={
+                "token_type": updated.get("token_type"),
+                "connected_at": updated.get("updated_at"),
+            },
+        )
+
+    def disconnect(self) -> ProviderConnectionResponse:
+        """저장된 token 과 남은 OAuth state 를 정리한다."""
+
+        if self.repository is None:
+            raise RuntimeError("provider repository is not configured")
+
+        deleted_token = self.repository.delete_provider_token(self.name)
+        cleared_states = self.repository.delete_provider_oauth_states(self.name)
+        return ProviderConnectionResponse(
+            provider_name=self.name,
+            status="disconnected",
+            connected=False,
+            detail="저장된 OpenAI 연결 정보를 제거했습니다. 필요하면 onboard-openai 로 다시 연결할 수 있습니다",
+            metadata={
+                "deleted_token": deleted_token,
+                "cleared_oauth_states": cleared_states,
+            },
+        )
+
     def generate(self, prompt: str, **kwargs) -> ProviderGenerateResponse:
         """저장된 token 이 있으면 실제 모델 호출을 시도하고, 없으면 stub 로 동작한다."""
 
@@ -205,6 +273,21 @@ class OpenAIOAuthProvider(BaseProvider):
             "client_secret": self.settings.openai_oauth_client_secret,
             "redirect_uri": redirect_uri,
         }
+        return self._request_token(form_data)
+
+    def _refresh_token(self, refresh_token: str) -> dict[str, Any]:
+        form_data = {
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": self.settings.openai_oauth_client_id,
+            "client_secret": self.settings.openai_oauth_client_secret,
+        }
+        refreshed = self._request_token(form_data)
+        if not refreshed.get("refresh_token"):
+            refreshed["refresh_token"] = refresh_token
+        return refreshed
+
+    def _request_token(self, form_data: dict[str, Any]) -> dict[str, Any]:
         response = httpx.post(
             self.settings.openai_oauth_token_url,
             data=form_data,
