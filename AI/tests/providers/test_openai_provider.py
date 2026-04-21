@@ -23,6 +23,28 @@ class DummyHTTPResponse:
             raise httpx.HTTPStatusError("error", request=self.request, response=httpx.Response(self.status_code, request=self.request, text=self.text))
 
 
+class DummyStreamResponse:
+    def __init__(self, lines: list[str], status_code: int = 200, url: str = "https://example.test"):
+        self._lines = lines
+        self.status_code = status_code
+        self.is_success = status_code < 400
+        self.reason_phrase = "OK" if self.is_success else "Bad Request"
+        self.request = httpx.Request("POST", url)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return None
+
+    def iter_lines(self):
+        for line in self._lines:
+            yield line
+
+    def read(self):
+        return "\n".join(self._lines).encode("utf-8")
+
+
 def _make_test_access_token() -> str:
     header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).decode().rstrip("=")
     payload = base64.urlsafe_b64encode(
@@ -68,19 +90,18 @@ def test_openai_provider_imports_local_codex_auth_and_generates_live(monkeypatch
     )
     provider = OpenAIOAuthProvider(settings, repository)
 
-    def fake_post(url, data=None, headers=None, timeout=None, json=None):
-        if url == f"{settings.openai_api_base_url}/codex/responses":
-            return DummyHTTPResponse(
-                {
-                    "id": "resp_codex",
-                    "model": settings.openai_response_model,
-                    "output_text": "로컬 로그인 연결 응답",
-                    "usage": {"input_tokens": 3, "output_tokens": 3},
-                }
+    def fake_stream(method, url, headers=None, json=None, timeout=None):
+        if method == "POST" and url == f"{settings.openai_api_base_url}/codex/responses":
+            return DummyStreamResponse(
+                [
+                    'data: {"type":"response.output_text.delta","delta":"로컬 로그인 연결 응답"}',
+                    'data: {"type":"response.completed","response":{"id":"resp_codex","model":"gpt-test","usage":{"input_tokens":3,"output_tokens":3}}}',
+                ],
+                url=url,
             )
         raise AssertionError(f"unexpected url: {url}")
 
-    monkeypatch.setattr("app.domain.providers.openai_oauth.httpx.post", fake_post)
+    monkeypatch.setattr("app.domain.providers.openai_oauth.httpx.stream", fake_stream)
     auth = provider.start_auth()
     generated = provider.generate("연결 확인")
 
@@ -116,18 +137,21 @@ def test_openai_provider_completes_auth_and_generates_live(monkeypatch, tmp_path
                     "scope": "openid profile email offline_access",
                 }
             )
-        if url == f"{settings.openai_api_base_url}/codex/responses":
-            return DummyHTTPResponse(
-                {
-                    "id": "resp_123",
-                    "model": settings.openai_response_model,
-                    "output_text": "실제 연결 응답",
-                    "usage": {"input_tokens": 4, "output_tokens": 3},
-                }
+        raise AssertionError(f"unexpected url: {url}")
+
+    def fake_stream(method, url, headers=None, json=None, timeout=None):
+        if method == "POST" and url == f"{settings.openai_api_base_url}/codex/responses":
+            return DummyStreamResponse(
+                [
+                    'data: {"type":"response.output_text.delta","delta":"실제 연결 응답"}',
+                    'data: {"type":"response.completed","response":{"id":"resp_123","model":"gpt-test","usage":{"input_tokens":4,"output_tokens":3}}}',
+                ],
+                url=url,
             )
         raise AssertionError(f"unexpected url: {url}")
 
     monkeypatch.setattr("app.domain.providers.openai_oauth.httpx.post", fake_post)
+    monkeypatch.setattr("app.domain.providers.openai_oauth.httpx.stream", fake_stream)
     connected = provider.complete_auth(code="code-123", state=auth.state)
     generated = provider.generate("연결 확인")
 

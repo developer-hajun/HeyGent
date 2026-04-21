@@ -66,7 +66,7 @@ copy .env.example .env
 - `HEYGENT_AI_DB_PATH`
 - `HEYGENT_API_BASE_URL`
 - `HEYGENT_OPENAI_AUTH_FILE`
-- `HEYGENT_OPENAI_API_BASE_URL`
+- `HEYGENT_OPENAI_API_BASE_URL` (`https://chatgpt.com/backend-api` 권장)
 - `HEYGENT_OPENAI_RESPONSE_MODEL`
 
 브라우저 OAuth 를 직접 붙일 때만 추가로 아래를 채웁니다.
@@ -131,6 +131,7 @@ py -3.11 -m app.cli onboard-openai
 
 즉 기본 경로는 사용자가 OAuth 앱 세부값을 몰라도 되게 하는 것입니다.
 브라우저 OAuth 앱 설정이 정말 필요할 때만 `configuration_required` 와 개발자 설정 문서를 보여줍니다.
+기본값은 OpenClaw 4.15가 쓰는 Codex OAuth 흐름과 맞춰져 있어서, 보통은 별도 client secret 설정이 필요 없습니다.
 
 ### 2. 로컬 로그인 재사용
 
@@ -145,7 +146,7 @@ py -3.11 -m app.cli onboard-openai
 기본 callback 예시:
 
 ```text
-http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback
+http://localhost:1455/auth/callback
 ```
 
 ### 4. 연결 확인과 갱신

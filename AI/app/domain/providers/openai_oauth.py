@@ -514,39 +514,78 @@ class OpenAIOAuthProvider(BaseProvider):
         if not account_id:
             raise RuntimeError("저장된 token 에 account_id 가 없어 Codex 호출을 진행할 수 없습니다")
 
-        response = httpx.post(
+        request_body = {
+            "model": self.settings.openai_response_model,
+            "store": False,
+            "stream": True,
+            "instructions": "You are a helpful assistant. Answer the user's request briefly and clearly.",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": prompt,
+                        }
+                    ],
+                }
+            ],
+            "text": {"verbosity": "medium"},
+            "include": ["reasoning.encrypted_content"],
+        }
+
+        output_chunks: list[str] = []
+        final_response: dict[str, Any] | None = None
+        with httpx.stream(
+            "POST",
             self._resolve_codex_responses_url(),
             headers={
                 "Authorization": f"Bearer {token_record['access_token']}",
                 "chatgpt-account-id": account_id,
                 "originator": OPENAI_CODEX_REQUEST_ORIGINATOR,
                 "OpenAI-Beta": OPENAI_CODEX_RESPONSE_BETA,
-                "Accept": "application/json",
+                "Accept": "text/event-stream",
                 "Content-Type": "application/json",
                 "User-Agent": "heygent-ai/0.1",
             },
-            json={
-                "model": self.settings.openai_response_model,
-                "store": False,
-                "stream": False,
-                "input": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "input_text",
-                                "text": prompt,
-                            }
-                        ],
-                    }
-                ],
-                "text": {"verbosity": "medium"},
-                "include": ["reasoning.encrypted_content"],
-            },
+            json=request_body,
             timeout=30.0,
-        )
-        response.raise_for_status()
-        return response.json()
+        ) as response:
+            if not response.is_success:
+                detail = response.read().decode("utf-8", errors="replace")
+                raise httpx.HTTPStatusError(
+                    f"Client error '{response.status_code} {response.reason_phrase}' for url '{response.request.url}'\n{detail}",
+                    request=response.request,
+                    response=response,
+                )
+
+            for raw_line in response.iter_lines():
+                if not raw_line or not raw_line.startswith("data: "):
+                    continue
+                try:
+                    event = json.loads(raw_line[6:])
+                except json.JSONDecodeError:
+                    continue
+                event_type = event.get("type")
+                if event_type == "response.output_text.delta":
+                    delta = event.get("delta")
+                    if isinstance(delta, str):
+                        output_chunks.append(delta)
+                elif event_type == "response.output_text.done":
+                    text = event.get("text")
+                    if isinstance(text, str) and text.strip():
+                        output_chunks = [text]
+                elif event_type == "response.completed":
+                    completed = event.get("response")
+                    if isinstance(completed, dict):
+                        final_response = completed
+                elif event_type == "response.failed":
+                    message = ((event.get("response") or {}).get("error") or {}).get("message")
+                    raise RuntimeError(str(message or "Codex response failed"))
+
+        result = final_response or {}
+        result["output_text"] = "".join(output_chunks).strip()
+        return result
 
     def _resolve_codex_responses_url(self) -> str:
         base_url = self.settings.openai_api_base_url.rstrip("/")
