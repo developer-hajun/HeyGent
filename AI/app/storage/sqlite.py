@@ -123,6 +123,47 @@ class SQLiteTaskRepository:
             row = connection.execute("SELECT * FROM task_runs WHERE task_run_id=?", (task_run_id,)).fetchone()
         return self._task_from_row(row) if row else None
 
+    def list_tasks(self, *, status: str | None = None, limit: int = 20, offset: int = 0) -> list[TaskRun]:
+        """최근 TaskRun 목록을 조회한다.
+
+        목록 화면에서는 진행 중 작업을 먼저 보여 주는 편이 유용하므로,
+        활성 상태(PENDING/RUNNING/WAITING/BLOCKED)를 상단으로 끌어올리고
+        그 안에서는 최근 업데이트 순으로 정렬한다.
+        """
+
+        query = """
+            SELECT *
+            FROM task_runs
+            {where_clause}
+            ORDER BY
+                CASE
+                    WHEN status IN ('PENDING', 'RUNNING', 'WAITING', 'BLOCKED') THEN 0
+                    ELSE 1
+                END,
+                COALESCE(updated_at, created_at) DESC,
+                created_at DESC
+            LIMIT ? OFFSET ?
+        """
+        parameters: list[Any] = []
+        where_clause = ""
+        if status is not None:
+            where_clause = "WHERE status = ?"
+            parameters.append(status)
+        parameters.extend([limit, offset])
+        with self._connect() as connection:
+            rows = connection.execute(query.format(where_clause=where_clause), tuple(parameters)).fetchall()
+        return [self._task_from_row(row) for row in rows]
+
+    def count_tasks(self, *, status: str | None = None) -> int:
+        query = "SELECT COUNT(*) AS count FROM task_runs"
+        parameters: tuple[Any, ...] = ()
+        if status is not None:
+            query += " WHERE status = ?"
+            parameters = (status,)
+        with self._connect() as connection:
+            row = connection.execute(query, parameters).fetchone()
+        return int(row["count"] if row is not None else 0)
+
     def create_step(self, step: StepRun) -> StepRun:
         now_dt = utc_now()
         step.created_at = step.created_at or now_dt

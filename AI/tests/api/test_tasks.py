@@ -46,3 +46,31 @@ def test_approval_wait_and_resume(client):
     assert "approval.resolved" in event_types
     assert "step.created" in event_types
     assert "task.completed" in event_types
+
+
+def test_list_tasks_with_status_filter_and_current_step_summary(client):
+    completed_task = client.post("/api/v1/tasks", json={"flow_name": "echo_flow", "input_payload": {"message": "first"}}).json()
+    waiting_task = client.post("/api/v1/tasks", json={"flow_name": "approval_wait_flow", "input_payload": {"subject": "approval"}}).json()
+    client.post("/api/v1/tasks", json={"flow_name": "echo_flow", "input_payload": {"message": "third"}}).json()
+
+    list_response = client.get("/api/v1/tasks?page=1&page_size=2&status=ALL")
+    waiting_response = client.get("/api/v1/tasks?page=1&page_size=5&status=WAITING")
+
+    assert list_response.status_code == 200
+    payload = list_response.json()
+    assert payload["page"] == 1
+    assert payload["page_size"] == 2
+    assert payload["total_count"] == 3
+    assert payload["has_next"] is True
+    assert len(payload["items"]) == 2
+    assert payload["items"][0]["task_run_id"] == waiting_task["task_run_id"]
+    assert payload["items"][0]["current_step"]["status"] == "WAITING"
+    assert payload["items"][0]["current_step"]["title"] in {"승인 여부 확인", "사용자 승인 대기"}
+    assert payload["items"][1]["status"] == "COMPLETED"
+    assert payload["items"][1]["task_run_id"] != waiting_task["task_run_id"]
+
+    assert waiting_response.status_code == 200
+    waiting_payload = waiting_response.json()
+    assert waiting_payload["status_filter"] == "WAITING"
+    assert waiting_payload["total_count"] == 1
+    assert waiting_payload["items"][0]["task_run_id"] == waiting_task["task_run_id"]

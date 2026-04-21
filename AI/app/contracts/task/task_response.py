@@ -43,6 +43,38 @@ class TaskRunResponse(BaseModel):
     ended_at: datetime | None = None
 
 
+class StepRunSummaryResponse(BaseModel):
+    step_run_id: str
+    step_order: int
+    step_type: str
+    status: str
+    title: str | None = None
+    summary_message: str | None = None
+    updated_at: datetime | None = None
+
+
+class TaskRunListItemResponse(BaseModel):
+    task_run_id: str
+    task_type: str
+    flow_name: str
+    status: str
+    title: str | None = None
+    progress_summary: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    current_step: StepRunSummaryResponse | None = None
+
+
+class TaskRunListResponse(BaseModel):
+    items: list[TaskRunListItemResponse] = Field(default_factory=list)
+    page: int
+    page_size: int
+    total_count: int
+    has_previous: bool
+    has_next: bool
+    status_filter: str
+
+
 class TaskEventResponse(BaseModel):
     event_id: str
     event_type: str

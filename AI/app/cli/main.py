@@ -21,6 +21,7 @@ from app.cli.ui.output import (
     print_shell_command_list as _print_shell_command_list,
     print_shell_task_result as _print_shell_task_result,
 )
+from app.cli.ui.tasks_browser import normalize_browser_filter as _normalize_browser_filter, run_tasks_browser as _run_tasks_browser
 from app.cli.ui.prompt import (
     _SlashCommandCompleter,
     _should_open_slash_menu,
@@ -60,6 +61,7 @@ def _build_examples() -> str:
         "  python -m app.cli list-providers\n"
         "  python -m app.cli create-task --type model_generate_flow --prompt \"안녕하세요\"\n"
         "  python -m app.cli create-task --type notion_page_create --payload '{\"title\":\"백로그\",\"content\":\"정리\"}'\n"
+        "  python -m app.cli tasks --status WAITING\n"
         "  python -m app.cli resume-task --task-id task_xxx --payload '{\"approved\": true}'"
     )
 
@@ -175,6 +177,19 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     )
     watch_parser.add_argument("--task-id", required=True, help="조회할 task_run_id")
     command_parsers["watch-task"] = watch_parser
+
+    tasks_parser = subparsers.add_parser(
+        "tasks",
+        aliases=["/tasks"],
+        help="최근 작업을 목록/상세 깊이로 탐색합니다",
+        description="하나의 tasks 허브 안에서 목록, 상세, 페이지 이동, 상태 필터를 함께 다룹니다.",
+    )
+    tasks_parser.add_argument("--status", default="ALL", help="ALL, RUNNING, WAITING, COMPLETED 중 하나")
+    tasks_parser.add_argument("--page", type=int, default=1, help="목록 페이지 번호")
+    tasks_parser.add_argument("--page-size", type=int, default=8, help="한 번에 가져올 작업 수")
+    tasks_parser.add_argument("--task-id", default=None, help="바로 열고 싶은 task_run_id")
+    command_parsers["tasks"] = tasks_parser
+    command_parsers["/tasks"] = tasks_parser
 
     steps_parser = subparsers.add_parser(
         "list-steps",
@@ -368,6 +383,17 @@ def _handle_shell_slash_command(raw: str, shell_args, settings: Settings, client
     if command in {"/status"}:
         response = client.request("GET", _request_path(settings, "/providers"))
         _print_response("status", response.json(), settings, as_json=shell_args.json)
+        return True
+    if command in {"/tasks"}:
+        initial_filter = "ALL"
+        initial_task_id = None
+        if len(tokens) > 1:
+            normalized = _normalize_browser_filter(tokens[1])
+            if normalized in {"ALL", "RUNNING", "WAITING", "COMPLETED"}:
+                initial_filter = normalized
+            else:
+                initial_task_id = tokens[1]
+        _run_tasks_browser(client, settings, initial_filter=initial_filter, initial_task_id=initial_task_id)
         return True
     if command in {"/auth"}:
         provider_state = _fetch_openai_provider_state(client, settings)
@@ -621,6 +647,15 @@ def _handle_remote_command(args, settings: Settings) -> int:
             )
         elif args.command == "watch-task":
             response = client.request("GET", _request_path(settings, f"/tasks/{args.task_id}"))
+        elif args.command in {"tasks", "/tasks"}:
+            if args.task_id:
+                response = client.request("GET", _request_path(settings, f"/tasks/{args.task_id}"))
+            else:
+                normalized_status = _normalize_browser_filter(args.status)
+                response = client.request(
+                    "GET",
+                    _request_path(settings, f"/tasks?status={normalized_status}&page={args.page}&page_size={args.page_size}"),
+                )
         elif args.command == "resume-task":
             response = client.request(
                 "POST",
@@ -699,6 +734,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "shell":
         return _run_shell(args, settings, parser)
+
+    if args.command in {"tasks", "/tasks"} and not args.json:
+        with _build_transport(args) as client:
+            _run_tasks_browser(client, settings, initial_filter=_normalize_browser_filter(args.status), initial_task_id=args.task_id)
+        return 0
 
     return _handle_remote_command(args, settings)
 

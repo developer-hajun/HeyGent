@@ -8,6 +8,7 @@ from prompt_toolkit.document import Document
 
 from app.cli import RemoteCLIClient, _SlashCommandCompleter, _should_open_slash_menu, build_parser, main
 import app.cli.ui.prompt as PROMPT_UI
+import app.cli.ui.tasks_browser as TASK_BROWSER_UI
 from app.core.config import get_settings
 from app.cli.ui.output import _display_width, render_box, render_plain_box
 
@@ -68,6 +69,7 @@ def test_slash_command_completer_shows_menu_for_single_slash():
     texts = {item.text for item in completions}
     assert "/help" in texts
     assert "/status" in texts
+    assert "/tasks" in texts
     assert "/auth" in texts
 
 
@@ -116,6 +118,64 @@ def test_render_plain_box_keeps_terminal_width_aligned():
 
     widths = {_display_width(line) for line in box.splitlines()}
     assert len(widths) == 1
+
+
+def test_tasks_browser_renders_list_and_detail_views():
+    state = TASK_BROWSER_UI.TaskBrowserState(
+        status_filter="WAITING",
+        list_payload={
+            "items": [
+                {
+                    "task_run_id": "task_wait",
+                    "task_type": "approval.wait",
+                    "status": "WAITING",
+                    "title": "승인 대기 태스크",
+                    "updated_at": "2026-04-22T00:14:00",
+                    "current_step": {"title": "사용자 승인 대기", "summary_message": "승인 응답을 기다리는 중"},
+                }
+            ],
+            "page": 1,
+            "page_size": 8,
+            "total_count": 1,
+        },
+        detail_task={
+            "task_run_id": "task_wait",
+            "task_type": "approval.wait",
+            "flow_name": "approval_wait_flow",
+            "status": "WAITING",
+            "title": "승인 대기 태스크",
+            "updated_at": "2026-04-22T00:14:00",
+        },
+        detail_steps=[
+            {
+                "step_run_id": "step_wait",
+                "step_order": 1,
+                "step_type": "approval.wait",
+                "status": "WAITING",
+                "title": "사용자 승인 대기",
+                "summary_message": "승인 응답을 기다리는 중",
+                "detail_json": {
+                    "agentDetail": {"called": False},
+                    "toolDetail": {"toolNames": ["approval.request"]},
+                    "llmDetail": {"model": "gpt-5.4", "callCount": 1},
+                },
+            }
+        ],
+        detail_events=[
+            {"event_type": "approval.requested", "summary_message": "승인이 필요합니다."},
+        ],
+        depth="detail",
+    )
+
+    list_rendered = TASK_BROWSER_UI.render_tasks_browser_list(state)
+    detail_rendered = TASK_BROWSER_UI.render_tasks_browser_detail(state)
+
+    assert "필터: 전체 / 진행중 / [대기] / 완료" in list_rendered
+    assert "› [1] 승인 대기 태스크 | WAITING | 승인 응답을 기다리는 중" in list_rendered
+    assert "Tasks > 승인 대기 태스크" in detail_rendered
+    assert "현재 Step" in detail_rendered
+    assert "- tool: approval.request" in detail_rendered
+    assert "- approval.requested | 승인이 필요합니다." in detail_rendered
 
 
 def test_initial_login_choice_uses_prompt_toolkit_choice(monkeypatch):
@@ -197,6 +257,41 @@ def test_remote_client_keeps_origin_base_url_paths():
     client = RemoteCLIClient(base_url="http://127.0.0.1:8000", timeout_seconds=10)
 
     assert client._normalize_request_path("/api/v1/providers/openai_oauth/auth") == "/api/v1/providers/openai_oauth/auth"
+
+
+def test_shell_slash_tasks_runs_browser(monkeypatch):
+    called = {}
+    settings = get_settings()
+    parser = build_parser(settings)
+    shell_args = parser.parse_args(["shell"])
+
+    def fake_browser(client, settings, *, initial_filter, initial_task_id):
+        called["filter"] = initial_filter
+        called["task_id"] = initial_task_id
+
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_run_tasks_browser", fake_browser)
+
+    handled = CLI_MAIN_MODULE._handle_shell_slash_command("/tasks waiting", shell_args, settings, object(), parser)
+
+    assert handled is True
+    assert called == {"filter": "WAITING", "task_id": None}
+
+
+def test_cli_tasks_list_local(monkeypatch, tmp_path, capsys):
+    db_path = tmp_path / "cli-tasks.db"
+    monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+
+    main(["--mode", "local", "create-task", "--type", "echo_flow", "--payload", '{"message":"one"}'])
+    capsys.readouterr()
+    main(["--mode", "local", "create-task", "--type", "approval_wait_flow", "--payload", '{"subject":"two"}'])
+    capsys.readouterr()
+
+    exit_code = main(["--mode", "local", "--json", "tasks", "--status", "WAITING"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert '"status_filter": "WAITING"' in captured
+    assert '"status": "WAITING"' in captured
 
 
 def test_cli_create_task_local(monkeypatch, tmp_path, capsys):

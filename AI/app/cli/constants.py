@@ -10,6 +10,7 @@ DEFAULT_MODEL_CHECK_PROMPT = "안녕하세요. 지금 연결 상태와 사용 �
 
 SHELL_SLASH_COMMANDS: dict[str, str] = {
     "/status": "show current provider and connection state",
+    "/tasks": "browse recent tasks with list and detail depth",
     "/auth": "connect OpenAI in the browser",
     "/refresh": "refresh the stored OpenAI token",
     "/disconnect": "remove the stored OpenAI connection",
@@ -23,12 +24,14 @@ COMMAND_ALIASES = {
     "shell": "대화형 셸",
     "status": "연결 상태",
     "/status": "연결 상태",
+    "/tasks": "작업 브라우저",
     "/": "슬래시 명령 목록",
     "onboard-openai": "OpenAI 연결 온보딩",
     "provider-refresh": "프로바이더 연결 갱신",
     "provider-disconnect": "프로바이더 연결 해제",
     "create-task": "작업 생성",
     "watch-task": "작업 조회",
+    "tasks": "작업 브라우저",
     "resume-task": "승인 재개",
     "list-flows": "플로우 목록",
     "list-providers": "프로바이더 목록",

@@ -1,12 +1,87 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.api.deps.task_context import TaskContext, get_task_context
+from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_request import CreateTaskRequest, ResumeTaskRequest
-from app.contracts.task.task_response import StepRunResponse, TaskEventResponse, TaskRunResponse
+from app.contracts.task.task_response import (
+    StepRunResponse,
+    StepRunSummaryResponse,
+    TaskEventResponse,
+    TaskRunListItemResponse,
+    TaskRunListResponse,
+    TaskRunResponse,
+)
+from app.contracts.task.task_status import TaskStatus
+from app.domain.tasks.models import StepRun
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+_ACTIVE_STEP_STATUSES = {status.value for status in (StepStatus.PENDING, StepStatus.RUNNING, StepStatus.WAITING, StepStatus.BLOCKED)}
+
+
+def _normalize_task_status_filter(raw_status: str) -> str | None:
+    normalized = (raw_status or "ALL").strip().upper()
+    if normalized == "ALL":
+        return None
+    if normalized not in {status.value for status in TaskStatus}:
+        raise HTTPException(status_code=400, detail=f"invalid status filter: {raw_status}")
+    return normalized
+
+
+def _select_current_step(steps: list[StepRun]) -> StepRun | None:
+    """상세/목록 양쪽에서 보여 줄 대표 StepRun 을 고른다.
+
+    아직 여러 step 이 쌓이지 않는 MVP 구조라도,
+    앞으로 멀티 스텝으로 확장될 것을 감안해 활성 step 우선 규칙을 고정해 둔다.
+    """
+
+    for step in steps:
+        if step.status in _ACTIVE_STEP_STATUSES:
+            return step
+    return steps[-1] if steps else None
+
+
+def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse:
+    current_step = _select_current_step(steps)
+    current_step_response = None
+    if current_step is not None:
+        current_step_response = StepRunSummaryResponse.model_validate(current_step, from_attributes=True)
+    return TaskRunListItemResponse(
+        task_run_id=task.task_run_id,
+        task_type=task.task_type,
+        flow_name=task.flow_name,
+        status=task.status,
+        title=task.title,
+        progress_summary=task.progress_summary,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+        current_step=current_step_response,
+    )
+
+
+@router.get("", response_model=TaskRunListResponse)
+def list_tasks(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=8, ge=1, le=20),
+    status: str = Query(default="ALL"),
+    context: TaskContext = Depends(get_task_context),
+) -> TaskRunListResponse:
+    status_filter = _normalize_task_status_filter(status)
+    offset = (page - 1) * page_size
+    tasks = context.repository.list_tasks(status=status_filter, limit=page_size, offset=offset)
+    total_count = context.repository.count_tasks(status=status_filter)
+    items = [_build_task_list_item(task, context.repository.list_steps(task.task_run_id)) for task in tasks]
+    return TaskRunListResponse(
+        items=items,
+        page=page,
+        page_size=page_size,
+        total_count=total_count,
+        has_previous=page > 1,
+        has_next=offset + len(items) < total_count,
+        status_filter=status_filter or "ALL",
+    )
 
 
 @router.post("", response_model=TaskRunResponse)
