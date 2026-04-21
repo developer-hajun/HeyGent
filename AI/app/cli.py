@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import time
 from typing import Any
+import webbrowser
 
 import httpx
 import uvicorn
@@ -14,6 +16,8 @@ from app.main import app
 
 
 COMMAND_PARSERS_ATTR = "_command_parsers"
+OPENAI_PROVIDER_NAME = "openai_oauth"
+DEFAULT_MODEL_CHECK_PROMPT = "안녕하세요. 지금 연결 상태와 사용 가능한 모델 작업 여부를 짧게 알려줘"
 
 
 class KoreanArgumentParser(argparse.ArgumentParser):
@@ -156,10 +160,16 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     onboard_parser = subparsers.add_parser(
         "onboard-openai",
         help="OpenAI OAuth 연결을 한국어 안내와 함께 시작합니다",
-        description="필요한 env 확인, 브라우저 인가 URL, callback 이후 다음 작업까지 한 번에 안내합니다.",
+        description="브라우저 자동 열기, 연결 완료 대기, 연결 후 모델 테스트까지 한 번에 수행할 수 있습니다.",
     )
     onboard_parser.add_argument("--redirect-uri", default=None, help="요청 시점에 redirect URI 를 덮어쓸 수 있습니다")
     onboard_parser.add_argument("--state", default=None, help="직접 관리할 OAuth state 값")
+    onboard_parser.add_argument("--no-open-browser", action="store_true", help="브라우저를 자동으로 열지 않습니다")
+    onboard_parser.add_argument("--no-wait", action="store_true", help="callback 완료까지 기다리지 않고 URL 만 출력합니다")
+    onboard_parser.add_argument("--wait-seconds", type=float, default=120.0, help="연결 완료를 기다릴 최대 시간(초)")
+    onboard_parser.add_argument("--poll-interval", type=float, default=2.0, help="연결 상태를 다시 확인할 간격(초)")
+    onboard_parser.add_argument("--no-run-check", action="store_true", help="연결 완료 후 model_generate_flow 테스트를 건너뜁니다")
+    onboard_parser.add_argument("--check-prompt", default=DEFAULT_MODEL_CHECK_PROMPT, help="연결 후 테스트 작업에 넣을 prompt")
     command_parsers["onboard-openai"] = onboard_parser
 
     refresh_parser = subparsers.add_parser(
@@ -167,7 +177,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
         help="저장된 refresh token 으로 provider 연결을 갱신합니다",
         description="토큰 만료 또는 만료 예정 시 저장된 refresh token 으로 access token 을 새로 갱신합니다.",
     )
-    refresh_parser.add_argument("--provider", default="openai_oauth", help="갱신할 provider 이름")
+    refresh_parser.add_argument("--provider", default=OPENAI_PROVIDER_NAME, help="갱신할 provider 이름")
     command_parsers["provider-refresh"] = refresh_parser
 
     disconnect_parser = subparsers.add_parser(
@@ -175,7 +185,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
         help="저장된 provider 연결 정보를 제거합니다",
         description="access token, refresh token, 남은 OAuth state 를 정리하고 다시 연결 가능한 상태로 돌립니다.",
     )
-    disconnect_parser.add_argument("--provider", default="openai_oauth", help="연결 해제할 provider 이름")
+    disconnect_parser.add_argument("--provider", default=OPENAI_PROVIDER_NAME, help="연결 해제할 provider 이름")
     command_parsers["provider-disconnect"] = disconnect_parser
 
     create_parser = subparsers.add_parser(
@@ -245,7 +255,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
         help="모델 프로바이더 OAuth 시작 정보를 확인합니다",
         description="authorization URL 과 누락된 env 를 JSON 형태로 확인하는 저수준 명령입니다.",
     )
-    auth_parser.add_argument("--provider", default="openai_oauth", help="인증을 시작할 provider 이름")
+    auth_parser.add_argument("--provider", default=OPENAI_PROVIDER_NAME, help="인증을 시작할 provider 이름")
     auth_parser.add_argument("--redirect-uri", default=None, help="요청 시점에 redirect URI 를 덮어쓸 수 있습니다")
     auth_parser.add_argument("--state", default=None, help="직접 관리할 OAuth state 값")
     command_parsers["provider-auth"] = auth_parser
@@ -274,10 +284,10 @@ def _print_openai_onboarding(response_json: dict[str, Any], base_url: str) -> No
     print("\n[HeyGent CLI] OpenAI 연결 온보딩\n")
     print("1) .env 에 OpenAI OAuth 값을 채웁니다")
     print("2) py -3.11 -m app.cli serve 로 서버를 실행합니다")
-    print("3) 아래 authorization_url 을 브라우저에서 엽니다")
-    print("4) 로그인 후 callback 이 /providers/openai_oauth/callback 으로 돌아오면 연결이 저장됩니다")
-    print("5) 연결 후 list-providers 또는 model_generate_flow 로 실제 작업을 확인합니다")
-    print("6) 만료되면 provider-refresh, 끊고 다시 붙이려면 provider-disconnect 후 onboard-openai 를 사용합니다\n")
+    print("3) 브라우저가 자동으로 열리고 OpenAI 로그인/인가를 진행합니다")
+    print("4) callback 이 /providers/openai_oauth/callback 으로 돌아오면 연결이 저장됩니다")
+    print("5) CLI 가 연결 완료까지 기다렸다가 바로 상태와 모델 작업을 확인합니다")
+    print("6) 만료되면 provider-refresh, 완전히 다시 하려면 provider-disconnect 후 onboard-openai 를 사용합니다\n")
     print("흐름도")
     print("  .env 설정")
     print("      ↓")
@@ -285,11 +295,13 @@ def _print_openai_onboarding(response_json: dict[str, Any], base_url: str) -> No
     print("      ↓")
     print("  onboard-openai")
     print("      ↓")
-    print("  브라우저 인가 / callback")
+    print("  브라우저 자동 오픈")
+    print("      ↓")
+    print("  callback 완료 대기")
     print("      ↓")
     print("  list-providers")
     print("      ↓")
-    print("  create-task --type model_generate_flow\n")
+    print("  model_generate_flow 테스트\n")
     print("응답 요약")
     print(json.dumps(response_json, ensure_ascii=False, indent=2))
     if response_json.get("authorization_url"):
@@ -313,17 +325,113 @@ def _request_path(settings: Settings, suffix: str) -> str:
     return f"{normalized_prefix}{suffix}"
 
 
+def _open_browser(url: str) -> bool:
+    try:
+        return bool(webbrowser.open(url))
+    except Exception:
+        return False
+
+
+def _wait_for_provider_connection(client, settings: Settings, provider_name: str, *, wait_seconds: float, poll_interval: float) -> dict[str, Any] | None:
+    """브라우저 callback 이후 provider 연결이 실제로 저장될 때까지 기다린다."""
+
+    deadline = time.time() + max(0.0, wait_seconds)
+    while time.time() <= deadline:
+        response = client.request("GET", _request_path(settings, f"/providers/{provider_name}"))
+        if response.is_success:
+            body = response.json()
+            if body.get("connected"):
+                return body
+        time.sleep(max(0.1, poll_interval))
+    return None
+
+
+def _run_model_check_task(client, settings: Settings, prompt: str) -> httpx.Response | Any:
+    """연결 직후 실제 모델 작업을 바로 검증한다."""
+
+    return client.request(
+        "POST",
+        _request_path(settings, "/tasks"),
+        json_body={
+            "flow_name": "model_generate_flow",
+            "owner_key": "cli-user",
+            "input_payload": {"prompt": prompt},
+        },
+    )
+
+
+def _handle_openai_onboarding(args, settings: Settings, client) -> int:
+    response = client.request(
+        "POST",
+        _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}/auth"),
+        json_body={"redirect_uri": args.redirect_uri, "state": args.state},
+    )
+    response_json = response.json()
+    _print_openai_onboarding(response_json, args.base_url)
+
+    if not response.is_success:
+        print("\nOpenAI 온보딩 시작 요청이 실패했습니다.")
+        return 1
+
+    if args.mode == "local":
+        print("\nlocal 모드에서는 브라우저 callback 자동 완료까지는 지원하지 않습니다. remote 서버 모드에서 사용해 주세요.")
+        return 0
+
+    if response_json.get("status") != "authorization_required" or not response_json.get("authorization_url"):
+        return 0
+
+    if not args.no_open_browser:
+        opened = _open_browser(response_json["authorization_url"])
+        if opened:
+            print("\n브라우저를 자동으로 열었어. 로그인과 인가를 마치면 내가 연결 완료를 기다릴게.")
+        else:
+            print("\n브라우저 자동 열기에 실패했어. 위 authorization_url 을 직접 열어줘.")
+    else:
+        print("\n브라우저 자동 열기는 건너뛰었어. 위 authorization_url 을 직접 열면 돼.")
+
+    if args.no_wait:
+        print("\n대기 없이 종료할게. 연결이 끝나면 list-providers 나 model_generate_flow 로 확인하면 돼.")
+        return 0
+
+    print(f"\n최대 {args.wait_seconds:.0f}초 동안 연결 완료를 기다릴게...")
+    provider_state = _wait_for_provider_connection(
+        client,
+        settings,
+        OPENAI_PROVIDER_NAME,
+        wait_seconds=args.wait_seconds,
+        poll_interval=args.poll_interval,
+    )
+    if provider_state is None:
+        print("\n아직 연결 완료를 확인하지 못했어. 브라우저에서 인가를 마친 뒤 아래 명령으로 다시 확인해 줘.")
+        print("- py -3.11 -m app.cli list-providers")
+        print("- py -3.11 -m app.cli onboard-openai --no-open-browser")
+        return 1
+
+    print("\nOpenAI 연결 완료를 확인했어.")
+    _print_response("list-providers", [provider_state])
+
+    if args.no_run_check:
+        return 0
+
+    print("\n이제 바로 모델 작업 테스트를 실행할게.")
+    task_response = _run_model_check_task(client, settings, args.check_prompt)
+    _print_response("create-task", task_response.json())
+    if task_response.is_success:
+        print("\n딸깍 온보딩 완료. 이제 같은 CLI로 모델 작업을 바로 계속 돌리면 돼.")
+        return 0
+
+    print("\n연결은 완료됐지만 테스트 작업은 실패했어. 응답을 보고 확인해 줘.")
+    return 1
+
+
 def _handle_remote_command(args, settings: Settings) -> int:
     with _build_transport(args) as client:
+        if args.command == "onboard-openai":
+            return _handle_openai_onboarding(args, settings, client)
+
         if args.command == "health":
             path = "/ready" if args.kind == "ready" else "/health"
             response = client.request("GET", _request_path(settings, path))
-        elif args.command == "onboard-openai":
-            response = client.request(
-                "POST",
-                _request_path(settings, "/providers/openai_oauth/auth"),
-                json_body={"redirect_uri": args.redirect_uri, "state": args.state},
-            )
         elif args.command == "provider-refresh":
             response = client.request("POST", _request_path(settings, f"/providers/{args.provider}/refresh"))
         elif args.command == "provider-disconnect":
@@ -365,11 +473,7 @@ def _handle_remote_command(args, settings: Settings) -> int:
             response = client.request("GET", _request_path(settings, f"/tasks/{args.task_id}/events"))
 
     response_json = response.json()
-    if args.command == "onboard-openai":
-        _print_openai_onboarding(response_json, args.base_url)
-    else:
-        _print_response(args.command, response_json)
-
+    _print_response(args.command, response_json)
     if response.is_success:
         return 0
 

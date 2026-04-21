@@ -1,5 +1,32 @@
+from collections import deque
+
 from app.cli import build_parser, main
 from app.core.config import get_settings
+
+
+class FakeResponse:
+    def __init__(self, payload, *, success: bool = True):
+        self._payload = payload
+        self.is_success = success
+
+    def json(self):
+        return self._payload
+
+
+class FakeRemoteClient:
+    def __init__(self, responses):
+        self.responses = deque(responses)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return None
+
+    def request(self, method, path, *, json_body=None):
+        if not self.responses:
+            raise AssertionError(f"unexpected request: {method} {path}")
+        return self.responses.popleft()
 
 
 def test_cli_create_task_local(monkeypatch, tmp_path, capsys):
@@ -82,7 +109,80 @@ def test_cli_openai_onboarding_local(monkeypatch, tmp_path, capsys):
     assert exit_code == 0
     assert "[HeyGent CLI] OpenAI 연결 온보딩" in captured
     assert "흐름도" in captured
-    assert "authorization_url" not in captured or "configuration_required" in captured
+    assert "local 모드에서는 브라우저 callback 자동 완료까지는 지원하지 않습니다" in captured
+
+
+def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
+    fake_client = FakeRemoteClient(
+        [
+            FakeResponse(
+                {
+                    "provider_name": "openai_oauth",
+                    "status": "authorization_required",
+                    "detail": "go",
+                    "authorization_url": "https://auth.openai.test/start",
+                    "redirect_uri": "http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback",
+                    "scopes": ["model.generate"],
+                    "state": "state_123",
+                    "missing_env": [],
+                    "metadata": {},
+                }
+            ),
+            FakeResponse(
+                {
+                    "provider_name": "openai_oauth",
+                    "healthy": True,
+                    "configured": True,
+                    "connected": False,
+                    "auth_type": "oauth",
+                    "detail": "waiting",
+                    "missing_env": [],
+                    "scopes": ["model.generate"],
+                    "expires_at": None,
+                }
+            ),
+            FakeResponse(
+                {
+                    "provider_name": "openai_oauth",
+                    "healthy": True,
+                    "configured": True,
+                    "connected": True,
+                    "auth_type": "oauth",
+                    "detail": "connected",
+                    "missing_env": [],
+                    "scopes": ["model.generate"],
+                    "expires_at": "2099-01-01T00:00:00+00:00",
+                }
+            ),
+            FakeResponse(
+                {
+                    "task_run_id": "task_test",
+                    "task_type": "model.generate",
+                    "flow_name": "model_generate_flow",
+                    "status": "COMPLETED",
+                    "input_payload": {"prompt": "테스트"},
+                    "result_payload": {"provider_name": "openai_oauth", "text": "연결 확인 완료", "metadata": {"mode": "live"}},
+                    "wait_payload": {},
+                    "error_message": None,
+                    "progress_summary": "done",
+                    "revision": 1,
+                }
+            ),
+        ]
+    )
+
+    monkeypatch.setattr("app.cli._build_transport", lambda args: fake_client)
+    monkeypatch.setattr("app.cli._open_browser", lambda url: True)
+    monkeypatch.setattr("app.cli.time.sleep", lambda seconds: None)
+
+    exit_code = main(["onboard-openai", "--wait-seconds", "1", "--poll-interval", "0.01", "--check-prompt", "테스트"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "브라우저를 자동으로 열었어" in captured
+    assert "OpenAI 연결 완료를 확인했어" in captured
+    assert "딸깍 온보딩 완료" in captured
+    assert '"flow_name": "model_generate_flow"' in captured
 
 
 def test_cli_provider_refresh_local(monkeypatch, tmp_path, capsys):

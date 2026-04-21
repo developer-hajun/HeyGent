@@ -24,7 +24,7 @@ HeyGent AI Backbone은 FastAPI 기반의 AI 게이트웨이/오케스트레이�
 - 서버 실행
 - health / ready 확인
 - provider 상태 확인
-- OpenAI OAuth 온보딩 안내
+- OpenAI OAuth 원클릭 온보딩
 - provider refresh / disconnect
 - task 생성 / 조회 / resume
 
@@ -110,22 +110,27 @@ provider-refresh (필요 시)
 create-task --type model_generate_flow
 ```
 
-### 1. 온보딩 안내 실행
+### 1. 원클릭 온보딩 실행
 
 ```bash
 py -3.11 -m app.cli onboard-openai
 ```
 
-이 명령은 아래를 같이 해줍니다.
+이 명령은 아래를 한 번에 시도합니다.
 
 - 필요한 env 누락 확인
 - authorization URL 생성
-- callback 이후 다음 단계 안내
-- 모델 작업 검증 예시 출력
+- 브라우저 자동 열기
+- callback 완료까지 대기
+- provider 연결 상태 확인
+- `model_generate_flow` 테스트 작업 실행
+
+즉 서버만 떠 있으면, 실무적으로는 거의 "CLI 딸깍" 에 가깝게 OpenAI 모델 연결과 기본 검증까지 이어집니다.
 
 ### 2. 브라우저에서 인가
 
-응답에 포함된 `authorization_url` 을 브라우저에서 엽니다.
+기본값으로 CLI 가 브라우저를 자동으로 열어 줍니다.
+자동으로 안 열리면 출력된 `authorization_url` 을 직접 열면 됩니다.
 로그인과 인가가 끝나면 서버의 callback 주소로 돌아옵니다.
 
 기본 callback 예시:
@@ -137,6 +142,9 @@ http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback
 브라우저 callback 성공 시 한국어 완료 페이지가 뜹니다.
 
 ### 3. 연결 확인
+
+기본 온보딩 명령은 callback 완료까지 기다린 뒤 상태를 다시 확인합니다.
+수동으로 다시 보고 싶으면 아래 명령을 쓰면 됩니다.
 
 ```bash
 py -3.11 -m app.cli list-providers
@@ -193,6 +201,8 @@ py -3.11 -m app.cli /help
 py -3.11 -m app.cli serve
 py -3.11 -m app.cli health
 py -3.11 -m app.cli onboard-openai
+py -3.11 -m app.cli onboard-openai --no-open-browser
+py -3.11 -m app.cli onboard-openai --no-run-check
 py -3.11 -m app.cli provider-refresh --provider openai_oauth
 py -3.11 -m app.cli provider-disconnect --provider openai_oauth
 py -3.11 -m app.cli list-providers
