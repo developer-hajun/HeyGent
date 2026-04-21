@@ -309,7 +309,9 @@ def test_cli_shell_default_mode(monkeypatch, tmp_path, capsys):
     assert "HeyGent AI Shell" in captured
     assert "Slash Commands" in captured
     assert "[HeyGent CLI] 연결 상태" in captured
-    assert "Assistant" in captured
+    assert "› 안녕" in captured
+    assert "mode:" in captured
+    assert "• " in captured
     assert "셸을 종료할게." in captured
 
 

@@ -644,6 +644,35 @@ def _run_prompt_task(client, settings: Settings, prompt: str):
     )
 
 
+def _run_with_working_indicator(action, *, enabled: bool = True):
+    if not enabled:
+        return action()
+
+    result: dict[str, Any] = {}
+    error: dict[str, BaseException] = {}
+    finished = threading.Event()
+
+    def worker() -> None:
+        try:
+            result["value"] = action()
+        except BaseException as exc:  # noqa: BLE001
+            error["value"] = exc
+        finally:
+            finished.set()
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    started_at = time.time()
+    while not finished.wait(0.1):
+        elapsed = max(1, int(time.time() - started_at))
+        print(f"\rWorking ({elapsed}s)", end="", flush=True)
+    if enabled:
+        print("\r" + " " * 40 + "\r", end="", flush=True)
+    if "value" in error:
+        raise error["value"]
+    return result.get("value")
+
+
 def _print_shell_task_result(task_payload: dict[str, Any], settings: Settings, *, as_json: bool = False) -> None:
     if as_json:
         _print_response("create-task", task_payload, settings, as_json=True)
@@ -651,17 +680,16 @@ def _print_shell_task_result(task_payload: dict[str, Any], settings: Settings, *
 
     result_payload = task_payload.get("result_payload") or {}
     metadata = result_payload.get("metadata") or {}
-    text = result_payload.get("text") or result_payload.get("output_text") or ""
-    rows = [
-        ("status:", str(task_payload.get("status") or "-")),
-        ("provider:", str(result_payload.get("provider_name") or "-")),
-        ("model:", str(metadata.get("model") or settings.openai_response_model)),
-        ("mode:", str(metadata.get("mode") or "-")),
-    ]
+    text = (result_payload.get("text") or result_payload.get("output_text") or "").strip()
+    status = str(task_payload.get("status") or "-")
+    model = str(metadata.get("model") or settings.openai_response_model)
+
     print()
-    print(_render_box("Assistant", rows))
+    print(f"mode: {metadata.get('mode') or '-'} • model: {model} • status: {status}")
     if text:
-        print(text)
+        lines = text.splitlines() or [text]
+        for line in lines:
+            print(f"• {line}")
 
 
 def _handle_shell_slash_command(raw: str, shell_args, settings: Settings, client, parser: argparse.ArgumentParser) -> bool:
@@ -743,7 +771,13 @@ def _run_shell(args, settings: Settings, parser: argparse.ArgumentParser) -> int
                     return 0
                 continue
 
-            response = _run_prompt_task(client, settings, line)
+            if not args.json:
+                print()
+                print(f"› {line}")
+            response = _run_with_working_indicator(
+                lambda: _run_prompt_task(client, settings, line),
+                enabled=not args.json,
+            )
             payload = response.json()
             _print_shell_task_result(payload, settings, as_json=args.json)
             if not response.is_success:
