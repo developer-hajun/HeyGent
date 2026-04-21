@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.domain.integrations.notion_client import NotionClient
 from app.domain.integrations.notion_mapper import NotionMapper
 from app.domain.providers.registry import ProviderRegistry
+from app.flows.model.model_generate import ModelGenerateFlow
 from app.flows.notion.notion_database_append import NotionDatabaseAppendFlow
 from app.flows.notion.notion_page_create import NotionPageCreateFlow
 from app.flows.stub.approval_wait_flow import ApprovalWaitFlow
@@ -17,6 +18,7 @@ class FlowRouter:
         self._flows = {
             EchoFlow.flow_name: EchoFlow(),
             ApprovalWaitFlow.flow_name: ApprovalWaitFlow(),
+            ModelGenerateFlow.flow_name: ModelGenerateFlow(default_provider),
             NotionPageCreateFlow.flow_name: NotionPageCreateFlow(notion_client, notion_mapper, default_provider),
             NotionDatabaseAppendFlow.flow_name: NotionDatabaseAppendFlow(notion_client, notion_mapper, default_provider),
         }

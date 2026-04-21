@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from app.contracts.provider.provider_response import ProviderAuthResponse, ProviderGenerateResponse, ProviderHealthResponse
+from app.contracts.provider.provider_response import ProviderAuthResponse, ProviderConnectionResponse, ProviderGenerateResponse, ProviderHealthResponse
 
 
 class BaseProvider(ABC):
@@ -22,6 +22,10 @@ class BaseProvider(ABC):
         어떤 설정이 필요하고 어떤 authorization URL 로 이동해야 하는지는
         공통 인터페이스로 노출해 두는 것이 중요하다.
         """
+
+    @abstractmethod
+    def complete_auth(self, *, code: str, state: str) -> ProviderConnectionResponse:
+        """OAuth callback 이후 토큰 교환과 저장을 수행한다."""
 
     @abstractmethod
     def generate(self, prompt: str, **kwargs) -> ProviderGenerateResponse:

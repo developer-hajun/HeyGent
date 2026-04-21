@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
     ws_manager = WebSocketManager()
     broadcaster = EventBroadcaster(ws_manager)
     approval_service = ApprovalService(repository, ApprovalQueue())
-    provider_registry = ProviderRegistry([OpenAIOAuthProvider(settings)])
+    provider_registry = ProviderRegistry([OpenAIOAuthProvider(settings, repository)])
     notion_client = NotionClient(settings.notion_api_base_url)
     notion_mapper = NotionMapper()
     flow_router = FlowRouter(provider_registry, notion_client, notion_mapper)
