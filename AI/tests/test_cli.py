@@ -1,5 +1,6 @@
 import base64
 import json
+import time
 from collections import deque
 
 from app.cli import RemoteCLIClient, build_parser, main
@@ -310,8 +311,45 @@ def test_cli_shell_default_mode(monkeypatch, tmp_path, capsys):
     assert "Slash Commands" in captured
     assert "[HeyGent CLI] 연결 상태" in captured
     assert "› 안녕" in captured
+    assert "Working (" in captured
     assert "mode:" in captured
     assert "• " in captured
+    assert "셸을 종료할게." in captured
+
+
+def test_cli_shell_interrupt(monkeypatch, tmp_path, capsys):
+    db_path = tmp_path / "cli-shell-interrupt.db"
+    monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+    answers = iter(["안녕", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    def fake_prompt_task(args, settings, prompt):
+        time.sleep(0.3)
+        return FakeResponse(
+            {
+                "task_run_id": "task_interrupt",
+                "task_type": "model.generate",
+                "flow_name": "model_generate_flow",
+                "status": "COMPLETED",
+                "input_payload": {"prompt": prompt},
+                "result_payload": {"provider_name": "openai_oauth", "text": "늦게 도착한 응답", "metadata": {"mode": "live", "model": "gpt-5.4"}},
+                "wait_payload": {},
+                "error_message": None,
+                "progress_summary": "done",
+                "revision": 1,
+            }
+        )
+
+    interrupt_calls = iter([True])
+    monkeypatch.setattr("app.cli._run_prompt_task_with_fresh_transport", fake_prompt_task)
+    monkeypatch.setattr("app.cli._shell_interrupt_requested", lambda: next(interrupt_calls, False))
+
+    exit_code = main(["--mode", "local"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Working (" in captured
+    assert "취소했어. 요청은 백그라운드에서 끝날 수 있어." in captured
     assert "셸을 종료할게." in captured
 
 

@@ -12,6 +12,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover
+    msvcrt = None
+
 import httpx
 import uvicorn
 from fastapi.testclient import TestClient
@@ -644,9 +649,29 @@ def _run_prompt_task(client, settings: Settings, prompt: str):
     )
 
 
-def _run_with_working_indicator(action, *, enabled: bool = True):
+def _run_prompt_task_with_fresh_transport(args, settings: Settings, prompt: str):
+    with _build_transport(args) as prompt_client:
+        return _run_prompt_task(prompt_client, settings, prompt)
+
+
+def _shell_interrupt_requested() -> bool:
+    if msvcrt is None:
+        return False
+    interrupted = False
+    while msvcrt.kbhit():
+        key = msvcrt.getwch()
+        if key in {"\x00", "\xe0"}:
+            if msvcrt.kbhit():
+                msvcrt.getwch()
+            continue
+        if key == "\x1b":
+            interrupted = True
+    return interrupted
+
+
+def _run_with_working_indicator(action, *, enabled: bool = True, interrupt_checker=None, interrupt_hint: str | None = None):
     if not enabled:
-        return action()
+        return False, action()
 
     result: dict[str, Any] = {}
     error: dict[str, BaseException] = {}
@@ -663,14 +688,24 @@ def _run_with_working_indicator(action, *, enabled: bool = True):
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
     started_at = time.time()
-    while not finished.wait(0.1):
-        elapsed = max(1, int(time.time() - started_at))
-        print(f"\rWorking ({elapsed}s)", end="", flush=True)
-    if enabled:
-        print("\r" + " " * 40 + "\r", end="", flush=True)
+    interrupted = False
+    try:
+        while not finished.wait(0.1):
+            elapsed = max(1, int(time.time() - started_at))
+            suffix = f" • {interrupt_hint}" if interrupt_hint else ""
+            print(f"\rWorking ({elapsed}s{suffix})", end="", flush=True)
+            if interrupt_checker is not None and interrupt_checker():
+                interrupted = True
+                break
+    except KeyboardInterrupt:
+        interrupted = True
+
+    print("\r" + " " * 60 + "\r", end="", flush=True)
+    if interrupted:
+        return True, None
     if "value" in error:
         raise error["value"]
-    return result.get("value")
+    return False, result.get("value")
 
 
 def _print_shell_task_result(task_payload: dict[str, Any], settings: Settings, *, as_json: bool = False) -> None:
@@ -774,10 +809,15 @@ def _run_shell(args, settings: Settings, parser: argparse.ArgumentParser) -> int
             if not args.json:
                 print()
                 print(f"› {line}")
-            response = _run_with_working_indicator(
-                lambda: _run_prompt_task(client, settings, line),
+            interrupted, response = _run_with_working_indicator(
+                lambda: _run_prompt_task_with_fresh_transport(args, settings, line),
                 enabled=not args.json,
+                interrupt_checker=_shell_interrupt_requested if not args.json else None,
+                interrupt_hint="esc to interrupt" if msvcrt is not None else "ctrl+c to interrupt",
             )
+            if interrupted:
+                print("취소했어. 요청은 백그라운드에서 끝날 수 있어.")
+                continue
             payload = response.json()
             _print_shell_task_result(payload, settings, as_json=args.json)
             if not response.is_success:
