@@ -39,6 +39,8 @@ class PrettyHelpFormatter(argparse.RawTextHelpFormatter):
 COMMAND_ALIASES = {
     "serve": "게이트웨이 실행",
     "health": "서버 상태 확인",
+    "status": "연결 상태",
+    "/status": "연결 상태",
     "onboard-openai": "OpenAI 연결 온보딩",
     "provider-refresh": "프로바이더 연결 갱신",
     "provider-disconnect": "프로바이더 연결 해제",
@@ -126,11 +128,12 @@ def _build_examples() -> str:
         "예시:\n"
         "  python -m app.cli serve\n"
         "  python -m app.cli health\n"
+        "  python -m app.cli status\n"
         "  python -m app.cli onboard-openai\n"
         "  python -m app.cli provider-refresh --provider openai_oauth\n"
         "  python -m app.cli provider-disconnect --provider openai_oauth\n"
         "  python -m app.cli list-providers\n"
-        "  python -m app.cli create-task --type model_generate_flow --payload '{\"prompt\":\"안녕하세요\"}'\n"
+        "  python -m app.cli create-task --type model_generate_flow --prompt \"안녕하세요\"\n"
         "  python -m app.cli create-task --type notion_page_create --payload '{\"title\":\"백로그\",\"content\":\"정리\"}'\n"
         "  python -m app.cli resume-task --task-id task_xxx --payload '{\"approved\": true}'"
     )
@@ -159,6 +162,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
         help="기본은 remote, 테스트나 빠른 디버그가 필요할 때만 local 사용",
     )
     parser.add_argument("--timeout", type=float, default=10.0, help="remote HTTP 요청 타임아웃(초)")
+    parser.add_argument("--json", action="store_true", help="사람용 카드 대신 원본 JSON 출력")
     subparsers = parser.add_subparsers(dest="command", required=True, help="실행할 명령")
     command_parsers: dict[str, argparse.ArgumentParser] = {}
 
@@ -177,6 +181,15 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     health_parser.add_argument("--kind", choices=["health", "ready"], default="ready", help="조회할 상태 종류")
     command_parsers["health"] = health_parser
 
+    status_parser = subparsers.add_parser(
+        "status",
+        aliases=["/status"],
+        help="현재 OpenAI 연결 상태를 카드 형태로 봅니다",
+        description="Codex 스타일처럼 현재 provider 연결 상태를 짧게 확인합니다.",
+    )
+    command_parsers["status"] = status_parser
+    command_parsers["/status"] = status_parser
+
     onboard_parser = subparsers.add_parser(
         "onboard-openai",
         help="사용자 기준으로 OpenAI 연결을 가장 쉬운 경로부터 자동 시도합니다",
@@ -186,6 +199,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     onboard_parser.add_argument("--state", default=None, help="직접 관리할 OAuth state 값")
     onboard_parser.add_argument("--force-oauth", dest="force_oauth", action="store_true", default=True, help="브라우저 OAuth 를 우선 사용합니다 (기본값)")
     onboard_parser.add_argument("--allow-local-auth-fallback", dest="force_oauth", action="store_false", help="개발용으로 로컬 ChatGPT/Codex 로그인 재사용을 허용합니다")
+    onboard_parser.add_argument("--yes", action="store_true", help="브라우저 열기 확인을 묻지 않고 바로 진행합니다")
     onboard_parser.add_argument("--no-open-browser", action="store_true", help="브라우저를 자동으로 열지 않습니다")
     onboard_parser.add_argument("--no-wait", action="store_true", help="callback 완료까지 기다리지 않고 URL 만 출력합니다")
     onboard_parser.add_argument("--wait-seconds", type=float, default=120.0, help="연결 완료를 기다릴 최대 시간(초)")
@@ -217,6 +231,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     )
     create_parser.add_argument("--type", required=True, dest="flow_name", help="실행할 flow 이름")
     create_parser.add_argument("--payload", dest="payload", default=None, help="JSON 문자열 또는 JSON 파일 경로")
+    create_parser.add_argument("--prompt", default=None, help="model_generate_flow 용 prompt 바로 입력")
     create_parser.add_argument("--owner-key", default="cli-user", help="작업 소유자 키, 기본값은 cli-user")
     command_parsers["create-task"] = create_parser
 
@@ -298,44 +313,72 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     return parser
 
 
-def _print_response(command: str, response_json: Any) -> None:
+def _render_box(title: str, rows: list[tuple[str, str]]) -> str:
+    content = [f"{label:<10} {value}" for label, value in rows]
+    width = max(len(title) + 2, *(len(line) for line in content))
+    top = f"┌─ {title} " + "─" * max(0, width - len(title) - 2) + "┐"
+    body = [f"│ {line.ljust(width)} │" for line in content]
+    bottom = "└" + "─" * (width + 2) + "┘"
+    return "\n".join([top, *body, bottom])
+
+
+def _format_bool(value: bool) -> str:
+    return "yes" if value else "no"
+
+
+def _print_provider_status_summary(providers: list[dict[str, Any]], settings: Settings, *, heading: str) -> None:
+    print(f"\n[HeyGent CLI] {heading}\n")
+    for provider in providers:
+        rows = [
+            ("provider:", str(provider.get("provider_name", "-"))),
+            ("model:", settings.openai_response_model if provider.get("provider_name") == OPENAI_PROVIDER_NAME else "-"),
+            ("connected:", _format_bool(bool(provider.get("connected")))),
+            ("configured:", _format_bool(bool(provider.get("configured")))),
+            ("auth:", str(provider.get("auth_type") or "-")),
+            ("expires:", str(provider.get("expires_at") or "-")),
+        ]
+        print(_render_box("OpenAI Status", rows))
+        detail = provider.get("detail")
+        if detail:
+            print(f"detail: {detail}")
+        print()
+
+
+def _print_response(command: str, response_json: Any, settings: Settings, *, as_json: bool = False) -> None:
+    if not as_json and command in {"list-providers", "status", "/status"} and isinstance(response_json, list):
+        heading = "연결 상태" if command in {"status", "/status"} else "프로바이더 목록"
+        _print_provider_status_summary(response_json, settings, heading=heading)
+        return
+
     label = COMMAND_ALIASES.get(command, command)
     print(f"\n[HeyGent CLI] {label} 결과")
     print(json.dumps(response_json, ensure_ascii=False, indent=2))
 
 
-def _print_openai_onboarding(response_json: dict[str, Any], base_url: str) -> None:
-    print("\n[HeyGent CLI] OpenAI 연결 온보딩\n")
-    print("브라우저 OpenAI OAuth 기준으로 OpenClaw와 같은 localhost callback 흐름으로 연결합니다.")
-    print("1) 브라우저에서 OpenAI 로그인")
-    print("2) localhost callback 으로 리다이렉트")
-    print("3) CLI 가 code 를 받아 서버에 token 저장 요청")
-    print("4) 연결되면 바로 상태와 모델 작업까지 확인\n")
-    print("흐름도")
-    print("  onboard-openai")
-    print("      ↓")
-    print("  브라우저 OpenAI 로그인")
-    print("      ↓")
-    print("  localhost callback 복귀")
-    print("      ↓")
-    print("  연결 상태 확인")
-    print("      ↓")
-    print("  model_generate_flow 테스트\n")
-    print("응답 요약")
-    print(json.dumps(response_json, ensure_ascii=False, indent=2))
-    if response_json.get("authorization_url"):
-        print("\n다음 단계")
-        print(f"- 브라우저에서 열 URL: {response_json['authorization_url']}")
-        print(f"- OAuth redirect URI: {response_json.get('redirect_uri')}")
-        print(f"- API base-url: {base_url}")
-        print("- 연결 확인: py -3.11 -m app.cli list-providers")
-        print("- 갱신: py -3.11 -m app.cli provider-refresh --provider openai_oauth")
-        print("- 연결 해제: py -3.11 -m app.cli provider-disconnect --provider openai_oauth")
-        print("- 모델 작업 확인: py -3.11 -m app.cli create-task --type model_generate_flow --payload payloads/openai-check.json")
-    elif response_json.get("status") == "configuration_required":
-        print("\n개발자 설정이 먼저 필요합니다")
+def _print_openai_onboarding_intro(response_json: dict[str, Any], settings: Settings, *, as_json: bool = False) -> None:
+    if as_json:
+        _print_response("onboard-openai", response_json, settings, as_json=True)
+        return
+
+    print("\n[HeyGent CLI] OpenAI 연결\n")
+    if response_json.get("status") in {"connected", "already_connected"}:
+        print("이미 OpenAI 연결이 준비되어 있습니다.")
+        return
+
+    if response_json.get("status") == "configuration_required":
+        print("OpenAI 연결 전에 설정이 더 필요합니다.")
         print("- 문서: tmp/openai-onboarding-dev.md")
-        print("- 설정 후 다시: py -3.11 -m app.cli onboard-openai")
+        print("- 다시 시도: py -3.11 -m app.cli onboard-openai")
+        return
+
+    print("OpenAI 연결이 필요합니다.")
+    print(f"model: {settings.openai_response_model}")
+    if response_json.get("authorization_url"):
+        print("\nLogin URL")
+        print(response_json["authorization_url"])
+    if response_json.get("redirect_uri"):
+        print("\nRedirect URL")
+        print(response_json["redirect_uri"])
 
 
 def _build_transport(args) -> RemoteCLIClient | LocalCLIClient:
@@ -360,6 +403,23 @@ def _open_browser(url: str) -> bool:
         return bool(webbrowser.open(url))
     except Exception:
         return False
+
+
+def _confirm_yes_no(message: str, *, default: bool = True) -> bool:
+    suffix = "YES / NO"
+    default_hint = "[YES]" if default else "[NO]"
+    while True:
+        try:
+            answer = input(f"{message}\n{suffix} {default_hint}\n> ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        if not answer:
+            return default
+        if answer in {"y", "yes"}:
+            return True
+        if answer in {"n", "no"}:
+            return False
+        print("YES 또는 NO 로 답해 줘.")
 
 
 class _OAuthCallbackListener:
@@ -503,6 +563,33 @@ def _run_model_check_task(client, settings: Settings, prompt: str) -> httpx.Resp
     )
 
 
+def _print_model_check_summary(task_payload: dict[str, Any], settings: Settings, *, as_json: bool = False) -> None:
+    if as_json:
+        _print_response("create-task", task_payload, settings, as_json=True)
+        return
+
+    result_payload = task_payload.get("result_payload") or {}
+    metadata = result_payload.get("metadata") or {}
+    rows = [
+        ("task:", str(task_payload.get("flow_name") or "-")),
+        ("status:", str(task_payload.get("status") or "-")),
+        ("provider:", str(result_payload.get("provider_name") or "-")),
+        ("model:", str(metadata.get("model") or settings.openai_response_model)),
+        ("mode:", str(metadata.get("mode") or "-")),
+    ]
+    print()
+    print(_render_box("Model Check", rows))
+    if result_payload.get("text"):
+        print(result_payload["text"])
+
+
+def _build_task_input_payload(args) -> dict[str, Any]:
+    payload = _load_payload(args.payload)
+    if args.prompt is not None:
+        payload = {**payload, "prompt": args.prompt}
+    return payload
+
+
 def _handle_openai_onboarding(args, settings: Settings, client) -> int:
     response = client.request(
         "POST",
@@ -510,7 +597,7 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
         json_body={"redirect_uri": args.redirect_uri, "state": args.state, "force_oauth": args.force_oauth},
     )
     response_json = response.json()
-    _print_openai_onboarding(response_json, args.base_url)
+    _print_openai_onboarding_intro(response_json, settings, as_json=args.json)
 
     if not response.is_success:
         print("\nOpenAI 온보딩 시작 요청이 실패했습니다.")
@@ -524,27 +611,32 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
 
     status = response_json.get("status")
     if status in {"connected", "already_connected"}:
-        print("\n브라우저 없이 바로 연결 상태를 확보했어.")
         provider_state = client.request("GET", _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}")).json()
-        _print_response("list-providers", [provider_state])
+        _print_response("list-providers", [provider_state], settings, as_json=args.json)
         if args.no_run_check:
             return 0
-        print("\n이제 바로 모델 작업 테스트를 실행할게.")
+        print("모델 호출도 바로 확인할게.")
         try:
             task_response = _run_model_check_task(client, settings, args.check_prompt)
-            _print_response("create-task", task_response.json())
+            _print_model_check_summary(task_response.json(), settings, as_json=args.json)
             if task_response.is_success:
-                print("\n딸깍 온보딩 완료. 이제 같은 CLI로 모델 작업을 바로 계속 돌리면 돼.")
+                print("\n온보딩 완료. 이제 바로 사용할 수 있어.")
                 return 0
             print("\n연결은 잡혔지만 테스트 작업은 실패했어. 응답을 보고 확인해 줘.")
             return 1
         except Exception as error:
             print(f"\n연결 정보는 저장했지만 라이브 모델 테스트에서 오류가 났어: {error}")
-            print("- 연결 상태 확인: py -3.11 -m app.cli list-providers")
+            print("- 연결 상태 확인: py -3.11 -m app.cli status")
             print("- 필요하면 다시 연결: py -3.11 -m app.cli provider-disconnect --provider openai_oauth")
             return 1
 
     if status != "authorization_required" or not response_json.get("authorization_url"):
+        return 0
+
+    if args.no_open_browser:
+        print("\n브라우저 자동 열기는 건너뛸게. 위 Login URL 을 직접 열면 돼.")
+    elif not args.yes and not _confirm_yes_no("브라우저를 열어 로그인할게요.", default=True):
+        print("\n브라우저 열기를 취소했어. 나중에 위 Login URL 을 직접 열면 돼.")
         return 0
 
     listener = None
@@ -562,37 +654,29 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
             response_json["redirect_uri"],
             response_json.get("state"),
         )
-        if listener is not None:
-            print(f"\nlocalhost callback 대기 중: {response_json['redirect_uri']}")
-        else:
-            print("\nlocalhost callback 포트를 잡지 못했어. 로그인 후 redirect URL 전체를 직접 붙여넣으면 돼.")
-    elif not args.no_wait and uses_service_callback:
-        print(f"\n서버 callback 대기 중: {response_json['redirect_uri']}")
 
     if not args.no_open_browser:
         opened = _open_browser(response_json["authorization_url"])
         if opened:
-            print("\n브라우저를 자동으로 열었어. 로그인과 인가를 마치면 내가 이어서 연결할게.")
+            print("\n브라우저를 열었어. 로그인 후 돌아오면 이어서 처리할게.")
         else:
-            print("\n브라우저 자동 열기에 실패했어. 위 authorization_url 을 직접 열어줘.")
-    else:
-        print("\n브라우저 자동 열기는 건너뛰었어. 위 authorization_url 을 직접 열면 돼.")
+            print("\n브라우저 자동 열기에 실패했어. 위 Login URL 을 직접 열어줘.")
 
     if args.no_wait:
-        print("\n대기 없이 종료할게. 로그인 후 다시 onboard-openai 를 실행하거나 list-providers 로 확인하면 돼.")
+        print("\n대기 없이 종료할게. 로그인 후 다시 onboard-openai 를 실행하거나 status 로 확인하면 돼.")
         return 0
 
     callback_result = None
     try:
         if listener is not None:
-            print(f"\n최대 {args.wait_seconds:.0f}초 동안 localhost callback 을 기다릴게...")
+            print("\nWaiting for authentication...")
             callback_result = listener.wait(args.wait_seconds)
     finally:
         if listener is not None:
             listener.close()
 
     if uses_service_callback:
-        print(f"\n최대 {args.wait_seconds:.0f}초 동안 서버가 callback 을 처리할 때까지 기다릴게...")
+        print("\nWaiting for authentication...")
         provider_state = _wait_for_provider_connection(
             client,
             settings,
@@ -601,7 +685,7 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
             poll_interval=args.poll_interval,
         )
         if provider_state is None:
-            print("\n아직 연결 완료를 확인하지 못했어. 브라우저 로그인 완료 후 다시 list-providers 로 확인해 줘.")
+            print("\n아직 연결 완료를 확인하지 못했어. 브라우저 로그인 완료 후 다시 status 로 확인해 줘.")
             return 1
     else:
         if callback_result is None:
@@ -621,30 +705,33 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
             )
             callback_result = {"ok": callback_response.is_success, "payload": callback_response.json()}
 
-        _print_response("provider-auth", callback_result["payload"])
+        if args.json:
+            _print_response("provider-auth", callback_result["payload"], settings, as_json=True)
         if not callback_result.get("ok"):
             print("\nOAuth callback 처리에는 도달했지만 token 교환이 실패했어.")
             return 1
         provider_state = client.request("GET", _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}")).json()
 
-    print("\nOpenAI 연결 완료를 확인했어.")
-    _print_response("list-providers", [provider_state])
+    print("\nConnected ✓")
+    _print_response("status", [provider_state], settings, as_json=args.json)
 
     if args.no_run_check:
         return 0
 
-    print("\n이제 바로 모델 작업 테스트를 실행할게.")
+    print("모델 호출도 바로 확인할게.")
     try:
         task_response = _run_model_check_task(client, settings, args.check_prompt)
-        _print_response("create-task", task_response.json())
+        _print_model_check_summary(task_response.json(), settings, as_json=args.json)
         if task_response.is_success:
-            print("\n딸깍 온보딩 완료. 이제 같은 CLI로 모델 작업을 바로 계속 돌리면 돼.")
+            print("\n온보딩 완료. 이제 바로 사용할 수 있어.")
+            print("- 상태 확인: py -3.11 -m app.cli status")
+            print("- 빠른 테스트: py -3.11 -m app.cli create-task --type model_generate_flow --prompt \"안녕하세요\"")
             return 0
         print("\n연결은 완료됐지만 테스트 작업은 실패했어. 응답을 보고 확인해 줘.")
         return 1
     except Exception as error:
         print(f"\n연결은 완료됐지만 라이브 모델 테스트에서 오류가 났어: {error}")
-        print("- 연결 상태 확인: py -3.11 -m app.cli list-providers")
+        print("- 연결 상태 확인: py -3.11 -m app.cli status")
         print("- 필요하면 다시 연결: py -3.11 -m app.cli provider-disconnect --provider openai_oauth")
         return 1
 
@@ -657,6 +744,8 @@ def _handle_remote_command(args, settings: Settings) -> int:
         if args.command == "health":
             path = "/ready" if args.kind == "ready" else "/health"
             response = client.request("GET", _request_path(settings, path))
+        elif args.command in {"status", "/status"}:
+            response = client.request("GET", _request_path(settings, "/providers"))
         elif args.command == "provider-refresh":
             response = client.request("POST", _request_path(settings, f"/providers/{args.provider}/refresh"))
         elif args.command == "provider-disconnect":
@@ -668,7 +757,7 @@ def _handle_remote_command(args, settings: Settings) -> int:
                 json_body={
                     "flow_name": args.flow_name,
                     "owner_key": args.owner_key,
-                    "input_payload": _load_payload(args.payload),
+                    "input_payload": _build_task_input_payload(args),
                 },
             )
         elif args.command == "watch-task":
@@ -698,7 +787,7 @@ def _handle_remote_command(args, settings: Settings) -> int:
             response = client.request("GET", _request_path(settings, f"/tasks/{args.task_id}/events"))
 
     response_json = response.json()
-    _print_response(args.command, response_json)
+    _print_response(args.command, response_json, settings, as_json=args.json)
     if response.is_success:
         return 0
 

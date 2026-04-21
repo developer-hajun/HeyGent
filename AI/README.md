@@ -134,8 +134,8 @@ py -3.11 -m app.cli onboard-openai
 
 ### 2. 브라우저 OAuth 연결
 
-`HEYGENT_OPENAI_OAUTH_*` 값이 준비되어 있으면 CLI 가 브라우저를 열어 줍니다.
-자동으로 안 열리면 출력된 `authorization_url` 을 직접 열면 됩니다.
+`onboard-openai` 는 Codex처럼 터미널 안에서 먼저 로그인 여부를 안내하고, 브라우저를 열기 전에 YES/NO 확인을 받습니다.
+자동으로 안 열리면 출력된 Login URL 을 직접 열면 됩니다.
 
 기본 로컬 callback 예시:
 
@@ -153,6 +153,7 @@ http://localhost:1455/auth/callback
 ### 4. 연결 확인과 갱신
 
 ```bash
+py -3.11 -m app.cli status
 py -3.11 -m app.cli list-providers
 py -3.11 -m app.cli provider-refresh --provider openai_oauth
 py -3.11 -m app.cli provider-disconnect --provider openai_oauth
@@ -167,6 +168,7 @@ py -3.11 -m app.cli provider-disconnect --provider openai_oauth
 
 ```bash
 py -3.11 -m app.cli create-task --type model_generate_flow --payload payloads/openai-check.json
+py -3.11 -m app.cli create-task --type model_generate_flow --prompt "안녕하세요"
 ```
 
 개발자 설정이 필요한 경우는 `tmp/openai-onboarding-dev.md` 를 보면 됩니다.
@@ -197,14 +199,17 @@ py -3.11 -m app.cli /help
 ```bash
 py -3.11 -m app.cli serve
 py -3.11 -m app.cli health
+py -3.11 -m app.cli status
+py -3.11 -m app.cli /status
 py -3.11 -m app.cli onboard-openai
+py -3.11 -m app.cli onboard-openai --yes
 py -3.11 -m app.cli onboard-openai --no-open-browser
 py -3.11 -m app.cli onboard-openai --no-run-check
 py -3.11 -m app.cli provider-refresh --provider openai_oauth
 py -3.11 -m app.cli provider-disconnect --provider openai_oauth
 py -3.11 -m app.cli list-providers
 py -3.11 -m app.cli list-flows
-py -3.11 -m app.cli create-task --type model_generate_flow --payload '{"prompt":"안녕하세요"}'
+py -3.11 -m app.cli create-task --type model_generate_flow --prompt "안녕하세요"
 py -3.11 -m app.cli create-task --type notion_page_create --payload '{"title":"백로그","content":"정리"}'
 ```
 

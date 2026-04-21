@@ -81,6 +81,18 @@ def test_cli_resume_task_local(monkeypatch, tmp_path, capsys):
     assert '"status": "COMPLETED"' in resume_output
 
 
+def test_cli_create_task_prompt_shortcut(monkeypatch, tmp_path, capsys):
+    db_path = tmp_path / "cli-prompt.db"
+    monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+
+    exit_code = main(["--mode", "local", "create-task", "--type", "model_generate_flow", "--prompt", "한 줄 요약해줘"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert '"flow_name": "model_generate_flow"' in captured
+    assert '"status": "COMPLETED"' in captured
+
+
 def test_cli_list_commands_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-list.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
@@ -94,7 +106,8 @@ def test_cli_list_commands_local(monkeypatch, tmp_path, capsys):
     assert provider_code == 0
     assert "[HeyGent CLI] 플로우 목록 결과" in flow_output
     assert "model_generate_flow" in flow_output
-    assert "[HeyGent CLI] 프로바이더 목록 결과" in provider_output
+    assert "[HeyGent CLI] 프로바이더 목록" in provider_output
+    assert "OpenAI Status" in provider_output
     assert "openai_oauth" in provider_output
 
 
@@ -108,6 +121,19 @@ def test_cli_health_local(monkeypatch, tmp_path, capsys):
     assert exit_code == 0
     assert "[HeyGent CLI] 서버 상태 확인 결과" in captured
     assert '"status": "ready"' in captured
+
+
+def test_cli_status_local(monkeypatch, tmp_path, capsys):
+    db_path = tmp_path / "cli-status.db"
+    monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+
+    exit_code = main(["--mode", "local", "status"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "[HeyGent CLI] 연결 상태" in captured
+    assert "OpenAI Status" in captured
+    assert "connected:" in captured
 
 
 def test_cli_provider_auth_local(monkeypatch, tmp_path, capsys):
@@ -145,10 +171,10 @@ def test_cli_openai_onboarding_local(monkeypatch, tmp_path, capsys):
     captured = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "[HeyGent CLI] OpenAI 연결 온보딩" in captured
-    assert "흐름도" in captured
-    assert "브라우저 없이 바로 연결 상태를 확보했어" in captured
-    assert '"status": "connected"' in captured or '"status": "already_connected"' in captured
+    assert "[HeyGent CLI] OpenAI 연결" in captured
+    assert "이미 OpenAI 연결이 준비되어 있습니다." in captured
+    assert "OpenAI Status" in captured
+    assert "connected:" in captured
 
 
 def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
@@ -215,6 +241,7 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
         def close(self):
             return None
 
+    monkeypatch.setattr("builtins.input", lambda prompt="": "YES")
     monkeypatch.setattr("app.cli._build_transport", lambda args: fake_client)
     monkeypatch.setattr("app.cli._open_browser", lambda url: True)
     monkeypatch.setattr("app.cli._start_local_oauth_callback_listener", lambda *args, **kwargs: FakeListener())
@@ -223,9 +250,11 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
     captured = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "브라우저를 자동으로 열었어" in captured
-    assert "OpenAI 연결 완료를 확인했어" in captured
-    assert "딸깍 온보딩 완료" in captured
+    assert "OpenAI 연결이 필요합니다." in captured
+    assert "Login URL" in captured
+    assert "Waiting for authentication..." in captured
+    assert "Connected ✓" in captured
+    assert "온보딩 완료. 이제 바로 사용할 수 있어." in captured
 
 
 def test_cli_provider_refresh_local(monkeypatch, tmp_path, capsys):
@@ -258,6 +287,7 @@ def test_cli_help_text_is_korean():
 
     assert "한글 CLI" in help_text
     assert "/help" in help_text
+    assert "status" in help_text
     assert "serve" in help_text
     assert "onboard-openai" in help_text
     assert "provider-refresh" in help_text
@@ -272,6 +302,18 @@ def test_cli_slash_help(capsys):
     assert exit_code == 0
     assert "[HeyGent CLI] 전체 도움말" in captured
     assert "create-task" in captured
+
+
+def test_cli_slash_status(monkeypatch, tmp_path, capsys):
+    db_path = tmp_path / "cli-slash-status.db"
+    monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+
+    exit_code = main(["--mode", "local", "/status"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "[HeyGent CLI] 연결 상태" in captured
+    assert "OpenAI Status" in captured
 
 
 def test_cli_command_help(capsys):
