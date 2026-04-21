@@ -5,7 +5,7 @@ from collections import deque
 
 from prompt_toolkit.document import Document
 
-from app.cli import RemoteCLIClient, _SlashCommandCompleter, build_parser, main
+from app.cli import RemoteCLIClient, _SlashCommandCompleter, _should_open_slash_menu, build_parser, main
 from app.core.config import get_settings
 
 
@@ -54,6 +54,22 @@ def test_slash_command_completer_matches_prefix():
     completions = list(completer.get_completions(Document(text="/st", cursor_position=3), None))
 
     assert any(item.text == "/status" for item in completions)
+
+
+def test_slash_command_completer_shows_menu_for_single_slash():
+    completer = _SlashCommandCompleter()
+    completions = list(completer.get_completions(Document(text="/", cursor_position=1), None))
+
+    texts = {item.text for item in completions}
+    assert "/help" in texts
+    assert "/status" in texts
+    assert "/" not in texts
+
+
+def test_should_open_slash_menu_only_for_first_character():
+    assert _should_open_slash_menu("", 0) is True
+    assert _should_open_slash_menu("abc", 3) is False
+    assert _should_open_slash_menu("/", 1) is False
 
 
 def test_remote_client_keeps_origin_base_url_paths():

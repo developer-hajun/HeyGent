@@ -148,8 +148,14 @@ class _SlashCommandCompleter(Completer):
         text = document.text_before_cursor or ""
         if not text.startswith("/"):
             return
+        if text == "/":
+            for command, description in SHELL_SLASH_COMMANDS.items():
+                if command == "/":
+                    continue
+                yield Completion(command, start_position=-1, display=f"{command}  {description}")
+            return
         for command, description in SHELL_SLASH_COMMANDS.items():
-            if command.startswith(text):
+            if command != "/" and command.startswith(text):
                 yield Completion(command, start_position=-len(text), display=f"{command}  {description}")
 
 
@@ -157,8 +163,12 @@ def _supports_prompt_toolkit() -> bool:
     return bool(PromptSession and sys.stdin.isatty() and sys.stdout.isatty())
 
 
-def _create_shell_prompt_session(prompt_text: str):
-    if not _supports_prompt_toolkit():
+def _should_open_slash_menu(current_text: str, cursor_position: int) -> bool:
+    return current_text == "" and cursor_position == 0
+
+
+def _create_shell_key_bindings():
+    if KeyBindings is None:
         return None
     bindings = KeyBindings()
 
@@ -166,13 +176,35 @@ def _create_shell_prompt_session(prompt_text: str):
     def _(event) -> None:  # pragma: no cover - interactive only
         event.app.current_buffer.start_completion(select_first=False)
 
+    @bindings.add("/")
+    def _(event) -> None:  # pragma: no cover - interactive only
+        buffer = event.app.current_buffer
+        should_open = _should_open_slash_menu(buffer.text, buffer.cursor_position)
+        buffer.insert_text("/")
+        if should_open:
+            buffer.start_completion(select_first=False)
+
+    @bindings.add("enter")
+    def _(event) -> None:  # pragma: no cover - interactive only
+        buffer = event.app.current_buffer
+        state = buffer.complete_state
+        if state is not None and buffer.text.startswith("/") and state.current_completion is not None:
+            buffer.apply_completion(state.current_completion)
+        buffer.validate_and_handle()
+
+    return bindings
+
+
+def _create_shell_prompt_session(prompt_text: str):
+    if not _supports_prompt_toolkit():
+        return None
     return PromptSession(
         message=prompt_text,
         completer=_SlashCommandCompleter(),
         complete_while_typing=True,
-        complete_style=CompleteStyle.MULTI_COLUMN,
+        complete_style=CompleteStyle.COLUMN,
         reserve_space_for_menu=8,
-        key_bindings=bindings,
+        key_bindings=_create_shell_key_bindings(),
     )
 
 
