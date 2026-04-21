@@ -43,7 +43,7 @@ def test_cli_list_commands_local(monkeypatch, tmp_path, capsys):
     assert flow_code == 0
     assert provider_code == 0
     assert "[HeyGent CLI] 플로우 목록 결과" in flow_output
-    assert "echo_flow" in flow_output
+    assert "model_generate_flow" in flow_output
     assert "[HeyGent CLI] 프로바이더 목록 결과" in provider_output
     assert "openai_oauth" in provider_output
 
@@ -72,6 +72,19 @@ def test_cli_provider_auth_local(monkeypatch, tmp_path, capsys):
     assert '"status": "configuration_required"' in captured
 
 
+def test_cli_openai_onboarding_local(monkeypatch, tmp_path, capsys):
+    db_path = tmp_path / "cli-onboard.db"
+    monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+
+    exit_code = main(["--mode", "local", "onboard-openai"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "[HeyGent CLI] OpenAI 연결 온보딩" in captured
+    assert "흐름도" in captured
+    assert "authorization_url" not in captured or "configuration_required" in captured
+
+
 def test_cli_help_text_is_korean():
     parser = build_parser(get_settings())
     help_text = parser.format_help()
@@ -79,7 +92,7 @@ def test_cli_help_text_is_korean():
     assert "한글 CLI" in help_text
     assert "/help" in help_text
     assert "serve" in help_text
-    assert "provider-auth" in help_text
+    assert "onboard-openai" in help_text
     assert "예시:" in help_text
 
 

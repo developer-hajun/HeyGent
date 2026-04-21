@@ -31,6 +31,7 @@ class PrettyHelpFormatter(argparse.RawTextHelpFormatter):
 COMMAND_ALIASES = {
     "serve": "게이트웨이 실행",
     "health": "서버 상태 확인",
+    "onboard-openai": "OpenAI 연결 온보딩",
     "create-task": "작업 생성",
     "watch-task": "작업 조회",
     "resume-task": "승인 재개",
@@ -99,12 +100,10 @@ def _build_examples() -> str:
         "예시:\n"
         "  python -m app.cli serve\n"
         "  python -m app.cli health\n"
-        "  python -m app.cli list-flows\n"
+        "  python -m app.cli onboard-openai\n"
         "  python -m app.cli list-providers\n"
-        "  python -m app.cli provider-auth --provider openai_oauth\n"
-        "  python -m app.cli create-task --type echo_flow --payload '{\"message\":\"안녕하세요\"}'\n"
-        "  python -m app.cli create-task --type approval_wait_flow --payload sample.json\n"
-        "  python -m app.cli watch-task --task-id task_xxx\n"
+        "  python -m app.cli create-task --type model_generate_flow --payload '{\"prompt\":\"안녕하세요\"}'\n"
+        "  python -m app.cli create-task --type notion_page_create --payload '{\"title\":\"백로그\",\"content\":\"정리\"}'\n"
         "  python -m app.cli resume-task --task-id task_xxx --payload '{\"approved\": true}'"
     )
 
@@ -149,6 +148,15 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     )
     health_parser.add_argument("--kind", choices=["health", "ready"], default="ready", help="조회할 상태 종류")
     command_parsers["health"] = health_parser
+
+    onboard_parser = subparsers.add_parser(
+        "onboard-openai",
+        help="OpenAI OAuth 연결을 한국어 안내와 함께 시작합니다",
+        description="필요한 env 확인, 브라우저 인가 URL, callback 이후 다음 작업까지 한 번에 안내합니다.",
+    )
+    onboard_parser.add_argument("--redirect-uri", default=None, help="요청 시점에 redirect URI 를 덮어쓸 수 있습니다")
+    onboard_parser.add_argument("--state", default=None, help="직접 관리할 OAuth state 값")
+    command_parsers["onboard-openai"] = onboard_parser
 
     create_parser = subparsers.add_parser(
         "create-task",
@@ -208,14 +216,14 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     providers_parser = subparsers.add_parser(
         "list-providers",
         help="등록된 Model Provider 목록을 봅니다",
-        description="현재 등록된 provider 의 이름, 설정 상태, 누락된 env 를 확인합니다.",
+        description="현재 등록된 provider 의 이름, 설정 상태, 연결 상태, 누락된 env 를 확인합니다.",
     )
     command_parsers["list-providers"] = providers_parser
 
     auth_parser = subparsers.add_parser(
         "provider-auth",
         help="모델 프로바이더 OAuth 시작 정보를 확인합니다",
-        description="현재는 authorization URL 과 누락된 env 를 확인하는 용도로 사용합니다.",
+        description="authorization URL 과 누락된 env 를 JSON 형태로 확인하는 저수준 명령입니다.",
     )
     auth_parser.add_argument("--provider", default="openai_oauth", help="인증을 시작할 provider 이름")
     auth_parser.add_argument("--redirect-uri", default=None, help="요청 시점에 redirect URI 를 덮어쓸 수 있습니다")
@@ -242,6 +250,35 @@ def _print_response(command: str, response_json: Any) -> None:
     print(json.dumps(response_json, ensure_ascii=False, indent=2))
 
 
+def _print_openai_onboarding(response_json: dict[str, Any], base_url: str) -> None:
+    print("\n[HeyGent CLI] OpenAI 연결 온보딩\n")
+    print("1) .env 에 OpenAI OAuth 값을 채웁니다")
+    print("2) py -3.11 -m app.cli serve 로 서버를 실행합니다")
+    print("3) 아래 authorization_url 을 브라우저에서 엽니다")
+    print("4) 로그인 후 callback 이 /providers/openai_oauth/callback 으로 돌아오면 연결이 저장됩니다")
+    print("5) 연결 후 list-providers 또는 model_generate_flow 로 실제 작업을 확인합니다\n")
+    print("흐름도")
+    print("  .env 설정")
+    print("      ↓")
+    print("  app.cli serve")
+    print("      ↓")
+    print("  onboard-openai")
+    print("      ↓")
+    print("  브라우저 인가 / callback")
+    print("      ↓")
+    print("  list-providers")
+    print("      ↓")
+    print("  create-task --type model_generate_flow\n")
+    print("응답 요약")
+    print(json.dumps(response_json, ensure_ascii=False, indent=2))
+    if response_json.get("authorization_url"):
+        print("\n다음 단계")
+        print(f"- 브라우저에서 열 URL: {response_json['authorization_url']}")
+        print(f"- callback 기준 서버 주소: {base_url}")
+        print("- 연결 확인: py -3.11 -m app.cli list-providers")
+        print("- 모델 작업 확인: py -3.11 -m app.cli create-task --type model_generate_flow --payload '{\"prompt\":\"안녕하세요\"}'")
+
+
 def _build_transport(args) -> RemoteCLIClient | LocalCLIClient:
     if args.mode == "local":
         return LocalCLIClient()
@@ -258,6 +295,12 @@ def _handle_remote_command(args, settings: Settings) -> int:
         if args.command == "health":
             path = "/ready" if args.kind == "ready" else "/health"
             response = client.request("GET", _request_path(settings, path))
+        elif args.command == "onboard-openai":
+            response = client.request(
+                "POST",
+                _request_path(settings, "/providers/openai_oauth/auth"),
+                json_body={"redirect_uri": args.redirect_uri, "state": args.state},
+            )
         elif args.command == "create-task":
             response = client.request(
                 "POST",
@@ -294,7 +337,12 @@ def _handle_remote_command(args, settings: Settings) -> int:
         else:
             response = client.request("GET", _request_path(settings, f"/tasks/{args.task_id}/events"))
 
-    _print_response(args.command, response.json())
+    response_json = response.json()
+    if args.command == "onboard-openai":
+        _print_openai_onboarding(response_json, args.base_url)
+    else:
+        _print_response(args.command, response_json)
+
     if response.is_success:
         return 0
 

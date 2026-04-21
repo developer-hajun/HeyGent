@@ -1,5 +1,5 @@
 def test_websocket_receives_task_events(client):
-    with client.websocket_connect("/api/v1/ws") as websocket:
+    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
         websocket.send_json({"action": "subscribe", "task_run_id": "all"})
         ack = websocket.receive_json()
 

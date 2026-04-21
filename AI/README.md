@@ -1,31 +1,62 @@
 # HeyGent AI Backbone
 
 HeyGent AI Backbone은 FastAPI 기반의 AI 게이트웨이/오케스트레이션 프로토타입입니다.
-현재 목표는 **TaskRun / StepRun 중심 백본**, **remote-first CLI**, **모델 OAuth 골격**, **외부 서비스 smoke test 구조**를 함께 검증하는 것입니다.
+현재 목표는 아래 4가지를 한 번에 검증하는 것입니다.
 
-## 핵심 방향
+- **TaskRun / StepRun 중심 백본**
+- **remote-first CLI**
+- **OpenAI OAuth 기반 모델 연결 1차 흐름**
+- **Notion 같은 외부 서비스 smoke test 구조**
 
-- 서버는 HTTP / WebSocket 표면을 기준으로 동작합니다.
-- CLI도 같은 API 표면에 붙는 것을 기본값으로 둡니다.
-- 개발/실사용 코드를 따로 나누기보다, `.env` 와 환경 변수로 host, port, DB, OAuth 설정을 분리합니다.
-- OpenAI OAuth 는 아직 토큰 교환 전 단계의 골격이며, generate 는 안전한 stub 응답을 유지합니다.
-- Notion 연동은 제품 핵심 기능이 아니라 **외부 서비스 연동 가능성 검증용 smoke test** 입니다.
+즉 지금 단계의 핵심은 "백본이 실제로 작업을 굴릴 수 있는가"이지,
+모든 채널/모델/운영 기능을 완성하는 것이 아닙니다.
+
+---
+
+## 지금 가능한 것
+
+### 1) 게이트웨이 서버
+- `/api/v1/...` prefix 기반 REST API
+- `/api/v1/gateway/ws` WebSocket 이벤트 구독
+- SQLite 기반 로컬 저장
+
+### 2) CLI
+- 서버 실행
+- health / ready 확인
+- provider 상태 확인
+- OpenAI OAuth 온보딩 안내
+- task 생성 / 조회 / resume
+
+### 3) 모델 연결
+- OpenAI OAuth authorization URL 생성
+- callback 이후 access token 저장
+- 저장된 token 이 있으면 실제 모델 호출 시도
+- token 이 없으면 안전한 stub 응답 사용
+
+### 4) 샘플 플로우
+- `echo_flow`
+- `approval_wait_flow`
+- `model_generate_flow`
+- `notion_page_create`
+- `notion_database_append`
+
+---
 
 ## 빠른 시작
 
-### 1) 의존성 설치
+### 1. 의존성 설치
 
 ```bash
 py -3.11 -m pip install -e .[dev]
 ```
 
-### 2) 환경 변수 파일 준비
+### 2. 환경 변수 파일 준비
 
 ```bash
 copy .env.example .env
 ```
 
-필요하면 `.env` 에서 아래 값을 먼저 조정합니다.
+우선 아래 값부터 채우면 됩니다.
 
 - `HEYGENT_HOST`
 - `HEYGENT_PORT`
@@ -33,32 +64,107 @@ copy .env.example .env
 - `HEYGENT_AI_DB_PATH`
 - `HEYGENT_API_BASE_URL`
 - `HEYGENT_OPENAI_OAUTH_*`
+- `HEYGENT_OPENAI_API_BASE_URL`
+- `HEYGENT_OPENAI_RESPONSE_MODEL`
 
-### 3) 서버 실행
+### 3. 서버 실행
 
 ```bash
 py -3.11 -m app.cli serve
 ```
 
-또는 직접 uvicorn 으로 실행해도 됩니다.
+기본 주소:
+
+- 서버: `http://127.0.0.1:8000`
+- API: `http://127.0.0.1:8000/api/v1`
+- Swagger: `http://127.0.0.1:8000/docs`
+
+### 4. 상태 확인
 
 ```bash
-py -3.11 -m uvicorn app.main:app --reload
+py -3.11 -m app.cli health
+py -3.11 -m app.cli list-providers
+py -3.11 -m app.cli list-flows
 ```
 
-기본 주소는 `http://127.0.0.1:8000` 이고, 기본 API prefix 는 `/api/v1` 입니다.
-따라서 기본 API base URL 은 `http://127.0.0.1:8000/api/v1` 입니다.
+---
 
-### 4) 브라우저에서 확인
+## OpenAI OAuth 온보딩
 
-- Swagger UI: `http://127.0.0.1:8000/docs`
-- Health: `http://127.0.0.1:8000/api/v1/health`
-- Ready: `http://127.0.0.1:8000/api/v1/ready`
+실무적으로는 아래 흐름으로 보면 됩니다.
 
-## CLI 사용
+```text
+.env 설정
+   ↓
+app.cli serve
+   ↓
+onboard-openai
+   ↓
+브라우저 인가 / callback
+   ↓
+list-providers
+   ↓
+create-task --type model_generate_flow
+```
 
-CLI는 기본적으로 **떠 있는 AI 서버에 붙는 remote-first 구조**입니다.
-즉 브라우저 대신 터미널에서 같은 API를 빠르게 확인하는 운영/개발 공용 도구로 보면 됩니다.
+### 1. 온보딩 안내 실행
+
+```bash
+py -3.11 -m app.cli onboard-openai
+```
+
+이 명령은 아래를 같이 해줍니다.
+
+- 필요한 env 누락 확인
+- authorization URL 생성
+- callback 이후 다음 단계 안내
+- 모델 작업 검증 예시 출력
+
+### 2. 브라우저에서 인가
+
+응답에 포함된 `authorization_url` 을 브라우저에서 엽니다.
+로그인과 인가가 끝나면 서버의 callback 주소로 돌아옵니다.
+
+기본 callback 예시:
+
+```text
+http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback
+```
+
+브라우저 callback 성공 시 한국어 완료 페이지가 뜹니다.
+
+### 3. 연결 확인
+
+```bash
+py -3.11 -m app.cli list-providers
+```
+
+여기서 아래 상태를 봅니다.
+
+- `configured`: env 가 채워졌는가
+- `connected`: token 이 저장되어 실제 호출이 가능한가
+- `expires_at`: 만료 예정 시각
+
+### 4. 실제 모델 작업 확인
+
+```bash
+py -3.11 -m app.cli create-task --type model_generate_flow --payload '{"prompt":"안녕하세요. 연결 상태를 짧게 알려줘"}'
+```
+
+또는 provider API 자체를 호출해도 됩니다.
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/providers/generate \
+  -H "Content-Type: application/json" \
+  -d '{"provider_name":"openai_oauth","prompt":"테스트"}'
+```
+
+---
+
+## CLI 사용법
+
+CLI는 기본적으로 **떠 있는 서버에 붙는 remote-first 구조**입니다.
+즉 로컬이든 Docker든, 기본 원칙은 "같은 API 표면을 CLI와 백엔드가 함께 쓴다" 입니다.
 
 전체 도움말:
 
@@ -66,14 +172,16 @@ CLI는 기본적으로 **떠 있는 AI 서버에 붙는 remote-first 구조**입
 py -3.11 -m app.cli /help
 ```
 
-자주 쓰는 예시:
+자주 쓰는 명령:
 
 ```bash
+py -3.11 -m app.cli serve
 py -3.11 -m app.cli health
-py -3.11 -m app.cli list-flows
+py -3.11 -m app.cli onboard-openai
 py -3.11 -m app.cli list-providers
-py -3.11 -m app.cli provider-auth --provider openai_oauth
-py -3.11 -m app.cli create-task --type echo_flow --payload '{"message":"안녕하세요"}'
+py -3.11 -m app.cli list-flows
+py -3.11 -m app.cli create-task --type model_generate_flow --payload '{"prompt":"안녕하세요"}'
+py -3.11 -m app.cli create-task --type notion_page_create --payload '{"title":"백로그","content":"정리"}'
 ```
 
 다른 주소에 떠 있는 서버에 붙고 싶으면 `--base-url` 을 넘깁니다.
@@ -82,24 +190,50 @@ py -3.11 -m app.cli create-task --type echo_flow --payload '{"message":"안녕�
 py -3.11 -m app.cli --base-url http://localhost:8000/api/v1 health
 ```
 
-테스트나 빠른 디버그 용도로만 `--mode local` 을 둘 수 있습니다.
+테스트나 빠른 디버그 용도로만 `--mode local` 을 쓸 수 있습니다.
 
 ```bash
 py -3.11 -m app.cli --mode local list-flows
 ```
 
-## 주요 CLI 명령
+---
 
-- `serve` : 현재 설정으로 게이트웨이 실행
-- `health` : `/health` 또는 `/ready` 확인
-- `list-flows` : 등록된 flow 목록 조회
-- `list-providers` : provider 상태 조회
-- `provider-auth` : 모델 provider OAuth 시작 정보 조회
-- `create-task` : TaskRun 생성 및 실행
-- `watch-task` : task 상태 조회
-- `list-steps` : StepRun 목록 조회
-- `list-events` : task event 목록 조회
-- `resume-task` : WAITING 작업 재개
+## Docker 실행
+
+### 1. 이미지 빌드
+
+```bash
+docker build -t heygent-ai-backbone .
+```
+
+### 2. 컨테이너 실행
+
+```bash
+docker run --rm -p 8000:8000 --env-file .env heygent-ai-backbone
+```
+
+### 3. compose 예시 사용
+
+```bash
+copy docker-compose.example.yml docker-compose.yml
+docker compose up --build
+```
+
+### 4. Docker 로 띄운 서버에 CLI 붙이기
+
+```bash
+py -3.11 -m app.cli --base-url http://127.0.0.1:8000/api/v1 health
+py -3.11 -m app.cli --base-url http://127.0.0.1:8000/api/v1 list-providers
+```
+
+즉 구조적으로는 아래처럼 보면 됩니다.
+
+- AI Backbone 서버: Docker 또는 로컬 uvicorn
+- CLI: 같은 API 호출
+- Backend 서버: 같은 API / WS 호출
+- FE / Mobile: 같은 상태 표면 구독
+
+---
 
 ## 주요 API
 
@@ -120,59 +254,50 @@ py -3.11 -m app.cli --mode local list-flows
 - `GET /api/v1/providers` : 등록된 provider 목록 조회
 - `GET /api/v1/providers/{provider_name}` : provider 상세 상태 조회
 - `POST /api/v1/providers/{provider_name}/auth` : OAuth 시작 정보 조회
-- `POST /api/v1/providers/generate` : provider stub 생성 테스트
+- `POST /api/v1/providers/{provider_name}/callback` : auth code callback 처리(JSON)
+- `GET /api/v1/providers/{provider_name}/callback` : 브라우저 callback 처리(HTML)
+- `POST /api/v1/providers/generate` : provider generate 호출
 
 ### Flow
 - `GET /api/v1/flows` : 등록된 flow 목록 조회
 - `POST /api/v1/flows/{flow_name}/execute` : 특정 flow 직접 실행
 
 ### WebSocket
-- `WS /api/v1/ws` : task 이벤트 구독
+- `WS /api/v1/gateway/ws` : 권장 task 이벤트 구독 경로
+- `WS /api/v1/ws` : 레거시 호환 경로
 
-## OpenAI OAuth 골격
+---
 
-현재 `openai_oauth` provider 는 아래 두 가지를 제공합니다.
+## 플로우 설명
 
-1. 설정 상태 확인
-2. authorization URL 구성 골격 노출
+### `model_generate_flow`
+OAuth 로 모델 연결이 된 뒤, TaskRun / StepRun 체계 안에서 실제 텍스트 생성이 되는지 확인하는 기본 플로우입니다.
 
-아직 없는 것:
+예시 payload:
 
-- 실제 auth code callback 처리
-- access token / refresh token 저장
-- 실제 OpenAI generate 호출
+```json
+{
+  "prompt": "안녕하세요. 연결 상태를 짧게 설명해 주세요"
+}
+```
 
-즉 지금 단계의 목적은 **모델 인증 구조를 미리 고정**하는 것입니다.
+### `notion_page_create`
+Notion 자체를 제품 핵심으로 밀기 위한 것이 아니라,
+외부 서비스 클라이언트 경계와 결과 저장 흐름을 검증하기 위한 smoke test 플로우입니다.
 
-필요한 환경 변수 예시:
+---
 
-- `HEYGENT_OPENAI_OAUTH_CLIENT_ID`
-- `HEYGENT_OPENAI_OAUTH_CLIENT_SECRET`
-- `HEYGENT_OPENAI_OAUTH_REDIRECT_URI`
-- `HEYGENT_OPENAI_OAUTH_AUTHORIZE_URL`
-- `HEYGENT_OPENAI_OAUTH_TOKEN_URL`
-- `HEYGENT_OPENAI_OAUTH_SCOPES`
+## 현재 제약사항
 
-## Notion 연동 위치
+- OpenAI OAuth 는 callback 이후 token 저장과 실제 generate 1차 흐름까지만 다룹니다.
+- refresh token 자동 갱신, 다중 사용자 연결, 복수 provider 계정 관리는 아직 없습니다.
+- Notion flow 는 여전히 안전한 stub 응답 중심입니다.
+- full daemon lifecycle(start/stop/restart/logs)까지는 아직 구현하지 않았습니다.
 
-Notion flow 는 외부 서비스 연동 smoke test 역할입니다.
-지금은 실제 쓰기 대신 안전한 stub 응답을 사용합니다.
-
-즉 현재 목적은 아래 검증입니다.
-
-- integration client 경계가 분리되어 있는가
-- 외부 호출 결과가 TaskRun / StepRun / event 로 남는가
-- 나중에 실제 외부 서비스로 교체하기 쉬운가
+---
 
 ## 테스트
 
 ```bash
 py -3.11 -m pytest -q
 ```
-
-## 현재 제약사항
-
-- OpenAI OAuth provider 는 아직 실제 토큰 교환 이전 단계입니다.
-- Notion flow 는 실제 API 쓰기 대신 안전한 stub 응답을 반환합니다.
-- `cancel`, `retry` 사용자 CLI 는 아직 없습니다.
-- Local 모드는 테스트/디버그 보조 수단이며, 기본 사용 흐름은 remote-first 입니다.
