@@ -2,10 +2,38 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from importlib import metadata
 import json
 
 from app.cli.constants import COMMAND_ALIASES, OPENAI_PROVIDER_NAME, SHELL_SLASH_COMMANDS
 from app.core.config import Settings
+from wcwidth import wcswidth
+
+
+def _display_width(value: str) -> int:
+    width = wcswidth(value)
+    return len(value) if width < 0 else width
+
+
+def _pad_display(value: str, target_width: int) -> str:
+    return value + (" " * max(0, target_width - _display_width(value)))
+
+
+def _project_version() -> str:
+    try:
+        return metadata.version("heygent-ai-backbone")
+    except metadata.PackageNotFoundError:
+        return "0.1.0"
+
+
+def _shorten_path(path: Path) -> str:
+    raw = str(path)
+    home = str(Path.home())
+    if raw.lower() == home.lower():
+        return "~"
+    if raw.lower().startswith((home + "\\").lower()):
+        return "~\\" + raw[len(home) + 1 :]
+    return raw
 
 
 def render_box(
@@ -15,20 +43,16 @@ def render_box(
     inner_padding: int = 1,
     vertical_padding: int = 0,
 ) -> str:
-    """간단한 터미널 박스를 그린다.
+    """간단한 터미널 박스를 그린다."""
 
-    현재는 의존성을 작게 유지하기 위해 직접 렌더링한다. 한글 폭 정렬을 더 정확히 맞출 때는
-    이 함수만 Rich 또는 wcwidth 기반 구현으로 교체하면 된다.
-    """
-
-    label_width = max((len(label) for label, _ in rows), default=0)
-    content = [f"{label.ljust(label_width)} {value}".rstrip() for label, value in rows]
+    label_width = max((_display_width(label) for label, _ in rows), default=0)
+    content = [f"{_pad_display(label, label_width)} {value}".rstrip() for label, value in rows]
     horizontal = " " * max(1, inner_padding)
-    width = max(len(title) + 2, *(len(line) for line in content)) + (len(horizontal) * 2)
-    top = f"┌─ {title} " + "─" * max(0, width - len(title) - 2) + "┐"
-    empty = f"│{' ' * (width + 2)}│"
-    body = [f"│{horizontal}{line.ljust(width - (len(horizontal) * 2))}{horizontal}│" for line in content]
-    bottom = "└" + "─" * (width + 2) + "┘"
+    inner_width = max(_display_width(title) + 3, *(_display_width(line) for line in content)) + (len(horizontal) * 2)
+    top = f"┌─ {title} " + "─" * max(0, inner_width - _display_width(title) - 3) + "┐"
+    empty = f"│{' ' * inner_width}│"
+    body = [f"│{horizontal}{_pad_display(line, inner_width - (len(horizontal) * 2))}{horizontal}│" for line in content]
+    bottom = "└" + "─" * inner_width + "┘"
     padded_body: list[str] = []
     for _ in range(max(0, vertical_padding)):
         padded_body.append(empty)
@@ -36,6 +60,15 @@ def render_box(
     for _ in range(max(0, vertical_padding)):
         padded_body.append(empty)
     return "\n".join([top, *padded_body, bottom])
+
+
+def render_plain_box(lines: list[str], *, inner_padding: int = 1) -> str:
+    horizontal = " " * max(1, inner_padding)
+    inner_width = max((_display_width(line) for line in lines), default=0) + (len(horizontal) * 2)
+    top = "┌" + "─" * inner_width + "┐"
+    body = [f"│{horizontal}{_pad_display(line, inner_width - (len(horizontal) * 2))}{horizontal}│" for line in lines]
+    bottom = "└" + "─" * inner_width + "┘"
+    return "\n".join([top, *body, bottom])
 
 
 def format_bool(value: bool) -> str:
@@ -119,17 +152,23 @@ def print_model_check_summary(task_payload: dict[str, Any], settings: Settings, 
         print(text)
 
 
-def print_shell_banner(settings: Settings) -> None:
-    rows = [
-        ("model", settings.openai_response_model),
-        ("directory", str(Path.cwd())),
-        ("base-url", settings.resolved_api_base_url()),
+def print_shell_banner(settings: Settings, provider_state: dict[str, Any] | None = None) -> None:
+    connected = bool(provider_state and provider_state.get("connected"))
+    auth_status = "connected  /status to view" if connected else "not connected  /auth to sign in"
+    lines = [
+        f"› HeyGent AI (v{_project_version()})",
+        "",
+        f"model:     {settings.openai_response_model}  /model to change",
+        f"directory: {_shorten_path(Path.cwd())}",
+        f"auth:      {auth_status}",
     ]
+    print(render_plain_box(lines, inner_padding=1))
     print()
-    print(render_box("HeyGent AI Shell", rows, inner_padding=2, vertical_padding=1))
+    if connected:
+        print("Tip: Type / to open commands.")
+    else:
+        print("Tip: Run /auth to connect OpenAI before asking the model.")
     print()
-    print("Tip: / 로 명령 목록을 보고, 그냥 입력하면 바로 모델에게 보냅니다.")
-    print("Tip: /status 로 연결 상태를 보고, /help 로 전체 명령을 봅니다.")
 
 
 def print_shell_command_list() -> None:

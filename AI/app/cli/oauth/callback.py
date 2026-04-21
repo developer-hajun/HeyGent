@@ -11,6 +11,28 @@ from app.cli.core.transport import request_path
 from app.core.config import Settings
 
 
+SUCCESS_CLOSE_HTML = """
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>OpenAI authentication completed</title>
+    <script>
+      window.addEventListener("load", () => {
+        setTimeout(() => {
+          window.open("", "_self");
+          window.close();
+        }, 500);
+      });
+    </script>
+  </head>
+  <body style="font-family: sans-serif; padding: 24px; line-height: 1.6;">
+    <h1>OpenAI authentication completed.</h1>
+    <p>This tab will close automatically. If it stays open, you can close it.</p>
+  </body>
+</html>
+"""
+
+
 class OAuthCallbackListener:
     """localhost OAuth callback 서버의 생명주기를 감싸는 작은 객체다."""
 
@@ -19,11 +41,20 @@ class OAuthCallbackListener:
         self.result_queue = result_queue
         self.thread = thread
 
-    def wait(self, timeout: float) -> dict[str, Any] | None:
+    def wait(self, timeout: float, *, poll_interval: float = 0.2) -> dict[str, Any] | None:
+        deadline = threading.Event()
+        timer = threading.Timer(max(0.0, timeout), deadline.set)
+        timer.daemon = True
+        timer.start()
         try:
-            return self.result_queue.get(timeout=max(0.1, timeout))
-        except queue.Empty:
+            while not deadline.is_set():
+                try:
+                    return self.result_queue.get(timeout=max(0.05, min(1.0, poll_interval)))
+                except queue.Empty:
+                    continue
             return None
+        finally:
+            timer.cancel()
 
     def close(self) -> None:
         try:
@@ -113,7 +144,7 @@ def start_local_oauth_callback_listener(client, settings: Settings, provider_nam
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.end_headers()
             html = (
-                "<html><body><h1>OpenAI authentication completed.</h1><p>You can close this window.</p></body></html>"
+                SUCCESS_CLOSE_HTML
                 if api_response.is_success
                 else f"<html><body><h1>Token exchange failed.</h1><pre>{json.dumps(payload, ensure_ascii=False)}</pre></body></html>"
             )

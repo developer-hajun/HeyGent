@@ -9,13 +9,12 @@ OPENAI_PROVIDER_NAME = "openai_oauth"
 DEFAULT_MODEL_CHECK_PROMPT = "안녕하세요. 지금 연결 상태와 사용 가능한 모델 작업 여부를 짧게 알려줘"
 
 SHELL_SLASH_COMMANDS: dict[str, str] = {
-    "/": "명령 목록 보기",
-    "/help": "도움말 보기",
-    "/status": "현재 연결 상태 보기",
-    "/auth": "OpenAI 연결 시작",
-    "/refresh": "토큰 갱신",
-    "/disconnect": "연결 해제",
-    "/exit": "셸 종료",
+    "/status": "show current provider and connection state",
+    "/auth": "connect OpenAI in the browser",
+    "/refresh": "refresh the stored OpenAI token",
+    "/disconnect": "remove the stored OpenAI connection",
+    "/help": "show commands and help",
+    "/exit": "close this shell",
 }
 
 COMMAND_ALIASES = {

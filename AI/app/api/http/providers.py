@@ -11,6 +11,35 @@ from app.contracts.provider.provider_response import ProviderAuthResponse, Provi
 router = APIRouter(prefix="/providers", tags=["providers"])
 
 
+def _oauth_success_close_html(detail: str, provider_name: str, status: str, expires_at: str | None) -> str:
+    return f"""
+        <html>
+          <head>
+            <meta charset=\"utf-8\" />
+            <title>OpenAI OAuth 연결 완료</title>
+            <script>
+              window.addEventListener(\"load\", () => {{
+                setTimeout(() => {{
+                  window.open(\"\", \"_self\");
+                  window.close();
+                }}, 500);
+              }});
+            </script>
+          </head>
+          <body style=\"font-family: sans-serif; padding: 24px; line-height: 1.6;\">
+            <h1>OpenAI OAuth 연결 완료</h1>
+            <p>{detail}</p>
+            <ul>
+              <li>provider: {provider_name}</li>
+              <li>status: {status}</li>
+              <li>expires_at: {expires_at or '미정'}</li>
+            </ul>
+            <p>이 창은 자동으로 닫힙니다. 닫히지 않으면 직접 닫아도 됩니다.</p>
+          </body>
+        </html>
+        """
+
+
 @router.get("", response_model=list[ProviderHealthResponse])
 def list_providers(context: ProviderContext = Depends(get_provider_context)) -> list[ProviderHealthResponse]:
     return context.registry.health()
@@ -102,22 +131,7 @@ def complete_provider_auth_from_browser(
     try:
         provider = context.registry.get(provider_name)
         result = provider.complete_auth(code=code, state=state)
-        body = f"""
-        <html>
-          <body style=\"font-family: sans-serif; padding: 24px; line-height: 1.6;\">
-            <h1>OpenAI OAuth 연결 완료</h1>
-            <p>{result.detail}</p>
-            <ul>
-              <li>provider: {result.provider_name}</li>
-              <li>status: {result.status}</li>
-              <li>expires_at: {result.expires_at or '미정'}</li>
-            </ul>
-            <p>이제 터미널에서 <code>py -3.11 -m app.cli list-providers</code> 또는 <code>py -3.11 -m app.cli create-task --type model_generate_flow --payload '{{"prompt":"안녕하세요"}}'</code> 로 바로 확인할 수 있습니다.</p>
-            <p>필요하면 <code>py -3.11 -m app.cli provider-refresh --provider openai_oauth</code> 로 갱신하고, <code>provider-disconnect</code> 로 연결 해제할 수 있습니다.</p>
-          </body>
-        </html>
-        """
-        return HTMLResponse(body)
+        return HTMLResponse(_oauth_success_close_html(result.detail, result.provider_name, result.status, result.expires_at))
     except KeyError:
         return HTMLResponse(
             "<html><body style='font-family:sans-serif;padding:24px;'><h1>OAuth 연결 실패</h1><p>state 값이 유효하지 않거나 이미 사용되었습니다.</p></body></html>",

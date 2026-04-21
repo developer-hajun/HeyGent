@@ -100,6 +100,12 @@ def _parse_scopes(value) -> list[str]:
     return [scope.strip() for scope in str(value).split(",") if scope.strip()]
 
 
+def _parse_optional_path(value) -> Path | None:
+    if value in {None, ""}:
+        return None
+    return Path(str(value))
+
+
 def get_settings() -> Settings:
     """현재 실행 시점의 설정을 읽어 Settings 객체로 반환한다.
 
@@ -123,11 +129,7 @@ def get_settings() -> Settings:
         openai_oauth_authorize_url=_read_env("HEYGENT_OPENAI_OAUTH_AUTHORIZE_URL", "https://auth.openai.com/oauth/authorize", dotenv_values),
         openai_oauth_token_url=_read_env("HEYGENT_OPENAI_OAUTH_TOKEN_URL", "https://auth.openai.com/oauth/token", dotenv_values),
         openai_oauth_scopes=_parse_scopes(_read_env("HEYGENT_OPENAI_OAUTH_SCOPES", "openid,profile,email,offline_access", dotenv_values)),
-        openai_auth_file=(
-            Path(_read_env("HEYGENT_OPENAI_AUTH_FILE", str(Path.home() / ".codex" / "auth.json"), dotenv_values))
-            if _read_env("HEYGENT_OPENAI_AUTH_FILE", str(Path.home() / ".codex" / "auth.json"), dotenv_values)
-            else None
-        ),
+        openai_auth_file=_parse_optional_path(_read_env("HEYGENT_OPENAI_AUTH_FILE", None, dotenv_values)),
         openai_api_base_url=_read_env("HEYGENT_OPENAI_API_BASE_URL", "https://chatgpt.com/backend-api", dotenv_values),
         openai_response_model=_read_env("HEYGENT_OPENAI_RESPONSE_MODEL", "gpt-5.4", dotenv_values),
         notion_api_base_url=_read_env("HEYGENT_NOTION_API_BASE_URL", "https://api.notion.com/v1", dotenv_values),

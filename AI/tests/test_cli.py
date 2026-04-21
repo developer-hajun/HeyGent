@@ -7,7 +7,9 @@ from collections import deque
 from prompt_toolkit.document import Document
 
 from app.cli import RemoteCLIClient, _SlashCommandCompleter, _should_open_slash_menu, build_parser, main
+import app.cli.ui.prompt as PROMPT_UI
 from app.core.config import get_settings
+from app.cli.ui.output import _display_width, render_box, render_plain_box
 
 CLI_MAIN_MODULE = importlib.import_module("app.cli.main")
 
@@ -66,13 +68,129 @@ def test_slash_command_completer_shows_menu_for_single_slash():
     texts = {item.text for item in completions}
     assert "/help" in texts
     assert "/status" in texts
-    assert "/" not in texts
+    assert "/auth" in texts
+
+
+def test_slash_command_completer_uses_codex_like_display_columns():
+    completer = _SlashCommandCompleter()
+    completion = next(iter(completer.get_completions(Document(text="/st", cursor_position=3), None)))
+
+    display = list(completion.display)
+    assert display[0] == ("class:completion-command", "/status")
+    assert display[1][1].isspace()
+    assert display[2] == ("class:completion-description", "show current provider and connection state")
 
 
 def test_should_open_slash_menu_only_for_first_character():
     assert _should_open_slash_menu("", 0) is True
     assert _should_open_slash_menu("abc", 3) is False
     assert _should_open_slash_menu("/", 1) is False
+
+
+def test_render_box_keeps_terminal_width_aligned():
+    box = render_box(
+        "HeyGent AI Shell",
+        [
+            ("model", "gpt-5.4"),
+            ("directory", r"C:\Users\Jun\Desktop\saffy\Openclaw\S14P31E105\ai"),
+            ("base-url", "http://127.0.0.1:8000/api/v1"),
+        ],
+        inner_padding=2,
+        vertical_padding=1,
+    )
+
+    widths = {_display_width(line) for line in box.splitlines()}
+    assert len(widths) == 1
+
+
+def test_render_plain_box_keeps_terminal_width_aligned():
+    box = render_plain_box(
+        [
+            "› HeyGent AI (v0.1.0)",
+            "",
+            "model:     gpt-5.4  /model to change",
+            r"directory: ~\Desktop\saffy\Openclaw\S14P31E105\AI",
+            "auth:      not connected  /auth to sign in",
+        ]
+    )
+
+    widths = {_display_width(line) for line in box.splitlines()}
+    assert len(widths) == 1
+
+
+def test_initial_login_choice_uses_prompt_toolkit_choice(monkeypatch):
+    monkeypatch.setattr(PROMPT_UI, "_supports_windows_console_choice", lambda: False)
+    monkeypatch.setattr(PROMPT_UI, "supports_interactive_choice", lambda: True)
+
+    called = {}
+
+    def fake_choice(message, *, options, default, symbol, show_frame, style):
+        called["message"] = message
+        called["options"] = options
+        called["default"] = default
+        called["symbol"] = symbol
+        return False
+
+    monkeypatch.setattr(PROMPT_UI, "choice", fake_choice)
+
+    assert PROMPT_UI.choose_initial_login_action() is False
+    assert called["message"] == "OpenAI 로그인이 필요합니다."
+    assert called["options"] == [(True, "1. 로그인"), (False, "2. 취소")]
+    assert called["default"] is True
+    assert called["symbol"] == "›"
+
+
+def test_shell_prompt_completion_current_style_is_not_reverse():
+    style = PROMPT_UI._shell_prompt_style()
+    attrs = style.get_attrs_for_style_str("class:completion-menu.completion.current")
+
+    assert attrs.reverse is False
+    assert attrs.bgcolor == "default"
+
+
+def test_shell_prompt_completion_current_colors_description_too():
+    style = PROMPT_UI._shell_prompt_style()
+    description_attrs = style.get_attrs_for_style_str("class:completion-menu.completion.current class:completion-description")
+    command_attrs = style.get_attrs_for_style_str("class:completion-menu.completion.current class:completion-command")
+    normal_description_attrs = style.get_attrs_for_style_str("class:completion-menu.completion class:completion-description")
+
+    assert description_attrs.color == "ffffff"
+    assert command_attrs.color == "ffffff"
+    assert normal_description_attrs.color == "8a8a8a"
+
+
+def test_shell_prompt_installs_completion_menu_without_scrollbar(monkeypatch):
+    installed = {}
+
+    class FakePromptSession:
+        def __init__(self, **kwargs):
+            installed["kwargs"] = kwargs
+
+    monkeypatch.setattr(PROMPT_UI, "_supports_prompt_toolkit", lambda: True)
+    monkeypatch.setattr(PROMPT_UI, "PromptSession", FakePromptSession)
+    monkeypatch.setattr(PROMPT_UI.prompt_shortcuts, "CompletionsMenu", object)
+
+    PROMPT_UI.create_shell_prompt_session("› ")
+
+    assert PROMPT_UI.prompt_shortcuts.CompletionsMenu is PROMPT_UI._NoScrollbarCompletionsMenu
+    assert installed["kwargs"]["complete_style"] is PROMPT_UI.CompleteStyle.COLUMN
+
+
+def test_initial_login_choice_uses_windows_console_arrows(monkeypatch, capsys):
+    class FakeMsvcrt:
+        def __init__(self):
+            self.keys = iter(["\xe0", "P", "\r"])
+
+        def getwch(self):
+            return next(self.keys)
+
+    monkeypatch.setattr(PROMPT_UI, "_supports_windows_console_choice", lambda: True)
+    monkeypatch.setattr(PROMPT_UI, "msvcrt", FakeMsvcrt())
+
+    assert PROMPT_UI.choose_initial_login_action() is False
+    captured = capsys.readouterr().out
+    assert "OpenAI 로그인이 필요합니다." in captured
+    assert "2. 취소" in captured
 
 
 def test_remote_client_keeps_origin_base_url_paths():
@@ -264,7 +382,7 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
     )
 
     class FakeListener:
-        def wait(self, timeout):
+        def wait(self, timeout, *, poll_interval=0.2):
             return {"ok": True, "payload": fake_client.request("POST", "/api/v1/providers/openai_oauth/callback").json()}
 
         def close(self):
@@ -284,6 +402,48 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
     assert "Waiting for authentication..." in captured
     assert "Connected ✓" in captured
     assert "온보딩 완료. 이제 바로 사용할 수 있어." in captured
+
+
+def test_cli_openai_onboarding_ctrl_c_while_waiting(monkeypatch, capsys):
+    fake_client = FakeRemoteClient(
+        [
+            FakeResponse(
+                {
+                    "provider_name": "openai_oauth",
+                    "status": "authorization_required",
+                    "detail": "go",
+                    "authorization_url": "https://auth.openai.test/start",
+                    "redirect_uri": "http://localhost:1455/auth/callback",
+                    "scopes": ["openid"],
+                    "state": "state_123",
+                    "missing_env": [],
+                    "metadata": {"pkce_required": True},
+                }
+            )
+        ]
+    )
+
+    class InterruptingListener:
+        closed = False
+
+        def wait(self, timeout, *, poll_interval=0.2):
+            raise KeyboardInterrupt
+
+        def close(self):
+            self.closed = True
+
+    listener = InterruptingListener()
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_build_transport", lambda args: fake_client)
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_open_browser", lambda url: True)
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_start_local_oauth_callback_listener", lambda *args, **kwargs: listener)
+
+    exit_code = main(["onboard-openai", "--yes", "--wait-seconds", "120"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 130
+    assert listener.closed is True
+    assert "Waiting for authentication..." in captured
+    assert "로그인을 취소하고 종료할게." in captured
 
 
 def test_cli_provider_refresh_local(monkeypatch, tmp_path, capsys):
@@ -328,18 +488,18 @@ def test_cli_help_text_is_korean():
 def test_cli_shell_default_mode(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-shell-default.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
-    answers = iter(["/", "/status", "안녕", "/exit"])
+    answers = iter(["2", "/", "/status", "안녕", "/exit"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     exit_code = main(["--mode", "local"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "HeyGent AI Shell" in captured
-    assert "Slash Commands" in captured
+    assert "OpenAI 로그인이 필요합니다." in captured
+    assert "› HeyGent AI" in captured
+    assert "not connected  /auth to sign in" in captured
     assert "[HeyGent CLI] 연결 상태" in captured
     assert "› 안녕" in captured
-    assert "Working (" in captured
     assert "mode:" in captured
     assert "• " in captured
     assert "셸을 종료할게." in captured
@@ -348,7 +508,7 @@ def test_cli_shell_default_mode(monkeypatch, tmp_path, capsys):
 def test_cli_shell_interrupt(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-shell-interrupt.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
-    answers = iter(["안녕", "/exit"])
+    answers = iter(["2", "안녕", "/exit"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     def fake_prompt_task(args, settings, prompt):
@@ -396,7 +556,20 @@ def test_cli_shell_auth_asks_before_reconnect(monkeypatch, capsys):
                     "scopes": ["openid"],
                     "expires_at": "2099-01-01T00:00:00+00:00",
                 }
-            )
+            ),
+            FakeResponse(
+                {
+                    "provider_name": "openai_oauth",
+                    "healthy": True,
+                    "configured": True,
+                    "connected": True,
+                    "auth_type": "oauth",
+                    "detail": "connected",
+                    "missing_env": [],
+                    "scopes": ["openid"],
+                    "expires_at": "2099-01-01T00:00:00+00:00",
+                }
+            ),
         ]
     )
     answers = iter(["/auth", "no", "/exit"])
@@ -420,7 +593,7 @@ def test_cli_shell_auth_asks_before_reconnect(monkeypatch, capsys):
 def test_cli_shell_slash_command_interrupt_returns_to_prompt(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-slash-interrupt.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
-    answers = iter(["/auth", "/exit"])
+    answers = iter(["2", "/auth", "/exit"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
 
     def fake_slash_command(raw, shell_args, settings, client, parser):
@@ -435,6 +608,132 @@ def test_cli_shell_slash_command_interrupt_returns_to_prompt(monkeypatch, tmp_pa
 
     assert exit_code == 0
     assert "취소했어. 입력창으로 돌아갈게." in captured
+
+
+def test_cli_shell_initial_login_runs_before_banner(monkeypatch, capsys):
+    fake_client = FakeRemoteClient(
+        [
+            FakeResponse(
+                {
+                    "provider_name": "openai_oauth",
+                    "healthy": True,
+                    "configured": True,
+                    "connected": False,
+                    "auth_type": "oauth",
+                    "detail": "not connected",
+                    "missing_env": [],
+                    "scopes": ["openid"],
+                    "expires_at": None,
+                }
+            ),
+            FakeResponse({"provider_name": "openai_oauth", "status": "connected", "connected": True, "detail": "done", "expires_at": "2099-01-01T00:00:00+00:00"}),
+            FakeResponse(
+                {
+                    "provider_name": "openai_oauth",
+                    "healthy": True,
+                    "configured": True,
+                    "connected": True,
+                    "auth_type": "oauth",
+                    "detail": "connected",
+                    "missing_env": [],
+                    "scopes": ["openid"],
+                    "expires_at": "2099-01-01T00:00:00+00:00",
+                }
+            ),
+            FakeResponse(
+                {
+                    "provider_name": "openai_oauth",
+                    "healthy": True,
+                    "configured": True,
+                    "connected": True,
+                    "auth_type": "oauth",
+                    "detail": "connected",
+                    "missing_env": [],
+                    "scopes": ["openid"],
+                    "expires_at": "2099-01-01T00:00:00+00:00",
+                }
+            ),
+        ]
+    )
+    answers = iter(["1", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_build_transport", lambda args: fake_client)
+
+    exit_code = main(["--base-url", "http://127.0.0.1:8000/api/v1"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert captured.index("OpenAI 로그인이 필요합니다.") < captured.index("› HeyGent AI")
+    assert "auth:      connected  /status to view" in captured
+    assert "셸을 종료할게." in captured
+
+
+def test_cli_shell_initial_login_ctrl_c_exits(monkeypatch, capsys):
+    fake_client = FakeRemoteClient(
+        [
+            FakeResponse(
+                {
+                    "provider_name": "openai_oauth",
+                    "healthy": True,
+                    "configured": True,
+                    "connected": False,
+                    "auth_type": "oauth",
+                    "detail": "not connected",
+                    "missing_env": [],
+                    "scopes": ["openid"],
+                    "expires_at": None,
+                }
+            )
+        ]
+    )
+
+    def raise_keyboard_interrupt(prompt=""):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", raise_keyboard_interrupt)
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_build_transport", lambda args: fake_client)
+    monkeypatch.setattr(PROMPT_UI, "_supports_windows_console_choice", lambda: False)
+    monkeypatch.setattr(PROMPT_UI, "supports_interactive_choice", lambda: False)
+
+    exit_code = main(["--base-url", "http://127.0.0.1:8000/api/v1"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "셸을 종료할게." in captured
+    assert "› HeyGent AI" not in captured
+
+
+def test_cli_shell_initial_login_wait_cancel_exits_without_banner(monkeypatch, capsys):
+    fake_client = FakeRemoteClient(
+        [
+            FakeResponse(
+                {
+                    "provider_name": "openai_oauth",
+                    "healthy": True,
+                    "configured": True,
+                    "connected": False,
+                    "auth_type": "oauth",
+                    "detail": "not connected",
+                    "missing_env": [],
+                    "scopes": ["openid"],
+                    "expires_at": None,
+                }
+            )
+        ]
+    )
+
+    monkeypatch.setattr("builtins.input", lambda prompt="": "1")
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_build_transport", lambda args: fake_client)
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_run_shell_auth", lambda args, settings, client: 130)
+    monkeypatch.setattr(PROMPT_UI, "_supports_windows_console_choice", lambda: False)
+    monkeypatch.setattr(PROMPT_UI, "supports_interactive_choice", lambda: False)
+
+    exit_code = main(["--base-url", "http://127.0.0.1:8000/api/v1"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "셸을 종료할게." in captured
+    assert "› HeyGent AI" not in captured
 
 
 def test_cli_slash_help(capsys):

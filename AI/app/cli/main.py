@@ -21,7 +21,13 @@ from app.cli.ui.output import (
     print_shell_command_list as _print_shell_command_list,
     print_shell_task_result as _print_shell_task_result,
 )
-from app.cli.ui.prompt import _SlashCommandCompleter, _should_open_slash_menu, create_shell_prompt_session as _create_shell_prompt_session, shell_read_input as _shell_read_input
+from app.cli.ui.prompt import (
+    _SlashCommandCompleter,
+    _should_open_slash_menu,
+    choose_initial_login_action as _choose_initial_login_action,
+    create_shell_prompt_session as _create_shell_prompt_session,
+    shell_read_input as _shell_read_input,
+)
 from app.cli.ui.spinner import msvcrt, run_with_working_indicator as _run_with_working_indicator, shell_interrupt_requested as _shell_interrupt_requested
 from app.cli.workflows.providers import fetch_openai_provider_state as _fetch_openai_provider_state, wait_for_provider_connection as _wait_for_provider_connection
 from app.cli.workflows.tasks import build_task_input_payload as _build_task_input_payload, load_payload as _load_payload, run_model_check_task as _run_model_check_task, run_prompt_task as _run_prompt_task
@@ -90,7 +96,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
         help="Codex 스타일 대화형 셸을 엽니다",
         description="슬래시 명령과 일반 프롬프트를 함께 쓰는 대화형 CLI 셸입니다.",
     )
-    shell_parser.add_argument("--prompt", default="> ", help="입력 프롬프트 문자열")
+    shell_parser.add_argument("--prompt", default="› ", help="입력 프롬프트 문자열")
     command_parsers["shell"] = shell_parser
 
     serve_parser = subparsers.add_parser(
@@ -270,6 +276,63 @@ def _confirm_yes_no(message: str, *, default: bool = True) -> bool:
         print("YES 또는 NO 로 답해 줘.")
 
 
+def _choose_initial_login() -> bool:
+    selected = _choose_initial_login_action()
+    if selected is not None:
+        if not selected:
+            print("로그인을 건너뛰고 셸로 들어갈게.")
+        return selected
+
+    print("\nOpenAI 로그인이 필요합니다.")
+    print("1. 로그인")
+    print("2. 취소")
+    while True:
+        try:
+            answer = input("> ").strip().lstrip("\ufeff").lower()
+        except (EOFError, KeyboardInterrupt):
+            raise
+        if answer in {"", "1", "login", "signin", "sign in", "로그인"}:
+            return True
+        if answer in {"2", "cancel", "취소", "no", "n"}:
+            print("로그인을 건너뛰고 셸로 들어갈게.")
+            return False
+        print("1 또는 2 를 입력해 줘.")
+
+
+def _build_shell_auth_args(shell_args) -> argparse.Namespace:
+    auth_args = argparse.Namespace(**vars(shell_args))
+    auth_args.command = "onboard-openai"
+    auth_args.redirect_uri = None
+    auth_args.state = None
+    auth_args.force_oauth = True
+    auth_args.yes = True
+    auth_args.no_open_browser = False
+    auth_args.no_wait = False
+    auth_args.wait_seconds = 120.0
+    auth_args.poll_interval = 2.0
+    auth_args.no_run_check = True
+    auth_args.check_prompt = DEFAULT_MODEL_CHECK_PROMPT
+    return auth_args
+
+
+def _run_shell_auth(args, settings: Settings, client) -> int:
+    return _handle_openai_onboarding(_build_shell_auth_args(args), settings, client)
+
+
+def _offer_login_before_shell(args, settings: Settings, client, provider_state: dict | None) -> dict | None:
+    if provider_state and provider_state.get("connected"):
+        return provider_state
+    if not _choose_initial_login():
+        return provider_state
+
+    exit_code = _run_shell_auth(args, settings, client)
+    if exit_code == 130:
+        raise KeyboardInterrupt
+    if exit_code != 0:
+        print("\n로그인이 완료되지 않았어. 연결 없이 셸로 들어갈게.")
+    return _fetch_openai_provider_state(client, settings) or provider_state
+
+
 def _run_prompt_task_with_fresh_transport(args, settings: Settings, prompt: str):
     with _build_transport(args) as prompt_client:
         return _run_prompt_task(prompt_client, settings, prompt)
@@ -315,19 +378,7 @@ def _handle_shell_slash_command(raw: str, shell_args, settings: Settings, client
             if not _confirm_yes_no("재연결할까요?", default=False):
                 print("재연결을 취소했어. 입력창으로 돌아갈게.")
                 return True
-        auth_args = argparse.Namespace(**vars(shell_args))
-        auth_args.command = "onboard-openai"
-        auth_args.redirect_uri = None
-        auth_args.state = None
-        auth_args.force_oauth = True
-        auth_args.yes = True
-        auth_args.no_open_browser = False
-        auth_args.no_wait = False
-        auth_args.wait_seconds = 120.0
-        auth_args.poll_interval = 2.0
-        auth_args.no_run_check = True
-        auth_args.check_prompt = DEFAULT_MODEL_CHECK_PROMPT
-        _handle_openai_onboarding(auth_args, settings, client)
+        _run_shell_auth(shell_args, settings, client)
         return True
     if command in {"/refresh"}:
         response = client.request("POST", _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}/refresh"))
@@ -345,7 +396,13 @@ def _handle_shell_slash_command(raw: str, shell_args, settings: Settings, client
 
 def _run_shell(args, settings: Settings, parser: argparse.ArgumentParser) -> int:
     with _build_transport(args) as client:
-        _print_shell_banner(settings)
+        provider_state = _fetch_openai_provider_state(client, settings)
+        try:
+            provider_state = _offer_login_before_shell(args, settings, client, provider_state)
+        except (EOFError, KeyboardInterrupt):
+            print("\n셸을 종료할게.")
+            return 0
+        _print_shell_banner(settings, provider_state)
         session = _create_shell_prompt_session(getattr(args, "prompt", "> "))
         while True:
             try:
@@ -354,7 +411,7 @@ def _run_shell(args, settings: Settings, parser: argparse.ArgumentParser) -> int
                 print("\n셸을 종료할게.")
                 return 0
 
-            line = raw.strip()
+            line = raw.strip().lstrip("\ufeff")
             if not line:
                 continue
             if line.startswith("/"):
@@ -465,20 +522,27 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
     try:
         if listener is not None:
             print("\nWaiting for authentication...")
-            callback_result = listener.wait(args.wait_seconds)
+            callback_result = listener.wait(args.wait_seconds, poll_interval=0.2)
+    except KeyboardInterrupt:
+        print("\n로그인을 취소하고 종료할게.")
+        return 130
     finally:
         if listener is not None:
             listener.close()
 
     if uses_service_callback:
         print("\nWaiting for authentication...")
-        provider_state = _wait_for_provider_connection(
-            client,
-            settings,
-            OPENAI_PROVIDER_NAME,
-            wait_seconds=args.wait_seconds,
-            poll_interval=args.poll_interval,
-        )
+        try:
+            provider_state = _wait_for_provider_connection(
+                client,
+                settings,
+                OPENAI_PROVIDER_NAME,
+                wait_seconds=args.wait_seconds,
+                poll_interval=min(args.poll_interval, 0.2),
+            )
+        except KeyboardInterrupt:
+            print("\n로그인을 취소하고 종료할게.")
+            return 130
         if provider_state is None:
             print("\n아직 연결 완료를 확인하지 못했어. 브라우저 로그인 완료 후 다시 status 로 확인해 줘.")
             return 1
@@ -598,7 +662,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
         args.command = "shell"
-        args.prompt = "> "
+        args.prompt = "› "
 
     if args.command in {"help", "/help"}:
         command_parsers: dict[str, argparse.ArgumentParser] = getattr(parser, COMMAND_PARSERS_ATTR, {})
