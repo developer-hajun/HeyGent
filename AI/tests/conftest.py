@@ -8,6 +8,11 @@ from fastapi.testclient import TestClient
 from app.domain.tasks.models import StepRun, TaskRun
 
 
+@pytest.fixture(autouse=True)
+def isolate_openai_auth_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HEYGENT_OPENAI_AUTH_FILE", str(tmp_path / "missing-auth.json"))
+
+
 @pytest.fixture()
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     db_path = tmp_path / "test.db"

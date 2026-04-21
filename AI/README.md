@@ -57,16 +57,21 @@ py -3.11 -m pip install -e .[dev]
 copy .env.example .env
 ```
 
-우선 아래 값부터 채우면 됩니다.
+기본 사용자 흐름은 `.env` 에서 로컬 인증 파일 경로만 준비하고 `onboard-openai` 를 실행하는 것입니다.
+브라우저 OAuth 앱 설정은 로컬 로그인 재사용이 안 될 때만 필요합니다.
 
 - `HEYGENT_HOST`
 - `HEYGENT_PORT`
 - `HEYGENT_API_PREFIX`
 - `HEYGENT_AI_DB_PATH`
 - `HEYGENT_API_BASE_URL`
-- `HEYGENT_OPENAI_OAUTH_*`
+- `HEYGENT_OPENAI_AUTH_FILE`
 - `HEYGENT_OPENAI_API_BASE_URL`
 - `HEYGENT_OPENAI_RESPONSE_MODEL`
+
+브라우저 OAuth 를 직접 붙일 때만 추가로 아래를 채웁니다.
+
+- `HEYGENT_OPENAI_OAUTH_*`
 
 ### 3. 서버 실행
 
@@ -90,27 +95,28 @@ py -3.11 -m app.cli list-flows
 
 ---
 
-## OpenAI OAuth 온보딩
+## OpenAI 온보딩
 
-실무적으로는 아래 흐름으로 보면 됩니다.
+사용자 입장에서는 `onboard-openai` 하나만 기억하면 됩니다.
+CLI 는 아래 우선순위로 연결을 시도합니다.
 
 ```text
-.env 설정
-   ↓
-app.cli serve
-   ↓
 onboard-openai
    ↓
-브라우저 인가 / callback
+이 기기의 ChatGPT/Codex 로그인 확인
+   ↓
+있으면 즉시 연결
+   ↓
+없으면 브라우저 OAuth 연결
+   ↓
+그래도 안 되면 개발자 설정 문서 안내
    ↓
 list-providers
-   ↓
-provider-refresh (필요 시)
    ↓
 create-task --type model_generate_flow
 ```
 
-### 1. 원클릭 온보딩 실행
+### 1. 사용자용 원클릭 실행
 
 ```bash
 py -3.11 -m app.cli onboard-openai
@@ -118,20 +124,23 @@ py -3.11 -m app.cli onboard-openai
 
 이 명령은 아래를 한 번에 시도합니다.
 
-- 필요한 env 누락 확인
-- authorization URL 생성
-- 브라우저 자동 열기
-- callback 완료까지 대기
-- provider 연결 상태 확인
+- 로컬 ChatGPT/Codex 로그인 재사용 가능 여부 확인
+- 필요하면 브라우저 OAuth URL 생성
+- 연결 상태 확인
 - `model_generate_flow` 테스트 작업 실행
 
-즉 서버만 떠 있으면, 실무적으로는 거의 "CLI 딸깍" 에 가깝게 OpenAI 모델 연결과 기본 검증까지 이어집니다.
+즉 기본 경로는 사용자가 OAuth 앱 세부값을 몰라도 되게 하는 것입니다.
+브라우저 OAuth 앱 설정이 정말 필요할 때만 `configuration_required` 와 개발자 설정 문서를 보여줍니다.
 
-### 2. 브라우저에서 인가
+### 2. 로컬 로그인 재사용
 
-기본값으로 CLI 가 브라우저를 자동으로 열어 줍니다.
+기본값으로 `HEYGENT_OPENAI_AUTH_FILE` 또는 `~/.codex/auth.json` 을 읽습니다.
+이 파일에 유효한 ChatGPT/Codex access token 이 있으면 브라우저 없이 바로 연결합니다.
+
+### 3. 브라우저 OAuth 연결
+
+로컬 로그인 재사용이 안 되는데 `HEYGENT_OPENAI_OAUTH_*` 값이 준비되어 있으면 CLI 가 브라우저를 열어 줍니다.
 자동으로 안 열리면 출력된 `authorization_url` 을 직접 열면 됩니다.
-로그인과 인가가 끝나면 서버의 callback 주소로 돌아옵니다.
 
 기본 callback 예시:
 
@@ -139,40 +148,26 @@ py -3.11 -m app.cli onboard-openai
 http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback
 ```
 
-브라우저 callback 성공 시 한국어 완료 페이지가 뜹니다.
-
-### 3. 연결 확인
-
-기본 온보딩 명령은 callback 완료까지 기다린 뒤 상태를 다시 확인합니다.
-수동으로 다시 보고 싶으면 아래 명령을 쓰면 됩니다.
+### 4. 연결 확인과 갱신
 
 ```bash
 py -3.11 -m app.cli list-providers
-```
-
-여기서 아래 상태를 봅니다.
-
-- `configured`: env 가 채워졌는가
-- `connected`: token 이 저장되어 실제 호출이 가능한가
-- `expires_at`: 만료 예정 시각
-
-### 4. 만료 시 갱신 또는 재연결
-
-```bash
 py -3.11 -m app.cli provider-refresh --provider openai_oauth
 py -3.11 -m app.cli provider-disconnect --provider openai_oauth
-py -3.11 -m app.cli onboard-openai
 ```
 
-- `provider-refresh` : 저장된 refresh token 으로 access token 재발급 시도
-- `provider-disconnect` : 저장된 token 과 남은 OAuth state 제거
-- `onboard-openai` : 완전히 다시 연결 시작
+- `configured`: 바로 연결을 시작할 준비가 되었는가
+- `connected`: 실제 호출 가능한 token 이 저장되었는가
+- `provider-refresh`: refresh token 또는 로컬 로그인 정보를 다시 읽어 갱신 시도
+- `provider-disconnect`: 저장된 token 과 남은 OAuth state 제거
 
 ### 5. 실제 모델 작업 확인
 
 ```bash
-py -3.11 -m app.cli create-task --type model_generate_flow --payload '{"prompt":"안녕하세요. 연결 상태를 짧게 알려줘"}'
+py -3.11 -m app.cli create-task --type model_generate_flow --payload payloads/openai-check.json
 ```
+
+개발자 설정이 필요한 경우는 `tmp/openai-onboarding-dev.md` 를 보면 됩니다.
 
 또는 provider API 자체를 호출해도 됩니다.
 

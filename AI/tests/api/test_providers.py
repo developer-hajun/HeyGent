@@ -1,4 +1,6 @@
+import base64
 import httpx
+import json
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -17,6 +19,14 @@ class DummyHTTPResponse:
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise httpx.HTTPStatusError("error", request=self.request, response=httpx.Response(self.status_code, request=self.request, text=self.text))
+
+
+def _make_test_access_token() -> str:
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).decode().rstrip("=")
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"exp": 4102444800, "scp": ["model.generate"], "https://api.openai.com/auth": {"chatgpt_account_id": "acct_test"}}).encode()
+    ).decode().rstrip("=")
+    return f"{header}.{payload}.sig"
 
 
 def test_list_providers(client):
@@ -43,6 +53,35 @@ def test_provider_auth_start_returns_missing_env(client):
     body = response.json()
     assert body["status"] == "configuration_required"
     assert "HEYGENT_OPENAI_OAUTH_CLIENT_SECRET" in body["missing_env"]
+
+
+def test_provider_auth_start_imports_local_chatgpt_login(monkeypatch, tmp_path):
+    db_path = tmp_path / "provider-local-auth.db"
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": _make_test_access_token(),
+                    "refresh_token": "refresh-123",
+                    "account_id": "acct_test",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+    monkeypatch.setenv("HEYGENT_OPENAI_AUTH_FILE", str(auth_path))
+
+    with TestClient(app) as local_client:
+        auth_response = local_client.post("/api/v1/providers/openai_oauth/auth", json={})
+        provider_response = local_client.get("/api/v1/providers/openai_oauth")
+
+    assert auth_response.status_code == 200
+    assert auth_response.json()["status"] == "connected"
+    assert provider_response.json()["configured"] is True
+    assert provider_response.json()["connected"] is True
 
 
 def test_provider_callback_connects_provider(monkeypatch, tmp_path):

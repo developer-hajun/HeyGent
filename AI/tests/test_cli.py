@@ -1,6 +1,8 @@
+import base64
+import json
 from collections import deque
 
-from app.cli import build_parser, main
+from app.cli import RemoteCLIClient, build_parser, main
 from app.core.config import get_settings
 
 
@@ -27,6 +29,27 @@ class FakeRemoteClient:
         if not self.responses:
             raise AssertionError(f"unexpected request: {method} {path}")
         return self.responses.popleft()
+
+
+def _make_test_access_token() -> str:
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).decode().rstrip("=")
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"exp": 4102444800, "scp": ["model.generate"], "https://api.openai.com/auth": {"chatgpt_account_id": "acct_test"}}).encode()
+    ).decode().rstrip("=")
+    return f"{header}.{payload}.sig"
+
+
+def test_remote_client_does_not_duplicate_api_prefix():
+    client = RemoteCLIClient(base_url="http://127.0.0.1:8000/api/v1", timeout_seconds=10)
+
+    assert client._normalize_request_path("/api/v1/providers/openai_oauth/auth") == "/providers/openai_oauth/auth"
+    assert client._normalize_request_path("/api/v1/ready") == "/ready"
+
+
+def test_remote_client_keeps_origin_base_url_paths():
+    client = RemoteCLIClient(base_url="http://127.0.0.1:8000", timeout_seconds=10)
+
+    assert client._normalize_request_path("/api/v1/providers/openai_oauth/auth") == "/api/v1/providers/openai_oauth/auth"
 
 
 def test_cli_create_task_local(monkeypatch, tmp_path, capsys):
@@ -101,15 +124,31 @@ def test_cli_provider_auth_local(monkeypatch, tmp_path, capsys):
 
 def test_cli_openai_onboarding_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-onboard.db"
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": _make_test_access_token(),
+                    "refresh_token": "refresh-test",
+                    "account_id": "acct_test",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+    monkeypatch.setenv("HEYGENT_OPENAI_AUTH_FILE", str(auth_path))
 
-    exit_code = main(["--mode", "local", "onboard-openai"])
+    exit_code = main(["--mode", "local", "onboard-openai", "--no-run-check"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
     assert "[HeyGent CLI] OpenAI 연결 온보딩" in captured
     assert "흐름도" in captured
-    assert "local 모드에서는 브라우저 callback 자동 완료까지는 지원하지 않습니다" in captured
+    assert "브라우저 없이 바로 연결 상태를 확보했어" in captured
+    assert '"status": "connected"' in captured or '"status": "already_connected"' in captured
 
 
 def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import time
 from typing import Any
+from urllib.parse import urlsplit
 import webbrowser
 
 import httpx
@@ -55,6 +56,7 @@ class RemoteCLIClient:
     def __init__(self, *, base_url: str, timeout_seconds: float) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
+        self._base_path = urlsplit(self.base_url).path.rstrip("/")
         self._client: httpx.Client | None = None
 
     def __enter__(self):
@@ -67,7 +69,22 @@ class RemoteCLIClient:
 
     def request(self, method: str, path: str, *, json_body: dict[str, Any] | None = None) -> httpx.Response:
         assert self._client is not None
-        return self._client.request(method, path, json=json_body)
+        return self._client.request(method, self._normalize_request_path(path), json=json_body)
+
+    def _normalize_request_path(self, path: str) -> str:
+        """Avoid duplicating an API prefix already present in base_url.
+
+        httpx joins base_url paths with request paths. If base_url is
+        http://host/api/v1 and the request path is /api/v1/ready, the final URL
+        becomes /api/v1/api/v1/ready unless we make the request path relative to
+        the configured base path.
+        """
+
+        if self._base_path and path == self._base_path:
+            return "/"
+        if self._base_path and path.startswith(f"{self._base_path}/"):
+            return path[len(self._base_path) :]
+        return path
 
 
 class LocalCLIClient:
@@ -159,8 +176,8 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
 
     onboard_parser = subparsers.add_parser(
         "onboard-openai",
-        help="OpenAI OAuth 연결을 한국어 안내와 함께 시작합니다",
-        description="브라우저 자동 열기, 연결 완료 대기, 연결 후 모델 테스트까지 한 번에 수행할 수 있습니다.",
+        help="사용자 기준으로 OpenAI 연결을 가장 쉬운 경로부터 자동 시도합니다",
+        description="로컬 ChatGPT/Codex 로그인 재사용, 브라우저 OAuth, 연결 후 모델 테스트까지 한 번에 수행할 수 있습니다.",
     )
     onboard_parser.add_argument("--redirect-uri", default=None, help="요청 시점에 redirect URI 를 덮어쓸 수 있습니다")
     onboard_parser.add_argument("--state", default=None, help="직접 관리할 OAuth state 값")
@@ -282,24 +299,19 @@ def _print_response(command: str, response_json: Any) -> None:
 
 def _print_openai_onboarding(response_json: dict[str, Any], base_url: str) -> None:
     print("\n[HeyGent CLI] OpenAI 연결 온보딩\n")
-    print("1) .env 에 OpenAI OAuth 값을 채웁니다")
-    print("2) py -3.11 -m app.cli serve 로 서버를 실행합니다")
-    print("3) 브라우저가 자동으로 열리고 OpenAI 로그인/인가를 진행합니다")
-    print("4) callback 이 /providers/openai_oauth/callback 으로 돌아오면 연결이 저장됩니다")
-    print("5) CLI 가 연결 완료까지 기다렸다가 바로 상태와 모델 작업을 확인합니다")
-    print("6) 만료되면 provider-refresh, 완전히 다시 하려면 provider-disconnect 후 onboard-openai 를 사용합니다\n")
+    print("사용자 기준으로 가장 쉬운 연결 경로부터 바로 시도합니다.")
+    print("1) 이 기기의 기존 ChatGPT/Codex 로그인 정보가 있으면 바로 연결")
+    print("2) 없으면 브라우저 OpenAI OAuth 연결 진행")
+    print("3) 둘 다 준비되지 않았으면 개발자 설정 문서를 안내")
+    print("4) 연결되면 바로 상태와 모델 작업까지 확인\n")
     print("흐름도")
-    print("  .env 설정")
-    print("      ↓")
-    print("  app.cli serve")
-    print("      ↓")
     print("  onboard-openai")
     print("      ↓")
-    print("  브라우저 자동 오픈")
+    print("  로컬 로그인 확인")
     print("      ↓")
-    print("  callback 완료 대기")
+    print("  있으면 즉시 연결 / 없으면 브라우저 연결")
     print("      ↓")
-    print("  list-providers")
+    print("  연결 상태 확인")
     print("      ↓")
     print("  model_generate_flow 테스트\n")
     print("응답 요약")
@@ -311,7 +323,11 @@ def _print_openai_onboarding(response_json: dict[str, Any], base_url: str) -> No
         print("- 연결 확인: py -3.11 -m app.cli list-providers")
         print("- 갱신: py -3.11 -m app.cli provider-refresh --provider openai_oauth")
         print("- 연결 해제: py -3.11 -m app.cli provider-disconnect --provider openai_oauth")
-        print("- 모델 작업 확인: py -3.11 -m app.cli create-task --type model_generate_flow --payload '{\"prompt\":\"안녕하세요\"}'")
+        print("- 모델 작업 확인: py -3.11 -m app.cli create-task --type model_generate_flow --payload payloads/openai-check.json")
+    elif response_json.get("status") == "configuration_required":
+        print("\n개발자 설정이 먼저 필요합니다")
+        print("- 문서: tmp/openai-onboarding-dev.md")
+        print("- 설정 후 다시: py -3.11 -m app.cli onboard-openai")
 
 
 def _build_transport(args) -> RemoteCLIClient | LocalCLIClient:
@@ -323,6 +339,12 @@ def _build_transport(args) -> RemoteCLIClient | LocalCLIClient:
 def _request_path(settings: Settings, suffix: str) -> str:
     normalized_prefix = "/" + settings.api_prefix.strip("/")
     return f"{normalized_prefix}{suffix}"
+
+
+def _response_url(response: Any) -> str | None:
+    request = getattr(response, "request", None)
+    url = getattr(request, "url", None)
+    return str(url) if url is not None else None
 
 
 def _open_browser(url: str) -> bool:
@@ -371,13 +393,43 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
 
     if not response.is_success:
         print("\nOpenAI 온보딩 시작 요청이 실패했습니다.")
+        if request_url := _response_url(response):
+            print(f"- 요청 URL: {request_url}")
+        print(f"- CLI base-url: {args.base_url}")
+        print(f"- API prefix: {settings.api_prefix}")
+        if getattr(response, "status_code", None) == 404:
+            print("- 404이면 서버 주소, API prefix 중복, 실행 중인 서버 프로세스를 확인해 주세요.")
         return 1
+
+    status = response_json.get("status")
+    if status in {"connected", "already_connected"}:
+        print("\n브라우저 없이 바로 연결 상태를 확보했어.")
+        provider_state = client.request("GET", _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}")).json()
+        _print_response("list-providers", [provider_state])
+        if args.no_run_check:
+            return 0
+        print("\n이제 바로 모델 작업 테스트를 실행할게.")
+        try:
+            task_response = _run_model_check_task(client, settings, args.check_prompt)
+            _print_response("create-task", task_response.json())
+            if task_response.is_success:
+                print("\n딸깍 온보딩 완료. 이제 같은 CLI로 모델 작업을 바로 계속 돌리면 돼.")
+                return 0
+            print("\n연결은 잡혔지만 테스트 작업은 실패했어. 응답을 보고 확인해 줘.")
+            return 1
+        except Exception as error:
+            print(f"\n연결 정보는 저장했지만 라이브 모델 테스트에서 오류가 났어: {error}")
+            print("- 연결 상태 확인: py -3.11 -m app.cli list-providers")
+            print("- 필요하면 다시 연결: py -3.11 -m app.cli provider-disconnect --provider openai_oauth")
+            return 1
+
+    if status != "authorization_required" or not response_json.get("authorization_url"):
+        if args.mode == "local":
+            print("\nlocal 모드에서는 브라우저 callback 자동 완료까지는 지원하지 않습니다. 필요하면 remote 서버 모드에서 브라우저 연결을 진행해 주세요.")
+        return 0
 
     if args.mode == "local":
         print("\nlocal 모드에서는 브라우저 callback 자동 완료까지는 지원하지 않습니다. remote 서버 모드에서 사용해 주세요.")
-        return 0
-
-    if response_json.get("status") != "authorization_required" or not response_json.get("authorization_url"):
         return 0
 
     if not args.no_open_browser:
@@ -414,14 +466,19 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
         return 0
 
     print("\n이제 바로 모델 작업 테스트를 실행할게.")
-    task_response = _run_model_check_task(client, settings, args.check_prompt)
-    _print_response("create-task", task_response.json())
-    if task_response.is_success:
-        print("\n딸깍 온보딩 완료. 이제 같은 CLI로 모델 작업을 바로 계속 돌리면 돼.")
-        return 0
-
-    print("\n연결은 완료됐지만 테스트 작업은 실패했어. 응답을 보고 확인해 줘.")
-    return 1
+    try:
+        task_response = _run_model_check_task(client, settings, args.check_prompt)
+        _print_response("create-task", task_response.json())
+        if task_response.is_success:
+            print("\n딸깍 온보딩 완료. 이제 같은 CLI로 모델 작업을 바로 계속 돌리면 돼.")
+            return 0
+        print("\n연결은 완료됐지만 테스트 작업은 실패했어. 응답을 보고 확인해 줘.")
+        return 1
+    except Exception as error:
+        print(f"\n연결은 완료됐지만 라이브 모델 테스트에서 오류가 났어: {error}")
+        print("- 연결 상태 확인: py -3.11 -m app.cli list-providers")
+        print("- 필요하면 다시 연결: py -3.11 -m app.cli provider-disconnect --provider openai_oauth")
+        return 1
 
 
 def _handle_remote_command(args, settings: Settings) -> int:
@@ -478,6 +535,8 @@ def _handle_remote_command(args, settings: Settings) -> int:
         return 0
 
     print("\n요청은 처리됐지만 성공 응답은 아니었습니다. 위 내용을 확인해 주세요.")
+    if request_url := _response_url(response):
+        print(f"- 요청 URL: {request_url}")
     return 1
 
 

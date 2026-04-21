@@ -1,4 +1,6 @@
+import base64
 import httpx
+import json
 
 from app.core.config import Settings
 from app.domain.providers.openai_oauth import OpenAIOAuthProvider
@@ -21,6 +23,14 @@ class DummyHTTPResponse:
             raise httpx.HTTPStatusError("error", request=self.request, response=httpx.Response(self.status_code, request=self.request, text=self.text))
 
 
+def _make_test_access_token() -> str:
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).decode().rstrip("=")
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"exp": 4102444800, "scp": ["model.generate"], "https://api.openai.com/auth": {"chatgpt_account_id": "acct_test"}}).encode()
+    ).decode().rstrip("=")
+    return f"{header}.{payload}.sig"
+
+
 def test_openai_provider_health_and_stub_generate(tmp_path):
     repository = SQLiteTaskRepository(tmp_path / "provider.db")
     provider = OpenAIOAuthProvider(Settings(), repository)
@@ -32,6 +42,52 @@ def test_openai_provider_health_and_stub_generate(tmp_path):
     assert health.healthy is True
     assert health.connected is False
     assert generated.output_text.startswith("[stub:openai_oauth]")
+
+
+def test_openai_provider_imports_local_codex_auth_and_generates_live(monkeypatch, tmp_path):
+    repository = SQLiteTaskRepository(tmp_path / "provider-codex.db")
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": _make_test_access_token(),
+                    "refresh_token": "refresh-token",
+                    "account_id": "acct_test",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(
+        openai_auth_file=auth_path,
+        openai_api_base_url="https://api.openai.test/v1",
+        openai_response_model="gpt-test",
+    )
+    provider = OpenAIOAuthProvider(settings, repository)
+
+    def fake_post(url, data=None, headers=None, timeout=None, json=None):
+        if url == f"{settings.openai_api_base_url}/responses":
+            return DummyHTTPResponse(
+                {
+                    "id": "resp_codex",
+                    "model": settings.openai_response_model,
+                    "output_text": "로컬 로그인 연결 응답",
+                    "usage": {"input_tokens": 3, "output_tokens": 3},
+                }
+            )
+        raise AssertionError(f"unexpected url: {url}")
+
+    monkeypatch.setattr("app.domain.providers.openai_oauth.httpx.post", fake_post)
+    auth = provider.start_auth()
+    generated = provider.generate("연결 확인")
+
+    assert auth.status == "connected"
+    assert provider.health().configured is True
+    assert provider.health().connected is True
+    assert generated.output_text == "로컬 로그인 연결 응답"
+    assert generated.metadata["mode"] == "live"
 
 
 def test_openai_provider_completes_auth_and_generates_live(monkeypatch, tmp_path):
