@@ -5,7 +5,12 @@ import os
 from typing import Sequence
 
 from app.cli.launcher.dependencies import ensure_cli_dependencies as _ensure_cli_dependencies, find_dependency_issues as _find_dependency_issues, install_project_dependencies as _install_project_dependencies
-from app.cli.launcher.server_process import ensure_local_server as _ensure_local_server, is_local_base_url as _is_local_base_url, server_ready as _server_ready
+from app.cli.launcher.server_process import (
+    ensure_local_server as _ensure_local_server,
+    is_local_base_url as _is_local_base_url,
+    read_pid_file as _read_pid_file,
+    server_ready as _server_ready,
+)
 from app.core.config import get_settings
 
 
@@ -23,7 +28,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="heygent",
         description="HeyGent launcher. Use 'heygent server' for the API and 'heygent cli' for the interactive shell.",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command", required=False)
 
     server_parser = subparsers.add_parser("server", help="API 서버를 실행합니다")
     server_parser.add_argument("--host", default=None, help="서버 bind host override")
@@ -36,6 +41,9 @@ def _build_parser() -> argparse.ArgumentParser:
     cli_parser.add_argument("--json", action="store_true", help="원본 JSON 출력 유지")
     cli_parser.add_argument("--no-auto-server", action="store_true", help="remote 모드에서 서버가 없을 때 자동 실행하지 않음")
     cli_parser.add_argument("--restart-server", action="store_true", help="로컬 서버를 다시 시작한 뒤 CLI 셸로 들어갑니다")
+    cli_parser.add_argument("--no-restart-server", action="store_true", help="기본 자동 재시작 없이 현재 떠 있는 로컬 서버를 그대로 사용합니다")
+
+    parser.set_defaults(command="cli")
 
     return parser
 
@@ -47,6 +55,20 @@ def _run_server(args) -> int:
     if args.port:
         os.environ["HEYGENT_PORT"] = str(args.port)
     return cli_main(forwarded)
+
+
+def _should_restart_managed_local_server(base_url: str) -> bool:
+    """launcher 가 직접 띄운 로컬 서버면 새 CLI 진입 시 다시 시작한다.
+
+    이렇게 하면 코드가 바뀐 뒤 `heygent` 를 다시 실행할 때
+    예전 프로세스를 계속 붙잡는 문제를 줄일 수 있다.
+    반대로 사용자가 별도로 띄운 서버까지 강제로 건드리지는 않는다.
+    """
+
+    managed = _read_pid_file()
+    if not managed:
+        return False
+    return str(managed.get("base_url") or "") == base_url
 
 
 def _run_cli(args) -> int:
@@ -65,8 +87,9 @@ def _run_cli(args) -> int:
     forwarded.extend(["--base-url", args.base_url, "--timeout", str(args.timeout)])
 
     if _is_local_base_url(args.base_url):
-        if args.restart_server:
-            print("[HeyGent] 로컬 서버를 다시 시작할게.")
+        should_restart = (args.restart_server or _should_restart_managed_local_server(args.base_url)) and not args.no_restart_server
+        if should_restart:
+            print("[HeyGent] 이전에 띄운 로컬 서버를 다시 시작할게.")
             if not _ensure_local_server(args.base_url, restart=True):
                 print("[HeyGent] 서버 재시작 후에도 준비 상태를 확인하지 못했어. 먼저 'heygent server' 를 직접 실행해 줘.")
                 return 1
@@ -83,7 +106,12 @@ def _run_cli(args) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    normalized_argv = list(argv or [])
+    if not normalized_argv:
+        normalized_argv = ["cli"]
+    elif normalized_argv[0] not in {"server", "cli"}:
+        normalized_argv = ["cli", *normalized_argv]
+    args = parser.parse_args(normalized_argv)
 
     if args.command == "server":
         return _run_server(args)
