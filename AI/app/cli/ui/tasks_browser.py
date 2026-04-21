@@ -766,12 +766,18 @@ def _handle_task_list_command(client, settings: Settings, state: TaskBrowserStat
             return
         return
 
-    # 본문에서는 위아래만 항목 이동, 좌우는 페이지 이동으로 분리한다.
+    # 본문에서는 위아래만 항목 이동, 마지막 항목 아래에서는 footer 로 내려간다.
     if command == "up":
         state.selected_index -= 1
         _clamp_selected_index(state)
         return
     if command == "down":
+        items = state.list_payload.get("items") or []
+        if items and state.selected_index >= len(items) - 1:
+            state.focus_area = "footer"
+            state.footer_index = 0
+            _clamp_footer_index(state)
+            return
         state.selected_index += 1
         _clamp_selected_index(state)
         return
@@ -830,12 +836,17 @@ def _handle_task_detail_command(client, settings: Settings, state: TaskBrowserSt
             return
         return
 
-    # detail body 는 수직 리스트다. 좌우는 아무것도 하지 않는다.
+    # detail body 는 수직 리스트다. 마지막 step 아래에서는 footer 로 내려간다.
     if command == "up":
         state.selected_step_index -= 1
         _clamp_selected_step_index(state)
         return
     if command == "down":
+        if state.detail_steps and state.selected_step_index >= len(state.detail_steps) - 1:
+            state.focus_area = "footer"
+            state.footer_index = 0
+            _clamp_footer_index(state)
+            return
         state.selected_step_index += 1
         _clamp_selected_step_index(state)
         return

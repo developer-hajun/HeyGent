@@ -429,6 +429,42 @@ def test_tasks_browser_detail_body_left_right_do_not_move_step(monkeypatch):
     assert state.selected_step_index == 1
 
 
+def test_tasks_browser_down_from_last_task_moves_to_footer():
+    state = TASK_BROWSER_UI.TaskBrowserState(
+        list_payload={
+            "items": [
+                {"task_run_id": "task_1", "task_type": "stub.echo", "status": "COMPLETED", "title": "작업 1", "step_count": 1},
+                {"task_run_id": "task_2", "task_type": "stub.echo", "status": "COMPLETED", "title": "작업 2", "step_count": 1},
+            ]
+        },
+        selected_index=1,
+        focus_area="body",
+    )
+
+    TASK_BROWSER_UI._handle_task_list_command(None, get_settings(), state, "down")
+
+    assert state.focus_area == "footer"
+    assert state.footer_index == 0
+
+
+def test_tasks_browser_down_from_last_step_moves_to_footer():
+    state = TASK_BROWSER_UI.TaskBrowserState(
+        depth="task_detail",
+        detail_task={"title": "승인 대기 태스크"},
+        detail_steps=[
+            {"step_run_id": "step_1", "step_type": "approval.plan", "title": "승인 조건 정리", "status": "COMPLETED"},
+            {"step_run_id": "step_2", "step_type": "approval.wait", "title": "사용자 승인 대기", "status": "WAITING"},
+        ],
+        selected_step_index=1,
+        focus_area="body",
+    )
+
+    TASK_BROWSER_UI._handle_task_detail_command(None, get_settings(), state, "down")
+
+    assert state.focus_area == "footer"
+    assert state.footer_index == 0
+
+
 def test_tasks_browser_list_viewport_follows_selected_row(monkeypatch):
     monkeypatch.setattr(TASK_BROWSER_UI.sys.stdout, "isatty", lambda: False)
     monkeypatch.setattr(TASK_BROWSER_UI.shutil, "get_terminal_size", lambda fallback=(120, 30): os.terminal_size((120, 20)))
