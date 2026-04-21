@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import queue
 import shlex
+import sys
 import time
 from typing import Any
 import threading
@@ -17,6 +18,20 @@ try:
 except ImportError:  # pragma: no cover
     msvcrt = None
 
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.patch_stdout import patch_stdout
+    from prompt_toolkit.shortcuts.prompt import CompleteStyle
+except ImportError:  # pragma: no cover
+    PromptSession = None
+    Completer = object  # type: ignore[assignment]
+    Completion = None  # type: ignore[assignment]
+    KeyBindings = None  # type: ignore[assignment]
+    patch_stdout = None  # type: ignore[assignment]
+    CompleteStyle = None  # type: ignore[assignment]
+
 import httpx
 import uvicorn
 from fastapi.testclient import TestClient
@@ -28,6 +43,15 @@ from app.main import app
 COMMAND_PARSERS_ATTR = "_command_parsers"
 OPENAI_PROVIDER_NAME = "openai_oauth"
 DEFAULT_MODEL_CHECK_PROMPT = "안녕하세요. 지금 연결 상태와 사용 가능한 모델 작업 여부를 짧게 알려줘"
+SHELL_SLASH_COMMANDS: dict[str, str] = {
+    "/": "명령 목록 보기",
+    "/help": "도움말 보기",
+    "/status": "현재 연결 상태 보기",
+    "/auth": "OpenAI 연결 시작",
+    "/refresh": "토큰 갱신",
+    "/disconnect": "연결 해제",
+    "/exit": "셸 종료",
+}
 
 
 class KoreanArgumentParser(argparse.ArgumentParser):
@@ -117,6 +141,46 @@ class LocalCLIClient:
 
     def request(self, method: str, path: str, *, json_body: dict[str, Any] | None = None):
         return self._client.request(method, path, json=json_body)
+
+
+class _SlashCommandCompleter(Completer):
+    def get_completions(self, document, complete_event):  # pragma: no cover - exercised via prompt_toolkit runtime
+        text = document.text_before_cursor or ""
+        if not text.startswith("/"):
+            return
+        for command, description in SHELL_SLASH_COMMANDS.items():
+            if command.startswith(text):
+                yield Completion(command, start_position=-len(text), display=f"{command}  {description}")
+
+
+def _supports_prompt_toolkit() -> bool:
+    return bool(PromptSession and sys.stdin.isatty() and sys.stdout.isatty())
+
+
+def _create_shell_prompt_session(prompt_text: str):
+    if not _supports_prompt_toolkit():
+        return None
+    bindings = KeyBindings()
+
+    @bindings.add("c-space")
+    def _(event) -> None:  # pragma: no cover - interactive only
+        event.app.current_buffer.start_completion(select_first=False)
+
+    return PromptSession(
+        message=prompt_text,
+        completer=_SlashCommandCompleter(),
+        complete_while_typing=True,
+        complete_style=CompleteStyle.MULTI_COLUMN,
+        reserve_space_for_menu=8,
+        key_bindings=bindings,
+    )
+
+
+def _shell_read_input(prompt_text: str, session=None) -> str:
+    if session is not None and patch_stdout is not None:
+        with patch_stdout():
+            return session.prompt()
+    return input(prompt_text)
 
 
 def _load_payload(raw: str | None) -> dict[str, Any]:
@@ -623,18 +687,7 @@ def _print_shell_banner(settings: Settings) -> None:
 
 def _print_shell_command_list() -> None:
     print()
-    print(_render_box(
-        "Slash Commands",
-        [
-            ("/", "명령 목록 보기"),
-            ("/help", "도움말 보기"),
-            ("/status", "현재 연결 상태 보기"),
-            ("/auth", "OpenAI 연결 시작"),
-            ("/refresh", "토큰 갱신"),
-            ("/disconnect", "연결 해제"),
-            ("/exit", "셸 종료"),
-        ],
-    ))
+    print(_render_box("Slash Commands", list(SHELL_SLASH_COMMANDS.items())))
 
 
 def _run_prompt_task(client, settings: Settings, prompt: str):
@@ -790,9 +843,10 @@ def _handle_shell_slash_command(raw: str, shell_args, settings: Settings, client
 def _run_shell(args, settings: Settings, parser: argparse.ArgumentParser) -> int:
     with _build_transport(args) as client:
         _print_shell_banner(settings)
+        session = _create_shell_prompt_session(getattr(args, "prompt", "> "))
         while True:
             try:
-                raw = input(getattr(args, "prompt", "> "))
+                raw = _shell_read_input(getattr(args, "prompt", "> "), session=session)
             except (EOFError, KeyboardInterrupt):
                 print("\n셸을 종료할게.")
                 return 0

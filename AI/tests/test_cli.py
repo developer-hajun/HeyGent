@@ -3,7 +3,9 @@ import json
 import time
 from collections import deque
 
-from app.cli import RemoteCLIClient, build_parser, main
+from prompt_toolkit.document import Document
+
+from app.cli import RemoteCLIClient, _SlashCommandCompleter, build_parser, main
 from app.core.config import get_settings
 
 
@@ -45,6 +47,13 @@ def test_remote_client_does_not_duplicate_api_prefix():
 
     assert client._normalize_request_path("/api/v1/providers/openai_oauth/auth") == "/providers/openai_oauth/auth"
     assert client._normalize_request_path("/api/v1/ready") == "/ready"
+
+
+def test_slash_command_completer_matches_prefix():
+    completer = _SlashCommandCompleter()
+    completions = list(completer.get_completions(Document(text="/st", cursor_position=3), None))
+
+    assert any(item.text == "/status" for item in completions)
 
 
 def test_remote_client_keeps_origin_base_url_paths():
