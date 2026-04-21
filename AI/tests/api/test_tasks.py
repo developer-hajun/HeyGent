@@ -1,14 +1,14 @@
 def test_create_echo_task_and_read_back(client):
-    response = client.post("/tasks", json={"flow_name": "echo_flow", "input_payload": {"message": "hello"}})
+    response = client.post("/api/v1/tasks", json={"flow_name": "echo_flow", "input_payload": {"message": "hello"}})
     data = response.json()
 
     assert response.status_code == 200
     assert data["status"] == "COMPLETED"
     assert data["result_payload"]["echo"] == {"message": "hello"}
 
-    task_response = client.get(f"/tasks/{data['task_run_id']}")
-    steps_response = client.get(f"/tasks/{data['task_run_id']}/steps")
-    events_response = client.get(f"/tasks/{data['task_run_id']}/events")
+    task_response = client.get(f"/api/v1/tasks/{data['task_run_id']}")
+    steps_response = client.get(f"/api/v1/tasks/{data['task_run_id']}/steps")
+    events_response = client.get(f"/api/v1/tasks/{data['task_run_id']}/events")
 
     assert task_response.status_code == 200
     assert steps_response.status_code == 200
@@ -17,7 +17,7 @@ def test_create_echo_task_and_read_back(client):
 
 
 def test_approval_wait_and_resume(client):
-    create_response = client.post("/tasks", json={"flow_name": "approval_wait_flow", "input_payload": {"subject": "demo"}})
+    create_response = client.post("/api/v1/tasks", json={"flow_name": "approval_wait_flow", "input_payload": {"subject": "demo"}})
     task = create_response.json()
 
     assert create_response.status_code == 200
@@ -25,11 +25,11 @@ def test_approval_wait_and_resume(client):
     assert task["wait_payload"]["reason"] == "approval_required"
 
     resume_response = client.post(
-        f"/tasks/{task['task_run_id']}/resume",
+        f"/api/v1/tasks/{task['task_run_id']}/resume",
         json={"payload": {"approved": True, "comment": "go"}},
     )
     resumed = resume_response.json()
-    events_response = client.get(f"/tasks/{task['task_run_id']}/events")
+    events_response = client.get(f"/api/v1/tasks/{task['task_run_id']}/events")
 
     assert resume_response.status_code == 200
     assert resumed["status"] == "COMPLETED"

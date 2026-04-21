@@ -4,11 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.http.flows import router as flows_router
-from app.api.http.health import router as health_router
-from app.api.http.providers import router as providers_router
-from app.api.http.tasks import router as tasks_router
-from app.api.ws.gateway import router as ws_router
+from app.api.router import build_api_router
 from app.core.config import get_settings
 from app.core.logger import configure_logging
 from app.domain.approvals.queue import ApprovalQueue
@@ -26,9 +22,16 @@ from app.domain.providers.registry import ProviderRegistry
 from app.storage.sqlite import SQLiteTaskRepository
 
 
+router_settings = get_settings()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """앱 시작 시 백본 구성요소를 조립한다."""
+    """앱 시작 시 백본 구성요소를 조립한다.
+
+    라우터 prefix 는 import 시점에 고정하고,
+    실제 저장소 경로와 OAuth 설정값은 실행 시점에 다시 읽어 현재 환경을 반영한다.
+    """
 
     configure_logging()
     settings = get_settings()
@@ -53,9 +56,5 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="HeyGent AI Backbone", lifespan=lifespan)
-app.include_router(health_router)
-app.include_router(tasks_router)
-app.include_router(providers_router)
-app.include_router(flows_router)
-app.include_router(ws_router)
+app = FastAPI(title=router_settings.app_name, lifespan=lifespan)
+app.include_router(build_api_router(router_settings))
