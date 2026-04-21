@@ -1,6 +1,7 @@
 import base64
 import importlib
 import json
+import os
 import time
 from collections import deque
 
@@ -207,12 +208,13 @@ def test_tasks_browser_renders_task_step_and_step_detail_views(monkeypatch):
 
     assert "필터: 전체 / 진행중 / [대기] / 완료" in list_rendered
     assert "[<필터>]" not in list_rendered
+    assert "Task 목록 (1-1 / 1)" in list_rendered
     assert "› [1] 승인 대기 태스크 | WAITING | step 2개" in list_rendered
     assert "입력: 배포 전 승인해줘" in list_rendered
     assert "현재: 승인 응답을 기다리는 중" in list_rendered
     assert "Tasks > 승인 대기 태스크" in task_detail_rendered
     assert "TaskRun = 전체 작업 / StepRun = 한 단계 / detail_json = step 저장 실행 정보" in task_detail_rendered
-    assert "Step 목록" in task_detail_rendered
+    assert "Step 목록 (1-2 / 2)" in task_detail_rendered
     assert "[현재] 사용자 승인 대기 | WAITING" in task_detail_rendered
     assert "Tasks > 승인 대기 태스크 > 사용자 승인 대기" in step_detail_rendered
     assert "detail 해석" in step_detail_rendered
@@ -416,6 +418,68 @@ def test_tasks_browser_detail_body_left_right_do_not_move_step(monkeypatch):
 
     TASK_BROWSER_UI._handle_task_detail_command(None, get_settings(), state, "right")
     assert state.selected_step_index == 1
+
+
+def test_tasks_browser_list_viewport_follows_selected_row(monkeypatch):
+    monkeypatch.setattr(TASK_BROWSER_UI.sys.stdout, "isatty", lambda: False)
+    monkeypatch.setattr(TASK_BROWSER_UI.shutil, "get_terminal_size", lambda fallback=(120, 30): os.terminal_size((120, 20)))
+
+    items = []
+    for index in range(6):
+        items.append(
+            {
+                "task_run_id": f"task_{index}",
+                "task_type": "stub.echo",
+                "status": "COMPLETED",
+                "title": f"작업 {index}",
+                "input_summary": f"입력 {index}",
+                "step_count": 1,
+                "current_step": {"title": f"step {index}", "summary_message": f"진행 {index}"},
+            }
+        )
+
+    state = TASK_BROWSER_UI.TaskBrowserState(
+        list_payload={"items": items, "page": 1, "page_size": 8, "total_count": len(items)},
+        selected_index=5,
+    )
+
+    rendered = TASK_BROWSER_UI.render_tasks_browser_list(state)
+
+    assert "Task 목록 (6-6 / 6)" in rendered
+    assert "› [6] 작업 5 | COMPLETED | step 1개" in rendered
+    assert "… 위에 5개 더 있음" in rendered
+    assert "[1] 작업 0" not in rendered
+
+
+def test_tasks_browser_detail_viewport_follows_selected_step(monkeypatch):
+    monkeypatch.setattr(TASK_BROWSER_UI.sys.stdout, "isatty", lambda: False)
+    monkeypatch.setattr(TASK_BROWSER_UI.shutil, "get_terminal_size", lambda fallback=(120, 30): os.terminal_size((120, 18)))
+
+    steps = []
+    for index in range(8):
+        steps.append(
+            {
+                "step_run_id": f"step_{index}",
+                "step_type": "approval.wait",
+                "title": f"단계 {index}",
+                "status": "WAITING" if index == 7 else "COMPLETED",
+                "summary_message": f"요약 {index}",
+            }
+        )
+
+    state = TASK_BROWSER_UI.TaskBrowserState(
+        depth="task_detail",
+        detail_task={"title": "승인 대기 태스크"},
+        detail_steps=steps,
+        selected_step_index=7,
+    )
+
+    rendered = TASK_BROWSER_UI.render_task_detail(state)
+
+    assert "Step 목록 (8-8 / 8)" in rendered
+    assert "› [현재] 단계 7 | WAITING" in rendered
+    assert "… 위에 7개 더 있음" in rendered
+    assert "단계 0" not in rendered
 
 
 def test_initial_login_choice_uses_prompt_toolkit_choice(monkeypatch):

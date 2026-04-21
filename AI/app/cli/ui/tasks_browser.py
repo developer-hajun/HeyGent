@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import json
 import math
 import os
+import shutil
 import sys
 from typing import Any, Callable
 from urllib.parse import urlencode
@@ -379,6 +380,23 @@ def _render_step_preview_lines(state: TaskBrowserState) -> list[str]:
 
 
 
+def _terminal_height() -> int:
+    return max(16, shutil.get_terminal_size((120, 30)).lines)
+
+
+
+def _viewport_bounds(*, selected_index: int, total_items: int, item_height: int, reserved_lines: int) -> tuple[int, int]:
+    if total_items <= 0:
+        return (0, 0)
+
+    available_lines = max(1, _terminal_height() - reserved_lines)
+    visible_items = max(1, available_lines // item_height)
+    start = max(0, min(selected_index - (visible_items // 2), total_items - visible_items))
+    end = min(total_items, start + visible_items)
+    return (start, end)
+
+
+
 def render_tasks_browser_list(state: TaskBrowserState) -> str:
     payload = state.list_payload or {}
     items = payload.get("items") or []
@@ -387,27 +405,43 @@ def render_tasks_browser_list(state: TaskBrowserState) -> str:
     page_size = int(payload.get("page_size") or max(1, state.page_size))
     total_pages = max(1, math.ceil(total_count / page_size)) if total_count else 1
 
-    lines = [
+    footer_lines = [
+        "",
+        _render_footer_actions(state),
+        "조작: ↑↓ 목록 이동 / ←→ 페이지 이동 / Tab 액션 이동 / Enter 실행 / Esc 뒤로",
+    ]
+    header_lines = [
         "Tasks",
         f"필터: {_render_filter_tabs(state.status_filter)}",
         f"페이지: {page}/{total_pages}   총 {total_count}개",
         "",
         *_render_task_preview_lines(state),
         "",
-        "Task 목록",
     ]
 
+    lines = list(header_lines)
+
     if not items:
-        lines.append("표시할 작업이 없습니다.")
+        lines.extend(["Task 목록", "표시할 작업이 없습니다."])
     else:
-        for index, item in enumerate(items, start=1):
-            cursor_selected = index - 1 == state.selected_index
+        start, end = _viewport_bounds(
+            selected_index=state.selected_index,
+            total_items=len(items),
+            item_height=4,
+            reserved_lines=len(header_lines) + len(footer_lines) + 3,
+        )
+        lines.append(f"Task 목록 ({start + 1}-{end} / {len(items)})")
+        if start > 0:
+            lines.append(_style_line(f"… 위에 {start}개 더 있음", muted=True))
+        for index in range(start, end):
+            item = items[index]
+            cursor_selected = index == state.selected_index
             selected = cursor_selected and state.focus_area == "body"
             marker = "›" if cursor_selected else " "
             title = _friendly_task_title(item)
             status = str(item.get("status") or "-")
             step_count = int(item.get("step_count") or 0)
-            headline = f"{marker} [{index}] {title} | {status} | step {step_count}개"
+            headline = f"{marker} [{index + 1}] {title} | {status} | step {step_count}개"
             detail = f"    입력: {_task_input_summary(item)}"
             progress = f"    현재: {_current_step_summary(item)}"
             meta = f"    id: {item.get('task_run_id') or '-'} • updated: {_format_time(item.get('updated_at') or item.get('created_at'))}"
@@ -415,14 +449,10 @@ def render_tasks_browser_list(state: TaskBrowserState) -> str:
             lines.append(_style_line(detail, selected=selected, muted=not selected))
             lines.append(_style_line(progress, selected=selected, muted=not selected))
             lines.append(_style_line(meta, selected=selected, muted=not selected))
+        if end < len(items):
+            lines.append(_style_line(f"… 아래에 {len(items) - end}개 더 있음", muted=True))
 
-    lines.extend(
-        [
-            "",
-            _render_footer_actions(state),
-            "조작: ↑↓ 목록 이동 / ←→ 페이지 이동 / Tab 액션 이동 / Enter 실행 / Esc 뒤로",
-        ]
-    )
+    lines.extend(footer_lines)
     return render_plain_box(lines)
 
 
@@ -433,7 +463,12 @@ def render_task_detail(state: TaskBrowserState) -> str:
     current_step = _select_current_step(steps)
     current_step_id = current_step.get("step_run_id") if current_step else None
 
-    lines = [
+    footer_lines = [
+        "",
+        _render_footer_actions(state),
+        "조작: ↑↓ step 이동 / ←→ 액션 이동 / Tab 액션 이동 / Enter 실행 / Esc 뒤로",
+    ]
+    header_lines = [
         f"Tasks > {_friendly_task_title(task)}",
         f"상태: {task.get('status') or '-'}",
         f"입력: {_task_detail_input_summary(task)}",
@@ -443,18 +478,29 @@ def render_task_detail(state: TaskBrowserState) -> str:
         "",
         *_render_step_preview_lines(state),
         "",
-        "Step 목록",
     ]
 
+    lines = list(header_lines)
+
     if not steps:
-        lines.append("step 이 없습니다.")
+        lines.extend(["Step 목록", "step 이 없습니다."])
     else:
-        for index, step in enumerate(steps, start=1):
-            cursor_selected = index - 1 == state.selected_step_index
+        start, end = _viewport_bounds(
+            selected_index=state.selected_step_index,
+            total_items=len(steps),
+            item_height=2,
+            reserved_lines=len(header_lines) + len(footer_lines) + 3,
+        )
+        lines.append(f"Step 목록 ({start + 1}-{end} / {len(steps)})")
+        if start > 0:
+            lines.append(_style_line(f"… 위에 {start}개 더 있음", muted=True))
+        for index in range(start, end):
+            step = steps[index]
+            cursor_selected = index == state.selected_step_index
             selected = cursor_selected and state.focus_area == "body"
             active = step.get("step_run_id") == current_step_id
             marker = "›" if cursor_selected else " "
-            badge = "현재" if active else f"#{index}"
+            badge = "현재" if active else f"#{index + 1}"
             title = _friendly_step_title(step)
             summary = _friendly_summary(step.get("summary_message"), fallback_title=title)
             headline = f"{marker} [{badge}] {title} | {step.get('status') or '-'}"
@@ -467,14 +513,10 @@ def render_task_detail(state: TaskBrowserState) -> str:
                 detail += " (선택됨)"
             lines.append(_style_line(headline, selected=selected, accent=active and not selected))
             lines.append(_style_line(detail, selected=selected, muted=not selected and not active))
+        if end < len(steps):
+            lines.append(_style_line(f"… 아래에 {len(steps) - end}개 더 있음", muted=True))
 
-    lines.extend(
-        [
-            "",
-            _render_footer_actions(state),
-            "조작: ↑↓ step 이동 / ←→ 액션 이동 / Tab 액션 이동 / Enter 실행 / Esc 뒤로",
-        ]
-    )
+    lines.extend(footer_lines)
     return render_plain_box(lines)
 
 
