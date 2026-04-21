@@ -286,6 +286,7 @@ def test_cli_help_text_is_korean():
     help_text = parser.format_help()
 
     assert "한글 CLI" in help_text
+    assert "shell" in help_text
     assert "/help" in help_text
     assert "status" in help_text
     assert "serve" in help_text
@@ -293,6 +294,23 @@ def test_cli_help_text_is_korean():
     assert "provider-refresh" in help_text
     assert "provider-disconnect" in help_text
     assert "예시:" in help_text
+
+
+def test_cli_shell_default_mode(monkeypatch, tmp_path, capsys):
+    db_path = tmp_path / "cli-shell-default.db"
+    monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+    answers = iter(["/", "/status", "안녕", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    exit_code = main(["--mode", "local"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "HeyGent AI Shell" in captured
+    assert "Slash Commands" in captured
+    assert "[HeyGent CLI] 연결 상태" in captured
+    assert "Assistant" in captured
+    assert "셸을 종료할게." in captured
 
 
 def test_cli_slash_help(capsys):

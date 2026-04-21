@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 import queue
+import shlex
 import time
 from typing import Any
 import threading
@@ -39,8 +40,10 @@ class PrettyHelpFormatter(argparse.RawTextHelpFormatter):
 COMMAND_ALIASES = {
     "serve": "게이트웨이 실행",
     "health": "서버 상태 확인",
+    "shell": "대화형 셸",
     "status": "연결 상태",
     "/status": "연결 상태",
+    "/": "슬래시 명령 목록",
     "onboard-openai": "OpenAI 연결 온보딩",
     "provider-refresh": "프로바이더 연결 갱신",
     "provider-disconnect": "프로바이더 연결 해제",
@@ -127,6 +130,8 @@ def _build_examples() -> str:
     return (
         "예시:\n"
         "  python -m app.cli serve\n"
+        "  python -m app.cli\n"
+        "  python -m app.cli shell\n"
         "  python -m app.cli health\n"
         "  python -m app.cli status\n"
         "  python -m app.cli onboard-openai\n"
@@ -163,8 +168,16 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     )
     parser.add_argument("--timeout", type=float, default=10.0, help="remote HTTP 요청 타임아웃(초)")
     parser.add_argument("--json", action="store_true", help="사람용 카드 대신 원본 JSON 출력")
-    subparsers = parser.add_subparsers(dest="command", required=True, help="실행할 명령")
+    subparsers = parser.add_subparsers(dest="command", required=False, help="실행할 명령")
     command_parsers: dict[str, argparse.ArgumentParser] = {}
+
+    shell_parser = subparsers.add_parser(
+        "shell",
+        help="Codex 스타일 대화형 셸을 엽니다",
+        description="슬래시 명령과 일반 프롬프트를 함께 쓰는 대화형 CLI 셸입니다.",
+    )
+    shell_parser.add_argument("--prompt", default="> ", help="입력 프롬프트 문자열")
+    command_parsers["shell"] = shell_parser
 
     serve_parser = subparsers.add_parser(
         "serve",
@@ -590,6 +603,153 @@ def _build_task_input_payload(args) -> dict[str, Any]:
     return payload
 
 
+def _print_shell_banner(settings: Settings) -> None:
+    rows = [
+        ("model:", settings.openai_response_model),
+        ("directory:", str(Path.cwd())),
+        ("base-url:", settings.resolved_api_base_url()),
+    ]
+    print()
+    print(_render_box("HeyGent AI Shell", rows))
+    print()
+    print("Tip: / 로 명령 목록을 보고, 그냥 입력하면 바로 모델에게 보냅니다.")
+    print("Tip: /status 로 연결 상태를 보고, /help 로 전체 명령을 봅니다.")
+
+
+def _print_shell_command_list() -> None:
+    print()
+    print(_render_box(
+        "Slash Commands",
+        [
+            ("/", "명령 목록 보기"),
+            ("/help", "도움말 보기"),
+            ("/status", "현재 연결 상태 보기"),
+            ("/auth", "OpenAI 연결 시작"),
+            ("/refresh", "토큰 갱신"),
+            ("/disconnect", "연결 해제"),
+            ("/exit", "셸 종료"),
+        ],
+    ))
+
+
+def _run_prompt_task(client, settings: Settings, prompt: str):
+    return client.request(
+        "POST",
+        _request_path(settings, "/tasks"),
+        json_body={
+            "flow_name": "model_generate_flow",
+            "owner_key": "cli-user",
+            "input_payload": {"prompt": prompt},
+        },
+    )
+
+
+def _print_shell_task_result(task_payload: dict[str, Any], settings: Settings, *, as_json: bool = False) -> None:
+    if as_json:
+        _print_response("create-task", task_payload, settings, as_json=True)
+        return
+
+    result_payload = task_payload.get("result_payload") or {}
+    metadata = result_payload.get("metadata") or {}
+    text = result_payload.get("text") or result_payload.get("output_text") or ""
+    rows = [
+        ("status:", str(task_payload.get("status") or "-")),
+        ("provider:", str(result_payload.get("provider_name") or "-")),
+        ("model:", str(metadata.get("model") or settings.openai_response_model)),
+        ("mode:", str(metadata.get("mode") or "-")),
+    ]
+    print()
+    print(_render_box("Assistant", rows))
+    if text:
+        print(text)
+
+
+def _handle_shell_slash_command(raw: str, shell_args, settings: Settings, client, parser: argparse.ArgumentParser) -> bool:
+    try:
+        tokens = shlex.split(raw)
+    except ValueError as error:
+        print(f"입력 파싱에 실패했어: {error}")
+        return True
+
+    command = tokens[0]
+    if command == "/":
+        _print_shell_command_list()
+        return True
+    if command in {"/exit", "/quit"}:
+        print("셸을 종료할게.")
+        return False
+    if command in {"/help"}:
+        if len(tokens) > 1:
+            print()
+            print(f"[HeyGent CLI] {tokens[1]} 도움말\n")
+            command_parsers: dict[str, argparse.ArgumentParser] = getattr(parser, COMMAND_PARSERS_ATTR, {})
+            target = command_parsers.get(tokens[1])
+            if target is None:
+                print(f"알 수 없는 명령입니다: {tokens[1]}")
+            else:
+                print(target.format_help())
+        else:
+            _print_shell_command_list()
+        return True
+    if command in {"/status"}:
+        response = client.request("GET", _request_path(settings, "/providers"))
+        _print_response("status", response.json(), settings, as_json=shell_args.json)
+        return True
+    if command in {"/auth"}:
+        auth_args = argparse.Namespace(**vars(shell_args))
+        auth_args.command = "onboard-openai"
+        auth_args.redirect_uri = None
+        auth_args.state = None
+        auth_args.force_oauth = True
+        auth_args.yes = True
+        auth_args.no_open_browser = False
+        auth_args.no_wait = False
+        auth_args.wait_seconds = 120.0
+        auth_args.poll_interval = 2.0
+        auth_args.no_run_check = True
+        auth_args.check_prompt = DEFAULT_MODEL_CHECK_PROMPT
+        _handle_openai_onboarding(auth_args, settings, client)
+        return True
+    if command in {"/refresh"}:
+        response = client.request("POST", _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}/refresh"))
+        _print_response("provider-refresh", response.json(), settings, as_json=shell_args.json)
+        return True
+    if command in {"/disconnect"}:
+        response = client.request("POST", _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}/disconnect"))
+        _print_response("provider-disconnect", response.json(), settings, as_json=shell_args.json)
+        return True
+
+    print(f"알 수 없는 슬래시 명령이야: {command}")
+    print("/ 를 입력하면 목록을 보여줄게.")
+    return True
+
+
+def _run_shell(args, settings: Settings, parser: argparse.ArgumentParser) -> int:
+    with _build_transport(args) as client:
+        _print_shell_banner(settings)
+        while True:
+            try:
+                raw = input(getattr(args, "prompt", "> "))
+            except (EOFError, KeyboardInterrupt):
+                print("\n셸을 종료할게.")
+                return 0
+
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("/"):
+                should_continue = _handle_shell_slash_command(line, args, settings, client, parser)
+                if not should_continue:
+                    return 0
+                continue
+
+            response = _run_prompt_task(client, settings, line)
+            payload = response.json()
+            _print_shell_task_result(payload, settings, as_json=args.json)
+            if not response.is_success:
+                print("요청은 갔지만 실패했어. 연결 상태와 응답을 확인해 줘.")
+
+
 def _handle_openai_onboarding(args, settings: Settings, client) -> int:
     response = client.request(
         "POST",
@@ -801,6 +961,9 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     parser = build_parser(settings)
     args = parser.parse_args(argv)
+    if not getattr(args, "command", None):
+        args.command = "shell"
+        args.prompt = "> "
 
     if args.command in {"help", "/help"}:
         command_parsers: dict[str, argparse.ArgumentParser] = getattr(parser, COMMAND_PARSERS_ATTR, {})
@@ -834,6 +997,9 @@ def main(argv: list[str] | None = None) -> int:
             log_level=settings.log_level,
         )
         return 0
+
+    if args.command == "shell":
+        return _run_shell(args, settings, parser)
 
     return _handle_remote_command(args, settings)
 
