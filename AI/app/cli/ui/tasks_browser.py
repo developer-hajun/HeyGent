@@ -700,16 +700,22 @@ def _execute_footer_action(client, settings: Settings, state: TaskBrowserState) 
         if action.key == "filter":
             _cycle_filter(state)
             _load_list(client, settings, state)
+            state.focus_area = "footer"
+            state.footer_index = 0
             return
         if action.key == "prev":
             if state.list_payload.get("has_previous"):
                 state.page = max(1, state.page - 1)
                 _load_list(client, settings, state)
+                state.focus_area = "footer"
+                state.footer_index = 1
             return
         if action.key == "next":
             if state.list_payload.get("has_next"):
                 state.page += 1
                 _load_list(client, settings, state)
+                state.focus_area = "footer"
+                state.footer_index = 2
             return
         if action.key == "open":
             selected = _selected_task_item(state)
@@ -773,7 +779,12 @@ def _handle_task_list_command(client, settings: Settings, state: TaskBrowserStat
         return
     if command == "down":
         items = state.list_payload.get("items") or []
-        if items and state.selected_index >= len(items) - 1:
+        if not items:
+            state.focus_area = "footer"
+            state.footer_index = 0
+            _clamp_footer_index(state)
+            return
+        if state.selected_index >= len(items) - 1:
             state.focus_area = "footer"
             state.footer_index = 0
             _clamp_footer_index(state)

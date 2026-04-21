@@ -447,6 +447,52 @@ def test_tasks_browser_down_from_last_task_moves_to_footer():
     assert state.footer_index == 0
 
 
+def test_tasks_browser_down_with_empty_list_moves_to_footer():
+    state = TASK_BROWSER_UI.TaskBrowserState(
+        list_payload={"items": []},
+        focus_area="body",
+    )
+
+    TASK_BROWSER_UI._handle_task_list_command(None, get_settings(), state, "down")
+
+    assert state.focus_area == "footer"
+    assert state.footer_index == 0
+
+
+def test_tasks_browser_filter_keeps_footer_focus_after_reload():
+    class FakeClient:
+        def request(self, method, path):
+            class FakeResponse:
+                is_success = True
+                status_code = 200
+
+                def json(self):
+                    return {
+                        "items": [],
+                        "page": 1,
+                        "page_size": 8,
+                        "total_count": 0,
+                        "has_previous": False,
+                        "has_next": False,
+                        "status_filter": "RUNNING",
+                    }
+
+            return FakeResponse()
+
+    state = TASK_BROWSER_UI.TaskBrowserState(
+        focus_area="footer",
+        footer_index=0,
+        status_filter="ALL",
+        list_payload={"items": []},
+    )
+
+    TASK_BROWSER_UI._execute_footer_action(FakeClient(), get_settings(), state)
+
+    assert state.status_filter == "RUNNING"
+    assert state.focus_area == "footer"
+    assert state.footer_index == 0
+
+
 def test_tasks_browser_down_from_last_step_moves_to_footer():
     state = TASK_BROWSER_UI.TaskBrowserState(
         depth="task_detail",
