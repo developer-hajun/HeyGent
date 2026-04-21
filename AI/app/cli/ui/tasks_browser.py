@@ -66,9 +66,10 @@ SUMMARY_FALLBACKS = {
 _ACTIVE_STEP_STATUSES = {"PENDING", "RUNNING", "WAITING", "BLOCKED"}
 
 _ANSI_RESET = "\033[0m"
-_ANSI_SELECTED = "\033[97m"
+# shell slash menu 에서 보이는 파란 계열과 최대한 맞춘다.
+_ANSI_SELECTED = "\033[38;5;45m"
 _ANSI_MUTED = "\033[90m"
-_ANSI_ACCENT = "\033[96m"
+_ANSI_ACCENT = "\033[38;5;45m"
 
 
 @dataclass(slots=True)
@@ -341,10 +342,11 @@ def _render_filter_tabs(selected_filter: str) -> str:
 
 def _render_footer_actions(state: TaskBrowserState) -> str:
     segments: list[str] = []
+    footer_focused = state.focus_area == "footer"
     for index, action in enumerate(_footer_actions_for_depth(state.depth)):
-        selected = state.focus_area == "footer" and index == state.footer_index
+        selected = footer_focused and index == state.footer_index
         token = f"[{action.label}]" if selected else action.label
-        segments.append(_style_line(token, selected=selected, accent=selected))
+        segments.append(_style_line(token, selected=selected, muted=footer_focused and not selected))
     return " ".join(segments)
 
 

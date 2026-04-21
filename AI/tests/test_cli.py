@@ -132,6 +132,15 @@ def test_render_plain_box_ignores_ansi_width_for_alignment():
     assert len(widths) == 1
 
 
+def test_tasks_browser_selected_color_matches_shell_blue(monkeypatch):
+    monkeypatch.setattr(TASK_BROWSER_UI.sys.stdout, "isatty", lambda: True)
+
+    selected = TASK_BROWSER_UI._style_line("selected", selected=True)
+
+    assert "\033[38;5;45m" in selected
+    assert selected.endswith("\033[0m")
+
+
 def test_tasks_browser_renders_task_step_and_step_detail_views(monkeypatch):
     monkeypatch.setattr(TASK_BROWSER_UI.sys.stdout, "isatty", lambda: False)
     state = TASK_BROWSER_UI.TaskBrowserState(
