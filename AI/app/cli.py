@@ -427,13 +427,28 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     return parser
 
 
-def _render_box(title: str, rows: list[tuple[str, str]]) -> str:
-    content = [f"{label:<10} {value}" for label, value in rows]
-    width = max(len(title) + 2, *(len(line) for line in content))
+def _render_box(
+    title: str,
+    rows: list[tuple[str, str]],
+    *,
+    inner_padding: int = 1,
+    vertical_padding: int = 0,
+) -> str:
+    label_width = max((len(label) for label, _ in rows), default=0)
+    content = [f"{label.ljust(label_width)} {value}".rstrip() for label, value in rows]
+    horizontal = " " * max(1, inner_padding)
+    width = max(len(title) + 2, *(len(line) for line in content)) + (len(horizontal) * 2)
     top = f"┌─ {title} " + "─" * max(0, width - len(title) - 2) + "┐"
-    body = [f"│ {line.ljust(width)} │" for line in content]
+    empty = f"│{' ' * (width + 2)}│"
+    body = [f"│{horizontal}{line.ljust(width - (len(horizontal) * 2))}{horizontal}│" for line in content]
     bottom = "└" + "─" * (width + 2) + "┘"
-    return "\n".join([top, *body, bottom])
+    padded_body: list[str] = []
+    for _ in range(max(0, vertical_padding)):
+        padded_body.append(empty)
+    padded_body.extend(body)
+    for _ in range(max(0, vertical_padding)):
+        padded_body.append(empty)
+    return "\n".join([top, *padded_body, bottom])
 
 
 def _format_bool(value: bool) -> str:
@@ -706,12 +721,12 @@ def _build_task_input_payload(args) -> dict[str, Any]:
 
 def _print_shell_banner(settings: Settings) -> None:
     rows = [
-        ("model:", settings.openai_response_model),
-        ("directory:", str(Path.cwd())),
-        ("base-url:", settings.resolved_api_base_url()),
+        ("model", settings.openai_response_model),
+        ("directory", str(Path.cwd())),
+        ("base-url", settings.resolved_api_base_url()),
     ]
     print()
-    print(_render_box("HeyGent AI Shell", rows))
+    print(_render_box("HeyGent AI Shell", rows, inner_padding=2, vertical_padding=1))
     print()
     print("Tip: / 로 명령 목록을 보고, 그냥 입력하면 바로 모델에게 보냅니다.")
     print("Tip: /status 로 연결 상태를 보고, /help 로 전체 명령을 봅니다.")
