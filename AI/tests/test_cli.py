@@ -1,4 +1,5 @@
 import base64
+import importlib
 import json
 import time
 from collections import deque
@@ -7,6 +8,8 @@ from prompt_toolkit.document import Document
 
 from app.cli import RemoteCLIClient, _SlashCommandCompleter, _should_open_slash_menu, build_parser, main
 from app.core.config import get_settings
+
+CLI_MAIN_MODULE = importlib.import_module("app.cli.main")
 
 
 class FakeResponse:
@@ -268,9 +271,9 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
             return None
 
     monkeypatch.setattr("builtins.input", lambda prompt="": "YES")
-    monkeypatch.setattr("app.cli._build_transport", lambda args: fake_client)
-    monkeypatch.setattr("app.cli._open_browser", lambda url: True)
-    monkeypatch.setattr("app.cli._start_local_oauth_callback_listener", lambda *args, **kwargs: FakeListener())
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_build_transport", lambda args: fake_client)
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_open_browser", lambda url: True)
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_start_local_oauth_callback_listener", lambda *args, **kwargs: FakeListener())
 
     exit_code = main(["onboard-openai", "--wait-seconds", "1", "--check-prompt", "테스트"])
     captured = capsys.readouterr().out
@@ -366,8 +369,8 @@ def test_cli_shell_interrupt(monkeypatch, tmp_path, capsys):
         )
 
     interrupt_calls = iter([True])
-    monkeypatch.setattr("app.cli._run_prompt_task_with_fresh_transport", fake_prompt_task)
-    monkeypatch.setattr("app.cli._shell_interrupt_requested", lambda: next(interrupt_calls, False))
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_run_prompt_task_with_fresh_transport", fake_prompt_task)
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_shell_interrupt_requested", lambda: next(interrupt_calls, False))
 
     exit_code = main(["--mode", "local"])
     captured = capsys.readouterr().out
@@ -376,6 +379,62 @@ def test_cli_shell_interrupt(monkeypatch, tmp_path, capsys):
     assert "Working (" in captured
     assert "취소했어. 요청은 백그라운드에서 끝날 수 있어." in captured
     assert "셸을 종료할게." in captured
+
+
+def test_cli_shell_auth_asks_before_reconnect(monkeypatch, capsys):
+    fake_client = FakeRemoteClient(
+        [
+            FakeResponse(
+                {
+                    "provider_name": "openai_oauth",
+                    "healthy": True,
+                    "configured": True,
+                    "connected": True,
+                    "auth_type": "oauth",
+                    "detail": "connected",
+                    "missing_env": [],
+                    "scopes": ["openid"],
+                    "expires_at": "2099-01-01T00:00:00+00:00",
+                }
+            )
+        ]
+    )
+    answers = iter(["/auth", "no", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_build_transport", lambda args: fake_client)
+
+    def fail_onboarding(*args, **kwargs):
+        raise AssertionError("onboarding should not start when reconnect is declined")
+
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_handle_openai_onboarding", fail_onboarding)
+
+    exit_code = main(["--base-url", "http://127.0.0.1:8000/api/v1"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "이미 OpenAI 연결이 저장되어 있어." in captured
+    assert "재연결을 취소했어. 입력창으로 돌아갈게." in captured
+    assert "셸을 종료할게." in captured
+
+
+def test_cli_shell_slash_command_interrupt_returns_to_prompt(monkeypatch, tmp_path, capsys):
+    db_path = tmp_path / "cli-slash-interrupt.db"
+    monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+    answers = iter(["/auth", "/exit"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    def fake_slash_command(raw, shell_args, settings, client, parser):
+        if raw == "/auth":
+            raise KeyboardInterrupt
+        return False
+
+    monkeypatch.setattr(CLI_MAIN_MODULE, "_handle_shell_slash_command", fake_slash_command)
+
+    exit_code = main(["--mode", "local"])
+    captured = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "취소했어. 입력창으로 돌아갈게." in captured
 
 
 def test_cli_slash_help(capsys):
