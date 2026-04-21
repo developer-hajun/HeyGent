@@ -77,6 +77,12 @@ copy .env.example .env
 ### 3. 서버 실행
 
 ```bash
+heygent server
+```
+
+기존 개발용 명령도 그대로 됩니다.
+
+```bash
 py -3.11 -m app.cli serve
 ```
 
@@ -86,9 +92,20 @@ py -3.11 -m app.cli serve
 - API: `http://127.0.0.1:8000/api/v1`
 - Swagger: `http://127.0.0.1:8000/docs`
 
-### 4. 상태 확인
+### 4. CLI 셸 열기
 
 ```bash
+heygent cli
+```
+
+기본 로컬 주소(`127.0.0.1`)를 쓰는 경우 서버가 안 떠 있으면 `heygent cli` 가 `heygent server` 를 백그라운드로 자동 실행한 뒤 셸로 들어갑니다.
+
+### 5. 상태 확인
+
+```bash
+heygent cli
+# 셸 안에서 /status
+
 py -3.11 -m app.cli health
 py -3.11 -m app.cli list-providers
 py -3.11 -m app.cli list-flows
