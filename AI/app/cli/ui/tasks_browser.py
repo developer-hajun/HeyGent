@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
+import os
 import sys
 from typing import Any, Callable
 from urllib.parse import urlencode
+
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover
+    msvcrt = None  # type: ignore[assignment]
 
 from app.cli.core.transport import request_path
 from app.cli.ui.output import render_plain_box
@@ -182,7 +188,7 @@ def render_tasks_browser_list(state: TaskBrowserState) -> str:
         [
             "",
             "<이전> <다음> <열기> <돌아가기>",
-            "명령: 번호 입력 / j,k 이동 / all,running,waiting,completed 필터 / <,> 페이지 / b 종료",
+            "명령: ↑↓ 이동 / ←→ 페이지 / Enter 열기 / Esc·Backspace 뒤로 / 번호·필터 직접 입력 가능",
         ]
     )
     return render_plain_box(lines)
@@ -251,7 +257,7 @@ def render_tasks_browser_detail(state: TaskBrowserState) -> str:
             event_summary = event.get("summary_message") or event.get("status") or "-"
             lines.append(f"- {event.get('event_type') or '-'} | {event_summary}")
 
-    lines.extend(["", "<돌아가기>", "명령: b"])
+    lines.extend(["", "<돌아가기>", "명령: Esc·Backspace 뒤로 / b"])
     return render_plain_box(lines)
 
 
@@ -260,6 +266,57 @@ def _clear_terminal() -> None:
         print("\033[2J\033[H", end="")
     else:
         print()
+
+
+def _supports_windows_browser_keys() -> bool:
+    return bool(os.name == "nt" and msvcrt is not None and sys.stdin.isatty() and sys.stdout.isatty())
+
+
+def _read_browser_command(prompt_text: str, *, input_func: InputFunc = input) -> str:
+    """tasks 브라우저 전용 입력을 읽는다.
+
+    기본 input()만 쓰면 방향키가 일반 문자열 입력으로 흘러가 버린다.
+    Windows 콘솔에서는 msvcrt 로 화살표/엔터/ESC/백스페이스를 직접 읽고,
+    그 외 환경은 기존 문자열 입력으로 자연스럽게 fallback 한다.
+    """
+
+    if not _supports_windows_browser_keys() or input_func is not input:
+        return input_func(prompt_text)
+
+    print(prompt_text, end="", flush=True)
+    buffer = ""
+    while True:
+        key = msvcrt.getwch()
+        if key == "\x03":
+            raise KeyboardInterrupt
+        if key in {"\r", "\n"}:
+            print()
+            return buffer
+        if key == "\x1b":
+            print()
+            return "__browser_back__"
+        if key == "\b":
+            if buffer:
+                buffer = buffer[:-1]
+                print("\b \b", end="", flush=True)
+            else:
+                print()
+                return "__browser_back__"
+            continue
+        if key in {"\x00", "\xe0"}:
+            code = msvcrt.getwch()
+            print()
+            if code == "H":
+                return "__browser_up__"
+            if code == "P":
+                return "__browser_down__"
+            if code == "K":
+                return "__browser_prev__"
+            if code == "M":
+                return "__browser_next__"
+            continue
+        buffer += key
+        print(key, end="", flush=True)
 
 
 def _load_list(client, settings: Settings, state: TaskBrowserState) -> None:
@@ -306,12 +363,22 @@ def run_tasks_browser(
         _clear_terminal()
         output_func(render_tasks_browser_detail(state) if state.depth == "detail" else render_tasks_browser_list(state))
         try:
-            raw_command = input_func("tasks> ").strip()
+            raw_command = _read_browser_command("tasks> ", input_func=input_func).strip()
         except (EOFError, KeyboardInterrupt):
             output_func("작업 브라우저를 닫을게.")
             return
 
         command = raw_command.lower()
+        if command == "__browser_up__":
+            command = "up"
+        elif command == "__browser_down__":
+            command = "down"
+        elif command == "__browser_prev__":
+            command = "prev"
+        elif command == "__browser_next__":
+            command = "next"
+        elif command == "__browser_back__":
+            command = "back"
         if state.depth == "detail":
             if command in {"b", "back", "돌아가기", "q", "quit", "exit"}:
                 state.depth = "list"

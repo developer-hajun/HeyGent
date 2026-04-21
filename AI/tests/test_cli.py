@@ -198,6 +198,36 @@ def test_tasks_browser_explains_old_server_405():
     assert "재시작" in str(error.value)
 
 
+def test_tasks_browser_reads_windows_arrow_keys(monkeypatch):
+    class FakeMsvcrt:
+        def __init__(self, keys):
+            self.keys = iter(keys)
+
+        def getwch(self):
+            return next(self.keys)
+
+    monkeypatch.setattr(TASK_BROWSER_UI, "_supports_windows_browser_keys", lambda: True)
+    monkeypatch.setattr(TASK_BROWSER_UI, "msvcrt", FakeMsvcrt(["\xe0", "H"]))
+
+    assert TASK_BROWSER_UI._read_browser_command("tasks> ") == "__browser_up__"
+
+
+def test_tasks_browser_reads_windows_number_input(monkeypatch, capsys):
+    class FakeMsvcrt:
+        def __init__(self, keys):
+            self.keys = iter(keys)
+
+        def getwch(self):
+            return next(self.keys)
+
+    monkeypatch.setattr(TASK_BROWSER_UI, "_supports_windows_browser_keys", lambda: True)
+    monkeypatch.setattr(TASK_BROWSER_UI, "msvcrt", FakeMsvcrt(["2", "\r"]))
+
+    assert TASK_BROWSER_UI._read_browser_command("tasks> ") == "2"
+    captured = capsys.readouterr().out
+    assert "tasks> 2" in captured
+
+
 def test_initial_login_choice_uses_prompt_toolkit_choice(monkeypatch):
     monkeypatch.setattr(PROMPT_UI, "_supports_windows_console_choice", lambda: False)
     monkeypatch.setattr(PROMPT_UI, "supports_interactive_choice", lambda: True)
