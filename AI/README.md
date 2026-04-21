@@ -99,6 +99,11 @@ heygent cli
 ```
 
 기본 로컬 주소(`127.0.0.1`)를 쓰는 경우 서버가 안 떠 있으면 `heygent cli` 가 `heygent server` 를 백그라운드로 자동 실행한 뒤 셸로 들어갑니다.
+코드 수정 후 이미 떠 있는 서버를 다시 반영하려면 아래처럼 재시작 옵션을 쓰면 됩니다.
+
+```bash
+heygent cli --restart-server
+```
 
 ### 5. 상태 확인
 

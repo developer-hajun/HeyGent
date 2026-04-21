@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import time
-from typing import Sequence
+from typing import Any, Sequence
 from urllib.parse import urlsplit
 
 import httpx
 
 from app.cli import main as cli_main
 from app.core.config import get_settings
+
+
+PID_FILE = Path("tmp/heygent-server.json")
 
 
 def _is_local_base_url(base_url: str) -> bool:
@@ -35,7 +40,33 @@ def _server_ready(base_url: str, timeout_seconds: float = 1.0) -> bool:
     return response.is_success
 
 
-def _spawn_server_process() -> subprocess.Popen:
+def _pid_file_path() -> Path:
+    return Path.cwd() / PID_FILE
+
+
+def _read_pid_file() -> dict[str, Any] | None:
+    path = _pid_file_path()
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _write_pid_file(pid: int, *, base_url: str) -> None:
+    path = _pid_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"pid": pid, "base_url": base_url, "cwd": str(Path.cwd())}), encoding="utf-8")
+
+
+def _clear_pid_file() -> None:
+    path = _pid_file_path()
+    if path.exists():
+        path.unlink(missing_ok=True)
+
+
+def _spawn_server_process(base_url: str) -> subprocess.Popen:
     command = [sys.executable, "-m", "app.cli", "serve"]
     kwargs: dict[str, object] = {
         "stdout": subprocess.DEVNULL,
@@ -47,13 +78,33 @@ def _spawn_server_process() -> subprocess.Popen:
         kwargs["creationflags"] = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kwargs["start_new_session"] = True
-    return subprocess.Popen(command, **kwargs)
+    process = subprocess.Popen(command, **kwargs)
+    _write_pid_file(process.pid, base_url=base_url)
+    return process
 
 
-def _ensure_local_server(base_url: str, *, wait_seconds: float = 12.0, poll_interval: float = 0.5) -> bool:
-    if _server_ready(base_url):
+def _stop_managed_server() -> bool:
+    payload = _read_pid_file()
+    if not payload or not payload.get("pid"):
+        return False
+    pid = int(payload["pid"])
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            os.kill(pid, signal.SIGTERM)
+    except Exception:
+        return False
+    _clear_pid_file()
+    return True
+
+
+def _ensure_local_server(base_url: str, *, wait_seconds: float = 12.0, poll_interval: float = 0.5, restart: bool = False) -> bool:
+    if restart:
+        _stop_managed_server()
+    elif _server_ready(base_url):
         return True
-    _spawn_server_process()
+    _spawn_server_process(base_url)
     deadline = time.time() + max(0.5, wait_seconds)
     while time.time() <= deadline:
         if _server_ready(base_url):
@@ -80,6 +131,7 @@ def _build_parser() -> argparse.ArgumentParser:
     cli_parser.add_argument("--timeout", type=float, default=10.0, help="remote HTTP 요청 타임아웃(초)")
     cli_parser.add_argument("--json", action="store_true", help="원본 JSON 출력 유지")
     cli_parser.add_argument("--no-auto-server", action="store_true", help="remote 모드에서 서버가 없을 때 자동 실행하지 않음")
+    cli_parser.add_argument("--restart-server", action="store_true", help="로컬 서버를 다시 시작한 뒤 CLI 셸로 들어갑니다")
 
     return parser
 
@@ -105,12 +157,19 @@ def _run_cli(args) -> int:
         forwarded.append("--json")
     forwarded.extend(["--base-url", args.base_url, "--timeout", str(args.timeout)])
 
-    if not args.no_auto_server and _is_local_base_url(args.base_url) and not _server_ready(args.base_url):
-        print("[HeyGent] 로컬 서버가 안 떠 있어서 heygent server 를 백그라운드로 시작할게.")
-        if not _ensure_local_server(args.base_url):
-            print("[HeyGent] 서버 자동 실행 후에도 준비 상태를 확인하지 못했어. 먼저 'heygent server' 를 실행해 줘.")
-            return 1
-        print("[HeyGent] 서버 준비 완료. CLI 셸로 들어갈게.")
+    if _is_local_base_url(args.base_url):
+        if args.restart_server:
+            print("[HeyGent] 로컬 서버를 다시 시작할게.")
+            if not _ensure_local_server(args.base_url, restart=True):
+                print("[HeyGent] 서버 재시작 후에도 준비 상태를 확인하지 못했어. 먼저 'heygent server' 를 직접 실행해 줘.")
+                return 1
+            print("[HeyGent] 서버 재시작 완료. CLI 셸로 들어갈게.")
+        elif not args.no_auto_server and not _server_ready(args.base_url):
+            print("[HeyGent] 로컬 서버가 안 떠 있어서 heygent server 를 백그라운드로 시작할게.")
+            if not _ensure_local_server(args.base_url):
+                print("[HeyGent] 서버 자동 실행 후에도 준비 상태를 확인하지 못했어. 먼저 'heygent server' 를 실행해 줘.")
+                return 1
+            print("[HeyGent] 서버 준비 완료. CLI 셸로 들어갈게.")
 
     return cli_main(forwarded)
 
