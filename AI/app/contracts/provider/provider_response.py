@@ -12,7 +12,24 @@ class ProviderHealthResponse(ContractModel):
 
     provider_name: str
     healthy: bool
+    configured: bool = False
+    auth_type: str | None = None
     detail: str
+    missing_env: list[str] = Field(default_factory=list)
+
+
+class ProviderAuthResponse(ContractModel):
+    """모델 프로바이더 인증 시작 또는 설정 상태 응답이다."""
+
+    provider_name: str
+    status: str
+    detail: str
+    authorization_url: str | None = None
+    redirect_uri: str | None = None
+    scopes: list[str] = Field(default_factory=list)
+    state: str | None = None
+    missing_env: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProviderGenerateResponse(ContractModel):
