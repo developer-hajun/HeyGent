@@ -68,11 +68,26 @@ def build_tasks_list_path(settings: Settings, *, status_filter: str, page: int, 
     return request_path(settings, f"/tasks?{query}")
 
 
+def _raise_request_error(response, payload: Any, *, action: str) -> None:
+    """브라우저 요청 실패를 사용자 입장에서 이해하기 쉬운 문장으로 바꾼다."""
+
+    status_code = getattr(response, "status_code", None)
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+
+    if action == "list" and status_code == 405:
+        raise TaskBrowserRequestError("현재 실행 중인 서버가 아직 GET /tasks 를 지원하지 않아. 최신 코드 반영 후 서버를 재시작해 줘.")
+    if action == "detail" and status_code == 404:
+        raise TaskBrowserRequestError("선택한 task 를 서버에서 찾지 못했어. 이미 정리됐거나 다른 DB 를 보고 있을 수 있어.")
+    if detail:
+        raise TaskBrowserRequestError(str(detail))
+    raise TaskBrowserRequestError(str(payload))
+
+
 def fetch_tasks_page(client, settings: Settings, *, status_filter: str, page: int, page_size: int) -> dict[str, Any]:
     response = client.request("GET", build_tasks_list_path(settings, status_filter=status_filter, page=page, page_size=page_size))
     payload = response.json()
     if not response.is_success:
-        raise TaskBrowserRequestError(str(payload))
+        _raise_request_error(response, payload, action="list")
     return payload
 
 
@@ -85,11 +100,11 @@ def fetch_task_detail_bundle(client, settings: Settings, task_run_id: str) -> di
     steps_payload = steps_response.json()
     events_payload = events_response.json()
     if not task_response.is_success:
-        raise TaskBrowserRequestError(str(task_payload))
+        _raise_request_error(task_response, task_payload, action="detail")
     if not steps_response.is_success:
-        raise TaskBrowserRequestError(str(steps_payload))
+        _raise_request_error(steps_response, steps_payload, action="detail")
     if not events_response.is_success:
-        raise TaskBrowserRequestError(str(events_payload))
+        _raise_request_error(events_response, events_payload, action="detail")
     return {"task": task_payload, "steps": steps_payload, "events": events_payload}
 
 

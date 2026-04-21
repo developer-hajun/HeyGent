@@ -4,6 +4,7 @@ import json
 import time
 from collections import deque
 
+import pytest
 from prompt_toolkit.document import Document
 
 from app.cli import RemoteCLIClient, _SlashCommandCompleter, _should_open_slash_menu, build_parser, main
@@ -176,6 +177,25 @@ def test_tasks_browser_renders_list_and_detail_views():
     assert "현재 Step" in detail_rendered
     assert "- tool: approval.request" in detail_rendered
     assert "- approval.requested | 승인이 필요합니다." in detail_rendered
+
+
+def test_tasks_browser_explains_old_server_405():
+    class FailingResponse:
+        is_success = False
+        status_code = 405
+
+        def json(self):
+            return {"detail": "Method Not Allowed"}
+
+    class FailingClient:
+        def request(self, method, path):
+            return FailingResponse()
+
+    with pytest.raises(TASK_BROWSER_UI.TaskBrowserRequestError) as error:
+        TASK_BROWSER_UI.fetch_tasks_page(FailingClient(), get_settings(), status_filter="ALL", page=1, page_size=8)
+
+    assert "GET /tasks" in str(error.value)
+    assert "재시작" in str(error.value)
 
 
 def test_initial_login_choice_uses_prompt_toolkit_choice(monkeypatch):
