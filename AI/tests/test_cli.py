@@ -360,6 +360,64 @@ def test_tasks_browser_run_flow_navigates_without_prompt(monkeypatch):
     assert outputs[-1] == "작업 브라우저를 닫을게."
 
 
+def test_tasks_browser_preview_changes_with_selected_row(monkeypatch):
+    monkeypatch.setattr(TASK_BROWSER_UI.sys.stdout, "isatty", lambda: False)
+    state = TASK_BROWSER_UI.TaskBrowserState(
+        list_payload={
+            "items": [
+                {
+                    "task_run_id": "task_1",
+                    "task_type": "stub.echo",
+                    "status": "COMPLETED",
+                    "title": "첫 번째 작업",
+                    "input_summary": "첫 번째 입력",
+                    "step_count": 1,
+                    "current_step": {"title": "첫 단계", "summary_message": "첫 번째 진행 요약"},
+                },
+                {
+                    "task_run_id": "task_2",
+                    "task_type": "model.generate",
+                    "status": "RUNNING",
+                    "title": "두 번째 작업",
+                    "input_summary": "두 번째 입력",
+                    "step_count": 2,
+                    "current_step": {"title": "둘째 단계", "summary_message": "두 번째 진행 요약"},
+                },
+            ],
+            "page": 1,
+            "page_size": 8,
+            "total_count": 2,
+        },
+    )
+
+    first_rendered = TASK_BROWSER_UI.render_tasks_browser_list(state)
+    state.selected_index = 1
+    second_rendered = TASK_BROWSER_UI.render_tasks_browser_list(state)
+
+    assert "- 제목: 첫 번째 작업" in first_rendered
+    assert "- 제목: 두 번째 작업" in second_rendered
+    assert "- 현재: 두 번째 진행 요약" in second_rendered
+
+
+def test_tasks_browser_detail_body_left_right_do_not_move_step(monkeypatch):
+    monkeypatch.setattr(TASK_BROWSER_UI.sys.stdout, "isatty", lambda: False)
+    state = TASK_BROWSER_UI.TaskBrowserState(
+        depth="task_detail",
+        detail_task={"title": "승인 대기 태스크"},
+        detail_steps=[
+            {"step_run_id": "step_1", "step_type": "approval.plan", "title": "승인 조건 정리", "status": "COMPLETED"},
+            {"step_run_id": "step_2", "step_type": "approval.wait", "title": "사용자 승인 대기", "status": "WAITING"},
+        ],
+        selected_step_index=1,
+    )
+
+    TASK_BROWSER_UI._handle_task_detail_command(None, get_settings(), state, "left")
+    assert state.selected_step_index == 1
+
+    TASK_BROWSER_UI._handle_task_detail_command(None, get_settings(), state, "right")
+    assert state.selected_step_index == 1
+
+
 def test_initial_login_choice_uses_prompt_toolkit_choice(monkeypatch):
     monkeypatch.setattr(PROMPT_UI, "_supports_windows_console_choice", lambda: False)
     monkeypatch.setattr(PROMPT_UI, "supports_interactive_choice", lambda: True)

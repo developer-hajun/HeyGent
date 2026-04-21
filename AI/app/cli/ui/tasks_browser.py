@@ -13,6 +13,21 @@ try:
 except ImportError:  # pragma: no cover
     msvcrt = None  # type: ignore[assignment]
 
+try:
+    from prompt_toolkit.application import Application
+    from prompt_toolkit.formatted_text import ANSI
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.layout import Layout
+    from prompt_toolkit.layout.containers import Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
+except ImportError:  # pragma: no cover
+    Application = None  # type: ignore[assignment]
+    ANSI = None  # type: ignore[assignment]
+    KeyBindings = None  # type: ignore[assignment]
+    Layout = None  # type: ignore[assignment]
+    Window = None  # type: ignore[assignment]
+    FormattedTextControl = None  # type: ignore[assignment]
+
 from app.cli.core.transport import request_path
 from app.cli.ui.output import render_plain_box
 from app.core.config import Settings
@@ -27,7 +42,6 @@ TASK_BROWSER_FILTERS: list[tuple[str, str]] = [
     ("COMPLETED", "완료"),
 ]
 TASK_FILTER_CODES = {code for code, _ in TASK_BROWSER_FILTERS}
-_TASK_FILTER_LABELS = {code: label for code, label in TASK_BROWSER_FILTERS}
 
 TASK_TITLE_FALLBACKS = {
     "model.generate": "모델 응답 생성",
@@ -42,13 +56,14 @@ STEP_TITLE_FALLBACKS = {
     "echo.execute": "입력 메시지 반영",
     "approval.wait": "사용자 승인 대기",
 }
-INTERNAL_SUMMARY_FALLBACKS = {
+SUMMARY_FALLBACKS = {
     "model generate flow completed": "모델 응답 생성 완료",
     "echo flow completed": "입력 메시지 반영 완료",
     "approval required": "사용자 승인이 필요함",
     "approval completed": "사용자 승인 완료",
 }
 _ACTIVE_STEP_STATUSES = {"PENDING", "RUNNING", "WAITING", "BLOCKED"}
+
 _ANSI_RESET = "\033[0m"
 _ANSI_SELECTED = "\033[97m"
 _ANSI_MUTED = "\033[90m"
@@ -57,27 +72,23 @@ _ANSI_ACCENT = "\033[96m"
 
 @dataclass(slots=True)
 class TaskBrowserState:
+    # 본문 리스트에서 현재 커서 위치
+    selected_index: int = 0
+    # step 리스트에서 현재 커서 위치
+    selected_step_index: int = 0
+    # footer 액션 포커스 여부와 위치
+    focus_area: str = "body"
+    footer_index: int = 0
+
     status_filter: str = "ALL"
     page: int = 1
     page_size: int = 8
-    selected_index: int = 0
-    selected_step_index: int = 0
     depth: str = "task_list"
-    focus_area: str = "body"
-    footer_index: int = 0
     list_payload: dict[str, Any] = field(default_factory=dict)
     detail_task: dict[str, Any] | None = None
     detail_steps: list[dict[str, Any]] = field(default_factory=list)
     detail_events: list[dict[str, Any]] = field(default_factory=list)
     selected_task_id: str | None = None
-
-
-class TaskBrowserRequestError(RuntimeError):
-    pass
-
-
-class TaskBrowserExit(Exception):
-    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +109,19 @@ TASK_DETAIL_ACTIONS = [
     BrowserAction("back", "<돌아가기>"),
 ]
 STEP_DETAIL_ACTIONS = [BrowserAction("back", "<돌아가기>")]
+
+
+class TaskBrowserRequestError(RuntimeError):
+    pass
+
+
+class TaskBrowserExit(Exception):
+    pass
+
+
+class TaskBrowserInputEnded(Exception):
+    pass
+
 
 
 def normalize_browser_filter(raw_value: str | None) -> str:
@@ -178,11 +202,11 @@ def _style_line(text: str, *, selected: bool = False, muted: bool = False, accen
 
 def _friendly_task_title(payload: dict[str, Any]) -> str:
     title = str(payload.get("title") or "").strip()
-    flow_name = str(payload.get("flow_name") or "").strip()
     task_type = str(payload.get("task_type") or "").strip()
-    if title and title not in {flow_name, task_type} and not title.endswith("_flow"):
+    flow_name = str(payload.get("flow_name") or "").strip()
+    if title and title not in {task_type, flow_name} and not title.endswith("_flow"):
         return _truncate_text(title, limit=42)
-    return _truncate_text(TASK_TITLE_FALLBACKS.get(task_type) or TASK_TITLE_FALLBACKS.get(flow_name) or flow_name or task_type or "Task")
+    return _truncate_text(TASK_TITLE_FALLBACKS.get(task_type) or TASK_TITLE_FALLBACKS.get(flow_name) or flow_name or task_type or "Task", limit=42)
 
 
 
@@ -199,17 +223,17 @@ def _friendly_summary(raw_value: str | None, *, fallback_title: str) -> str:
     summary = str(raw_value or "").strip()
     if not summary:
         return fallback_title
-    return _truncate_text(INTERNAL_SUMMARY_FALLBACKS.get(summary.lower()) or summary, limit=64)
+    return _truncate_text(SUMMARY_FALLBACKS.get(summary.lower()) or summary, limit=64)
 
 
 
 def _task_input_summary(payload: dict[str, Any]) -> str:
     summary = payload.get("input_summary")
     if summary:
-        return _truncate_text(summary, limit=56)
+        return _truncate_text(summary, limit=64)
     progress = payload.get("progress_summary")
     if progress:
-        return _truncate_text(progress, limit=56)
+        return _truncate_text(progress, limit=64)
     return "입력 요약 없음"
 
 
@@ -324,6 +348,37 @@ def _render_footer_actions(state: TaskBrowserState) -> str:
 
 
 
+def _render_task_preview_lines(state: TaskBrowserState) -> list[str]:
+    selected = _selected_task_item(state)
+    if selected is None:
+        return ["선택 미리보기", "- 항목 없음"]
+    return [
+        "선택 미리보기",
+        f"- 제목: {_friendly_task_title(selected)}",
+        f"- 입력: {_task_input_summary(selected)}",
+        f"- 현재: {_current_step_summary(selected)}",
+        f"- step: {selected.get('step_count') or 0}개",
+    ]
+
+
+
+def _render_step_preview_lines(state: TaskBrowserState) -> list[str]:
+    selected = _selected_step_item(state)
+    current_step = _select_current_step(state.detail_steps)
+    if selected is None:
+        return ["선택 step 미리보기", "- step 없음"]
+    selected_id = selected.get("step_run_id")
+    current_id = current_step.get("step_run_id") if current_step else None
+    relation = "현재 실행 단계" if selected_id == current_id else "선택된 단계"
+    return [
+        "선택 step 미리보기",
+        f"- 단계: {_friendly_step_title(selected)}",
+        f"- 설명: {_friendly_summary(selected.get('summary_message'), fallback_title=_friendly_step_title(selected))}",
+        f"- 상태: {selected.get('status') or '-'} ({relation})",
+    ]
+
+
+
 def render_tasks_browser_list(state: TaskBrowserState) -> str:
     payload = state.list_payload or {}
     items = payload.get("items") or []
@@ -337,14 +392,18 @@ def render_tasks_browser_list(state: TaskBrowserState) -> str:
         f"필터: {_render_filter_tabs(state.status_filter)}",
         f"페이지: {page}/{total_pages}   총 {total_count}개",
         "",
+        *_render_task_preview_lines(state),
+        "",
+        "Task 목록",
     ]
 
     if not items:
         lines.append("표시할 작업이 없습니다.")
     else:
         for index, item in enumerate(items, start=1):
-            selected = index - 1 == state.selected_index and state.focus_area == "body"
-            marker = "›" if index - 1 == state.selected_index else " "
+            cursor_selected = index - 1 == state.selected_index
+            selected = cursor_selected and state.focus_area == "body"
+            marker = "›" if cursor_selected else " "
             title = _friendly_task_title(item)
             status = str(item.get("status") or "-")
             step_count = int(item.get("step_count") or 0)
@@ -361,7 +420,7 @@ def render_tasks_browser_list(state: TaskBrowserState) -> str:
         [
             "",
             _render_footer_actions(state),
-            "조작: ↑↓ 항목 이동 / Tab 액션 이동 / ←→ 페이지 또는 액션 이동 / Enter 실행 / Esc 뒤로",
+            "조작: ↑↓ 목록 이동 / ←→ 페이지 이동 / Tab 액션 이동 / Enter 실행 / Esc 뒤로",
         ]
     )
     return render_plain_box(lines)
@@ -378,9 +437,11 @@ def render_task_detail(state: TaskBrowserState) -> str:
         f"Tasks > {_friendly_task_title(task)}",
         f"상태: {task.get('status') or '-'}",
         f"입력: {_task_detail_input_summary(task)}",
-        f"TaskRun = 전체 작업 / StepRun = 한 단계 / detail_json = step 저장 실행 정보",
+        "TaskRun = 전체 작업 / StepRun = 한 단계 / detail_json = step 저장 실행 정보",
         f"step: {len(steps)}개   flow: {task.get('flow_name') or '-'}",
         f"최근 갱신: {_format_time(task.get('updated_at') or task.get('created_at'))}",
+        "",
+        *_render_step_preview_lines(state),
         "",
         "Step 목록",
     ]
@@ -411,7 +472,7 @@ def render_task_detail(state: TaskBrowserState) -> str:
         [
             "",
             _render_footer_actions(state),
-            "조작: ↑↓ step 이동 / Tab 액션 이동 / ←→ 액션 이동 / Enter 실행 / Esc 뒤로",
+            "조작: ↑↓ step 이동 / ←→ 액션 이동 / Tab 액션 이동 / Enter 실행 / Esc 뒤로",
         ]
     )
     return render_plain_box(lines)
@@ -478,10 +539,19 @@ def render_tasks_browser_step_detail(state: TaskBrowserState) -> str:
         [
             "",
             _render_footer_actions(state),
-            "조작: Tab 액션 이동 / ←→ 액션 이동 / Enter 실행 / Esc 뒤로",
+            "조작: ←→ 액션 이동 / Enter 실행 / Esc 뒤로",
         ]
     )
     return render_plain_box(lines)
+
+
+
+def _render_current_view(state: TaskBrowserState) -> str:
+    if state.depth == "task_list":
+        return render_tasks_browser_list(state)
+    if state.depth == "task_detail":
+        return render_task_detail(state)
+    return render_tasks_browser_step_detail(state)
 
 
 
@@ -498,9 +568,29 @@ def _supports_windows_browser_keys() -> bool:
 
 
 
+def _supports_fullscreen_browser() -> bool:
+    return bool(
+        Application
+        and ANSI
+        and KeyBindings
+        and Layout
+        and Window
+        and FormattedTextControl
+        and sys.stdin.isatty()
+        and sys.stdout.isatty()
+    )
+
+
+
 def _read_browser_command(*, input_func: InputFunc = input) -> str:
-    if not _supports_windows_browser_keys() or input_func is not input:
-        return str(input_func("")).strip().lower()
+    if input_func is not input:
+        raw = str(input_func(""))
+        if not raw:
+            raise TaskBrowserInputEnded
+        return raw.strip().lower()
+
+    if not _supports_windows_browser_keys():
+        raise TaskBrowserInputEnded
 
     while True:
         key = msvcrt.getwch()
@@ -524,13 +614,13 @@ def _read_browser_command(*, input_func: InputFunc = input) -> str:
                 return "left"
             if code == "M":
                 return "right"
-            continue
 
 
 
 def _load_list(client, settings: Settings, state: TaskBrowserState) -> None:
     state.list_payload = fetch_tasks_page(client, settings, status_filter=state.status_filter, page=state.page, page_size=state.page_size)
     _clamp_selected_index(state)
+    state.depth = "task_list"
     state.focus_area = "body"
     state.footer_index = 0
 
@@ -546,6 +636,7 @@ def _load_detail(client, settings: Settings, state: TaskBrowserState, task_run_i
     state.depth = "task_detail"
     state.focus_area = "body"
     state.footer_index = 0
+    _clamp_selected_step_index(state)
 
 
 
@@ -559,42 +650,47 @@ def _cycle_filter(state: TaskBrowserState) -> None:
 
 
 def _execute_footer_action(client, settings: Settings, state: TaskBrowserState) -> None:
-    actions = _footer_actions_for_depth(state.depth)
-    action = actions[state.footer_index]
+    action = _footer_actions_for_depth(state.depth)[state.footer_index]
 
-    if action.key == "filter":
-        _cycle_filter(state)
-        _load_list(client, settings, state)
-        return
-    if action.key == "prev":
-        if state.list_payload.get("has_previous"):
-            state.page = max(1, state.page - 1)
+    if state.depth == "task_list":
+        if action.key == "filter":
+            _cycle_filter(state)
             _load_list(client, settings, state)
-        return
-    if action.key == "next":
-        if state.list_payload.get("has_next"):
-            state.page += 1
-            _load_list(client, settings, state)
-        return
-    if action.key == "open":
-        if state.depth == "task_list":
+            return
+        if action.key == "prev":
+            if state.list_payload.get("has_previous"):
+                state.page = max(1, state.page - 1)
+                _load_list(client, settings, state)
+            return
+        if action.key == "next":
+            if state.list_payload.get("has_next"):
+                state.page += 1
+                _load_list(client, settings, state)
+            return
+        if action.key == "open":
             selected = _selected_task_item(state)
             if selected is not None:
                 _load_detail(client, settings, state, str(selected.get("task_run_id")))
-        elif state.depth == "task_detail":
+            return
+        if action.key == "back":
+            raise TaskBrowserExit
+        return
+
+    if state.depth == "task_detail":
+        if action.key == "open":
             if _selected_step_item(state) is not None:
                 state.depth = "step_detail"
                 state.focus_area = "footer"
                 state.footer_index = 0
-        return
-    if action.key == "back":
-        if state.depth == "task_list":
-            raise TaskBrowserExit
-        if state.depth == "task_detail":
+            return
+        if action.key == "back":
             state.depth = "task_list"
             state.focus_area = "body"
             state.footer_index = 0
             return
+        return
+
+    if action.key == "back":
         state.depth = "task_detail"
         state.focus_area = "body"
         state.footer_index = 0
@@ -604,15 +700,19 @@ def _execute_footer_action(client, settings: Settings, state: TaskBrowserState) 
 def _handle_task_list_command(client, settings: Settings, state: TaskBrowserState, command: str) -> None:
     if command == "back":
         raise TaskBrowserExit
+
     if command == "tab":
         state.focus_area = "footer" if state.focus_area == "body" else "body"
         return
+
     if state.focus_area == "footer":
         if command == "left":
-            state.footer_index = max(0, state.footer_index - 1)
+            state.footer_index -= 1
+            _clamp_footer_index(state)
             return
         if command == "right":
-            state.footer_index = min(len(TASK_LIST_ACTIONS) - 1, state.footer_index + 1)
+            state.footer_index += 1
+            _clamp_footer_index(state)
             return
         if command == "up":
             state.focus_area = "body"
@@ -622,6 +722,7 @@ def _handle_task_list_command(client, settings: Settings, state: TaskBrowserStat
             return
         return
 
+    # 본문에서는 위아래만 항목 이동, 좌우는 페이지 이동으로 분리한다.
     if command == "up":
         state.selected_index -= 1
         _clamp_selected_index(state)
@@ -647,30 +748,37 @@ def _handle_task_list_command(client, settings: Settings, state: TaskBrowserStat
 
 
 
-def _handle_task_detail_command(state: TaskBrowserState, command: str) -> None:
+def _handle_task_detail_command(client, settings: Settings, state: TaskBrowserState, command: str) -> None:
+    del client, settings
+
     if command == "back":
         state.depth = "task_list"
         state.focus_area = "body"
         state.footer_index = 0
         return
+
     if command == "tab":
         state.focus_area = "footer" if state.focus_area == "body" else "body"
         return
+
     if state.focus_area == "footer":
         if command == "left":
-            state.footer_index = max(0, state.footer_index - 1)
+            state.footer_index -= 1
+            _clamp_footer_index(state)
             return
         if command == "right":
-            state.footer_index = min(len(TASK_DETAIL_ACTIONS) - 1, state.footer_index + 1)
+            state.footer_index += 1
+            _clamp_footer_index(state)
             return
         if command == "up":
             state.focus_area = "body"
             return
         if command == "enter":
-            if TASK_DETAIL_ACTIONS[state.footer_index].key == "open" and _selected_step_item(state) is not None:
-                state.depth = "step_detail"
-                state.focus_area = "footer"
-                state.footer_index = 0
+            if TASK_DETAIL_ACTIONS[state.footer_index].key == "open":
+                if _selected_step_item(state) is not None:
+                    state.depth = "step_detail"
+                    state.focus_area = "footer"
+                    state.footer_index = 0
             else:
                 state.depth = "task_list"
                 state.focus_area = "body"
@@ -678,6 +786,7 @@ def _handle_task_detail_command(state: TaskBrowserState, command: str) -> None:
             return
         return
 
+    # detail body 는 수직 리스트다. 좌우는 아무것도 하지 않는다.
     if command == "up":
         state.selected_step_index -= 1
         _clamp_selected_step_index(state)
@@ -686,10 +795,11 @@ def _handle_task_detail_command(state: TaskBrowserState, command: str) -> None:
         state.selected_step_index += 1
         _clamp_selected_step_index(state)
         return
-    if command == "enter" and _selected_step_item(state) is not None:
-        state.depth = "step_detail"
-        state.focus_area = "footer"
-        state.footer_index = 0
+    if command == "enter":
+        if _selected_step_item(state) is not None:
+            state.depth = "step_detail"
+            state.focus_area = "footer"
+            state.footer_index = 0
 
 
 
@@ -699,14 +809,97 @@ def _handle_step_detail_command(state: TaskBrowserState, command: str) -> None:
         state.focus_area = "body"
         state.footer_index = 0
         return
+
     if command == "tab":
         state.focus_area = "footer"
-        return
-    if command == "left":
         state.footer_index = 0
         return
-    if command == "right":
+
+    if command in {"left", "right", "up", "down"}:
         state.footer_index = 0
+
+
+
+def _dispatch_command(client, settings: Settings, state: TaskBrowserState, command: str) -> None:
+    if state.depth == "task_list":
+        _handle_task_list_command(client, settings, state, command)
+        return
+    if state.depth == "task_detail":
+        _handle_task_detail_command(client, settings, state, command)
+        return
+    _handle_step_detail_command(state, command)
+
+
+
+def _run_tasks_browser_fallback(client, settings: Settings, state: TaskBrowserState, *, input_func: InputFunc, output_func: OutputFunc) -> None:
+    while True:
+        _clear_terminal()
+        output_func(_render_current_view(state))
+
+        try:
+            command = _read_browser_command(input_func=input_func)
+        except (EOFError, KeyboardInterrupt, TaskBrowserInputEnded):
+            output_func("작업 브라우저를 닫을게.")
+            return
+
+        try:
+            _dispatch_command(client, settings, state, command)
+        except TaskBrowserExit:
+            output_func("작업 브라우저를 닫을게.")
+            return
+
+
+
+def _run_tasks_browser_fullscreen(client, settings: Settings, state: TaskBrowserState) -> None:
+    control = FormattedTextControl(lambda: ANSI(_render_current_view(state)))
+    window = Window(content=control, always_hide_cursor=True, wrap_lines=False)
+    bindings = KeyBindings()
+    app: Application | None = None
+
+    def _apply(command: str, event) -> None:  # pragma: no cover - interactive only
+        try:
+            _dispatch_command(client, settings, state, command)
+        except TaskBrowserExit:
+            event.app.exit(result="closed")
+            return
+        event.app.invalidate()
+
+    @bindings.add("up")
+    def _(event) -> None:  # pragma: no cover - interactive only
+        _apply("up", event)
+
+    @bindings.add("down")
+    def _(event) -> None:  # pragma: no cover - interactive only
+        _apply("down", event)
+
+    @bindings.add("left")
+    def _(event) -> None:  # pragma: no cover - interactive only
+        _apply("left", event)
+
+    @bindings.add("right")
+    def _(event) -> None:  # pragma: no cover - interactive only
+        _apply("right", event)
+
+    @bindings.add("tab")
+    def _(event) -> None:  # pragma: no cover - interactive only
+        _apply("tab", event)
+
+    @bindings.add("enter")
+    def _(event) -> None:  # pragma: no cover - interactive only
+        _apply("enter", event)
+
+    @bindings.add("escape")
+    @bindings.add("backspace")
+    def _(event) -> None:  # pragma: no cover - interactive only
+        _apply("back", event)
+
+    @bindings.add("c-c")
+    def _(event) -> None:  # pragma: no cover - interactive only
+        event.app.exit(result="closed")
+
+    app = Application(layout=Layout(window), key_bindings=bindings, full_screen=True, mouse_support=False)
+    app.run()
+    del app
 
 
 
@@ -729,28 +922,8 @@ def run_tasks_browser(
         output_func(f"작업 브라우저를 열지 못했어: {error}")
         return
 
-    while True:
-        _clear_terminal()
-        if state.depth == "task_list":
-            output_func(render_tasks_browser_list(state))
-        elif state.depth == "task_detail":
-            output_func(render_task_detail(state))
-        else:
-            output_func(render_tasks_browser_step_detail(state))
+    if input_func is input and _supports_fullscreen_browser():
+        _run_tasks_browser_fullscreen(client, settings, state)
+        return
 
-        try:
-            command = _read_browser_command(input_func=input_func)
-        except (EOFError, KeyboardInterrupt):
-            output_func("작업 브라우저를 닫을게.")
-            return
-
-        try:
-            if state.depth == "task_list":
-                _handle_task_list_command(client, settings, state, command)
-            elif state.depth == "task_detail":
-                _handle_task_detail_command(state, command)
-            else:
-                _handle_step_detail_command(state, command)
-        except TaskBrowserExit:
-            output_func("작업 브라우저를 닫을게.")
-            return
+    _run_tasks_browser_fallback(client, settings, state, input_func=input_func, output_func=output_func)
