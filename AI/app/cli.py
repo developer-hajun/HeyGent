@@ -180,11 +180,12 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     onboard_parser = subparsers.add_parser(
         "onboard-openai",
         help="사용자 기준으로 OpenAI 연결을 가장 쉬운 경로부터 자동 시도합니다",
-        description="로컬 ChatGPT/Codex 로그인 재사용, 브라우저 OAuth, 연결 후 모델 테스트까지 한 번에 수행할 수 있습니다.",
+        description="브라우저 OAuth 기준으로 로컬 서비스 callback, 연결 상태 확인, 모델 테스트까지 한 번에 수행할 수 있습니다.",
     )
     onboard_parser.add_argument("--redirect-uri", default=None, help="요청 시점에 redirect URI 를 덮어쓸 수 있습니다")
     onboard_parser.add_argument("--state", default=None, help="직접 관리할 OAuth state 값")
-    onboard_parser.add_argument("--force-oauth", action="store_true", help="로컬 로그인 재사용 대신 브라우저 OAuth 를 강제로 시작합니다")
+    onboard_parser.add_argument("--force-oauth", dest="force_oauth", action="store_true", default=True, help="브라우저 OAuth 를 우선 사용합니다 (기본값)")
+    onboard_parser.add_argument("--allow-local-auth-fallback", dest="force_oauth", action="store_false", help="개발용으로 로컬 ChatGPT/Codex 로그인 재사용을 허용합니다")
     onboard_parser.add_argument("--no-open-browser", action="store_true", help="브라우저를 자동으로 열지 않습니다")
     onboard_parser.add_argument("--no-wait", action="store_true", help="callback 완료까지 기다리지 않고 URL 만 출력합니다")
     onboard_parser.add_argument("--wait-seconds", type=float, default=120.0, help="연결 완료를 기다릴 최대 시간(초)")
@@ -279,7 +280,8 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     auth_parser.add_argument("--provider", default=OPENAI_PROVIDER_NAME, help="인증을 시작할 provider 이름")
     auth_parser.add_argument("--redirect-uri", default=None, help="요청 시점에 redirect URI 를 덮어쓸 수 있습니다")
     auth_parser.add_argument("--state", default=None, help="직접 관리할 OAuth state 값")
-    auth_parser.add_argument("--force-oauth", action="store_true", help="로컬 로그인 재사용 대신 브라우저 OAuth 를 강제로 시작합니다")
+    auth_parser.add_argument("--force-oauth", dest="force_oauth", action="store_true", default=True, help="브라우저 OAuth 를 우선 사용합니다 (기본값)")
+    auth_parser.add_argument("--allow-local-auth-fallback", dest="force_oauth", action="store_false", help="개발용으로 로컬 ChatGPT/Codex 로그인 재사용을 허용합니다")
     command_parsers["provider-auth"] = auth_parser
 
     help_parser = subparsers.add_parser(
@@ -304,17 +306,17 @@ def _print_response(command: str, response_json: Any) -> None:
 
 def _print_openai_onboarding(response_json: dict[str, Any], base_url: str) -> None:
     print("\n[HeyGent CLI] OpenAI 연결 온보딩\n")
-    print("사용자 기준으로 가장 쉬운 연결 경로부터 바로 시도합니다.")
-    print("1) 이 기기의 기존 ChatGPT/Codex 로그인 정보가 있으면 바로 연결")
-    print("2) 없으면 브라우저 OpenAI OAuth 연결 진행")
-    print("3) 둘 다 준비되지 않았으면 개발자 설정 문서를 안내")
+    print("브라우저 OpenAI OAuth 기준으로 로컬에서도 서비스처럼 연결합니다.")
+    print("1) 브라우저에서 OpenAI 로그인")
+    print("2) 우리 callback URL 로 리다이렉트")
+    print("3) 서버가 token 저장")
     print("4) 연결되면 바로 상태와 모델 작업까지 확인\n")
     print("흐름도")
     print("  onboard-openai")
     print("      ↓")
-    print("  로컬 로그인 확인")
+    print("  브라우저 OpenAI 로그인")
     print("      ↓")
-    print("  있으면 즉시 연결 / 없으면 브라우저 연결")
+    print("  우리 callback URL 복귀")
     print("      ↓")
     print("  연결 상태 확인")
     print("      ↓")
@@ -401,6 +403,12 @@ def _parse_manual_callback_input(raw: str, expected_state: str | None) -> tuple[
         query = parse_qs(value)
         return (query.get("code") or [None])[0], (query.get("state") or [None])[0]
     return value, expected_state
+
+
+def _uses_service_callback_redirect(redirect_uri: str, settings: Settings, provider_name: str) -> bool:
+    expected_path = _request_path(settings, f"/providers/{provider_name}/callback")
+    parsed = urlsplit(redirect_uri)
+    return parsed.path.rstrip("/") == expected_path.rstrip("/")
 
 
 def _start_local_oauth_callback_listener(client, settings: Settings, provider_name: str, redirect_uri: str, expected_state: str | None):
@@ -540,7 +548,13 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
         return 0
 
     listener = None
-    if not args.no_wait and response_json.get("redirect_uri") and response_json.get("state"):
+    provider_state = None
+    uses_service_callback = bool(response_json.get("redirect_uri")) and _uses_service_callback_redirect(
+        response_json["redirect_uri"],
+        settings,
+        OPENAI_PROVIDER_NAME,
+    )
+    if not args.no_wait and response_json.get("redirect_uri") and response_json.get("state") and not uses_service_callback:
         listener = _start_local_oauth_callback_listener(
             client,
             settings,
@@ -552,6 +566,8 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
             print(f"\nlocalhost callback 대기 중: {response_json['redirect_uri']}")
         else:
             print("\nlocalhost callback 포트를 잡지 못했어. 로그인 후 redirect URL 전체를 직접 붙여넣으면 돼.")
+    elif not args.no_wait and uses_service_callback:
+        print(f"\n서버 callback 대기 중: {response_json['redirect_uri']}")
 
     if not args.no_open_browser:
         opened = _open_browser(response_json["authorization_url"])
@@ -563,7 +579,7 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
         print("\n브라우저 자동 열기는 건너뛰었어. 위 authorization_url 을 직접 열면 돼.")
 
     if args.no_wait:
-        print("\n대기 없이 종료할게. 로그인 후 다시 onboard-openai --force-oauth 로 이어가거나 list-providers 로 확인하면 돼.")
+        print("\n대기 없이 종료할게. 로그인 후 list-providers 나 onboard-openai 로 확인하면 돼.")
         return 0
 
     callback_result = None
@@ -575,29 +591,42 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
         if listener is not None:
             listener.close()
 
-    if callback_result is None:
-        print("\n자동 callback 을 아직 못 받았어.")
-        try:
-            manual = input("로그인 후 브라우저 주소창의 전체 redirect URL 또는 code를 붙여넣어 줘: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            manual = ""
-        code, callback_state = _parse_manual_callback_input(manual, response_json.get("state"))
-        if not code:
-            print("- code 를 확인하지 못했어. 다시 onboard-openai --force-oauth 로 시도해 줘.")
-            return 1
-        callback_response = client.request(
-            "POST",
-            _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}/callback"),
-            json_body={"code": code, "state": callback_state or response_json.get("state")},
+    if uses_service_callback:
+        print(f"\n최대 {args.wait_seconds:.0f}초 동안 서버가 callback 을 처리할 때까지 기다릴게...")
+        provider_state = _wait_for_provider_connection(
+            client,
+            settings,
+            OPENAI_PROVIDER_NAME,
+            wait_seconds=args.wait_seconds,
+            poll_interval=args.poll_interval,
         )
-        callback_result = {"ok": callback_response.is_success, "payload": callback_response.json()}
+        if provider_state is None:
+            print("\n아직 연결 완료를 확인하지 못했어. 브라우저 로그인 완료 후 다시 list-providers 로 확인해 줘.")
+            return 1
+    else:
+        if callback_result is None:
+            print("\n자동 callback 을 아직 못 받았어.")
+            try:
+                manual = input("로그인 후 브라우저 주소창의 전체 redirect URL 또는 code를 붙여넣어 줘: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                manual = ""
+            code, callback_state = _parse_manual_callback_input(manual, response_json.get("state"))
+            if not code:
+                print("- code 를 확인하지 못했어. 다시 onboard-openai --force-oauth 로 시도해 줘.")
+                return 1
+            callback_response = client.request(
+                "POST",
+                _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}/callback"),
+                json_body={"code": code, "state": callback_state or response_json.get("state")},
+            )
+            callback_result = {"ok": callback_response.is_success, "payload": callback_response.json()}
 
-    _print_response("provider-auth", callback_result["payload"])
-    if not callback_result.get("ok"):
-        print("\nOAuth callback 처리에는 도달했지만 token 교환이 실패했어.")
-        return 1
+        _print_response("provider-auth", callback_result["payload"])
+        if not callback_result.get("ok"):
+            print("\nOAuth callback 처리에는 도달했지만 token 교환이 실패했어.")
+            return 1
+        provider_state = client.request("GET", _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}")).json()
 
-    provider_state = client.request("GET", _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}")).json()
     print("\nOpenAI 연결 완료를 확인했어.")
     _print_response("list-providers", [provider_state])
 

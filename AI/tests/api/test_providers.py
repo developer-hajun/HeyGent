@@ -53,7 +53,7 @@ def test_provider_auth_start_returns_authorization_url(client):
     body = response.json()
     assert body["status"] == "authorization_required"
     assert body["authorization_url"].startswith("https://auth.openai.com/oauth/authorize?")
-    assert body["redirect_uri"] == "http://localhost:1455/auth/callback"
+    assert body["redirect_uri"] == "http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback"
 
 
 def test_provider_auth_start_imports_local_chatgpt_login(monkeypatch, tmp_path):
@@ -76,7 +76,7 @@ def test_provider_auth_start_imports_local_chatgpt_login(monkeypatch, tmp_path):
     monkeypatch.setenv("HEYGENT_OPENAI_AUTH_FILE", str(auth_path))
 
     with TestClient(app) as local_client:
-        auth_response = local_client.post("/api/v1/providers/openai_oauth/auth", json={})
+        auth_response = local_client.post("/api/v1/providers/openai_oauth/auth", json={"force_oauth": False})
         provider_response = local_client.get("/api/v1/providers/openai_oauth")
 
     assert auth_response.status_code == 200
@@ -89,7 +89,7 @@ def test_provider_callback_connects_provider(monkeypatch, tmp_path):
     db_path = tmp_path / "provider-api.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
     monkeypatch.setenv("HEYGENT_OPENAI_OAUTH_CLIENT_ID", "client-id")
-    monkeypatch.setenv("HEYGENT_OPENAI_OAUTH_REDIRECT_URI", "http://localhost:1455/auth/callback")
+    monkeypatch.setenv("HEYGENT_OPENAI_OAUTH_REDIRECT_URI", "http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback")
     monkeypatch.setenv("HEYGENT_OPENAI_OAUTH_AUTHORIZE_URL", "https://auth.openai.test/authorize")
     monkeypatch.setenv("HEYGENT_OPENAI_OAUTH_TOKEN_URL", "https://auth.openai.test/token")
     monkeypatch.setenv("HEYGENT_OPENAI_OAUTH_SCOPES", "openid,profile,email,offline_access")
@@ -135,7 +135,7 @@ def test_provider_disconnect_clears_connection(monkeypatch, tmp_path):
     db_path = tmp_path / "provider-disconnect.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
     monkeypatch.setenv("HEYGENT_OPENAI_OAUTH_CLIENT_ID", "client-id")
-    monkeypatch.setenv("HEYGENT_OPENAI_OAUTH_REDIRECT_URI", "http://localhost:1455/auth/callback")
+    monkeypatch.setenv("HEYGENT_OPENAI_OAUTH_REDIRECT_URI", "http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback")
     monkeypatch.setenv("HEYGENT_OPENAI_OAUTH_AUTHORIZE_URL", "https://auth.openai.test/authorize")
     monkeypatch.setenv("HEYGENT_OPENAI_OAUTH_TOKEN_URL", "https://auth.openai.test/token")
     monkeypatch.setenv("HEYGENT_OPENAI_OAUTH_SCOPES", "openid,profile,email,offline_access")

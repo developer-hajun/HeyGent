@@ -27,7 +27,7 @@ class Settings:
     api_base_url: str | None = None
     openai_oauth_client_id: str | None = "app_EMoamEEZ73f0CkXaXp7hrann"
     openai_oauth_client_secret: str | None = None
-    openai_oauth_redirect_uri: str | None = "http://localhost:1455/auth/callback"
+    openai_oauth_redirect_uri: str | None = None
     openai_oauth_authorize_url: str | None = "https://auth.openai.com/oauth/authorize"
     openai_oauth_token_url: str | None = "https://auth.openai.com/oauth/token"
     openai_oauth_scopes: list[str] = field(default_factory=lambda: ["openid", "profile", "email", "offline_access"])
@@ -43,6 +43,13 @@ class Settings:
             return self.api_base_url.rstrip("/")
         normalized_prefix = "/" + self.api_prefix.strip("/")
         return f"http://{self.host}:{self.port}{normalized_prefix}"
+
+    def resolved_openai_oauth_redirect_uri(self) -> str:
+        """OpenAI OAuth callback URL 을 계산한다."""
+
+        if self.openai_oauth_redirect_uri:
+            return self.openai_oauth_redirect_uri.rstrip("/")
+        return f"{self.resolved_api_base_url()}/providers/openai_oauth/callback"
 
 
 def load_dotenv_values(env_file: Path | None = None) -> dict[str, str]:
@@ -112,7 +119,7 @@ def get_settings() -> Settings:
         api_base_url=_read_env("HEYGENT_API_BASE_URL", None, dotenv_values),
         openai_oauth_client_id=_read_env("HEYGENT_OPENAI_OAUTH_CLIENT_ID", "app_EMoamEEZ73f0CkXaXp7hrann", dotenv_values),
         openai_oauth_client_secret=_read_env("HEYGENT_OPENAI_OAUTH_CLIENT_SECRET", None, dotenv_values),
-        openai_oauth_redirect_uri=_read_env("HEYGENT_OPENAI_OAUTH_REDIRECT_URI", "http://localhost:1455/auth/callback", dotenv_values),
+        openai_oauth_redirect_uri=_read_env("HEYGENT_OPENAI_OAUTH_REDIRECT_URI", None, dotenv_values),
         openai_oauth_authorize_url=_read_env("HEYGENT_OPENAI_OAUTH_AUTHORIZE_URL", "https://auth.openai.com/oauth/authorize", dotenv_values),
         openai_oauth_token_url=_read_env("HEYGENT_OPENAI_OAUTH_TOKEN_URL", "https://auth.openai.com/oauth/token", dotenv_values),
         openai_oauth_scopes=_parse_scopes(_read_env("HEYGENT_OPENAI_OAUTH_SCOPES", "openid,profile,email,offline_access", dotenv_values)),

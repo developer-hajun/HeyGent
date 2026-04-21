@@ -39,8 +39,6 @@ class OpenAIOAuthProvider(BaseProvider):
         missing: list[str] = []
         if not self.settings.openai_oauth_client_id:
             missing.append("HEYGENT_OPENAI_OAUTH_CLIENT_ID")
-        if not self.settings.openai_oauth_redirect_uri:
-            missing.append("HEYGENT_OPENAI_OAUTH_REDIRECT_URI")
         if not self.settings.openai_oauth_authorize_url:
             missing.append("HEYGENT_OPENAI_OAUTH_AUTHORIZE_URL")
         if not self.settings.openai_oauth_token_url:
@@ -93,7 +91,7 @@ class OpenAIOAuthProvider(BaseProvider):
         force_oauth: bool = False,
     ) -> ProviderAuthResponse:
         missing_env = self.missing_env()
-        effective_redirect_uri = redirect_uri or self.settings.openai_oauth_redirect_uri
+        effective_redirect_uri = redirect_uri or self.settings.resolved_openai_oauth_redirect_uri()
         effective_state = state or new_id("oauth_state")
         current = self.health()
 
@@ -126,7 +124,7 @@ class OpenAIOAuthProvider(BaseProvider):
                     },
                 )
 
-        if missing_env or effective_redirect_uri is None:
+        if missing_env:
             return ProviderAuthResponse(
                 provider_name=self.name,
                 status="configuration_required",
@@ -168,7 +166,7 @@ class OpenAIOAuthProvider(BaseProvider):
         return ProviderAuthResponse(
             provider_name=self.name,
             status="authorization_required",
-            detail="브라우저에서 OpenAI 로그인과 연결 승인을 진행해 주세요. 완료되면 localhost callback 으로 돌아옵니다",
+            detail="브라우저에서 OpenAI 로그인과 연결 승인을 진행해 주세요. 완료되면 설정된 서비스 callback URL 로 돌아옵니다",
             authorization_url=authorization_url,
             redirect_uri=effective_redirect_uri,
             scopes=self.settings.openai_oauth_scopes,

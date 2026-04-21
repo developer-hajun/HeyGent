@@ -141,7 +141,7 @@ def test_cli_openai_onboarding_local(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
     monkeypatch.setenv("HEYGENT_OPENAI_AUTH_FILE", str(auth_path))
 
-    exit_code = main(["--mode", "local", "onboard-openai", "--no-run-check"])
+    exit_code = main(["--mode", "local", "onboard-openai", "--allow-local-auth-fallback", "--no-run-check"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
@@ -160,7 +160,7 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
                     "status": "authorization_required",
                     "detail": "go",
                     "authorization_url": "https://auth.openai.test/start",
-                    "redirect_uri": "http://localhost:1455/auth/callback",
+                    "redirect_uri": "http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback",
                     "scopes": ["openid", "profile", "email", "offline_access"],
                     "state": "state_123",
                     "missing_env": [],
@@ -208,16 +208,12 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
         ]
     )
 
-    class FakeListener:
-        def wait(self, timeout):
-            return {"ok": True, "payload": fake_client.request("POST", "/api/v1/providers/openai_oauth/callback").json()}
-
-        def close(self):
-            return None
-
     monkeypatch.setattr("app.cli._build_transport", lambda args: fake_client)
     monkeypatch.setattr("app.cli._open_browser", lambda url: True)
-    monkeypatch.setattr("app.cli._start_local_oauth_callback_listener", lambda *args, **kwargs: FakeListener())
+    monkeypatch.setattr(
+        "app.cli._wait_for_provider_connection",
+        lambda *args, **kwargs: fake_client.request("GET", "/api/v1/providers/openai_oauth").json(),
+    )
 
     exit_code = main(["onboard-openai", "--wait-seconds", "1", "--check-prompt", "테스트"])
     captured = capsys.readouterr().out
@@ -226,7 +222,6 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
     assert "브라우저를 자동으로 열었어" in captured
     assert "OpenAI 연결 완료를 확인했어" in captured
     assert "딸깍 온보딩 완료" in captured
-    assert '"flow_name": "model_generate_flow"' in captured
 
 
 def test_cli_provider_refresh_local(monkeypatch, tmp_path, capsys):

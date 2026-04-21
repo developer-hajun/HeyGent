@@ -57,15 +57,16 @@ py -3.11 -m pip install -e .[dev]
 copy .env.example .env
 ```
 
-기본 사용자 흐름은 `.env` 에서 로컬 인증 파일 경로만 준비하고 `onboard-openai` 를 실행하는 것입니다.
-브라우저 OAuth 앱 설정은 로컬 로그인 재사용이 안 될 때만 필요합니다.
+기본 사용자 흐름은 `.env` 에서 로컬 서비스 callback URL 을 두고 `onboard-openai` 를 실행하는 것입니다.
+나중에는 이 redirect URL 만 배포 도메인 값으로 바꾸면 같은 흐름을 유지할 수 있습니다.
 
 - `HEYGENT_HOST`
 - `HEYGENT_PORT`
 - `HEYGENT_API_PREFIX`
 - `HEYGENT_AI_DB_PATH`
 - `HEYGENT_API_BASE_URL`
-- `HEYGENT_OPENAI_AUTH_FILE`
+- `HEYGENT_OPENAI_OAUTH_REDIRECT_URI`
+- `HEYGENT_OPENAI_AUTH_FILE` (개발용 fallback)
 - `HEYGENT_OPENAI_API_BASE_URL` (`https://chatgpt.com/backend-api` 권장)
 - `HEYGENT_OPENAI_RESPONSE_MODEL`
 
@@ -98,18 +99,16 @@ py -3.11 -m app.cli list-flows
 ## OpenAI 온보딩
 
 사용자 입장에서는 `onboard-openai` 하나만 기억하면 됩니다.
-CLI 는 아래 우선순위로 연결을 시도합니다.
+기본 흐름은 브라우저 OAuth 와 서비스 callback 입니다.
 
 ```text
 onboard-openai
    ↓
-이 기기의 ChatGPT/Codex 로그인 확인
+브라우저 OpenAI 로그인
    ↓
-있으면 즉시 연결
+우리 서비스 callback 으로 복귀
    ↓
-없으면 브라우저 OAuth 연결
-   ↓
-그래도 안 되면 개발자 설정 문서 안내
+서버가 token 저장
    ↓
 list-providers
    ↓
@@ -124,30 +123,32 @@ py -3.11 -m app.cli onboard-openai
 
 이 명령은 아래를 한 번에 시도합니다.
 
-- 로컬 ChatGPT/Codex 로그인 재사용 가능 여부 확인
-- 필요하면 브라우저 OAuth URL 생성
+- 브라우저 OAuth URL 생성
+- 우리 callback URL 로의 복귀 확인
 - 연결 상태 확인
 - `model_generate_flow` 테스트 작업 실행
 
-즉 기본 경로는 사용자가 OAuth 앱 세부값을 몰라도 되게 하는 것입니다.
-브라우저 OAuth 앱 설정이 정말 필요할 때만 `configuration_required` 와 개발자 설정 문서를 보여줍니다.
+즉 로컬에서도 실제 서비스처럼 로그인 리다이렉트 흐름을 먼저 검증합니다.
 기본값은 OpenClaw 4.15가 쓰는 Codex OAuth 흐름과 맞춰져 있어서, 보통은 별도 client secret 설정이 필요 없습니다.
+개발용으로만 로컬 ChatGPT/Codex 로그인 fallback 을 허용하려면 `--allow-local-auth-fallback` 를 쓰면 됩니다.
 
-### 2. 로컬 로그인 재사용
+### 2. 브라우저 OAuth 연결
 
-기본값으로 `HEYGENT_OPENAI_AUTH_FILE` 또는 `~/.codex/auth.json` 을 읽습니다.
-이 파일에 유효한 ChatGPT/Codex access token 이 있으면 브라우저 없이 바로 연결합니다.
-
-### 3. 브라우저 OAuth 연결
-
-로컬 로그인 재사용이 안 되는데 `HEYGENT_OPENAI_OAUTH_*` 값이 준비되어 있으면 CLI 가 브라우저를 열어 줍니다.
+`HEYGENT_OPENAI_OAUTH_*` 값이 준비되어 있으면 CLI 가 브라우저를 열어 줍니다.
 자동으로 안 열리면 출력된 `authorization_url` 을 직접 열면 됩니다.
 
-기본 callback 예시:
+기본 로컬 callback 예시:
 
 ```text
-http://localhost:1455/auth/callback
+http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback
 ```
+
+배포 후에는 이 값만 서비스 도메인으로 바꾸면 됩니다.
+
+### 3. 로컬 로그인 재사용 (선택)
+
+개발 편의를 위해 `HEYGENT_OPENAI_AUTH_FILE` 또는 `~/.codex/auth.json` 을 fallback 으로 둘 수 있습니다.
+이 경로는 기본 제품 플로우가 아니라 개발용 우회 경로입니다.
 
 ### 4. 연결 확인과 갱신
 

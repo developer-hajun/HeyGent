@@ -102,7 +102,7 @@ def test_openai_provider_imports_local_codex_auth_and_generates_live(monkeypatch
         raise AssertionError(f"unexpected url: {url}")
 
     monkeypatch.setattr("app.domain.providers.openai_oauth.httpx.stream", fake_stream)
-    auth = provider.start_auth()
+    auth = provider.start_auth(force_oauth=False)
     generated = provider.generate("연결 확인")
 
     assert auth.status == "connected"
@@ -116,7 +116,7 @@ def test_openai_provider_completes_auth_and_generates_live(monkeypatch, tmp_path
     repository = SQLiteTaskRepository(tmp_path / "provider-live.db")
     settings = Settings(
         openai_oauth_client_id="client-id",
-        openai_oauth_redirect_uri="http://localhost:1455/auth/callback",
+        openai_oauth_redirect_uri="http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback",
         openai_oauth_authorize_url="https://auth.openai.test/authorize",
         openai_oauth_token_url="https://auth.openai.test/token",
         openai_oauth_scopes=["openid", "profile", "email", "offline_access"],
@@ -165,7 +165,7 @@ def test_openai_provider_refresh_and_disconnect(monkeypatch, tmp_path):
     repository = SQLiteTaskRepository(tmp_path / "provider-refresh.db")
     settings = Settings(
         openai_oauth_client_id="client-id",
-        openai_oauth_redirect_uri="http://localhost:1455/auth/callback",
+        openai_oauth_redirect_uri="http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback",
         openai_oauth_authorize_url="https://auth.openai.test/authorize",
         openai_oauth_token_url="https://auth.openai.test/token",
         openai_oauth_scopes=["openid", "profile", "email", "offline_access"],
