@@ -200,18 +200,23 @@ def test_tasks_browser_renders_task_step_and_step_detail_views(monkeypatch):
     )
 
     list_rendered = TASK_BROWSER_UI.render_tasks_browser_list(state)
-    task_detail_rendered = TASK_BROWSER_UI._render_task_detail(state)
+    state.depth = "task_detail"
+    task_detail_rendered = TASK_BROWSER_UI.render_task_detail(state)
+    state.depth = "step_detail"
     step_detail_rendered = TASK_BROWSER_UI.render_tasks_browser_step_detail(state)
 
     assert "필터: 전체 / 진행중 / [대기] / 완료" in list_rendered
+    assert "[<필터>]" not in list_rendered
     assert "› [1] 승인 대기 태스크 | WAITING | step 2개" in list_rendered
     assert "입력: 배포 전 승인해줘" in list_rendered
     assert "현재: 승인 응답을 기다리는 중" in list_rendered
     assert "Tasks > 승인 대기 태스크" in task_detail_rendered
+    assert "TaskRun = 전체 작업 / StepRun = 한 단계 / detail_json = step 저장 실행 정보" in task_detail_rendered
     assert "Step 목록" in task_detail_rendered
     assert "[현재] 사용자 승인 대기 | WAITING" in task_detail_rendered
     assert "Tasks > 승인 대기 태스크 > 사용자 승인 대기" in step_detail_rendered
-    assert "input_payload" in step_detail_rendered
+    assert "detail 해석" in step_detail_rendered
+    assert "- Tool 사용: approval.request" in step_detail_rendered
     assert '"reason": "approval_required"' in step_detail_rendered
     assert "- approval.requested | 승인이 필요합니다." in step_detail_rendered
 
@@ -246,10 +251,10 @@ def test_tasks_browser_reads_windows_arrow_keys(monkeypatch):
     monkeypatch.setattr(TASK_BROWSER_UI, "_supports_windows_browser_keys", lambda: True)
     monkeypatch.setattr(TASK_BROWSER_UI, "msvcrt", FakeMsvcrt(["\xe0", "H"]))
 
-    assert TASK_BROWSER_UI._read_browser_command("tasks> ") == "__browser_up__"
+    assert TASK_BROWSER_UI._read_browser_command() == "up"
 
 
-def test_tasks_browser_reads_windows_number_input(monkeypatch, capsys):
+def test_tasks_browser_reads_windows_enter_and_tab(monkeypatch):
     class FakeMsvcrt:
         def __init__(self, keys):
             self.keys = iter(keys)
@@ -258,11 +263,101 @@ def test_tasks_browser_reads_windows_number_input(monkeypatch, capsys):
             return next(self.keys)
 
     monkeypatch.setattr(TASK_BROWSER_UI, "_supports_windows_browser_keys", lambda: True)
-    monkeypatch.setattr(TASK_BROWSER_UI, "msvcrt", FakeMsvcrt(["2", "\r"]))
+    monkeypatch.setattr(TASK_BROWSER_UI, "msvcrt", FakeMsvcrt(["\t"]))
+    assert TASK_BROWSER_UI._read_browser_command() == "tab"
 
-    assert TASK_BROWSER_UI._read_browser_command("tasks> ") == "2"
-    captured = capsys.readouterr().out
-    assert "tasks> 2" in captured
+    monkeypatch.setattr(TASK_BROWSER_UI, "msvcrt", FakeMsvcrt(["\r"]))
+    assert TASK_BROWSER_UI._read_browser_command() == "enter"
+
+
+def test_tasks_browser_run_flow_navigates_without_prompt(monkeypatch):
+    settings = get_settings()
+    outputs: list[str] = []
+    commands = iter(["enter", "enter", "back", "back", "tab", "right", "right", "right", "right", "enter"])
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+            self.is_success = True
+            self.status_code = 200
+
+        def json(self):
+            return self._payload
+
+    class FakeClient:
+        def request(self, method, path):
+            if "?" in path:
+                return FakeResponse(
+                    {
+                        "items": [
+                            {
+                                "task_run_id": "task_1",
+                                "task_type": "model.generate",
+                                "flow_name": "model_generate_flow",
+                                "status": "COMPLETED",
+                                "title": "모델 생성 요청",
+                                "input_summary": "헤르메스 알아?",
+                                "step_count": 1,
+                                "updated_at": "2026-04-22T00:00:00",
+                                "current_step": {"step_run_id": "step_1", "step_type": "model.generate.execute", "status": "COMPLETED", "title": "모델 응답 생성", "summary_message": "모델 응답 생성 완료"},
+                            }
+                        ],
+                        "page": 1,
+                        "page_size": 8,
+                        "total_count": 1,
+                        "has_previous": False,
+                        "has_next": False,
+                        "status_filter": "ALL",
+                    }
+                )
+            if path.endswith("/steps"):
+                return FakeResponse(
+                    [
+                        {
+                            "step_run_id": "step_1",
+                            "task_run_id": "task_1",
+                            "step_order": 1,
+                            "step_type": "model.generate.execute",
+                            "status": "COMPLETED",
+                            "title": "모델 응답 생성",
+                            "input_payload": {"prompt": "헤르메스 알아?"},
+                            "output_payload": {"text": "응, 알아."},
+                            "wait_payload": {},
+                            "detail_json": {"agentDetail": {"called": False}, "toolDetail": {"toolNames": []}, "llmDetail": {"model": "gpt-5.4", "callCount": 1}},
+                            "summary_message": "모델 응답 생성 완료",
+                            "updated_at": "2026-04-22T00:00:00",
+                        }
+                    ]
+                )
+            if path.endswith("/events"):
+                return FakeResponse([
+                    {"event_type": "task.completed", "step_run_id": "step_1", "summary_message": "완료됨"}
+                ])
+            return FakeResponse(
+                {
+                    "task_run_id": "task_1",
+                    "task_type": "model.generate",
+                    "flow_name": "model_generate_flow",
+                    "status": "COMPLETED",
+                    "title": "모델 생성 요청",
+                    "input_payload": {"prompt": "헤르메스 알아?"},
+                    "updated_at": "2026-04-22T00:00:00",
+                }
+            )
+
+    monkeypatch.setattr(TASK_BROWSER_UI, "_clear_terminal", lambda: None)
+    monkeypatch.setattr(TASK_BROWSER_UI.sys.stdout, "isatty", lambda: False)
+
+    TASK_BROWSER_UI.run_tasks_browser(
+        FakeClient(),
+        settings,
+        input_func=lambda prompt="": next(commands),
+        output_func=outputs.append,
+    )
+
+    assert any("Tasks > 모델 생성 요청" in output for output in outputs)
+    assert any("Tasks > 모델 생성 요청 > 모델 응답 생성" in output for output in outputs)
+    assert outputs[-1] == "작업 브라우저를 닫을게."
 
 
 def test_initial_login_choice_uses_prompt_toolkit_choice(monkeypatch):
