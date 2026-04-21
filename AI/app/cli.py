@@ -180,7 +180,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     onboard_parser = subparsers.add_parser(
         "onboard-openai",
         help="사용자 기준으로 OpenAI 연결을 가장 쉬운 경로부터 자동 시도합니다",
-        description="브라우저 OAuth 기준으로 로컬 서비스 callback, 연결 상태 확인, 모델 테스트까지 한 번에 수행할 수 있습니다.",
+        description="브라우저 OAuth 기준으로 OpenClaw와 같은 localhost callback, 연결 상태 확인, 모델 테스트까지 한 번에 수행할 수 있습니다.",
     )
     onboard_parser.add_argument("--redirect-uri", default=None, help="요청 시점에 redirect URI 를 덮어쓸 수 있습니다")
     onboard_parser.add_argument("--state", default=None, help="직접 관리할 OAuth state 값")
@@ -306,17 +306,17 @@ def _print_response(command: str, response_json: Any) -> None:
 
 def _print_openai_onboarding(response_json: dict[str, Any], base_url: str) -> None:
     print("\n[HeyGent CLI] OpenAI 연결 온보딩\n")
-    print("브라우저 OpenAI OAuth 기준으로 로컬에서도 서비스처럼 연결합니다.")
+    print("브라우저 OpenAI OAuth 기준으로 OpenClaw와 같은 localhost callback 흐름으로 연결합니다.")
     print("1) 브라우저에서 OpenAI 로그인")
-    print("2) 우리 callback URL 로 리다이렉트")
-    print("3) 서버가 token 저장")
+    print("2) localhost callback 으로 리다이렉트")
+    print("3) CLI 가 code 를 받아 서버에 token 저장 요청")
     print("4) 연결되면 바로 상태와 모델 작업까지 확인\n")
     print("흐름도")
     print("  onboard-openai")
     print("      ↓")
     print("  브라우저 OpenAI 로그인")
     print("      ↓")
-    print("  우리 callback URL 복귀")
+    print("  localhost callback 복귀")
     print("      ↓")
     print("  연결 상태 확인")
     print("      ↓")
@@ -579,7 +579,7 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
         print("\n브라우저 자동 열기는 건너뛰었어. 위 authorization_url 을 직접 열면 돼.")
 
     if args.no_wait:
-        print("\n대기 없이 종료할게. 로그인 후 list-providers 나 onboard-openai 로 확인하면 돼.")
+        print("\n대기 없이 종료할게. 로그인 후 다시 onboard-openai 를 실행하거나 list-providers 로 확인하면 돼.")
         return 0
 
     callback_result = None

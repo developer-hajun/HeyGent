@@ -160,7 +160,7 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
                     "status": "authorization_required",
                     "detail": "go",
                     "authorization_url": "https://auth.openai.test/start",
-                    "redirect_uri": "http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback",
+                    "redirect_uri": "http://localhost:1455/auth/callback",
                     "scopes": ["openid", "profile", "email", "offline_access"],
                     "state": "state_123",
                     "missing_env": [],
@@ -208,12 +208,16 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
         ]
     )
 
+    class FakeListener:
+        def wait(self, timeout):
+            return {"ok": True, "payload": fake_client.request("POST", "/api/v1/providers/openai_oauth/callback").json()}
+
+        def close(self):
+            return None
+
     monkeypatch.setattr("app.cli._build_transport", lambda args: fake_client)
     monkeypatch.setattr("app.cli._open_browser", lambda url: True)
-    monkeypatch.setattr(
-        "app.cli._wait_for_provider_connection",
-        lambda *args, **kwargs: fake_client.request("GET", "/api/v1/providers/openai_oauth").json(),
-    )
+    monkeypatch.setattr("app.cli._start_local_oauth_callback_listener", lambda *args, **kwargs: FakeListener())
 
     exit_code = main(["onboard-openai", "--wait-seconds", "1", "--check-prompt", "테스트"])
     captured = capsys.readouterr().out

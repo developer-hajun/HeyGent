@@ -57,8 +57,8 @@ py -3.11 -m pip install -e .[dev]
 copy .env.example .env
 ```
 
-기본 사용자 흐름은 `.env` 에서 로컬 서비스 callback URL 을 두고 `onboard-openai` 를 실행하는 것입니다.
-나중에는 이 redirect URL 만 배포 도메인 값으로 바꾸면 같은 흐름을 유지할 수 있습니다.
+기본 사용자 흐름은 `.env` 에서 OpenClaw와 같은 localhost callback 값을 두고 `onboard-openai` 를 실행하는 것입니다.
+나중에는 이 redirect URL 만 별도 설정으로 바꿀 수 있게 구조를 유지합니다.
 
 - `HEYGENT_HOST`
 - `HEYGENT_PORT`
@@ -99,16 +99,16 @@ py -3.11 -m app.cli list-flows
 ## OpenAI 온보딩
 
 사용자 입장에서는 `onboard-openai` 하나만 기억하면 됩니다.
-기본 흐름은 브라우저 OAuth 와 서비스 callback 입니다.
+기본 흐름은 브라우저 OAuth 와 localhost callback 입니다.
 
 ```text
 onboard-openai
    ↓
 브라우저 OpenAI 로그인
    ↓
-우리 서비스 callback 으로 복귀
+localhost callback 으로 복귀
    ↓
-서버가 token 저장
+CLI 가 code 를 서버 callback 처리로 전달
    ↓
 list-providers
    ↓
@@ -124,12 +124,12 @@ py -3.11 -m app.cli onboard-openai
 이 명령은 아래를 한 번에 시도합니다.
 
 - 브라우저 OAuth URL 생성
-- 우리 callback URL 로의 복귀 확인
+- localhost callback 복귀 확인
 - 연결 상태 확인
 - `model_generate_flow` 테스트 작업 실행
 
-즉 로컬에서도 실제 서비스처럼 로그인 리다이렉트 흐름을 먼저 검증합니다.
-기본값은 OpenClaw 4.15가 쓰는 Codex OAuth 흐름과 맞춰져 있어서, 보통은 별도 client secret 설정이 필요 없습니다.
+즉 지금은 OpenClaw 4.15가 쓰는 Codex OAuth localhost 흐름을 그대로 따라갑니다.
+기본값은 보통 별도 client secret 설정이 필요 없습니다.
 개발용으로만 로컬 ChatGPT/Codex 로그인 fallback 을 허용하려면 `--allow-local-auth-fallback` 를 쓰면 됩니다.
 
 ### 2. 브라우저 OAuth 연결
@@ -140,10 +140,10 @@ py -3.11 -m app.cli onboard-openai
 기본 로컬 callback 예시:
 
 ```text
-http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback
+http://localhost:1455/auth/callback
 ```
 
-배포 후에는 이 값만 서비스 도메인으로 바꾸면 됩니다.
+나중에 자체 OAuth client 나 배포 환경을 붙일 때는 이 값을 설정으로 분리하면 됩니다.
 
 ### 3. 로컬 로그인 재사용 (선택)
 

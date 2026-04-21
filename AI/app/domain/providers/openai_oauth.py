@@ -166,7 +166,7 @@ class OpenAIOAuthProvider(BaseProvider):
         return ProviderAuthResponse(
             provider_name=self.name,
             status="authorization_required",
-            detail="브라우저에서 OpenAI 로그인과 연결 승인을 진행해 주세요. 완료되면 설정된 서비스 callback URL 로 돌아옵니다",
+            detail="브라우저에서 OpenAI 로그인과 연결 승인을 진행해 주세요. 완료되면 등록된 localhost callback 으로 돌아옵니다",
             authorization_url=authorization_url,
             redirect_uri=effective_redirect_uri,
             scopes=self.settings.openai_oauth_scopes,
