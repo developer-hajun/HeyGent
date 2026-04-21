@@ -5,8 +5,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+import httpx
+import uvicorn
 from fastapi.testclient import TestClient
 
+from app.core.config import Settings, get_settings
 from app.main import app
 
 
@@ -26,14 +29,57 @@ class PrettyHelpFormatter(argparse.RawTextHelpFormatter):
 
 
 COMMAND_ALIASES = {
+    "serve": "게이트웨이 실행",
+    "health": "서버 상태 확인",
     "create-task": "작업 생성",
     "watch-task": "작업 조회",
     "resume-task": "승인 재개",
     "list-flows": "플로우 목록",
     "list-providers": "프로바이더 목록",
+    "provider-auth": "프로바이더 인증 시작",
     "list-steps": "단계 목록",
     "list-events": "이벤트 목록",
 }
+
+
+class RemoteCLIClient:
+    """떠 있는 AI 서버에 HTTP 로 붙는 기본 CLI 전송 계층이다."""
+
+    def __init__(self, *, base_url: str, timeout_seconds: float) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.timeout_seconds = timeout_seconds
+        self._client: httpx.Client | None = None
+
+    def __enter__(self):
+        self._client = httpx.Client(base_url=self.base_url, timeout=self.timeout_seconds)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        if self._client is not None:
+            self._client.close()
+
+    def request(self, method: str, path: str, *, json_body: dict[str, Any] | None = None) -> httpx.Response:
+        assert self._client is not None
+        return self._client.request(method, path, json=json_body)
+
+
+class LocalCLIClient:
+    """테스트나 빠른 디버그를 위한 in-process 전송 계층이다.
+
+    기본 사용 흐름은 remote 이지만,
+    테스트에서는 실제 서버 프로세스를 띄우지 않고도 같은 라우터 표면을 검증할 수 있게 남겨 둔다.
+    """
+
+    def __enter__(self):
+        self._client = TestClient(app)
+        self._client.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self._client.__exit__(exc_type, exc, tb)
+
+    def request(self, method: str, path: str, *, json_body: dict[str, Any] | None = None):
+        return self._client.request(method, path, json=json_body)
 
 
 def _load_payload(raw: str | None) -> dict[str, Any]:
@@ -51,29 +97,58 @@ def _load_payload(raw: str | None) -> dict[str, Any]:
 def _build_examples() -> str:
     return (
         "예시:\n"
+        "  python -m app.cli serve\n"
+        "  python -m app.cli health\n"
         "  python -m app.cli list-flows\n"
         "  python -m app.cli list-providers\n"
+        "  python -m app.cli provider-auth --provider openai_oauth\n"
         "  python -m app.cli create-task --type echo_flow --payload '{\"message\":\"안녕하세요\"}'\n"
         "  python -m app.cli create-task --type approval_wait_flow --payload sample.json\n"
         "  python -m app.cli watch-task --task-id task_xxx\n"
-        "  python -m app.cli list-steps --task-id task_xxx\n"
-        "  python -m app.cli list-events --task-id task_xxx\n"
         "  python -m app.cli resume-task --task-id task_xxx --payload '{\"approved\": true}'"
     )
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
+    settings = settings or get_settings()
     parser = KoreanArgumentParser(
         prog="python -m app.cli",
         description=(
-            "HeyGent AI Backbone 을 로컬에서 빠르게 확인하는 한글 CLI 입니다.\n"
-            "자세한 명령은 'python -m app.cli /help' 또는 'python -m app.cli help' 로 볼 수 있습니다."
+            "HeyGent AI Backbone 을 서버 중심으로 다루는 한글 CLI 입니다.\n"
+            "기본 동작은 HTTP 서버에 붙는 remote 모드이며, 필요하면 local 디버그 모드도 사용할 수 있습니다."
         ),
         epilog=_build_examples(),
         formatter_class=PrettyHelpFormatter,
     )
+    parser.add_argument(
+        "--base-url",
+        default=settings.resolved_api_base_url(),
+        help=f"remote 모드에서 호출할 API 기본 주소, 기본값은 {settings.resolved_api_base_url()}",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["remote", "local"],
+        default="remote",
+        help="기본은 remote, 테스트나 빠른 디버그가 필요할 때만 local 사용",
+    )
+    parser.add_argument("--timeout", type=float, default=10.0, help="remote HTTP 요청 타임아웃(초)")
     subparsers = parser.add_subparsers(dest="command", required=True, help="실행할 명령")
     command_parsers: dict[str, argparse.ArgumentParser] = {}
+
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="현재 설정으로 API 서버를 실행합니다",
+        description=".env 또는 환경 변수에 정의된 host/port/reload 설정으로 uvicorn 서버를 실행합니다.",
+    )
+    command_parsers["serve"] = serve_parser
+
+    health_parser = subparsers.add_parser(
+        "health",
+        help="서버 health 또는 ready 상태를 조회합니다",
+        description="기본은 /ready 를 조회하고, --kind health 로 liveness 확인만 수행할 수 있습니다.",
+    )
+    health_parser.add_argument("--kind", choices=["health", "ready"], default="ready", help="조회할 상태 종류")
+    command_parsers["health"] = health_parser
 
     create_parser = subparsers.add_parser(
         "create-task",
@@ -133,9 +208,19 @@ def build_parser() -> argparse.ArgumentParser:
     providers_parser = subparsers.add_parser(
         "list-providers",
         help="등록된 Model Provider 목록을 봅니다",
-        description="현재 등록된 provider 의 이름과 상태를 확인합니다.",
+        description="현재 등록된 provider 의 이름, 설정 상태, 누락된 env 를 확인합니다.",
     )
     command_parsers["list-providers"] = providers_parser
+
+    auth_parser = subparsers.add_parser(
+        "provider-auth",
+        help="모델 프로바이더 OAuth 시작 정보를 확인합니다",
+        description="현재는 authorization URL 과 누락된 env 를 확인하는 용도로 사용합니다.",
+    )
+    auth_parser.add_argument("--provider", default="openai_oauth", help="인증을 시작할 provider 이름")
+    auth_parser.add_argument("--redirect-uri", default=None, help="요청 시점에 redirect URI 를 덮어쓸 수 있습니다")
+    auth_parser.add_argument("--state", default=None, help="직접 관리할 OAuth state 값")
+    command_parsers["provider-auth"] = auth_parser
 
     help_parser = subparsers.add_parser(
         "help",
@@ -157,8 +242,69 @@ def _print_response(command: str, response_json: Any) -> None:
     print(json.dumps(response_json, ensure_ascii=False, indent=2))
 
 
+def _build_transport(args) -> RemoteCLIClient | LocalCLIClient:
+    if args.mode == "local":
+        return LocalCLIClient()
+    return RemoteCLIClient(base_url=args.base_url, timeout_seconds=args.timeout)
+
+
+def _request_path(settings: Settings, suffix: str) -> str:
+    normalized_prefix = "/" + settings.api_prefix.strip("/")
+    return f"{normalized_prefix}{suffix}"
+
+
+def _handle_remote_command(args, settings: Settings) -> int:
+    with _build_transport(args) as client:
+        if args.command == "health":
+            path = "/ready" if args.kind == "ready" else "/health"
+            response = client.request("GET", _request_path(settings, path))
+        elif args.command == "create-task":
+            response = client.request(
+                "POST",
+                _request_path(settings, "/tasks"),
+                json_body={
+                    "flow_name": args.flow_name,
+                    "owner_key": args.owner_key,
+                    "input_payload": _load_payload(args.payload),
+                },
+            )
+        elif args.command == "watch-task":
+            response = client.request("GET", _request_path(settings, f"/tasks/{args.task_id}"))
+        elif args.command == "resume-task":
+            response = client.request(
+                "POST",
+                _request_path(settings, f"/tasks/{args.task_id}/resume"),
+                json_body={
+                    "approval_id": args.approval_id,
+                    "payload": _load_payload(args.payload),
+                },
+            )
+        elif args.command == "list-flows":
+            response = client.request("GET", _request_path(settings, "/flows"))
+        elif args.command == "list-providers":
+            response = client.request("GET", _request_path(settings, "/providers"))
+        elif args.command == "provider-auth":
+            response = client.request(
+                "POST",
+                _request_path(settings, f"/providers/{args.provider}/auth"),
+                json_body={"redirect_uri": args.redirect_uri, "state": args.state},
+            )
+        elif args.command == "list-steps":
+            response = client.request("GET", _request_path(settings, f"/tasks/{args.task_id}/steps"))
+        else:
+            response = client.request("GET", _request_path(settings, f"/tasks/{args.task_id}/events"))
+
+    _print_response(args.command, response.json())
+    if response.is_success:
+        return 0
+
+    print("\n요청은 처리됐지만 성공 응답은 아니었습니다. 위 내용을 확인해 주세요.")
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
+    settings = get_settings()
+    parser = build_parser(settings)
     args = parser.parse_args(argv)
 
     if args.command in {"help", "/help"}:
@@ -177,41 +323,24 @@ def main(argv: list[str] | None = None) -> int:
         print(parser.format_help())
         return 0
 
-    with TestClient(app) as client:
-        if args.command == "create-task":
-            response = client.post(
-                "/tasks",
-                json={
-                    "flow_name": args.flow_name,
-                    "owner_key": args.owner_key,
-                    "input_payload": _load_payload(args.payload),
-                },
-            )
-        elif args.command == "watch-task":
-            response = client.get(f"/tasks/{args.task_id}")
-        elif args.command == "resume-task":
-            response = client.post(
-                f"/tasks/{args.task_id}/resume",
-                json={
-                    "approval_id": args.approval_id,
-                    "payload": _load_payload(args.payload),
-                },
-            )
-        elif args.command == "list-flows":
-            response = client.get("/flows")
-        elif args.command == "list-providers":
-            response = client.get("/providers")
-        elif args.command == "list-steps":
-            response = client.get(f"/tasks/{args.task_id}/steps")
-        else:
-            response = client.get(f"/tasks/{args.task_id}/events")
-
-    _print_response(args.command, response.json())
-    if response.is_success:
+    if args.command == "serve":
+        print(
+            f"\n[HeyGent CLI] 게이트웨이 실행\n"
+            f"- host: {settings.host}\n"
+            f"- port: {settings.port}\n"
+            f"- api: {settings.resolved_api_base_url()}\n"
+            f"- reload: {settings.reload}"
+        )
+        uvicorn.run(
+            "app.main:app",
+            host=settings.host,
+            port=settings.port,
+            reload=settings.reload,
+            log_level=settings.log_level,
+        )
         return 0
 
-    print("\n요청은 처리됐지만 성공 응답은 아니었습니다. 위 내용을 확인해 주세요.")
-    return 1
+    return _handle_remote_command(args, settings)
 
 
 if __name__ == "__main__":
