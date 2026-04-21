@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 import math
 import os
 import sys
@@ -43,6 +44,12 @@ FILTER_ALIASES: dict[str, str] = {
     "완료": "COMPLETED",
 }
 
+_ACTIVE_STEP_STATUSES = {"PENDING", "RUNNING", "WAITING", "BLOCKED"}
+_ANSI_RESET = "\033[0m"
+_ANSI_SELECTED = "\033[97m"
+_ANSI_MUTED = "\033[90m"
+_ANSI_ACCENT = "\033[96m"
+
 
 @dataclass(slots=True)
 class TaskBrowserState:
@@ -50,7 +57,8 @@ class TaskBrowserState:
     page: int = 1
     page_size: int = 8
     selected_index: int = 0
-    depth: str = "list"
+    selected_step_index: int = 0
+    depth: str = "task_list"
     list_payload: dict[str, Any] = field(default_factory=dict)
     detail_task: dict[str, Any] | None = None
     detail_steps: list[dict[str, Any]] = field(default_factory=list)
@@ -62,6 +70,10 @@ class TaskBrowserRequestError(RuntimeError):
     pass
 
 
+class TaskBrowserExit(Exception):
+    pass
+
+
 def normalize_browser_filter(raw_value: str | None) -> str:
     if raw_value is None:
         return "ALL"
@@ -69,9 +81,11 @@ def normalize_browser_filter(raw_value: str | None) -> str:
     return normalized or raw_value.strip().upper()
 
 
+
 def build_tasks_list_path(settings: Settings, *, status_filter: str, page: int, page_size: int) -> str:
     query = urlencode({"status": status_filter, "page": page, "page_size": page_size})
     return request_path(settings, f"/tasks?{query}")
+
 
 
 def _raise_request_error(response, payload: Any, *, action: str) -> None:
@@ -89,12 +103,14 @@ def _raise_request_error(response, payload: Any, *, action: str) -> None:
     raise TaskBrowserRequestError(str(payload))
 
 
+
 def fetch_tasks_page(client, settings: Settings, *, status_filter: str, page: int, page_size: int) -> dict[str, Any]:
     response = client.request("GET", build_tasks_list_path(settings, status_filter=status_filter, page=page, page_size=page_size))
     payload = response.json()
     if not response.is_success:
         _raise_request_error(response, payload, action="list")
     return payload
+
 
 
 def fetch_task_detail_bundle(client, settings: Settings, task_run_id: str) -> dict[str, Any]:
@@ -114,6 +130,7 @@ def fetch_task_detail_bundle(client, settings: Settings, task_run_id: str) -> di
     return {"task": task_payload, "steps": steps_payload, "events": events_payload}
 
 
+
 def _clamp_selected_index(state: TaskBrowserState) -> None:
     items = state.list_payload.get("items") or []
     if not items:
@@ -122,7 +139,16 @@ def _clamp_selected_index(state: TaskBrowserState) -> None:
     state.selected_index = max(0, min(state.selected_index, len(items) - 1))
 
 
-def _selected_item(state: TaskBrowserState) -> dict[str, Any] | None:
+
+def _clamp_selected_step_index(state: TaskBrowserState) -> None:
+    if not state.detail_steps:
+        state.selected_step_index = 0
+        return
+    state.selected_step_index = max(0, min(state.selected_step_index, len(state.detail_steps) - 1))
+
+
+
+def _selected_task_item(state: TaskBrowserState) -> dict[str, Any] | None:
     items = state.list_payload.get("items") or []
     if not items:
         return None
@@ -130,29 +156,76 @@ def _selected_item(state: TaskBrowserState) -> dict[str, Any] | None:
     return items[state.selected_index]
 
 
+
+def _selected_step_item(state: TaskBrowserState) -> dict[str, Any] | None:
+    if not state.detail_steps:
+        return None
+    _clamp_selected_step_index(state)
+    return state.detail_steps[state.selected_step_index]
+
+
+
 def _select_current_step(steps: list[dict[str, Any]]) -> dict[str, Any] | None:
     for step in steps:
-        if step.get("status") in {"PENDING", "RUNNING", "WAITING", "BLOCKED"}:
+        if step.get("status") in _ACTIVE_STEP_STATUSES:
             return step
     return steps[-1] if steps else None
+
 
 
 def _format_time(raw_value: str | None) -> str:
     if not raw_value:
         return "-"
-    return raw_value.replace("T", " ").split("+")[0]
+    return raw_value.replace("T", " ").replace("Z", "").split("+")[0]
 
 
-def _step_summary(item: dict[str, Any]) -> str:
+
+def _truncate_text(value: str | None, *, limit: int = 64) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text or "-"
+    return text[: limit - 1].rstrip() + "…"
+
+
+
+def _task_input_summary(item: dict[str, Any]) -> str:
+    return _truncate_text(item.get("input_summary") or item.get("progress_summary") or "입력 요약 없음", limit=56)
+
+
+
+def _task_title(item: dict[str, Any]) -> str:
+    return _truncate_text(item.get("title") or item.get("flow_name") or item.get("task_type") or item.get("task_run_id") or "-", limit=40)
+
+
+
+def _current_step_summary(item: dict[str, Any]) -> str:
     current_step = item.get("current_step") or {}
-    return str(current_step.get("summary_message") or current_step.get("title") or item.get("progress_summary") or "-")
+    return _truncate_text(current_step.get("summary_message") or current_step.get("title") or item.get("progress_summary") or "-", limit=52)
+
+
+
+def _style_line(text: str, *, selected: bool = False, muted: bool = False, accent: bool = False) -> str:
+    if not sys.stdout.isatty():
+        return text
+    if selected:
+        return f"{_ANSI_SELECTED}{text}{_ANSI_RESET}"
+    if accent:
+        return f"{_ANSI_ACCENT}{text}{_ANSI_RESET}"
+    if muted:
+        return f"{_ANSI_MUTED}{text}{_ANSI_RESET}"
+    return text
+
 
 
 def _render_filter_tabs(selected_filter: str) -> str:
     segments: list[str] = []
     for code, label in TASK_BROWSER_FILTERS.items():
-        segments.append(f"[{label}]" if code == selected_filter else label)
+        if code == selected_filter:
+            segments.append(_style_line(f"[{label}]", accent=True))
+        else:
+            segments.append(label)
     return " / ".join(segments)
+
 
 
 def render_tasks_browser_list(state: TaskBrowserState) -> str:
@@ -176,13 +249,21 @@ def render_tasks_browser_list(state: TaskBrowserState) -> str:
         for index, item in enumerate(items, start=1):
             selected = index - 1 == state.selected_index
             marker = "›" if selected else " "
-            title = str(item.get("title") or item.get("task_type") or item.get("task_run_id"))
+            title = _task_title(item)
             status = str(item.get("status") or "-")
-            step_summary = _step_summary(item)
+            input_summary = _task_input_summary(item)
+            step_count = int(item.get("step_count") or 0)
+            current_step = _current_step_summary(item)
             task_id = str(item.get("task_run_id") or "-")
             updated_at = _format_time(item.get("updated_at") or item.get("created_at"))
-            lines.append(f"{marker} [{index}] {title} | {status} | {step_summary}")
-            lines.append(f"    id: {task_id} • updated: {updated_at}")
+            headline = f"{marker} [{index}] {title} | {status} | step {step_count}개"
+            detail = f"    입력: {input_summary}"
+            progress = f"    현재: {current_step}"
+            meta = f"    id: {task_id} • updated: {updated_at}"
+            lines.append(_style_line(headline, selected=selected))
+            lines.append(_style_line(detail, selected=selected, muted=not selected))
+            lines.append(_style_line(progress, selected=selected, muted=not selected))
+            lines.append(_style_line(meta, selected=selected, muted=not selected))
 
     lines.extend(
         [
@@ -194,71 +275,107 @@ def render_tasks_browser_list(state: TaskBrowserState) -> str:
     return render_plain_box(lines)
 
 
-def _render_step_detail_lines(step: dict[str, Any]) -> list[str]:
-    detail = step.get("detail_json") or {}
-    agent_detail = detail.get("agentDetail") or {}
-    tool_detail = detail.get("toolDetail") or {}
-    llm_detail = detail.get("llmDetail") or {}
 
-    tool_names = ", ".join(tool_detail.get("toolNames") or []) or "-"
-    agent_called = "yes" if agent_detail.get("called") else "no"
-    llm_model = llm_detail.get("model") or "-"
-    llm_calls = llm_detail.get("callCount") or 0
-    return [
-        f"- agent: {agent_called}",
-        f"- tool: {tool_names}",
-        f"- llm: {llm_model} ({llm_calls}회)",
-    ]
+def _task_detail_title(task: dict[str, Any]) -> str:
+    return _truncate_text(task.get("title") or task.get("flow_name") or task.get("task_type") or task.get("task_run_id") or "-", limit=48)
 
 
-def render_tasks_browser_detail(state: TaskBrowserState) -> str:
+
+def _task_detail_input_summary(task: dict[str, Any]) -> str:
+    payload = task.get("input_payload") or {}
+    preferred = [payload.get("prompt"), payload.get("message"), payload.get("subject"), payload.get("title"), payload.get("content")]
+    for value in preferred:
+        if isinstance(value, str) and value.strip():
+            return _truncate_text(value, limit=72)
+    if payload:
+        return _truncate_text(str(payload), limit=72)
+    return "입력 요약 없음"
+
+
+
+def _render_task_detail(state: TaskBrowserState) -> str:
     task = state.detail_task or {}
     steps = state.detail_steps or []
-    events = state.detail_events or []
     current_step = _select_current_step(steps)
-    title = str(task.get("title") or task.get("task_type") or task.get("task_run_id") or "-")
-
     lines = [
-        f"Tasks > {title}",
+        f"Tasks > {_task_detail_title(task)}",
         f"상태: {task.get('status') or '-'}",
-        f"flow: {task.get('flow_name') or '-'}",
-        f"업데이트: {_format_time(task.get('updated_at') or task.get('created_at'))}",
+        f"입력: {_task_detail_input_summary(task)}",
+        f"step: {len(steps)}개   flow: {task.get('flow_name') or '-'}",
+        f"최근 갱신: {_format_time(task.get('updated_at') or task.get('created_at'))}",
+        "",
+        "Step 목록",
     ]
 
-    if current_step is not None:
-        lines.extend(
-            [
-                "",
-                "현재 Step",
-                f"- {current_step.get('title') or current_step.get('step_type') or '-'} | {current_step.get('status') or '-'}",
-            ]
-        )
-        summary = current_step.get("summary_message")
-        if summary:
-            lines.append(f"- 요약: {summary}")
-        lines.extend(_render_step_detail_lines(current_step))
-
-    lines.extend(["", "Step 목록"])
     if not steps:
-        lines.append("- step 없음")
+        lines.append("step 이 없습니다.")
     else:
         current_step_id = current_step.get("step_run_id") if current_step else None
-        for step in steps:
-            marker = "›" if step.get("step_run_id") == current_step_id else "-"
-            summary = step.get("summary_message") or step.get("title") or step.get("step_type") or "-"
-            lines.append(f"{marker} #{step.get('step_order')} {summary} | {step.get('status') or '-'}")
+        for index, step in enumerate(steps, start=1):
+            selected = index - 1 == state.selected_step_index
+            active = step.get("step_run_id") == current_step_id
+            marker = "›" if selected else " "
+            badge = "현재" if active else f"#{index}"
+            title = _truncate_text(step.get("title") or step.get("step_type") or "-", limit=42)
+            summary = _truncate_text(step.get("summary_message") or "요약 없음", limit=56)
+            headline = f"{marker} [{badge}] {title} | {step.get('status') or '-'}"
+            detail = f"    설명: {summary}"
+            lines.append(_style_line(headline, selected=selected))
+            lines.append(_style_line(detail, selected=selected, muted=not selected))
 
-    lines.extend(["", "최근 Event"])
-    recent_events = events[-5:]
-    if not recent_events:
-        lines.append("- event 없음")
+    lines.extend(["", "<열기> <돌아가기>", "명령: ↑↓ 이동 / Enter 열기 / Esc·Backspace 뒤로 / b"])
+    return render_plain_box(lines)
+
+
+
+def _json_block_lines(title: str, payload: Any) -> list[str]:
+    lines = [title]
+    rendered = json.dumps(payload if payload is not None else {}, ensure_ascii=False, indent=2)
+    for line in rendered.splitlines():
+        lines.append(f"  {line}")
+    return lines
+
+
+
+def _step_related_events(state: TaskBrowserState, step_run_id: str | None) -> list[dict[str, Any]]:
+    if not step_run_id:
+        return []
+    return [event for event in state.detail_events if event.get("step_run_id") == step_run_id]
+
+
+
+def render_tasks_browser_step_detail(state: TaskBrowserState) -> str:
+    task = state.detail_task or {}
+    step = _selected_step_item(state) or {}
+    related_events = _step_related_events(state, step.get("step_run_id"))[-5:]
+
+    lines = [
+        f"Tasks > {_task_detail_title(task)} > {_truncate_text(step.get('title') or step.get('step_type') or '-', limit=36)}",
+        f"상태: {step.get('status') or '-'}",
+        f"설명: {_truncate_text(step.get('summary_message') or '요약 없음', limit=84)}",
+        f"step_order: {step.get('step_order') or '-'}   type: {step.get('step_type') or '-'}",
+        f"최근 갱신: {_format_time(step.get('updated_at') or step.get('created_at'))}",
+        "",
+    ]
+
+    lines.extend(_json_block_lines("input_payload", step.get("input_payload") or {}))
+    lines.append("")
+    lines.extend(_json_block_lines("output_payload", step.get("output_payload") or {}))
+    lines.append("")
+    lines.extend(_json_block_lines("wait_payload", step.get("wait_payload") or {}))
+    lines.append("")
+    lines.extend(_json_block_lines("detail_json", step.get("detail_json") or {}))
+    lines.append("")
+    lines.append("최근 step event")
+    if related_events:
+        for event in related_events:
+            lines.append(f"- {event.get('event_type') or '-'} | {event.get('summary_message') or event.get('status') or '-'}")
     else:
-        for event in recent_events:
-            event_summary = event.get("summary_message") or event.get("status") or "-"
-            lines.append(f"- {event.get('event_type') or '-'} | {event_summary}")
+        lines.append("- 연결된 step event 없음")
 
     lines.extend(["", "<돌아가기>", "명령: Esc·Backspace 뒤로 / b"])
     return render_plain_box(lines)
+
 
 
 def _clear_terminal() -> None:
@@ -268,8 +385,10 @@ def _clear_terminal() -> None:
         print()
 
 
+
 def _supports_windows_browser_keys() -> bool:
     return bool(os.name == "nt" and msvcrt is not None and sys.stdin.isatty() and sys.stdout.isatty())
+
 
 
 def _read_browser_command(prompt_text: str, *, input_func: InputFunc = input) -> str:
@@ -319,9 +438,11 @@ def _read_browser_command(prompt_text: str, *, input_func: InputFunc = input) ->
         print(key, end="", flush=True)
 
 
+
 def _load_list(client, settings: Settings, state: TaskBrowserState) -> None:
     state.list_payload = fetch_tasks_page(client, settings, status_filter=state.status_filter, page=state.page, page_size=state.page_size)
     _clamp_selected_index(state)
+
 
 
 def _load_detail(client, settings: Settings, state: TaskBrowserState, task_run_id: str) -> None:
@@ -330,14 +451,108 @@ def _load_detail(client, settings: Settings, state: TaskBrowserState, task_run_i
     state.detail_steps = bundle["steps"]
     state.detail_events = bundle["events"]
     state.selected_task_id = task_run_id
-    state.depth = "detail"
+    state.selected_step_index = 0
+    state.depth = "task_detail"
+
 
 
 def _update_filter(state: TaskBrowserState, next_filter: str) -> None:
     state.status_filter = next_filter
     state.page = 1
     state.selected_index = 0
-    state.depth = "list"
+    state.depth = "task_list"
+
+
+
+def _normalize_command(raw_command: str) -> str:
+    command = raw_command.lower()
+    if command == "__browser_up__":
+        return "up"
+    if command == "__browser_down__":
+        return "down"
+    if command == "__browser_prev__":
+        return "prev"
+    if command == "__browser_next__":
+        return "next"
+    if command == "__browser_back__":
+        return "back"
+    return command
+
+
+
+def _open_selected_task(client, settings: Settings, state: TaskBrowserState) -> None:
+    selected_item = _selected_task_item(state)
+    if selected_item is None:
+        return
+    _load_detail(client, settings, state, str(selected_item.get("task_run_id")))
+
+
+
+def _open_selected_step(state: TaskBrowserState) -> None:
+    if _selected_step_item(state) is None:
+        return
+    state.depth = "step_detail"
+
+
+
+def _handle_task_list_command(client, settings: Settings, state: TaskBrowserState, *, raw_command: str, command: str, output_func: OutputFunc) -> None:
+    if command in {"b", "back", "돌아가기", "q", "quit", "exit"}:
+        raise TaskBrowserExit
+    if command in {"j", "down", "up", "k"}:
+        state.selected_index += 1 if command in {"j", "down"} else -1
+        _clamp_selected_index(state)
+        return
+    if command in {"<", "p", "prev", "이전"}:
+        if state.list_payload.get("has_previous"):
+            state.page = max(1, state.page - 1)
+            state.selected_index = 0
+            _load_list(client, settings, state)
+        return
+    if command in {">", "n", "next", "다음"}:
+        if state.list_payload.get("has_next"):
+            state.page += 1
+            state.selected_index = 0
+            _load_list(client, settings, state)
+        return
+    if command in {alias.lower() for alias in FILTER_ALIASES}:
+        normalized_filter = normalize_browser_filter(raw_command)
+        if normalized_filter in TASK_BROWSER_FILTERS:
+            _update_filter(state, normalized_filter)
+            _load_list(client, settings, state)
+        return
+    if command in {"", "o", "open", "열기"}:
+        _open_selected_task(client, settings, state)
+        return
+    if raw_command.isdigit():
+        target_index = int(raw_command) - 1
+        items = state.list_payload.get("items") or []
+        if 0 <= target_index < len(items):
+            state.selected_index = target_index
+            _open_selected_task(client, settings, state)
+        return
+    if raw_command:
+        output_func("알 수 없는 입력이야. 방향키, Enter, 숫자, 필터 키워드를 써줘.")
+
+
+
+def _handle_task_detail_command(state: TaskBrowserState, *, command: str) -> None:
+    if command in {"b", "back", "돌아가기", "q", "quit", "exit"}:
+        state.depth = "task_list"
+        return
+    if command in {"j", "down", "up", "k"}:
+        state.selected_step_index += 1 if command in {"j", "down"} else -1
+        _clamp_selected_step_index(state)
+        return
+    if command in {"", "o", "open", "열기", "next"}:
+        _open_selected_step(state)
+        return
+
+
+
+def _handle_step_detail_command(state: TaskBrowserState, *, command: str) -> None:
+    if command in {"b", "back", "돌아가기", "q", "quit", "exit"}:
+        state.depth = "task_detail"
+
 
 
 def run_tasks_browser(
@@ -361,68 +576,27 @@ def run_tasks_browser(
 
     while True:
         _clear_terminal()
-        output_func(render_tasks_browser_detail(state) if state.depth == "detail" else render_tasks_browser_list(state))
+        if state.depth == "task_list":
+            output_func(render_tasks_browser_list(state))
+        elif state.depth == "task_detail":
+            output_func(_render_task_detail(state))
+        else:
+            output_func(render_tasks_browser_step_detail(state))
+
         try:
             raw_command = _read_browser_command("tasks> ", input_func=input_func).strip()
         except (EOFError, KeyboardInterrupt):
             output_func("작업 브라우저를 닫을게.")
             return
 
-        command = raw_command.lower()
-        if command == "__browser_up__":
-            command = "up"
-        elif command == "__browser_down__":
-            command = "down"
-        elif command == "__browser_prev__":
-            command = "prev"
-        elif command == "__browser_next__":
-            command = "next"
-        elif command == "__browser_back__":
-            command = "back"
-        if state.depth == "detail":
-            if command in {"b", "back", "돌아가기", "q", "quit", "exit"}:
-                state.depth = "list"
-                continue
-            continue
-
-        if command in {"b", "back", "돌아가기", "q", "quit", "exit"}:
+        command = _normalize_command(raw_command)
+        try:
+            if state.depth == "task_list":
+                _handle_task_list_command(client, settings, state, raw_command=raw_command, command=command, output_func=output_func)
+            elif state.depth == "task_detail":
+                _handle_task_detail_command(state, command=command)
+            else:
+                _handle_step_detail_command(state, command=command)
+        except TaskBrowserExit:
             output_func("작업 브라우저를 닫을게.")
             return
-        if command in {"j", "down"}:
-            state.selected_index += 1
-            _clamp_selected_index(state)
-            continue
-        if command in {"k", "up"}:
-            state.selected_index -= 1
-            _clamp_selected_index(state)
-            continue
-        if command in {"<", "p", "prev", "이전"}:
-            if state.list_payload.get("has_previous"):
-                state.page = max(1, state.page - 1)
-                state.selected_index = 0
-                _load_list(client, settings, state)
-            continue
-        if command in {">", "n", "next", "다음"}:
-            if state.list_payload.get("has_next"):
-                state.page += 1
-                state.selected_index = 0
-                _load_list(client, settings, state)
-            continue
-        if command in {alias.lower() for alias in FILTER_ALIASES}:
-            normalized_filter = normalize_browser_filter(raw_command)
-            if normalized_filter in TASK_BROWSER_FILTERS:
-                _update_filter(state, normalized_filter)
-                _load_list(client, settings, state)
-            continue
-        if command in {"", "o", "open", "열기"}:
-            selected_item = _selected_item(state)
-            if selected_item is not None:
-                _load_detail(client, settings, state, str(selected_item.get("task_run_id")))
-            continue
-        if raw_command.isdigit():
-            target_index = int(raw_command) - 1
-            items = state.list_payload.get("items") or []
-            if 0 <= target_index < len(items):
-                state.selected_index = target_index
-                _load_detail(client, settings, state, str(items[target_index].get("task_run_id")))
-            continue

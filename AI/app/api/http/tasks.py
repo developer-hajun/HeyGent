@@ -19,6 +19,11 @@ from app.domain.tasks.models import StepRun
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 _ACTIVE_STEP_STATUSES = {status.value for status in (StepStatus.PENDING, StepStatus.RUNNING, StepStatus.WAITING, StepStatus.BLOCKED)}
+_TASK_TITLE_FALLBACKS = {
+    "model.generate": "모델 응답 생성",
+    "stub.echo": "Echo 응답",
+    "stub.approval_wait": "사용자 승인 대기",
+}
 
 
 def _normalize_task_status_filter(raw_status: str) -> str | None:
@@ -43,17 +48,67 @@ def _select_current_step(steps: list[StepRun]) -> StepRun | None:
     return steps[-1] if steps else None
 
 
+def _truncate_text(value: str, *, limit: int = 56) -> str:
+    compact = " ".join(value.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1].rstrip() + "…"
+
+
+
+def _find_first_scalar(payload: dict) -> str | None:
+    for value in payload.values():
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+    return None
+
+
+
+def _summarize_task_input_payload(payload: dict) -> str | None:
+    """Task 목록에서 사용자 의도를 빠르게 파악할 수 있도록 입력을 한 줄로 요약한다."""
+
+    preferred_keys = ["prompt", "message", "subject", "title", "query", "content", "text"]
+    for key in preferred_keys:
+        raw_value = payload.get(key)
+        if isinstance(raw_value, str) and raw_value.strip():
+            return _truncate_text(raw_value)
+    first_scalar = _find_first_scalar(payload)
+    if first_scalar:
+        return _truncate_text(first_scalar)
+    if payload:
+        return _truncate_text(str(payload))
+    return None
+
+
+
+def _display_task_title(task, *, input_summary: str | None) -> str:
+    raw_title = (task.title or "").strip()
+    if raw_title and raw_title != task.task_type:
+        return raw_title
+    if task.task_type in _TASK_TITLE_FALLBACKS:
+        return _TASK_TITLE_FALLBACKS[task.task_type]
+    if input_summary:
+        return _truncate_text(input_summary, limit=28)
+    return task.flow_name or task.task_type
+
+
+
 def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse:
     current_step = _select_current_step(steps)
     current_step_response = None
     if current_step is not None:
         current_step_response = StepRunSummaryResponse.model_validate(current_step, from_attributes=True)
+    input_summary = _summarize_task_input_payload(task.input_payload)
     return TaskRunListItemResponse(
         task_run_id=task.task_run_id,
         task_type=task.task_type,
         flow_name=task.flow_name,
         status=task.status,
-        title=task.title,
+        title=_display_task_title(task, input_summary=input_summary),
+        input_summary=input_summary,
+        step_count=len(steps),
         progress_summary=task.progress_summary,
         created_at=task.created_at,
         updated_at=task.updated_at,

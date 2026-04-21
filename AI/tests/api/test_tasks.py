@@ -64,9 +64,13 @@ def test_list_tasks_with_status_filter_and_current_step_summary(client):
     assert payload["has_next"] is True
     assert len(payload["items"]) == 2
     assert payload["items"][0]["task_run_id"] == waiting_task["task_run_id"]
+    assert payload["items"][0]["title"] == "승인 대기 태스크"
+    assert payload["items"][0]["input_summary"] == "approval"
+    assert payload["items"][0]["step_count"] == 1
     assert payload["items"][0]["current_step"]["status"] == "WAITING"
     assert payload["items"][0]["current_step"]["title"] in {"승인 여부 확인", "사용자 승인 대기"}
     assert payload["items"][1]["status"] == "COMPLETED"
+    assert payload["items"][1]["input_summary"] in {"first", "third"}
     assert payload["items"][1]["task_run_id"] != waiting_task["task_run_id"]
 
     assert waiting_response.status_code == 200

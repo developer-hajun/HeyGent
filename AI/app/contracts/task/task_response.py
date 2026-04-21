@@ -59,6 +59,8 @@ class TaskRunListItemResponse(BaseModel):
     flow_name: str
     status: str
     title: str | None = None
+    input_summary: str | None = None
+    step_count: int = 0
     progress_summary: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

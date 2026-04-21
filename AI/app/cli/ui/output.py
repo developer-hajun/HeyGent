@@ -4,14 +4,22 @@ from pathlib import Path
 from typing import Any
 from importlib import metadata
 import json
+import re
 
 from app.cli.constants import COMMAND_ALIASES, OPENAI_PROVIDER_NAME, SHELL_SLASH_COMMANDS
 from app.core.config import Settings
 from wcwidth import wcswidth
 
 
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(value: str) -> str:
+    return ANSI_ESCAPE_RE.sub("", value)
+
+
 def _display_width(value: str) -> int:
-    width = wcswidth(value)
+    width = wcswidth(_strip_ansi(value))
     return len(value) if width < 0 else width
 
 

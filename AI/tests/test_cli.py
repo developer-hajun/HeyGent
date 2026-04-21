@@ -121,7 +121,18 @@ def test_render_plain_box_keeps_terminal_width_aligned():
     assert len(widths) == 1
 
 
-def test_tasks_browser_renders_list_and_detail_views():
+def test_render_plain_box_ignores_ansi_width_for_alignment():
+    box = render_plain_box([
+        "\033[97mselected line\033[0m",
+        "plain line",
+    ])
+
+    widths = {_display_width(line) for line in box.splitlines()}
+    assert len(widths) == 1
+
+
+def test_tasks_browser_renders_task_step_and_step_detail_views(monkeypatch):
+    monkeypatch.setattr(TASK_BROWSER_UI.sys.stdout, "isatty", lambda: False)
     state = TASK_BROWSER_UI.TaskBrowserState(
         status_filter="WAITING",
         list_payload={
@@ -131,6 +142,8 @@ def test_tasks_browser_renders_list_and_detail_views():
                     "task_type": "approval.wait",
                     "status": "WAITING",
                     "title": "승인 대기 태스크",
+                    "input_summary": "배포 전 승인해줘",
+                    "step_count": 2,
                     "updated_at": "2026-04-22T00:14:00",
                     "current_step": {"title": "사용자 승인 대기", "summary_message": "승인 응답을 기다리는 중"},
                 }
@@ -145,38 +158,62 @@ def test_tasks_browser_renders_list_and_detail_views():
             "flow_name": "approval_wait_flow",
             "status": "WAITING",
             "title": "승인 대기 태스크",
+            "input_payload": {"subject": "배포 전 승인해줘"},
             "updated_at": "2026-04-22T00:14:00",
         },
         detail_steps=[
             {
-                "step_run_id": "step_wait",
+                "step_run_id": "step_plan",
                 "step_order": 1,
+                "step_type": "approval.plan",
+                "status": "COMPLETED",
+                "title": "승인 조건 정리",
+                "summary_message": "어떤 승인이 필요한지 정리함",
+                "input_payload": {"subject": "배포 전 승인해줘"},
+                "output_payload": {"approvalReason": "배포 승인 필요"},
+                "wait_payload": {},
+                "detail_json": {"agentDetail": {"called": False}, "toolDetail": {"toolNames": []}, "llmDetail": {"model": None, "callCount": 0}},
+            },
+            {
+                "step_run_id": "step_wait",
+                "step_order": 2,
                 "step_type": "approval.wait",
                 "status": "WAITING",
                 "title": "사용자 승인 대기",
                 "summary_message": "승인 응답을 기다리는 중",
+                "input_payload": {"subject": "배포 전 승인해줘"},
+                "output_payload": {},
+                "wait_payload": {"reason": "approval_required"},
                 "detail_json": {
                     "agentDetail": {"called": False},
                     "toolDetail": {"toolNames": ["approval.request"]},
                     "llmDetail": {"model": "gpt-5.4", "callCount": 1},
                 },
-            }
+                "updated_at": "2026-04-22T00:14:00",
+            },
         ],
         detail_events=[
-            {"event_type": "approval.requested", "summary_message": "승인이 필요합니다."},
+            {"event_type": "approval.requested", "step_run_id": "step_wait", "summary_message": "승인이 필요합니다."},
         ],
-        depth="detail",
+        depth="step_detail",
+        selected_step_index=1,
     )
 
     list_rendered = TASK_BROWSER_UI.render_tasks_browser_list(state)
-    detail_rendered = TASK_BROWSER_UI.render_tasks_browser_detail(state)
+    task_detail_rendered = TASK_BROWSER_UI._render_task_detail(state)
+    step_detail_rendered = TASK_BROWSER_UI.render_tasks_browser_step_detail(state)
 
     assert "필터: 전체 / 진행중 / [대기] / 완료" in list_rendered
-    assert "› [1] 승인 대기 태스크 | WAITING | 승인 응답을 기다리는 중" in list_rendered
-    assert "Tasks > 승인 대기 태스크" in detail_rendered
-    assert "현재 Step" in detail_rendered
-    assert "- tool: approval.request" in detail_rendered
-    assert "- approval.requested | 승인이 필요합니다." in detail_rendered
+    assert "› [1] 승인 대기 태스크 | WAITING | step 2개" in list_rendered
+    assert "입력: 배포 전 승인해줘" in list_rendered
+    assert "현재: 승인 응답을 기다리는 중" in list_rendered
+    assert "Tasks > 승인 대기 태스크" in task_detail_rendered
+    assert "Step 목록" in task_detail_rendered
+    assert "[현재] 사용자 승인 대기 | WAITING" in task_detail_rendered
+    assert "Tasks > 승인 대기 태스크 > 사용자 승인 대기" in step_detail_rendered
+    assert "input_payload" in step_detail_rendered
+    assert '"reason": "approval_required"' in step_detail_rendered
+    assert "- approval.requested | 승인이 필요합니다." in step_detail_rendered
 
 
 def test_tasks_browser_explains_old_server_405():
