@@ -20,6 +20,7 @@ class ProviderAuthRequest(ContractModel):
 
     redirect_uri: str | None = Field(default=None, description="요청 시점에 덮어쓸 redirect URI")
     state: str | None = Field(default=None, description="클라이언트가 직접 관리할 state 값")
+    force_oauth: bool = Field(default=False, description="로컬 로그인 재사용 대신 브라우저 OAuth 를 강제로 시작할지 여부")
 
 
 class ProviderCallbackRequest(ContractModel):

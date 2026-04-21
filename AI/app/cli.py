@@ -3,9 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import queue
 import time
 from typing import Any
-from urllib.parse import urlsplit
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
 import httpx
@@ -181,6 +184,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     )
     onboard_parser.add_argument("--redirect-uri", default=None, help="요청 시점에 redirect URI 를 덮어쓸 수 있습니다")
     onboard_parser.add_argument("--state", default=None, help="직접 관리할 OAuth state 값")
+    onboard_parser.add_argument("--force-oauth", action="store_true", help="로컬 로그인 재사용 대신 브라우저 OAuth 를 강제로 시작합니다")
     onboard_parser.add_argument("--no-open-browser", action="store_true", help="브라우저를 자동으로 열지 않습니다")
     onboard_parser.add_argument("--no-wait", action="store_true", help="callback 완료까지 기다리지 않고 URL 만 출력합니다")
     onboard_parser.add_argument("--wait-seconds", type=float, default=120.0, help="연결 완료를 기다릴 최대 시간(초)")
@@ -275,6 +279,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     auth_parser.add_argument("--provider", default=OPENAI_PROVIDER_NAME, help="인증을 시작할 provider 이름")
     auth_parser.add_argument("--redirect-uri", default=None, help="요청 시점에 redirect URI 를 덮어쓸 수 있습니다")
     auth_parser.add_argument("--state", default=None, help="직접 관리할 OAuth state 값")
+    auth_parser.add_argument("--force-oauth", action="store_true", help="로컬 로그인 재사용 대신 브라우저 OAuth 를 강제로 시작합니다")
     command_parsers["provider-auth"] = auth_parser
 
     help_parser = subparsers.add_parser(
@@ -319,7 +324,8 @@ def _print_openai_onboarding(response_json: dict[str, Any], base_url: str) -> No
     if response_json.get("authorization_url"):
         print("\n다음 단계")
         print(f"- 브라우저에서 열 URL: {response_json['authorization_url']}")
-        print(f"- callback 기준 서버 주소: {base_url}")
+        print(f"- OAuth redirect URI: {response_json.get('redirect_uri')}")
+        print(f"- API base-url: {base_url}")
         print("- 연결 확인: py -3.11 -m app.cli list-providers")
         print("- 갱신: py -3.11 -m app.cli provider-refresh --provider openai_oauth")
         print("- 연결 해제: py -3.11 -m app.cli provider-disconnect --provider openai_oauth")
@@ -354,6 +360,113 @@ def _open_browser(url: str) -> bool:
         return False
 
 
+class _OAuthCallbackListener:
+    def __init__(self, server: HTTPServer, result_queue: "queue.Queue[dict[str, Any]]", thread: threading.Thread) -> None:
+        self.server = server
+        self.result_queue = result_queue
+        self.thread = thread
+
+    def wait(self, timeout: float) -> dict[str, Any] | None:
+        try:
+            return self.result_queue.get(timeout=max(0.1, timeout))
+        except queue.Empty:
+            return None
+
+    def close(self) -> None:
+        try:
+            self.server.shutdown()
+        except Exception:
+            return
+        try:
+            self.server.server_close()
+        except Exception:
+            return
+
+
+def _parse_manual_callback_input(raw: str, expected_state: str | None) -> tuple[str | None, str | None]:
+    value = raw.strip()
+    if not value:
+        return None, None
+    try:
+        parsed = urlsplit(value)
+        query = parse_qs(parsed.query)
+        code = (query.get("code") or [None])[0]
+        state = (query.get("state") or [None])[0]
+    except Exception:
+        code = None
+        state = None
+    if code:
+        return code, state
+    if value.startswith("code=") or "&state=" in value:
+        query = parse_qs(value)
+        return (query.get("code") or [None])[0], (query.get("state") or [None])[0]
+    return value, expected_state
+
+
+def _start_local_oauth_callback_listener(client, settings: Settings, provider_name: str, redirect_uri: str, expected_state: str | None):
+    parsed = urlsplit(redirect_uri)
+    host = parsed.hostname or "127.0.0.1"
+    bind_host = "127.0.0.1" if host == "localhost" else host
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    path = parsed.path or "/"
+    result_queue: "queue.Queue[dict[str, Any]]" = queue.Queue(maxsize=1)
+
+    class CallbackHandler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            request_url = urlsplit(self.path)
+            if request_url.path != path:
+                self.send_response(404)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write("<html><body><h1>Callback route not found.</h1></body></html>".encode("utf-8"))
+                return
+
+            query = parse_qs(request_url.query)
+            code = (query.get("code") or [None])[0]
+            state = (query.get("state") or [None])[0]
+            if expected_state and state != expected_state:
+                self.send_response(400)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write("<html><body><h1>State mismatch.</h1></body></html>".encode("utf-8"))
+                return
+            if not code:
+                self.send_response(400)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write("<html><body><h1>Missing authorization code.</h1></body></html>".encode("utf-8"))
+                return
+
+            api_response = client.request(
+                "POST",
+                _request_path(settings, f"/providers/{provider_name}/callback"),
+                json_body={"code": code, "state": state},
+            )
+            payload = api_response.json()
+            result_queue.put({"ok": api_response.is_success, "payload": payload})
+            self.send_response(200 if api_response.is_success else 502)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            html = (
+                "<html><body><h1>OpenAI authentication completed.</h1><p>You can close this window.</p></body></html>"
+                if api_response.is_success
+                else f"<html><body><h1>Token exchange failed.</h1><pre>{json.dumps(payload, ensure_ascii=False)}</pre></body></html>"
+            )
+            self.wfile.write(html.encode("utf-8"))
+
+        def log_message(self, format, *args):  # noqa: A003
+            return
+
+    try:
+        server = HTTPServer((bind_host, port), CallbackHandler)
+    except OSError:
+        return None
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return _OAuthCallbackListener(server, result_queue, thread)
+
+
 def _wait_for_provider_connection(client, settings: Settings, provider_name: str, *, wait_seconds: float, poll_interval: float) -> dict[str, Any] | None:
     """브라우저 callback 이후 provider 연결이 실제로 저장될 때까지 기다린다."""
 
@@ -386,7 +499,7 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
     response = client.request(
         "POST",
         _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}/auth"),
-        json_body={"redirect_uri": args.redirect_uri, "state": args.state},
+        json_body={"redirect_uri": args.redirect_uri, "state": args.state, "force_oauth": args.force_oauth},
     )
     response_json = response.json()
     _print_openai_onboarding(response_json, args.base_url)
@@ -424,41 +537,67 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
             return 1
 
     if status != "authorization_required" or not response_json.get("authorization_url"):
-        if args.mode == "local":
-            print("\nlocal 모드에서는 브라우저 callback 자동 완료까지는 지원하지 않습니다. 필요하면 remote 서버 모드에서 브라우저 연결을 진행해 주세요.")
         return 0
 
-    if args.mode == "local":
-        print("\nlocal 모드에서는 브라우저 callback 자동 완료까지는 지원하지 않습니다. remote 서버 모드에서 사용해 주세요.")
-        return 0
+    listener = None
+    if not args.no_wait and response_json.get("redirect_uri") and response_json.get("state"):
+        listener = _start_local_oauth_callback_listener(
+            client,
+            settings,
+            OPENAI_PROVIDER_NAME,
+            response_json["redirect_uri"],
+            response_json.get("state"),
+        )
+        if listener is not None:
+            print(f"\nlocalhost callback 대기 중: {response_json['redirect_uri']}")
+        else:
+            print("\nlocalhost callback 포트를 잡지 못했어. 로그인 후 redirect URL 전체를 직접 붙여넣으면 돼.")
 
     if not args.no_open_browser:
         opened = _open_browser(response_json["authorization_url"])
         if opened:
-            print("\n브라우저를 자동으로 열었어. 로그인과 인가를 마치면 내가 연결 완료를 기다릴게.")
+            print("\n브라우저를 자동으로 열었어. 로그인과 인가를 마치면 내가 이어서 연결할게.")
         else:
             print("\n브라우저 자동 열기에 실패했어. 위 authorization_url 을 직접 열어줘.")
     else:
         print("\n브라우저 자동 열기는 건너뛰었어. 위 authorization_url 을 직접 열면 돼.")
 
     if args.no_wait:
-        print("\n대기 없이 종료할게. 연결이 끝나면 list-providers 나 model_generate_flow 로 확인하면 돼.")
+        print("\n대기 없이 종료할게. 로그인 후 다시 onboard-openai --force-oauth 로 이어가거나 list-providers 로 확인하면 돼.")
         return 0
 
-    print(f"\n최대 {args.wait_seconds:.0f}초 동안 연결 완료를 기다릴게...")
-    provider_state = _wait_for_provider_connection(
-        client,
-        settings,
-        OPENAI_PROVIDER_NAME,
-        wait_seconds=args.wait_seconds,
-        poll_interval=args.poll_interval,
-    )
-    if provider_state is None:
-        print("\n아직 연결 완료를 확인하지 못했어. 브라우저에서 인가를 마친 뒤 아래 명령으로 다시 확인해 줘.")
-        print("- py -3.11 -m app.cli list-providers")
-        print("- py -3.11 -m app.cli onboard-openai --no-open-browser")
+    callback_result = None
+    try:
+        if listener is not None:
+            print(f"\n최대 {args.wait_seconds:.0f}초 동안 localhost callback 을 기다릴게...")
+            callback_result = listener.wait(args.wait_seconds)
+    finally:
+        if listener is not None:
+            listener.close()
+
+    if callback_result is None:
+        print("\n자동 callback 을 아직 못 받았어.")
+        try:
+            manual = input("로그인 후 브라우저 주소창의 전체 redirect URL 또는 code를 붙여넣어 줘: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            manual = ""
+        code, callback_state = _parse_manual_callback_input(manual, response_json.get("state"))
+        if not code:
+            print("- code 를 확인하지 못했어. 다시 onboard-openai --force-oauth 로 시도해 줘.")
+            return 1
+        callback_response = client.request(
+            "POST",
+            _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}/callback"),
+            json_body={"code": code, "state": callback_state or response_json.get("state")},
+        )
+        callback_result = {"ok": callback_response.is_success, "payload": callback_response.json()}
+
+    _print_response("provider-auth", callback_result["payload"])
+    if not callback_result.get("ok"):
+        print("\nOAuth callback 처리에는 도달했지만 token 교환이 실패했어.")
         return 1
 
+    provider_state = client.request("GET", _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}")).json()
     print("\nOpenAI 연결 완료를 확인했어.")
     _print_response("list-providers", [provider_state])
 
@@ -522,7 +661,7 @@ def _handle_remote_command(args, settings: Settings) -> int:
             response = client.request(
                 "POST",
                 _request_path(settings, f"/providers/{args.provider}/auth"),
-                json_body={"redirect_uri": args.redirect_uri, "state": args.state},
+                json_body={"redirect_uri": args.redirect_uri, "state": args.state, "force_oauth": args.force_oauth},
             )
         elif args.command == "list-steps":
             response = client.request("GET", _request_path(settings, f"/tasks/{args.task_id}/steps"))

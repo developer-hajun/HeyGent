@@ -37,7 +37,7 @@ def start_provider_auth(
         provider = context.registry.get(provider_name)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=f"unknown provider: {error.args[0]}") from error
-    return provider.start_auth(redirect_uri=payload.redirect_uri, state=payload.state)
+    return provider.start_auth(redirect_uri=payload.redirect_uri, state=payload.state, force_oauth=payload.force_oauth)
 
 
 @router.post("/{provider_name}/callback", response_model=ProviderConnectionResponse)

@@ -40,6 +40,7 @@ def test_openai_provider_health_and_stub_generate(tmp_path):
 
     assert health.provider_name == "openai_oauth"
     assert health.healthy is True
+    assert health.configured is True
     assert health.connected is False
     assert generated.output_text.startswith("[stub:openai_oauth]")
 
@@ -62,13 +63,13 @@ def test_openai_provider_imports_local_codex_auth_and_generates_live(monkeypatch
     )
     settings = Settings(
         openai_auth_file=auth_path,
-        openai_api_base_url="https://api.openai.test/v1",
+        openai_api_base_url="https://chatgpt.test/backend-api",
         openai_response_model="gpt-test",
     )
     provider = OpenAIOAuthProvider(settings, repository)
 
     def fake_post(url, data=None, headers=None, timeout=None, json=None):
-        if url == f"{settings.openai_api_base_url}/responses":
+        if url == f"{settings.openai_api_base_url}/codex/responses":
             return DummyHTTPResponse(
                 {
                     "id": "resp_codex",
@@ -94,29 +95,28 @@ def test_openai_provider_completes_auth_and_generates_live(monkeypatch, tmp_path
     repository = SQLiteTaskRepository(tmp_path / "provider-live.db")
     settings = Settings(
         openai_oauth_client_id="client-id",
-        openai_oauth_client_secret="client-secret",
-        openai_oauth_redirect_uri="http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback",
+        openai_oauth_redirect_uri="http://localhost:1455/auth/callback",
         openai_oauth_authorize_url="https://auth.openai.test/authorize",
         openai_oauth_token_url="https://auth.openai.test/token",
-        openai_oauth_scopes=["model.generate"],
-        openai_api_base_url="https://api.openai.test/v1",
+        openai_oauth_scopes=["openid", "profile", "email", "offline_access"],
+        openai_api_base_url="https://chatgpt.test/backend-api",
         openai_response_model="gpt-test",
     )
     provider = OpenAIOAuthProvider(settings, repository)
-    auth = provider.start_auth()
+    auth = provider.start_auth(force_oauth=True)
 
     def fake_post(url, data=None, headers=None, timeout=None, json=None):
         if url == settings.openai_oauth_token_url:
             return DummyHTTPResponse(
                 {
-                    "access_token": "live-token",
+                    "access_token": _make_test_access_token(),
                     "refresh_token": "refresh-token",
                     "token_type": "Bearer",
                     "expires_in": 3600,
-                    "scope": "model.generate",
+                    "scope": "openid profile email offline_access",
                 }
             )
-        if url == f"{settings.openai_api_base_url}/responses":
+        if url == f"{settings.openai_api_base_url}/codex/responses":
             return DummyHTTPResponse(
                 {
                     "id": "resp_123",
@@ -141,11 +141,10 @@ def test_openai_provider_refresh_and_disconnect(monkeypatch, tmp_path):
     repository = SQLiteTaskRepository(tmp_path / "provider-refresh.db")
     settings = Settings(
         openai_oauth_client_id="client-id",
-        openai_oauth_client_secret="client-secret",
-        openai_oauth_redirect_uri="http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback",
+        openai_oauth_redirect_uri="http://localhost:1455/auth/callback",
         openai_oauth_authorize_url="https://auth.openai.test/authorize",
         openai_oauth_token_url="https://auth.openai.test/token",
-        openai_oauth_scopes=["model.generate"],
+        openai_oauth_scopes=["openid", "profile", "email", "offline_access"],
     )
     provider = OpenAIOAuthProvider(settings, repository)
     repository.upsert_provider_token(
@@ -164,11 +163,11 @@ def test_openai_provider_refresh_and_disconnect(monkeypatch, tmp_path):
         if url == settings.openai_oauth_token_url:
             return DummyHTTPResponse(
                 {
-                    "access_token": "new-token",
+                    "access_token": _make_test_access_token(),
                     "refresh_token": "new-refresh-token",
                     "token_type": "Bearer",
                     "expires_in": 3600,
-                    "scope": "model.generate",
+                    "scope": "openid profile email offline_access",
                 }
             )
         raise AssertionError(f"unexpected url: {url}")

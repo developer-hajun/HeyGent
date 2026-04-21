@@ -15,7 +15,13 @@ class BaseProvider(ABC):
         """현재 프로바이더 사용 가능 여부를 반환한다."""
 
     @abstractmethod
-    def start_auth(self, *, redirect_uri: str | None = None, state: str | None = None) -> ProviderAuthResponse:
+    def start_auth(
+        self,
+        *,
+        redirect_uri: str | None = None,
+        state: str | None = None,
+        force_oauth: bool = False,
+    ) -> ProviderAuthResponse:
         """OAuth 시작에 필요한 메타데이터를 반환한다.
 
         현재 단계에서는 실제 callback 처리를 완성하지 않더라도,

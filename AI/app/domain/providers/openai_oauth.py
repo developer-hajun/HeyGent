@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -16,17 +18,15 @@ from app.core.utils.ids import new_id
 from app.domain.providers.base import BaseProvider
 
 
+OPENAI_CODEX_JWT_CLAIM_PATH = "https://api.openai.com/auth"
+OPENAI_CODEX_PROFILE_CLAIM_PATH = "https://api.openai.com/profile"
+OPENAI_CODEX_AUTH_ORIGINATOR = "openclaw"
+OPENAI_CODEX_REQUEST_ORIGINATOR = "pi"
+OPENAI_CODEX_RESPONSE_BETA = "responses=experimental"
+
+
 class OpenAIOAuthProvider(BaseProvider):
-    """OpenAI OAuth 기반 모델 프로바이더 구현이다.
-
-    현재 단계의 목표는 아래 두 가지를 실제로 가능하게 만드는 것이다.
-
-    1. OAuth authorization URL 생성과 callback 후 token 저장
-    2. 저장된 access token 이 있으면 실제 모델 요청 시도
-
-    즉, 예전처럼 "이름만 OAuth provider 인 stub" 에서 한 단계 올라가,
-    로컬 백본 환경에서도 인증과 모델 실행 흐름을 end-to-end 로 검증할 수 있게 한다.
-    """
+    """OpenClaw 4.15 방식의 OpenAI Codex OAuth 흐름을 따른다."""
 
     name = "openai_oauth"
     auth_type = "oauth"
@@ -39,8 +39,6 @@ class OpenAIOAuthProvider(BaseProvider):
         missing: list[str] = []
         if not self.settings.openai_oauth_client_id:
             missing.append("HEYGENT_OPENAI_OAUTH_CLIENT_ID")
-        if not self.settings.openai_oauth_client_secret:
-            missing.append("HEYGENT_OPENAI_OAUTH_CLIENT_SECRET")
         if not self.settings.openai_oauth_redirect_uri:
             missing.append("HEYGENT_OPENAI_OAUTH_REDIRECT_URI")
         if not self.settings.openai_oauth_authorize_url:
@@ -51,18 +49,13 @@ class OpenAIOAuthProvider(BaseProvider):
 
     def health(self) -> ProviderHealthResponse:
         missing_env = self.missing_env()
+        token_record = self._get_token_record()
         local_auth_payload = self._read_local_auth_payload()
         configured = not missing_env or local_auth_payload is not None
-        token_record = self._get_token_record()
         connected = False
-        detail = "OpenAI 연결 준비가 아직 부족합니다"
+        detail = "OpenAI Codex OAuth 연결을 시작할 준비가 되어 있습니다"
         expires_at = None
         scopes = self.settings.openai_oauth_scopes
-
-        if local_auth_payload is not None and missing_env:
-            detail = "이 기기의 ChatGPT/Codex 로그인 정보로 바로 연결할 수 있습니다"
-        elif configured:
-            detail = "브라우저 OpenAI OAuth 연결을 시작할 준비가 되어 있습니다"
 
         if token_record is not None:
             scopes = token_record.get("scopes") or scopes
@@ -70,11 +63,15 @@ class OpenAIOAuthProvider(BaseProvider):
             connected = not self._is_expired(expires_at)
             source = (token_record.get("raw_payload") or {}).get("source")
             if connected and source == "codex_cli":
-                detail = "이 기기의 ChatGPT/Codex 로그인 정보를 가져와 실제 모델 호출을 시도할 수 있습니다"
+                detail = "이 기기의 ChatGPT/Codex 로그인 정보를 가져와 실제 Codex 호출을 시도할 수 있습니다"
             elif connected:
-                detail = "OAuth access token 이 저장되어 실제 모델 호출을 시도할 수 있습니다"
+                detail = "OpenAI Codex OAuth 연결이 저장되어 실제 Codex 호출을 시도할 수 있습니다"
             else:
                 detail = "저장된 token 이 만료되었거나 다시 연결이 필요합니다"
+        elif local_auth_payload is not None:
+            detail = "이 기기의 ChatGPT/Codex 로그인 정보가 있어 바로 연결하거나 브라우저 OAuth 를 다시 시작할 수 있습니다"
+        elif missing_env:
+            detail = "OpenAI 연결 준비가 아직 부족합니다"
 
         return ProviderHealthResponse(
             provider_name=self.name,
@@ -88,15 +85,19 @@ class OpenAIOAuthProvider(BaseProvider):
             expires_at=expires_at,
         )
 
-    def start_auth(self, *, redirect_uri: str | None = None, state: str | None = None) -> ProviderAuthResponse:
-        """사용자 기준으로 가장 쉬운 연결 경로를 먼저 시도한다."""
-
+    def start_auth(
+        self,
+        *,
+        redirect_uri: str | None = None,
+        state: str | None = None,
+        force_oauth: bool = False,
+    ) -> ProviderAuthResponse:
         missing_env = self.missing_env()
         effective_redirect_uri = redirect_uri or self.settings.openai_oauth_redirect_uri
         effective_state = state or new_id("oauth_state")
         current = self.health()
 
-        if current.connected:
+        if current.connected and not force_oauth:
             return ProviderAuthResponse(
                 provider_name=self.name,
                 status="already_connected",
@@ -108,27 +109,28 @@ class OpenAIOAuthProvider(BaseProvider):
                 metadata={"connection_ready": True},
             )
 
-        local_connection = self._connect_from_local_auth()
-        if local_connection is not None:
-            return ProviderAuthResponse(
-                provider_name=self.name,
-                status="connected" if local_connection.connected else "reconnect_required",
-                detail=local_connection.detail,
-                redirect_uri=effective_redirect_uri,
-                scopes=local_connection.scopes,
-                state=effective_state,
-                missing_env=missing_env,
-                metadata={
-                    "connection_ready": local_connection.connected,
-                    **local_connection.metadata,
-                },
-            )
+        if not force_oauth:
+            local_connection = self._connect_from_local_auth()
+            if local_connection is not None:
+                return ProviderAuthResponse(
+                    provider_name=self.name,
+                    status="connected" if local_connection.connected else "reconnect_required",
+                    detail=local_connection.detail,
+                    redirect_uri=effective_redirect_uri,
+                    scopes=local_connection.scopes,
+                    state=effective_state,
+                    missing_env=missing_env,
+                    metadata={
+                        "connection_ready": local_connection.connected,
+                        **local_connection.metadata,
+                    },
+                )
 
-        if missing_env:
+        if missing_env or effective_redirect_uri is None:
             return ProviderAuthResponse(
                 provider_name=self.name,
                 status="configuration_required",
-                detail="이 기기에서 바로 연결할 로그인 정보가 없어서 개발자 설정이 먼저 필요합니다",
+                detail="브라우저 OAuth 를 시작하기 전에 OpenAI 설정을 확인해야 합니다",
                 redirect_uri=effective_redirect_uri,
                 scopes=self.settings.openai_oauth_scopes,
                 state=effective_state,
@@ -139,8 +141,14 @@ class OpenAIOAuthProvider(BaseProvider):
                 },
             )
 
-        if self.repository is not None and effective_redirect_uri is not None:
-            self.repository.create_provider_oauth_state(self.name, effective_state, effective_redirect_uri)
+        code_verifier, code_challenge = self._create_pkce_pair()
+        if self.repository is not None:
+            self.repository.create_provider_oauth_state(
+                self.name,
+                effective_state,
+                effective_redirect_uri,
+                code_verifier,
+            )
 
         query = urlencode(
             {
@@ -148,23 +156,34 @@ class OpenAIOAuthProvider(BaseProvider):
                 "client_id": self.settings.openai_oauth_client_id,
                 "redirect_uri": effective_redirect_uri,
                 "scope": " ".join(self.settings.openai_oauth_scopes),
+                "code_challenge": code_challenge,
+                "code_challenge_method": "S256",
                 "state": effective_state,
+                "id_token_add_organizations": "true",
+                "codex_cli_simplified_flow": "true",
+                "originator": OPENAI_CODEX_AUTH_ORIGINATOR,
             }
         )
         authorization_url = f"{self.settings.openai_oauth_authorize_url}?{query}"
         return ProviderAuthResponse(
             provider_name=self.name,
             status="authorization_required",
-            detail="브라우저에서 OpenAI 로그인과 연결 승인을 진행해 주세요",
+            detail="브라우저에서 OpenAI 로그인과 연결 승인을 진행해 주세요. 완료되면 localhost callback 으로 돌아옵니다",
             authorization_url=authorization_url,
             redirect_uri=effective_redirect_uri,
             scopes=self.settings.openai_oauth_scopes,
             state=effective_state,
-            metadata={"token_exchange_ready": True, "token_url": self.settings.openai_oauth_token_url},
+            metadata={
+                "token_exchange_ready": True,
+                "token_url": self.settings.openai_oauth_token_url,
+                "pkce_required": True,
+                "originator": OPENAI_CODEX_AUTH_ORIGINATOR,
+            },
         )
 
     def complete_auth(self, *, code: str, state: str) -> ProviderConnectionResponse:
-        """authorization code 를 access token 으로 교환하고 저장한다."""
+        if self.repository is None:
+            raise RuntimeError("provider repository is not configured")
 
         missing_env = self.missing_env()
         if missing_env:
@@ -172,17 +191,22 @@ class OpenAIOAuthProvider(BaseProvider):
                 provider_name=self.name,
                 status="configuration_required",
                 connected=False,
-                detail="OAuth callback 을 처리하기 전에 필요한 환경 변수를 먼저 채워야 합니다",
+                detail="OAuth callback 을 처리하기 전에 필요한 환경 설정을 먼저 채워야 합니다",
                 metadata={"missing_env": missing_env},
             )
-        if self.repository is None:
-            raise RuntimeError("provider repository is not configured")
 
         state_record = self.repository.get_provider_oauth_state(self.name, state)
         if state_record is None:
             raise KeyError(state)
+        code_verifier = state_record.get("code_verifier")
+        if not code_verifier:
+            raise RuntimeError("stored oauth state is missing code_verifier")
 
-        token_payload = self._exchange_code(code=code, redirect_uri=state_record["redirect_uri"])
+        token_payload = self._exchange_code(
+            code=code,
+            redirect_uri=state_record["redirect_uri"],
+            code_verifier=code_verifier,
+        )
         stored = self.repository.upsert_provider_token(self.name, token_payload)
         self.repository.consume_provider_oauth_state(self.name, state)
 
@@ -190,26 +214,24 @@ class OpenAIOAuthProvider(BaseProvider):
             provider_name=self.name,
             status="connected",
             connected=True,
-            detail="OpenAI OAuth 연결이 완료되었습니다. 이제 모델 작업을 실행할 수 있습니다",
+            detail="OpenAI Codex OAuth 연결이 완료되었습니다. 이제 실제 모델 작업을 실행할 수 있습니다",
             scopes=stored.get("scopes", []),
             expires_at=stored.get("expires_at"),
             metadata={
                 "token_type": stored.get("token_type"),
                 "connected_at": stored.get("updated_at"),
+                "account_id": (stored.get("raw_payload") or {}).get("account_id"),
             },
         )
 
     def refresh_connection(self) -> ProviderConnectionResponse:
-        """저장된 refresh token 또는 로컬 로그인 정보를 사용해 연결을 갱신한다."""
-
         if self.repository is None:
             raise RuntimeError("provider repository is not configured")
 
-        missing_env = self.missing_env()
         stored = self._get_token_record()
         refresh_token = stored.get("refresh_token") if stored is not None else None
 
-        if refresh_token and not missing_env:
+        if refresh_token:
             token_payload = self._refresh_token(refresh_token)
             updated = self.repository.upsert_provider_token(self.name, token_payload)
             return ProviderConnectionResponse(
@@ -222,6 +244,7 @@ class OpenAIOAuthProvider(BaseProvider):
                 metadata={
                     "token_type": updated.get("token_type"),
                     "connected_at": updated.get("updated_at"),
+                    "account_id": (updated.get("raw_payload") or {}).get("account_id"),
                 },
             )
 
@@ -241,14 +264,6 @@ class OpenAIOAuthProvider(BaseProvider):
                 metadata=local_connection.metadata,
             )
 
-        if missing_env:
-            return ProviderConnectionResponse(
-                provider_name=self.name,
-                status="configuration_required",
-                connected=False,
-                detail="자동 갱신에 필요한 OAuth 설정이나 로컬 로그인 정보가 없습니다",
-                metadata={"missing_env": missing_env, "setup_doc": "tmp/openai-onboarding-dev.md"},
-            )
         if stored is None:
             return ProviderConnectionResponse(
                 provider_name=self.name,
@@ -256,18 +271,17 @@ class OpenAIOAuthProvider(BaseProvider):
                 connected=False,
                 detail="저장된 provider token 이 없습니다. 먼저 onboard-openai 로 연결해 주세요",
             )
+
         return ProviderConnectionResponse(
             provider_name=self.name,
             status="reconnect_required",
             connected=False,
-            detail="refresh token 이 없어 자동 갱신이 불가능합니다. onboard-openai 로 다시 연결해 주세요",
+            detail="refresh token 이 없어 자동 갱신이 불가능합니다. onboard-openai --force-oauth 로 다시 연결해 주세요",
             scopes=stored.get("scopes", []),
             expires_at=stored.get("expires_at"),
         )
 
     def disconnect(self) -> ProviderConnectionResponse:
-        """저장된 token 과 남은 OAuth state 를 정리한다."""
-
         if self.repository is None:
             raise RuntimeError("provider repository is not configured")
 
@@ -285,8 +299,6 @@ class OpenAIOAuthProvider(BaseProvider):
         )
 
     def generate(self, prompt: str, **kwargs) -> ProviderGenerateResponse:
-        """저장된 token 이 있으면 실제 모델 호출을 시도하고, 없으면 stub 로 동작한다."""
-
         preview = prompt.strip()[:120]
         health = self.health()
         token_record = self._get_token_record()
@@ -350,6 +362,7 @@ class OpenAIOAuthProvider(BaseProvider):
                 "source": "codex_cli",
                 "auth_path": auth_path,
                 "connected_at": stored.get("updated_at"),
+                "account_id": (stored.get("raw_payload") or {}).get("account_id"),
             },
         )
 
@@ -371,7 +384,8 @@ class OpenAIOAuthProvider(BaseProvider):
         claims = self._decode_jwt_payload(access_token)
         scopes = self._extract_scopes(claims)
         expires_at = self._claims_expiry(claims)
-        account_id = tokens.get("account_id") or ((claims.get("https://api.openai.com/auth") or {}).get("chatgpt_account_id"))
+        account_id = tokens.get("account_id") or self._extract_account_id(access_token)
+        profile = claims.get(OPENAI_CODEX_PROFILE_CLAIM_PATH) if isinstance(claims.get(OPENAI_CODEX_PROFILE_CLAIM_PATH), dict) else {}
         return {
             "access_token": access_token,
             "refresh_token": tokens.get("refresh_token"),
@@ -382,6 +396,7 @@ class OpenAIOAuthProvider(BaseProvider):
                 "source": "codex_cli",
                 "auth_mode": body.get("auth_mode"),
                 "account_id": account_id,
+                "email": profile.get("email"),
                 "auth_path": str(auth_path),
                 "model": self.settings.openai_response_model,
                 "api_base_url": self.settings.openai_api_base_url,
@@ -406,6 +421,15 @@ class OpenAIOAuthProvider(BaseProvider):
         except Exception:
             return {}
 
+    @classmethod
+    def _extract_account_id(cls, token: str) -> str | None:
+        claims = cls._decode_jwt_payload(token)
+        auth_claims = claims.get(OPENAI_CODEX_JWT_CLAIM_PATH)
+        if not isinstance(auth_claims, dict):
+            return None
+        account_id = auth_claims.get("chatgpt_account_id")
+        return str(account_id) if isinstance(account_id, str) and account_id else None
+
     @staticmethod
     def _extract_scopes(claims: dict[str, Any]) -> list[str]:
         raw_scopes = claims.get("scp")
@@ -422,12 +446,18 @@ class OpenAIOAuthProvider(BaseProvider):
             return None
         return datetime.fromtimestamp(int(exp), tz=timezone.utc).isoformat()
 
-    def _exchange_code(self, *, code: str, redirect_uri: str) -> dict[str, Any]:
+    @staticmethod
+    def _create_pkce_pair() -> tuple[str, str]:
+        verifier = secrets.token_urlsafe(64).rstrip("=")
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("utf-8")).digest()).decode("utf-8").rstrip("=")
+        return verifier, challenge
+
+    def _exchange_code(self, *, code: str, redirect_uri: str, code_verifier: str) -> dict[str, Any]:
         form_data = {
             "grant_type": "authorization_code",
             "code": code,
             "client_id": self.settings.openai_oauth_client_id,
-            "client_secret": self.settings.openai_oauth_client_secret,
+            "code_verifier": code_verifier,
             "redirect_uri": redirect_uri,
         }
         return self._request_token(form_data)
@@ -437,7 +467,6 @@ class OpenAIOAuthProvider(BaseProvider):
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
             "client_id": self.settings.openai_oauth_client_id,
-            "client_secret": self.settings.openai_oauth_client_secret,
         }
         refreshed = self._request_token(form_data)
         if not refreshed.get("refresh_token"):
@@ -448,37 +477,84 @@ class OpenAIOAuthProvider(BaseProvider):
         response = httpx.post(
             self.settings.openai_oauth_token_url,
             data=form_data,
-            headers={"Accept": "application/json"},
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
             timeout=20.0,
         )
         response.raise_for_status()
         body = response.json()
         expires_at = self._calculate_expires_at(body.get("expires_in"))
-        scope_text = body.get("scope") or ",".join(self.settings.openai_oauth_scopes)
+        access_token = body["access_token"]
+        account_id = self._extract_account_id(access_token)
+        claims = self._decode_jwt_payload(access_token)
+        scopes = self._extract_scopes(claims) or self.settings.openai_oauth_scopes
+        raw_payload = body if isinstance(body, dict) else {}
+        raw_payload.update(
+            {
+                "source": "openai_codex_oauth",
+                "account_id": account_id,
+                "email": ((claims.get(OPENAI_CODEX_PROFILE_CLAIM_PATH) or {}) if isinstance(claims.get(OPENAI_CODEX_PROFILE_CLAIM_PATH), dict) else {}).get("email"),
+                "model": self.settings.openai_response_model,
+                "api_base_url": self.settings.openai_api_base_url,
+            }
+        )
         return {
-            "access_token": body["access_token"],
+            "access_token": access_token,
             "refresh_token": body.get("refresh_token"),
             "token_type": body.get("token_type", "Bearer"),
             "expires_at": expires_at,
-            "scope_text": scope_text.replace(" ", ","),
-            "raw_payload": body,
+            "scope_text": ",".join(scopes),
+            "raw_payload": raw_payload,
         }
 
     def _call_responses_api(self, *, prompt: str, token_record: dict[str, Any]) -> dict[str, Any]:
+        account_id = (token_record.get("raw_payload") or {}).get("account_id") or self._extract_account_id(token_record["access_token"])
+        if not account_id:
+            raise RuntimeError("저장된 token 에 account_id 가 없어 Codex 호출을 진행할 수 없습니다")
+
         response = httpx.post(
-            f"{self.settings.openai_api_base_url.rstrip('/')}/responses",
+            self._resolve_codex_responses_url(),
             headers={
                 "Authorization": f"Bearer {token_record['access_token']}",
+                "chatgpt-account-id": account_id,
+                "originator": OPENAI_CODEX_REQUEST_ORIGINATOR,
+                "OpenAI-Beta": OPENAI_CODEX_RESPONSE_BETA,
+                "Accept": "application/json",
                 "Content-Type": "application/json",
+                "User-Agent": "heygent-ai/0.1",
             },
             json={
                 "model": self.settings.openai_response_model,
-                "input": prompt,
+                "store": False,
+                "stream": False,
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": prompt,
+                            }
+                        ],
+                    }
+                ],
+                "text": {"verbosity": "medium"},
+                "include": ["reasoning.encrypted_content"],
             },
             timeout=30.0,
         )
         response.raise_for_status()
         return response.json()
+
+    def _resolve_codex_responses_url(self) -> str:
+        base_url = self.settings.openai_api_base_url.rstrip("/")
+        if base_url.endswith("/codex/responses"):
+            return base_url
+        if base_url.endswith("/codex"):
+            return f"{base_url}/responses"
+        return f"{base_url}/codex/responses"
 
     def _get_token_record(self) -> dict[str, Any] | None:
         if self.repository is None:

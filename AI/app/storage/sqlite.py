@@ -48,6 +48,9 @@ class SQLiteTaskRepository:
                     ]
                 )
             )
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(provider_oauth_states)").fetchall()}
+            if "code_verifier" not in columns:
+                connection.execute("ALTER TABLE provider_oauth_states ADD COLUMN code_verifier TEXT")
 
     def create_task(self, task: TaskRun) -> TaskRun:
         now = utc_now().isoformat()
@@ -235,7 +238,7 @@ class SQLiteTaskRepository:
             "resolved_at": row["resolved_at"],
         }
 
-    def create_provider_oauth_state(self, provider_name: str, state: str, redirect_uri: str) -> dict[str, Any]:
+    def create_provider_oauth_state(self, provider_name: str, state: str, redirect_uri: str, code_verifier: str | None = None) -> dict[str, Any]:
         """OAuth 시작 시 생성한 state 를 저장한다.
 
         callback 단계에서 state 를 다시 확인해야 CSRF 와 잘못된 콜백 재사용을 줄일 수 있다.
@@ -244,13 +247,18 @@ class SQLiteTaskRepository:
         created_at = utc_now().isoformat()
         with self._connect() as connection:
             connection.execute(
-                "INSERT OR REPLACE INTO provider_oauth_states VALUES (?, ?, ?, ?, ?, ?)",
-                (state, provider_name, redirect_uri, "PENDING", created_at, None),
+                """
+                INSERT OR REPLACE INTO provider_oauth_states
+                (state, provider_name, redirect_uri, code_verifier, status, created_at, consumed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (state, provider_name, redirect_uri, code_verifier, "PENDING", created_at, None),
             )
         return {
             "state": state,
             "provider_name": provider_name,
             "redirect_uri": redirect_uri,
+            "code_verifier": code_verifier,
             "status": "PENDING",
             "created_at": created_at,
             "consumed_at": None,
@@ -268,6 +276,7 @@ class SQLiteTaskRepository:
             "state": row["state"],
             "provider_name": row["provider_name"],
             "redirect_uri": row["redirect_uri"],
+            "code_verifier": row["code_verifier"],
             "status": row["status"],
             "created_at": row["created_at"],
             "consumed_at": row["consumed_at"],

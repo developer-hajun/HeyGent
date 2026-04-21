@@ -119,7 +119,7 @@ def test_cli_provider_auth_local(monkeypatch, tmp_path, capsys):
 
     assert exit_code == 0
     assert "[HeyGent CLI] 프로바이더 인증 시작 결과" in captured
-    assert '"status": "configuration_required"' in captured
+    assert '"status": "authorization_required"' in captured
 
 
 def test_cli_openai_onboarding_local(monkeypatch, tmp_path, capsys):
@@ -160,24 +160,22 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
                     "status": "authorization_required",
                     "detail": "go",
                     "authorization_url": "https://auth.openai.test/start",
-                    "redirect_uri": "http://127.0.0.1:8000/api/v1/providers/openai_oauth/callback",
-                    "scopes": ["model.generate"],
+                    "redirect_uri": "http://localhost:1455/auth/callback",
+                    "scopes": ["openid", "profile", "email", "offline_access"],
                     "state": "state_123",
                     "missing_env": [],
-                    "metadata": {},
+                    "metadata": {"pkce_required": True},
                 }
             ),
             FakeResponse(
                 {
                     "provider_name": "openai_oauth",
-                    "healthy": True,
-                    "configured": True,
-                    "connected": False,
-                    "auth_type": "oauth",
-                    "detail": "waiting",
-                    "missing_env": [],
-                    "scopes": ["model.generate"],
-                    "expires_at": None,
+                    "status": "connected",
+                    "connected": True,
+                    "detail": "done",
+                    "scopes": ["openid", "profile", "email", "offline_access"],
+                    "expires_at": "2099-01-01T00:00:00+00:00",
+                    "metadata": {"account_id": "acct_test"},
                 }
             ),
             FakeResponse(
@@ -189,7 +187,7 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
                     "auth_type": "oauth",
                     "detail": "connected",
                     "missing_env": [],
-                    "scopes": ["model.generate"],
+                    "scopes": ["openid", "profile", "email", "offline_access"],
                     "expires_at": "2099-01-01T00:00:00+00:00",
                 }
             ),
@@ -210,11 +208,18 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
         ]
     )
 
+    class FakeListener:
+        def wait(self, timeout):
+            return {"ok": True, "payload": fake_client.request("POST", "/api/v1/providers/openai_oauth/callback").json()}
+
+        def close(self):
+            return None
+
     monkeypatch.setattr("app.cli._build_transport", lambda args: fake_client)
     monkeypatch.setattr("app.cli._open_browser", lambda url: True)
-    monkeypatch.setattr("app.cli.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("app.cli._start_local_oauth_callback_listener", lambda *args, **kwargs: FakeListener())
 
-    exit_code = main(["onboard-openai", "--wait-seconds", "1", "--poll-interval", "0.01", "--check-prompt", "테스트"])
+    exit_code = main(["onboard-openai", "--wait-seconds", "1", "--check-prompt", "테스트"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
@@ -233,7 +238,7 @@ def test_cli_provider_refresh_local(monkeypatch, tmp_path, capsys):
 
     assert exit_code == 0
     assert "[HeyGent CLI] 프로바이더 연결 갱신 결과" in captured
-    assert '"status": "configuration_required"' in captured or '"status": "not_connected"' in captured
+    assert '"status": "reconnect_required"' in captured or '"status": "not_connected"' in captured
 
 
 def test_cli_provider_disconnect_local(monkeypatch, tmp_path, capsys):

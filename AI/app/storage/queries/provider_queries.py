@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS provider_oauth_states (
     state TEXT PRIMARY KEY,
     provider_name TEXT NOT NULL,
     redirect_uri TEXT NOT NULL,
+    code_verifier TEXT,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
     consumed_at TEXT
