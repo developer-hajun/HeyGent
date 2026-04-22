@@ -14,6 +14,7 @@ from app.contracts.task.task_response import (
     TaskRunResponse,
 )
 from app.contracts.task.task_status import TaskStatus
+from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.tasks.models import StepRun
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -142,16 +143,16 @@ def list_tasks(
 @router.post("", response_model=TaskRunResponse)
 async def create_task(request: Request, payload: CreateTaskRequest, context: TaskContext = Depends(get_task_context)) -> TaskRunResponse:
     orchestrator = request.app.state.orchestrator
-    engine = context.engine
     try:
-        task, step, flow = orchestrator.plan(
-            flow_name=payload.flow_name,
-            owner_key=payload.owner_key,
-            input_payload=payload.input_payload,
+        task = await orchestrator.start(
+            OrchestrationRequest(
+                owner_key=payload.owner_key,
+                input_payload=payload.input_payload,
+                requested_route=payload.flow_name,
+            )
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=f"unknown flow: {error.args[0]}") from error
-    task = await engine.run(task=task, step=step, flow=flow)
     return TaskRunResponse.model_validate(task, from_attributes=True)
 
 
@@ -177,14 +178,14 @@ def list_events(task_run_id: str, context: TaskContext = Depends(get_task_contex
 
 @router.post("/{task_run_id}/resume", response_model=TaskRunResponse)
 async def resume_task(request: Request, task_run_id: str, payload: ResumeTaskRequest, context: TaskContext = Depends(get_task_context)) -> TaskRunResponse:
-    repository = context.repository
-    task = repository.get_task(task_run_id)
-    if task is None:
-        raise HTTPException(status_code=404, detail="task not found")
-    approval = repository.get_open_approval(task_run_id)
-    if approval is None:
-        raise HTTPException(status_code=409, detail="no open approval")
-    approval_id = payload.approval_id or approval["approval_id"]
-    flow = request.app.state.orchestrator.get_flow(task.flow_name)
-    task = await context.engine.resume(task=task, flow=flow, approval_id=approval_id, payload=payload.payload)
+    try:
+        task = await request.app.state.orchestrator.resume(
+            task_run_id=task_run_id,
+            approval_id=payload.approval_id or "",
+            payload=payload.payload,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="task not found") from None
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     return TaskRunResponse.model_validate(task, from_attributes=True)

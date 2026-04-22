@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.contracts.task.task_response import TaskRunResponse
+from app.domain.orchestration.contracts import OrchestrationRequest
 
 router = APIRouter(prefix="/flows", tags=["flows"])
 
@@ -23,12 +24,13 @@ def list_flows(request: Request) -> list[str]:
 @router.post("/{flow_name}/execute", response_model=TaskRunResponse)
 async def execute_flow(flow_name: str, payload: ExecuteFlowRequest, request: Request) -> TaskRunResponse:
     try:
-        task, step, flow = request.app.state.orchestrator.plan(
-            flow_name=flow_name,
-            owner_key=payload.owner_key,
-            input_payload=payload.input_payload,
+        task = await request.app.state.orchestrator.start(
+            OrchestrationRequest(
+                owner_key=payload.owner_key,
+                input_payload=payload.input_payload,
+                requested_route=flow_name,
+            )
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=f"unknown flow: {error.args[0]}") from error
-    task = await request.app.state.task_engine.run(task=task, step=step, flow=flow)
     return TaskRunResponse.model_validate(task, from_attributes=True)
