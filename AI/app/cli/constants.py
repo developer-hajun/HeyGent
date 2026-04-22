@@ -1,6 +1,6 @@
 """CLI 전역 상수 모음.
 
-상수는 parser, shell, renderer, workflow 여러 영역에서 같이 쓰인다.
+상수는 parser, shell, renderer, tasks 브라우저 여러 영역에서 같이 쓰인다.
 한 파일에서만 정의해 두면 slash command 이름이나 provider 이름이 갈라지는 일을 막을 수 있다.
 """
 

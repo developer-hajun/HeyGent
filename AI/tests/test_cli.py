@@ -292,7 +292,7 @@ def test_tasks_browser_reads_windows_enter_and_tab(monkeypatch):
     assert TASK_BROWSER_UI._read_browser_command() == "enter"
 
 
-def test_tasks_browser_run_flow_navigates_without_prompt(monkeypatch):
+def test_tasks_browser_navigation_works_without_extra_prompt(monkeypatch):
     settings = get_settings()
     outputs: list[str] = []
     commands = iter(["enter", "enter", "back", "back", "tab", "right", "right", "right", "right", "enter"])

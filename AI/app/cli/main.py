@@ -139,7 +139,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     onboard_parser.add_argument("--no-wait", action="store_true", help="callback 완료까지 기다리지 않고 URL 만 출력합니다")
     onboard_parser.add_argument("--wait-seconds", type=float, default=120.0, help="연결 완료를 기다릴 최대 시간(초)")
     onboard_parser.add_argument("--poll-interval", type=float, default=2.0, help="연결 상태를 다시 확인할 간격(초)")
-    onboard_parser.add_argument("--no-run-check", action="store_true", help="연결 완료 후 model_generate_flow 테스트를 건너뜁니다")
+    onboard_parser.add_argument("--no-run-check", action="store_true", help="연결 완료 후 model.generate 테스트를 건너뜁니다")
     onboard_parser.add_argument("--check-prompt", default=DEFAULT_MODEL_CHECK_PROMPT, help="연결 후 테스트 작업에 넣을 prompt")
     command_parsers["onboard-openai"] = onboard_parser
 
