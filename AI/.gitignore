@@ -1,0 +1,14 @@
+tmp/
+.env
+.env.local
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+coverage.xml
+*.log
+*.sqlite3
+*.db
