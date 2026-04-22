@@ -23,6 +23,7 @@ class TaskEngine:
         self.step_executor = StepExecutor()
 
     async def run(self, *, task: TaskRun, step: StepRun, flow) -> TaskRun:
+        task.current_step_run_id = step.step_run_id
         self.repository.create_task(task)
         self.repository.create_step(step)
         await self._emit("task.created", task)
@@ -30,6 +31,8 @@ class TaskEngine:
         return await self._execute(task=task, step=step, flow=flow, resume_payload=None)
 
     async def run_next_step(self, *, task: TaskRun, step: StepRun, flow) -> TaskRun:
+        task.current_step_run_id = step.step_run_id
+        self.repository.update_task(task)
         self.repository.create_step(step)
         await self._emit("step.created", task, step)
         return await self._execute(task=task, step=step, flow=flow, resume_payload=None)
@@ -38,7 +41,13 @@ class TaskEngine:
         approval = self.approval_service.resolve(approval_id, payload)
         if approval is None:
             raise KeyError(approval_id)
-        step = self.repository.list_steps(task.task_run_id)[0]
+        # 승인 레코드가 이미 exact waiting step 을 알고 있으므로,
+        # resume 시점에는 "마지막 step"이나 "첫 step"을 다시 추측하면 안 된다.
+        # 여기서 approval.step_run_id 를 그대로 따라가야 waiting/resume 정합성이 깨지지 않는다.
+        step = self.repository.get_step(approval["step_run_id"])
+        if step is None:
+            raise KeyError(approval["step_run_id"])
+        task.current_step_run_id = step.step_run_id
         await self._emit("approval.resolved", task, step, payload={"approval_id": approval_id, **payload})
         return await self._execute(task=task, step=step, flow=flow, resume_payload=payload)
 
@@ -48,6 +57,9 @@ class TaskEngine:
         task.status = TaskStatus.RUNNING
         task.started_at = task.started_at or utc_now()
         task.wait_payload = {}
+        # current_step_run_id 는 루프 전체가 지금 어느 semantic step 을 붙잡고 있는지 나타내는
+        # 운영 기준점이다. waiting, approval, event replay, resume 모두 이 값을 신뢰해야 한다.
+        task.current_step_run_id = step.step_run_id
         step.status = StepStatus.RUNNING
         step.started_at = step.started_at or utc_now()
         self.repository.update_task(task)
@@ -66,6 +78,7 @@ class TaskEngine:
 
         task.status = task_status
         step.status = step_status
+        task.current_step_run_id = step.step_run_id
         task.result_payload = outcome.get("result_payload", task.result_payload)
         task.wait_payload = outcome.get("wait_payload", {})
         task.progress_summary = outcome.get("summary_message")

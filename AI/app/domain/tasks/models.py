@@ -24,6 +24,15 @@ class TaskRun:
     # 현재 작업 상태(PENDING/RUNNING/WAITING/COMPLETED 등).
     # UI, 재개 처리, 후속 로직이 모두 이 상태를 보고 분기한다.
     status: str
+    # 사용자가 요청한 의도 타입.
+    # flow 제거 이후에는 이 값이 "무슨 작업을 하려는가"를 설명하는 정식 기준점이 된다.
+    intent_type: str | None = None
+    # 이 TaskRun 이 처음 어떤 capability 로 진입했는지 남기는 키.
+    # 나중에 flow 이름 없이도 시작 경로를 복원하려면 진입 capability 를 별도로 고정해야 한다.
+    entry_capability: str | None = None
+    # 현재 루프가 붙잡고 있는 StepRun ID.
+    # waiting/resume/이벤트 발행이 "마지막 step 추측"이 아니라 정확한 step 기준으로 움직이게 만드는 최소 앵커다.
+    current_step_run_id: str | None = None
     # 사람이 읽기 쉬운 작업 제목.
     # task_type 만으로는 화면에서 의미가 약해서 목록/상세 화면용 라벨로 둔다.
     title: str | None = None
@@ -70,6 +79,9 @@ class StepRun:
     # 현재 step 상태.
     # TaskRun 전체 상태와 별개로 "어느 단계가 멈췄는지/실패했는지" 파악하려고 저장한다.
     status: str
+    # 실제 실행자를 식별하는 키.
+    # flow/route 를 지운 뒤에도 "어느 capability executor 가 이 step 을 돌렸는가"를 복원하려면 step 단위 실행자 식별자가 필요하다.
+    executor_key: str | None = None
     # 사람이 읽는 단계 제목.
     # 내부 타입명만 노출하면 이해가 어려워서 UI 표시용 이름을 따로 둔다.
     title: str | None = None

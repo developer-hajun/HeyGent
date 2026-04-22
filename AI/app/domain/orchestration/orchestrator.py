@@ -53,7 +53,11 @@ class Orchestrator:
         if approval is None:
             raise ValueError("no open approval")
         resolved_approval_id = approval_id or approval["approval_id"]
-        current_step = self.repository.list_steps(task.task_run_id)[-1]
+        # resume 시점의 canonical step 은 approval 가 가리키는 step 이다.
+        # 마지막 step 을 다시 잡으면 이후 semantic step 구조가 바뀌는 순간 즉시 오작동한다.
+        current_step = self.repository.get_step(approval["step_run_id"])
+        if current_step is None:
+            raise KeyError(approval["step_run_id"])
         route = self.route_decider.decide_resume_route(task=task, current_step=current_step)
         worker = self.worker_registry.get(route)
         task = await self.task_engine.resume(task=task, flow=worker, approval_id=resolved_approval_id, payload=payload)

@@ -32,6 +32,12 @@ class PlannedTask:
     # 사용자가 요청한 작업 종류.
     # flow_name 과 분리해 두면 "요청 의미"와 "실행 구현"을 각각 추적할 수 있다.
     task_type: str
+    # 사용자가 요청한 intent_type.
+    # flow 제거 이후에는 TaskRun.task_type 과 별도로 canonical intent 기준점으로 유지한다.
+    intent_type: str
+    # 처음 진입할 capability 키.
+    # route 대신 capability 기준으로 첫 실행자를 고정해 두려는 필드다.
+    entry_capability: str
     # 작업 소유자/세션 범위를 구분하는 키.
     # 계획 단계에서부터 ownership 을 붙여 둬야 이후 저장 시 일관되게 흘러간다.
     owner_key: str

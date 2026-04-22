@@ -21,6 +21,8 @@ class Planner:
         return PlannedTask(
             flow_name=route,
             task_type=worker.task_type,
+            intent_type=worker.task_type,
+            entry_capability=getattr(worker, "executor_key", route),
             owner_key=owner_key,
             title=getattr(worker, "task_title", worker.task_type),
             input_payload=input_payload,
@@ -44,6 +46,8 @@ class Planner:
             flow_name=planned_task.flow_name,
             owner_key=planned_task.owner_key,
             status="PENDING",
+            intent_type=planned_task.intent_type,
+            entry_capability=planned_task.entry_capability,
             title=planned_task.title or planned_task.task_type,
             input_payload=planned_task.input_payload,
         )
@@ -55,6 +59,7 @@ class Planner:
             task_run_id=task.task_run_id,
             step_order=1,
             step_type=first_step.step_type,
+            executor_key=planned_task.entry_capability,
             status="PENDING",
             title=first_step.title or first_step.step_type,
             input_payload=first_step.input_payload,
@@ -75,6 +80,7 @@ class Planner:
             task_run_id=task.task_run_id,
             step_order=step_order,
             step_type=worker.step_type,
+            executor_key=getattr(worker, "executor_key", route),
             status="PENDING",
             title=getattr(worker, "step_title", worker.step_type),
             input_payload=input_payload,

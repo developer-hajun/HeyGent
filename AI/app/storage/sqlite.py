@@ -51,7 +51,11 @@ class SQLiteTaskRepository:
             )
             self._ensure_column(connection, "provider_oauth_states", "code_verifier", "TEXT")
             self._ensure_column(connection, "task_runs", "title", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "task_runs", "intent_type", "TEXT")
+            self._ensure_column(connection, "task_runs", "entry_capability", "TEXT")
+            self._ensure_column(connection, "task_runs", "current_step_run_id", "TEXT")
             self._ensure_column(connection, "step_runs", "title", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "step_runs", "executor_key", "TEXT")
             self._ensure_column(connection, "step_runs", "detail_json", "TEXT NOT NULL DEFAULT '{}'" )
             self._ensure_column(connection, "step_runs", "created_at", "TEXT")
             self._ensure_column(connection, "step_runs", "updated_at", "TEXT")
@@ -64,16 +68,19 @@ class SQLiteTaskRepository:
             connection.execute(
                 """
                 INSERT INTO task_runs (
-                    task_run_id, task_type, flow_name, owner_key, status, title,
+                    task_run_id, task_type, flow_name, intent_type, entry_capability, current_step_run_id, owner_key, status, title,
                     input_payload, result_payload, wait_payload, error_message,
                     progress_summary, revision, created_at, started_at, updated_at, ended_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task.task_run_id,
                     task.task_type,
                     task.flow_name,
+                    task.intent_type,
+                    task.entry_capability,
+                    task.current_step_run_id,
                     task.owner_key,
                     task.status,
                     task.title or task.task_type,
@@ -98,12 +105,15 @@ class SQLiteTaskRepository:
             connection.execute(
                 """
                 UPDATE task_runs
-                SET status=?, title=?, result_payload=?, wait_payload=?, error_message=?, progress_summary=?, revision=?, started_at=?, updated_at=?, ended_at=?
+                SET status=?, title=?, intent_type=?, entry_capability=?, current_step_run_id=?, result_payload=?, wait_payload=?, error_message=?, progress_summary=?, revision=?, started_at=?, updated_at=?, ended_at=?
                 WHERE task_run_id=?
                 """,
                 (
                     task.status,
                     task.title or task.task_type,
+                    task.intent_type,
+                    task.entry_capability,
+                    task.current_step_run_id,
                     json.dumps(task.result_payload),
                     json.dumps(task.wait_payload),
                     task.error_message,
@@ -122,6 +132,11 @@ class SQLiteTaskRepository:
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM task_runs WHERE task_run_id=?", (task_run_id,)).fetchone()
         return self._task_from_row(row) if row else None
+
+    def get_step(self, step_run_id: str) -> StepRun | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM step_runs WHERE step_run_id=?", (step_run_id,)).fetchone()
+        return self._step_from_row(row) if row else None
 
     def list_tasks(self, *, status: str | None = None, limit: int = 20, offset: int = 0) -> list[TaskRun]:
         """최근 TaskRun 목록을 조회한다.
@@ -172,17 +187,18 @@ class SQLiteTaskRepository:
             connection.execute(
                 """
                 INSERT INTO step_runs (
-                    step_run_id, task_run_id, step_order, step_type, status, title,
+                    step_run_id, task_run_id, step_order, step_type, executor_key, status, title,
                     input_payload, output_payload, wait_payload, detail_json,
                     summary_message, error_message, created_at, updated_at, started_at, ended_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     step.step_run_id,
                     step.task_run_id,
                     step.step_order,
                     step.step_type,
+                    step.executor_key,
                     step.status,
                     step.title or step.step_type,
                     json.dumps(step.input_payload),
@@ -205,12 +221,13 @@ class SQLiteTaskRepository:
             connection.execute(
                 """
                 UPDATE step_runs
-                SET status=?, title=?, output_payload=?, wait_payload=?, detail_json=?, summary_message=?, error_message=?, updated_at=?, started_at=?, ended_at=?
+                SET status=?, title=?, executor_key=?, output_payload=?, wait_payload=?, detail_json=?, summary_message=?, error_message=?, updated_at=?, started_at=?, ended_at=?
                 WHERE step_run_id=?
                 """,
                 (
                     step.status,
                     step.title or step.step_type,
+                    step.executor_key,
                     json.dumps(step.output_payload),
                     json.dumps(step.wait_payload),
                     json.dumps(step.detail_json),
@@ -439,6 +456,9 @@ class SQLiteTaskRepository:
             task_run_id=row["task_run_id"],
             task_type=row["task_type"],
             flow_name=row["flow_name"],
+            intent_type=row["intent_type"],
+            entry_capability=row["entry_capability"],
+            current_step_run_id=row["current_step_run_id"],
             owner_key=row["owner_key"],
             status=row["status"],
             title=row["title"],
@@ -460,6 +480,7 @@ class SQLiteTaskRepository:
             task_run_id=row["task_run_id"],
             step_order=row["step_order"],
             step_type=row["step_type"],
+            executor_key=row["executor_key"],
             status=row["status"],
             title=row["title"],
             input_payload=json.loads(row["input_payload"]),
