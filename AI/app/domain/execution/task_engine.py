@@ -29,6 +29,11 @@ class TaskEngine:
         await self._emit("step.created", task, step)
         return await self._execute(task=task, step=step, flow=flow, resume_payload=None)
 
+    async def run_next_step(self, *, task: TaskRun, step: StepRun, flow) -> TaskRun:
+        self.repository.create_step(step)
+        await self._emit("step.created", task, step)
+        return await self._execute(task=task, step=step, flow=flow, resume_payload=None)
+
     async def resume(self, *, task: TaskRun, flow, approval_id: str, payload: dict) -> TaskRun:
         approval = self.approval_service.resolve(approval_id, payload)
         if approval is None:

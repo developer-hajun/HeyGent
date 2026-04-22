@@ -1,45 +1,44 @@
 from __future__ import annotations
 
 from app.core.utils.ids import new_id
+from app.domain.orchestration.contracts import Worker, build_orchestration_detail
 from app.domain.tasks.models import StepRun, TaskRun
 from app.domain.tasks.schemas import PlannedStep, PlannedTask
 from app.domain.tasks.step_detail import build_default_step_detail, merge_step_detail
 
 
 class Planner:
-    """Flow 정의를 TaskRun/StepRun 계획으로 바꾼다."""
+    """초기 step 과 handoff step 생성을 담당한다."""
 
-    def create_task_plan(
+    def create_initial_plan(
         self,
         *,
-        flow_name: str,
-        task_type: str,
+        route: str,
+        worker: Worker,
         owner_key: str,
         input_payload: dict,
-        step_type: str,
-        task_title: str | None = None,
-        step_title: str | None = None,
-        step_detail: dict | None = None,
     ) -> PlannedTask:
-        # 현재 단계는 단일 step 플로우를 기본값으로 유지한다.
         return PlannedTask(
-            flow_name=flow_name,
-            task_type=task_type,
+            flow_name=route,
+            task_type=worker.task_type,
             owner_key=owner_key,
-            title=task_title,
+            title=getattr(worker, "task_title", worker.task_type),
             input_payload=input_payload,
             steps=[
                 PlannedStep(
-                    step_type=step_type,
-                    title=step_title,
+                    step_type=worker.step_type,
+                    title=getattr(worker, "step_title", worker.step_type),
                     input_payload=input_payload,
-                    detail_json=merge_step_detail(build_default_step_detail(), step_detail or {}),
+                    detail_json=merge_step_detail(
+                        build_default_step_detail(),
+                        build_orchestration_detail(route=route),
+                    ),
                 )
             ],
         )
 
-    def materialize(self, planned_task: PlannedTask) -> tuple[TaskRun, StepRun]:
-        task = TaskRun(
+    def materialize_task(self, planned_task: PlannedTask) -> TaskRun:
+        return TaskRun(
             task_run_id=new_id("task"),
             task_type=planned_task.task_type,
             flow_name=planned_task.flow_name,
@@ -48,8 +47,10 @@ class Planner:
             title=planned_task.title or planned_task.task_type,
             input_payload=planned_task.input_payload,
         )
+
+    def materialize_initial_step(self, *, task: TaskRun, planned_task: PlannedTask) -> StepRun:
         first_step = planned_task.steps[0]
-        step = StepRun(
+        return StepRun(
             step_run_id=new_id("step"),
             task_run_id=task.task_run_id,
             step_order=1,
@@ -59,4 +60,26 @@ class Planner:
             input_payload=first_step.input_payload,
             detail_json=merge_step_detail(build_default_step_detail(), first_step.detail_json),
         )
-        return task, step
+
+    def create_handoff_step(
+        self,
+        *,
+        task: TaskRun,
+        route: str,
+        worker: Worker,
+        input_payload: dict,
+        step_order: int,
+    ) -> StepRun:
+        return StepRun(
+            step_run_id=new_id("step"),
+            task_run_id=task.task_run_id,
+            step_order=step_order,
+            step_type=worker.step_type,
+            status="PENDING",
+            title=getattr(worker, "step_title", worker.step_type),
+            input_payload=input_payload,
+            detail_json=merge_step_detail(
+                build_default_step_detail(),
+                build_orchestration_detail(route=route),
+            ),
+        )
