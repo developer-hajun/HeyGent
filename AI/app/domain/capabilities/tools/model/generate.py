@@ -17,6 +17,8 @@ class ModelGenerateCapability:
         task_title="모델 생성 요청",
         step_type="model.generate.execute",
         step_title="모델 응답 생성",
+        semantic_key="response.compose",
+        semantic_goal="사용자 요청을 바탕으로 최종 모델 응답을 생성한다.",
     )
 
     def __init__(self, provider: BaseProvider) -> None:

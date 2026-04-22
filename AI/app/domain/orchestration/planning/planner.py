@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.core.utils.ids import new_id
 from app.domain.capabilities.tools.contracts import TaskCapabilityExecutor
 from app.domain.orchestration.contracts import build_orchestration_detail
-from app.domain.tasks.detail import build_default_step_detail, merge_step_detail
+from app.domain.tasks.detail import build_default_step_detail, build_semantic_step_detail, merge_step_detail
 from app.domain.tasks.runtime import StepRun, TaskRun
 
 
@@ -23,7 +23,7 @@ class Planner:
         )
 
     def materialize_step(self, *, task: TaskRun, executor: TaskCapabilityExecutor, input_payload: dict, step_order: int) -> StepRun:
-        return StepRun(
+        step = StepRun(
             step_run_id=new_id("step"),
             task_run_id=task.task_run_id,
             step_order=step_order,
@@ -32,16 +32,28 @@ class Planner:
             status="PENDING",
             title=executor.spec.step_title,
             input_payload=input_payload,
-            detail_json=merge_step_detail(
-                build_default_step_detail(),
-                build_orchestration_detail(
-                    intent_type=task.intent_type or executor.spec.intent_type,
-                    entry_capability=task.entry_capability or executor.spec.entry_capability,
-                    executor_key=executor.spec.executor_key,
-                    semantic_step=executor.spec.step_title,
-                ),
+            detail_json=build_default_step_detail(),
+        )
+        step.detail_json = merge_step_detail(
+            step.detail_json,
+            build_orchestration_detail(
+                intent_type=task.intent_type or executor.spec.intent_type,
+                entry_capability=task.entry_capability or executor.spec.entry_capability,
+                executor_key=executor.spec.executor_key,
+                semantic_step=executor.spec.step_title,
             ),
         )
+        step.detail_json = merge_step_detail(
+            step.detail_json,
+            build_semantic_step_detail(
+                step_run_id=step.step_run_id,
+                semantic_key=executor.spec.semantic_key or executor.spec.step_type,
+                semantic_step=executor.spec.step_title,
+                semantic_goal=executor.spec.semantic_goal or executor.spec.step_title,
+                lifecycle="pending",
+            ),
+        )
+        return step
 
     def materialize_resume_step(self, *, task: TaskRun, step: StepRun, executor: TaskCapabilityExecutor) -> StepRun:
         """resume 는 기존 StepRun 을 재사용하되 semantic metadata 가 비면 다시 채운다.
@@ -58,6 +70,16 @@ class Planner:
                 entry_capability=task.entry_capability or executor.spec.entry_capability,
                 executor_key=step.executor_key,
                 semantic_step=step.title or executor.spec.step_title,
+            ),
+        )
+        step.detail_json = merge_step_detail(
+            step.detail_json,
+            build_semantic_step_detail(
+                step_run_id=step.step_run_id,
+                semantic_key=executor.spec.semantic_key or step.step_type,
+                semantic_step=step.title or executor.spec.step_title,
+                semantic_goal=executor.spec.semantic_goal or step.title or executor.spec.step_title,
+                lifecycle="resuming",
             ),
         )
         return step

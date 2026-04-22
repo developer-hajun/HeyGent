@@ -15,6 +15,8 @@ def test_create_echo_task_and_read_back(client):
     assert steps_response.status_code == 200
     assert steps_response.json()[0]["status"] == "COMPLETED"
     assert steps_response.json()[0]["title"] == "입력 메시지 반영"
+    assert steps_response.json()[0]["detail_json"]["semanticDetail"]["semanticKey"] == "echo.reply"
+    assert steps_response.json()[0]["detail_json"]["semanticDetail"]["lifecycle"] == "completed"
     assert steps_response.json()[0]["detail_json"]["agentDetail"]["called"] is False
     assert steps_response.json()[0]["detail_json"]["toolDetail"]["toolNames"] == []
     assert steps_response.json()[0]["detail_json"]["llmDetail"]["callCount"] == 0
@@ -26,10 +28,16 @@ def test_create_echo_task_and_read_back(client):
 def test_approval_wait_and_resume(client):
     create_response = client.post("/api/v1/tasks", json={"intent_type": "stub.approval_wait", "input_payload": {"subject": "demo"}})
     task = create_response.json()
+    waiting_steps = client.get(f"/api/v1/tasks/{task['task_run_id']}/steps").json()
+    waiting_step_id = waiting_steps[0]["step_run_id"]
 
     assert create_response.status_code == 200
     assert task["status"] == "WAITING"
     assert task["wait_payload"]["reason"] == "approval_required"
+    assert task["wait_payload"]["approval_id"]
+    assert waiting_steps[0]["detail_json"]["approvalDetail"]["approvalRequested"] is True
+    assert waiting_steps[0]["detail_json"]["approvalDetail"]["approvalId"] == task["wait_payload"]["approval_id"]
+    assert waiting_steps[0]["detail_json"]["semanticDetail"]["lifecycle"] == "waiting"
 
     resume_response = client.post(
         f"/api/v1/tasks/{task['task_run_id']}/resume",
@@ -37,10 +45,14 @@ def test_approval_wait_and_resume(client):
     )
     resumed = resume_response.json()
     events_response = client.get(f"/api/v1/tasks/{task['task_run_id']}/events")
+    resumed_steps = client.get(f"/api/v1/tasks/{task['task_run_id']}/steps").json()
 
     assert resume_response.status_code == 200
     assert resumed["status"] == "COMPLETED"
     assert resumed["result_payload"]["approved"] is True
+    assert resumed_steps[0]["step_run_id"] == waiting_step_id
+    assert resumed_steps[0]["detail_json"]["approvalDetail"]["response"] == {"approved": True, "comment": "go"}
+    assert resumed_steps[0]["detail_json"]["semanticDetail"]["lifecycle"] == "completed"
     event_types = [event["event_type"] for event in events_response.json()]
     assert "approval.requested" in event_types
     assert "approval.resolved" in event_types

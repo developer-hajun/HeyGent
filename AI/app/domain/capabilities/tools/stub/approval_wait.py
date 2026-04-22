@@ -14,6 +14,8 @@ class ApprovalWaitCapability:
         task_title="승인 대기 태스크",
         step_type="approval.wait",
         step_title="사용자 승인 대기",
+        semantic_key="approval.checkpoint",
+        semantic_goal="사용자 승인 전까지 정확히 같은 StepRun 을 기준으로 대기하고 재개한다.",
     )
 
     def execute(self, *, task, step, resume_payload=None):

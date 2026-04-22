@@ -14,6 +14,8 @@ class EchoCapability:
         task_title="Echo 응답 태스크",
         step_type="echo.execute",
         step_title="입력 메시지 반영",
+        semantic_key="echo.reply",
+        semantic_goal="입력 payload 를 그대로 반영해 응답을 만든다.",
     )
 
     def execute(self, *, task, step, resume_payload=None):

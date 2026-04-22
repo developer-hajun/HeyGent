@@ -17,6 +17,13 @@ class CapabilitySpec:
     task_title: str
     step_type: str
     step_title: str
+    # semantic_key 는 "이 step 을 사용자에게 어떤 의미 단위로 설명할 것인가"를 고정한다.
+    # 지금은 capability 1회 실행이 step 1개와 거의 1:1 이지만,
+    # 이후 한 step 안에 여러 tool/llm 호출을 묶더라도 이 키를 semantic 기준점으로 유지한다.
+    semantic_key: str | None = None
+    # semantic_goal 은 StepRun 이 왜 존재하는지 설명하는 한 줄 목적이다.
+    # 단순 executor 이름이 아니라, 이 step 이 끝나면 사용자가 무엇을 얻는지를 남긴다.
+    semantic_goal: str | None = None
 
 
 class TaskCapabilityExecutor(Protocol):

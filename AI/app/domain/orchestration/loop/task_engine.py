@@ -6,7 +6,7 @@ from app.core.time import utc_now
 from app.domain.orchestration.approval.service import ApprovalService
 from app.domain.orchestration.loop.step_executor import StepExecutor
 from app.domain.orchestration.policies.state_machine import ensure_step_transition, ensure_task_transition
-from app.domain.tasks.detail import merge_step_detail
+from app.domain.tasks.detail import build_approval_detail, build_semantic_step_detail, merge_step_detail
 from app.domain.tasks.events import build_task_event
 from app.domain.tasks.repository import TaskRepository
 from app.domain.tasks.runtime import StepRun, TaskRun
@@ -41,6 +41,27 @@ class TaskEngine:
         if step is None:
             raise KeyError(approval["step_run_id"])
         task.current_step_run_id = step.step_run_id
+        step.detail_json = merge_step_detail(
+            step.detail_json,
+            build_approval_detail(
+                approval_requested=False,
+                approval_id=approval_id,
+                response_payload=payload,
+            ),
+        )
+        step.detail_json = merge_step_detail(
+            step.detail_json,
+            build_semantic_step_detail(
+                step_run_id=step.step_run_id,
+                semantic_key=(step.detail_json.get("semanticDetail") or {}).get("semanticKey") or step.step_type,
+                semantic_step=(step.detail_json.get("semanticDetail") or {}).get("semanticStep") or step.title or step.step_type,
+                semantic_goal=(step.detail_json.get("semanticDetail") or {}).get("goal") or step.title or step.step_type,
+                lifecycle="resuming",
+            ),
+        )
+        # approval 응답은 exact waiting step 에 귀속돼야 한다.
+        # 여기서 미리 저장해 두면 resume 실행 중 예외가 나더라도 "어떤 승인 응답으로 재개를 시도했는가"가 남는다.
+        self.repository.update_step(step)
         await self._emit("approval.resolved", task, step, payload={"approval_id": approval_id, **payload})
         return await self._execute(task=task, step=step, executor=executor, resume_payload=payload)
 
@@ -56,6 +77,16 @@ class TaskEngine:
         task.current_step_run_id = step.step_run_id
         step.status = StepStatus.RUNNING
         step.started_at = step.started_at or utc_now()
+        step.detail_json = merge_step_detail(
+            step.detail_json,
+            build_semantic_step_detail(
+                step_run_id=step.step_run_id,
+                semantic_key=(step.detail_json.get("semanticDetail") or {}).get("semanticKey") or executor.spec.semantic_key or step.step_type,
+                semantic_step=(step.detail_json.get("semanticDetail") or {}).get("semanticStep") or step.title or executor.spec.step_title,
+                semantic_goal=(step.detail_json.get("semanticDetail") or {}).get("goal") or executor.spec.semantic_goal or step.title or executor.spec.step_title,
+                lifecycle="running",
+            ),
+        )
         self.repository.update_task(task)
         self.repository.update_step(step)
         await self._emit("task.started", task)
@@ -80,6 +111,16 @@ class TaskEngine:
         step.output_payload = outcome.get("output_payload", step.output_payload)
         step.wait_payload = outcome.get("wait_payload", {})
         step.detail_json = merge_step_detail(step.detail_json, outcome.get("detail_json"))
+        step.detail_json = merge_step_detail(
+            step.detail_json,
+            build_semantic_step_detail(
+                step_run_id=step.step_run_id,
+                semantic_key=(step.detail_json.get("semanticDetail") or {}).get("semanticKey") or step.step_type,
+                semantic_step=(step.detail_json.get("semanticDetail") or {}).get("semanticStep") or step.title or step.step_type,
+                semantic_goal=(step.detail_json.get("semanticDetail") or {}).get("goal") or step.title or step.step_type,
+                lifecycle=self._semantic_lifecycle(task_status),
+            ),
+        )
         step.summary_message = outcome.get("summary_message")
         if task_status in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED}:
             task.ended_at = utc_now()
@@ -93,6 +134,21 @@ class TaskEngine:
                 step_run_id=step.step_run_id,
                 payload=outcome.get("approval_payload", {}),
             )
+            # WAITING 은 "task 가 멈췄다"보다 더 구체적인 운영 사건이다.
+            # approval 가 어떤 exact step 을 가리키는지, 그리고 그 요청 payload 가 무엇인지
+            # StepRun.detail 안에도 같이 남겨야 resume/debug/UI 가 같은 기준점을 공유할 수 있다.
+            task.wait_payload = {**task.wait_payload, "approval_id": approval["approval_id"]}
+            step.wait_payload = {**step.wait_payload, "approval_id": approval["approval_id"]}
+            step.detail_json = merge_step_detail(
+                step.detail_json,
+                build_approval_detail(
+                    approval_requested=True,
+                    approval_id=approval["approval_id"],
+                    request_payload=approval["request_payload"],
+                ),
+            )
+            self.repository.update_task(task)
+            self.repository.update_step(step)
             await self._emit("approval.requested", task, step, payload=approval)
             await self._emit("task.waiting", task, step)
             await self._emit("step.waiting", task, step)
@@ -105,6 +161,18 @@ class TaskEngine:
 
         await self._emit("task.updated", task, step)
         return task
+
+    @staticmethod
+    def _semantic_lifecycle(task_status: str) -> str:
+        if task_status == TaskStatus.WAITING:
+            return "waiting"
+        if task_status == TaskStatus.COMPLETED:
+            return "completed"
+        if task_status == TaskStatus.FAILED:
+            return "failed"
+        if task_status == TaskStatus.CANCELED:
+            return "canceled"
+        return "running"
 
     async def _emit(self, event_type: str, task: TaskRun, step: StepRun | None = None, payload: dict | None = None) -> None:
         event = build_task_event(
