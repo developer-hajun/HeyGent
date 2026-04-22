@@ -16,15 +16,15 @@ class CapabilityRegistry:
     시작점과 재개점 모두 capability registry 를 바로 조회해서 loop 가 실행자를 잡는다.
     """
 
-    def __init__(self, *, provider_registry, notion_client, notion_mapper) -> None:
+    def __init__(self, *, provider_registry, notion_client, notion_mapper, prompt_manager) -> None:
         default_provider = provider_registry.get("openai_oauth")
         executors = [
             EchoCapability(),
             DelegateEchoCapability(),
             ApprovalWaitCapability(),
-            ModelGenerateCapability(default_provider),
-            NotionPageCreateCapability(notion_client, notion_mapper, default_provider),
-            NotionDatabaseAppendCapability(notion_client, notion_mapper, default_provider),
+            ModelGenerateCapability(default_provider, prompt_manager),
+            NotionPageCreateCapability(notion_client, notion_mapper, default_provider, prompt_manager),
+            NotionDatabaseAppendCapability(notion_client, notion_mapper, default_provider, prompt_manager),
         ]
         self._executors_by_key: dict[str, TaskCapabilityExecutor] = {executor.spec.executor_key: executor for executor in executors}
         self._default_entry_by_intent = {executor.spec.intent_type: executor.spec.entry_capability for executor in executors}

@@ -17,6 +17,8 @@ def test_create_echo_task_and_read_back(client):
     assert steps_response.json()[0]["title"] == "입력 메시지 반영"
     assert steps_response.json()[0]["detail_json"]["semanticDetail"]["semanticKey"] == "echo.reply"
     assert steps_response.json()[0]["detail_json"]["semanticDetail"]["lifecycle"] == "completed"
+    assert steps_response.json()[0]["detail_json"]["operationDetail"]["completedCount"] == 1
+    assert steps_response.json()[0]["detail_json"]["planningDetail"]["completedCount"] == 1
     assert steps_response.json()[0]["detail_json"]["agentDetail"]["called"] is False
     assert steps_response.json()[0]["detail_json"]["toolDetail"]["toolNames"] == []
     assert steps_response.json()[0]["detail_json"]["llmDetail"]["callCount"] == 0
@@ -38,6 +40,7 @@ def test_approval_wait_and_resume(client):
     assert waiting_steps[0]["detail_json"]["approvalDetail"]["approvalRequested"] is True
     assert waiting_steps[0]["detail_json"]["approvalDetail"]["approvalId"] == task["wait_payload"]["approval_id"]
     assert waiting_steps[0]["detail_json"]["semanticDetail"]["lifecycle"] == "waiting"
+    assert waiting_steps[0]["detail_json"]["operationDetail"]["completedCount"] == 1
 
     resume_response = client.post(
         f"/api/v1/tasks/{task['task_run_id']}/resume",
@@ -53,6 +56,7 @@ def test_approval_wait_and_resume(client):
     assert resumed_steps[0]["step_run_id"] == waiting_step_id
     assert resumed_steps[0]["detail_json"]["approvalDetail"]["response"] == {"approved": True, "comment": "go"}
     assert resumed_steps[0]["detail_json"]["semanticDetail"]["lifecycle"] == "completed"
+    assert resumed_steps[0]["detail_json"]["operationDetail"]["completedCount"] == 2
     event_types = [event["event_type"] for event in events_response.json()]
     assert "approval.requested" in event_types
     assert "approval.resolved" in event_types
@@ -106,6 +110,7 @@ def test_delegate_child_task_linkage(client):
     assert steps[0]["detail_json"]["agentDetail"]["childTaskRunId"] == task["result_payload"]["childTaskRunId"]
     assert steps[0]["detail_json"]["agentDetail"]["status"] == "COMPLETED"
     assert steps[0]["output_payload"]["childStatus"] == "COMPLETED"
+    assert steps[0]["detail_json"]["operationDetail"]["completedCount"] == 2
     assert len(listed["items"]) == 2
     child_ids = {item["task_run_id"] for item in listed["items"]}
     assert task["result_payload"]["childTaskRunId"] in child_ids

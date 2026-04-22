@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
-from app.domain.capabilities.tools.contracts import CapabilitySpec
+from app.domain.capabilities.tools.contracts import CapabilitySpec, OperationTemplate
 
 
 class ApprovalWaitCapability:
@@ -16,6 +16,10 @@ class ApprovalWaitCapability:
         step_title="사용자 승인 대기",
         semantic_key="approval.checkpoint",
         semantic_goal="사용자 승인 전까지 정확히 같은 StepRun 을 기준으로 대기하고 재개한다.",
+        operation_templates=(
+            OperationTemplate(key="approval.request", title="승인 요청 생성", kind="approval"),
+            OperationTemplate(key="approval.resume", title="승인 결과 반영", kind="approval"),
+        ),
     )
 
     def execute(self, *, task, step, resume_payload=None):
@@ -34,6 +38,15 @@ class ApprovalWaitCapability:
                 },
                 "summary_message": "approval required",
                 "approval_payload": {"reason": "echo 승인 확인", "action": "approve"},
+                "operations": [
+                    {
+                        "key": "approval.request",
+                        "title": "승인 요청 생성",
+                        "kind": "approval",
+                        "status": "completed",
+                        "summary": "승인 요청을 생성하고 WAITING 으로 전환",
+                    }
+                ],
             }
 
         return {
@@ -47,4 +60,20 @@ class ApprovalWaitCapability:
                 "llmDetail": {"model": None, "callCount": 0},
             },
             "summary_message": "approval completed",
+            "operations": [
+                {
+                    "key": "approval.request",
+                    "title": "승인 요청 생성",
+                    "kind": "approval",
+                    "status": "completed",
+                    "summary": "기존 승인 요청을 기준으로 재개",
+                },
+                {
+                    "key": "approval.resume",
+                    "title": "승인 결과 반영",
+                    "kind": "approval",
+                    "status": "completed",
+                    "summary": "승인 payload 를 반영해 step 완료",
+                },
+            ],
         }

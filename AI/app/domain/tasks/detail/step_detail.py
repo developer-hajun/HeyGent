@@ -58,6 +58,23 @@ DEFAULT_STEP_DETAIL: dict[str, Any] = {
         # 재시도나 다중 호출 여부를 파악해 비용/지연 분석에 쓴다.
         "callCount": 0,
     },
+    "operationDetail": {
+        # semantic step 안에서 실제로 수행된 하위 operation 목록.
+        # StepRun 을 더 잘게 쪼개지 않더라도 어떤 내부 동작이 있었는지 여기서 추적한다.
+        "operations": [],
+        # 등록된 operation 전체 개수.
+        "totalCount": 0,
+        # 완료된 operation 개수.
+        "completedCount": 0,
+    },
+    "planningDetail": {
+        # semantic step 내부 계획 항목.
+        # 다음 행동을 강제하는 엔진이 아니라, 현재 step 안에 어떤 하위 작업이 남았는지 보여 주는 외부 상태다.
+        "todoItems": [],
+        "currentKey": None,
+        "totalCount": 0,
+        "completedCount": 0,
+    },
     "approvalDetail": {
         # 이 step 이 approval lifecycle 에 실제로 들어갔는지 여부.
         # WAITING step 중에서도 사용자 승인 기준으로 멈춘 것인지 구분해야 resume 정책을 단순하게 유지할 수 있다.
@@ -129,6 +146,48 @@ def build_approval_detail(
         detail["response"] = response_payload
     return {
         "approvalDetail": detail
+    }
+
+
+def build_operation_detail(operations: list[dict[str, Any]]) -> dict[str, Any]:
+    normalized_operations = [
+        {
+            "key": str(operation.get("key") or ""),
+            "title": str(operation.get("title") or ""),
+            "kind": str(operation.get("kind") or "operation"),
+            "status": str(operation.get("status") or "completed"),
+            "summary": operation.get("summary"),
+        }
+        for operation in operations
+        if operation.get("key")
+    ]
+    return {
+        "operationDetail": {
+            "operations": normalized_operations,
+            "totalCount": len(normalized_operations),
+            "completedCount": sum(1 for operation in normalized_operations if operation["status"] == "completed"),
+        }
+    }
+
+
+def build_planning_detail(*, todo_items: list[dict[str, Any]], current_key: str | None) -> dict[str, Any]:
+    normalized_items = [
+        {
+            "key": str(item.get("key") or ""),
+            "title": str(item.get("title") or ""),
+            "kind": str(item.get("kind") or "operation"),
+            "status": str(item.get("status") or "pending"),
+        }
+        for item in todo_items
+        if item.get("key")
+    ]
+    return {
+        "planningDetail": {
+            "todoItems": normalized_items,
+            "currentKey": current_key,
+            "totalCount": len(normalized_items),
+            "completedCount": sum(1 for item in normalized_items if item["status"] == "completed"),
+        }
     }
 
 

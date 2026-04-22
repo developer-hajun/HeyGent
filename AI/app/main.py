@@ -11,6 +11,7 @@ from app.api.ws.runtime.ws_manager import WebSocketManager
 from app.core.config import get_settings
 from app.core.logger import configure_logging
 from app.domain.capabilities.children.runtime.launcher import ChildSessionLauncher
+from app.domain.capabilities.skills import SkillLoader, SkillPromptBuilder, SkillRegistry
 from app.domain.capabilities.tools.notion.client import NotionClient
 from app.domain.capabilities.tools.notion.mapper import NotionMapper
 from app.domain.capabilities.tools.registry import CapabilityRegistry
@@ -20,6 +21,7 @@ from app.domain.orchestration.loop.runner import AgentLoopRunner
 from app.domain.orchestration.loop.task_engine import TaskEngine
 from app.domain.orchestration.orchestrator import Orchestrator
 from app.domain.orchestration.planning.planner import Planner
+from app.domain.orchestration.prompts import PromptManager
 from app.domain.providers.model import OpenAIOAuthProvider
 from app.domain.providers.registry import ProviderRegistry
 from app.storage.sqlite import SQLiteTaskRepository
@@ -41,12 +43,18 @@ async def lifespan(app: FastAPI):
     provider_registry = ProviderRegistry([OpenAIOAuthProvider(settings, repository)])
     notion_client = NotionClient(settings.notion_api_base_url)
     notion_mapper = NotionMapper()
+    skill_registry = SkillRegistry()
+    skill_loader = SkillLoader()
+    skill_registry.register_many(skill_loader.load_builtin())
+    skill_prompt_builder = SkillPromptBuilder(skill_registry)
+    prompt_manager = PromptManager(skill_prompt_builder)
     child_session_launcher = ChildSessionLauncher()
     task_engine = TaskEngine(repository, broadcaster, approval_service, child_session_launcher)
     capability_registry = CapabilityRegistry(
         provider_registry=provider_registry,
         notion_client=notion_client,
         notion_mapper=notion_mapper,
+        prompt_manager=prompt_manager,
     )
     planner = Planner()
     loop_runner = AgentLoopRunner(
@@ -63,8 +71,10 @@ async def lifespan(app: FastAPI):
     app.state.ws_manager = ws_manager
     app.state.session_registry = SessionRegistry()
     app.state.provider_registry = provider_registry
+    app.state.skill_registry = skill_registry
     app.state.notion_client = notion_client
     app.state.notion_mapper = notion_mapper
+    app.state.prompt_manager = prompt_manager
     app.state.capability_registry = capability_registry
     app.state.child_session_launcher = child_session_launcher
     app.state.orchestrator = orchestrator

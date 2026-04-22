@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.core.utils.ids import new_id
 from app.domain.capabilities.tools.contracts import TaskCapabilityExecutor
 from app.domain.orchestration.contracts import build_orchestration_detail
+from app.domain.orchestration.planning.todo_state import build_initial_todo_state, build_todo_detail_patch
 from app.domain.tasks.detail import build_default_step_detail, build_semantic_step_detail, merge_step_detail
 from app.domain.tasks.runtime import StepRun, TaskRun
 
@@ -53,6 +54,11 @@ class Planner:
                 lifecycle="pending",
             ),
         )
+        initial_todo_state = build_initial_todo_state(
+            step_title=executor.spec.step_title,
+            operation_templates=executor.spec.operation_templates,
+        )
+        step.detail_json = merge_step_detail(step.detail_json, build_todo_detail_patch(initial_todo_state))
         return step
 
     def materialize_resume_step(self, *, task: TaskRun, step: StepRun, executor: TaskCapabilityExecutor) -> StepRun:

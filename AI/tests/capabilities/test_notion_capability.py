@@ -16,7 +16,15 @@ def test_notion_mapper_builds_page_payload():
 
 
 def test_notion_page_create_capability_returns_stub_result(task_run, step_run):
-    capability = NotionPageCreateCapability(NotionClient("https://api.notion.test/v1"), NotionMapper(), OpenAIOAuthProvider(Settings()))
+    from app.domain.capabilities.skills import SkillPromptBuilder, SkillRegistry
+    from app.domain.orchestration.prompts import PromptManager
+
+    capability = NotionPageCreateCapability(
+        NotionClient("https://api.notion.test/v1"),
+        NotionMapper(),
+        OpenAIOAuthProvider(Settings()),
+        PromptManager(SkillPromptBuilder(SkillRegistry())),
+    )
     task_run.task_type = "notion.page.create"
     task_run.intent_type = "notion.page.create"
     task_run.entry_capability = "notion.page.create"
@@ -28,10 +36,19 @@ def test_notion_page_create_capability_returns_stub_result(task_run, step_run):
     assert outcome["task_status"] == "COMPLETED"
     assert outcome["result_payload"]["notion"]["object"] == "page"
     assert "Weekly Sync" in outcome["result_payload"]["summary"]
+    assert len(outcome["operations"]) == 3
 
 
 def test_notion_database_append_capability_returns_stub_result(task_run, step_run):
-    capability = NotionDatabaseAppendCapability(NotionClient("https://api.notion.test/v1"), NotionMapper(), OpenAIOAuthProvider(Settings()))
+    from app.domain.capabilities.skills import SkillPromptBuilder, SkillRegistry
+    from app.domain.orchestration.prompts import PromptManager
+
+    capability = NotionDatabaseAppendCapability(
+        NotionClient("https://api.notion.test/v1"),
+        NotionMapper(),
+        OpenAIOAuthProvider(Settings()),
+        PromptManager(SkillPromptBuilder(SkillRegistry())),
+    )
     task_run.task_type = "notion.database.append"
     task_run.intent_type = "notion.database.append"
     task_run.entry_capability = "notion.database.append"
@@ -42,3 +59,4 @@ def test_notion_database_append_capability_returns_stub_result(task_run, step_ru
 
     assert outcome["task_status"] == "COMPLETED"
     assert outcome["result_payload"]["notion"]["resource_id"] == "db-item-db123"
+    assert len(outcome["operations"]) == 3

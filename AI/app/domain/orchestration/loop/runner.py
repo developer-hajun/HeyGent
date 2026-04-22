@@ -4,12 +4,13 @@ from app.domain.capabilities.tools.registry import CapabilityRegistry
 from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.orchestration.loop.task_engine import TaskEngine
 from app.domain.orchestration.planning.planner import Planner
+from app.domain.orchestration.resume import ResumeTargetResolver
 from app.domain.tasks.repository import TaskRepository
 from app.domain.tasks.runtime import TaskRun
 
 
 class AgentLoopRunner:
-    """Hermes식 loop-first 진입점에 맞춘 최소 runner 다."""
+    """flow 추론 없이 loop-first 로 TaskRun 을 시작하는 진입점이다."""
 
     def __init__(
         self,
@@ -23,6 +24,7 @@ class AgentLoopRunner:
         self.planner = planner
         self.task_engine = task_engine
         self.capability_registry = capability_registry
+        self.resume_target_resolver = ResumeTargetResolver()
 
     async def start(self, request: OrchestrationRequest) -> TaskRun:
         executor = self.capability_registry.resolve(
@@ -44,9 +46,7 @@ class AgentLoopRunner:
 
     async def resume(self, *, task: TaskRun, approval_id: str, payload: dict) -> TaskRun:
         open_approval = self.repository.get_open_approval(task.task_run_id)
-        step_run_id = task.current_step_run_id or (open_approval or {}).get("step_run_id")
-        if not step_run_id:
-            raise ValueError("current waiting step is missing")
+        step_run_id = self.resume_target_resolver.resolve(task=task, open_approval=open_approval)
 
         step = self.repository.get_step(step_run_id)
         if step is None:

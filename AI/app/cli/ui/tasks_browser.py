@@ -541,12 +541,16 @@ def _step_detail_summary_lines(step: dict[str, Any]) -> list[str]:
     agent_detail = detail.get("agentDetail") or {}
     tool_detail = detail.get("toolDetail") or {}
     llm_detail = detail.get("llmDetail") or {}
+    operation_detail = detail.get("operationDetail") or {}
+    planning_detail = detail.get("planningDetail") or {}
     tool_names = ", ".join(tool_detail.get("toolNames") or []) or "없음"
     return [
         f"- Agent 호출: {'yes' if agent_detail.get('called') else 'no'}",
         f"- Agent 상태: {agent_detail.get('status') or '-'}",
         f"- Tool 사용: {tool_names}",
         f"- LLM 호출: {llm_detail.get('callCount') or 0}회 ({llm_detail.get('model') or '-'})",
+        f"- Operation: {operation_detail.get('completedCount') or 0}/{operation_detail.get('totalCount') or 0}",
+        f"- 남은 todo: {planning_detail.get('currentKey') or '없음'}",
         f"- Child task: {agent_detail.get('childTaskRunId') or '없음'}",
         f"- Child 요약: {agent_detail.get('summary') or '없음'}",
     ]

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
-from app.domain.capabilities.tools.contracts import CapabilitySpec
+from app.domain.capabilities.tools.contracts import CapabilitySpec, OperationTemplate
 
 
 class DelegateEchoCapability:
@@ -16,6 +16,10 @@ class DelegateEchoCapability:
         step_title="Child Echo 위임",
         semantic_key="delegate.child.echo",
         semantic_goal="부모 StepRun 에서 child task 를 독립 세션으로 실행하고 결과를 회수한다.",
+        operation_templates=(
+            OperationTemplate(key="agent.delegate", title="Child 세션 실행", kind="agent"),
+            OperationTemplate(key="agent.collect_summary", title="Child 결과 회수", kind="agent"),
+        ),
     )
 
     def execute(self, *, task, step, resume_payload=None):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
-from app.domain.capabilities.tools.contracts import CapabilitySpec
+from app.domain.capabilities.tools.contracts import CapabilitySpec, OperationTemplate
 from app.domain.providers.model import BaseProvider
 
 
@@ -19,13 +19,17 @@ class ModelGenerateCapability:
         step_title="모델 응답 생성",
         semantic_key="response.compose",
         semantic_goal="사용자 요청을 바탕으로 최종 모델 응답을 생성한다.",
+        operation_templates=(
+            OperationTemplate(key="llm.generate", title="모델 응답 생성", kind="llm"),
+        ),
     )
 
-    def __init__(self, provider: BaseProvider) -> None:
+    def __init__(self, provider: BaseProvider, prompt_manager) -> None:
         self.provider = provider
+        self.prompt_manager = prompt_manager
 
     def execute(self, *, task, step, resume_payload=None):
-        prompt = str(task.input_payload.get("prompt", "")).strip() or "안녕하세요. 현재 연결 상태를 짧게 요약해 주세요."
+        prompt = self.prompt_manager.build_model_prompt(input_payload=task.input_payload)
         generated = self.provider.generate(prompt, purpose="task_loop")
         return {
             "task_status": TaskStatus.COMPLETED,
@@ -46,4 +50,13 @@ class ModelGenerateCapability:
                 "llmDetail": {"model": generated.provider_name, "callCount": 1},
             },
             "summary_message": "model generate capability completed",
+            "operations": [
+                {
+                    "key": "llm.generate",
+                    "title": "모델 응답 생성",
+                    "kind": "llm",
+                    "status": "completed",
+                    "summary": generated.output_text[:80],
+                }
+            ],
         }
