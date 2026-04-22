@@ -42,6 +42,12 @@ def test_sqlite_repository_persists_task_step_event_approval_and_provider_auth(t
     assert repository.list_steps("task_1")[0].step_run_id == "step_1"
     assert repository.list_steps("task_1")[0].title == "테스트 스텝"
     assert "agentDetail" in repository.list_steps("task_1")[0].detail_json
+    with repository._connect() as connection:
+        applied_migrations = {
+            row["migration_id"] for row in connection.execute("SELECT migration_id FROM schema_migrations").fetchall()
+        }
+    assert "20260422_task_loop_anchors" in applied_migrations
+    assert "20260422_provider_oauth_code_verifier" in applied_migrations
     assert repository.list_events("task_1")[0].event_id == event.event_id
     assert repository.get_open_approval("task_1")["approval_id"] == approval["approval_id"]
     assert oauth_state["state"] == "state_123"

@@ -10,6 +10,7 @@ from app.contracts.event.task_events import TaskEventEnvelope
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
 from app.domain.tasks.runtime import StepRun, TaskRun
+from app.storage.migrations import apply_sqlite_migrations
 from app.storage.queries.approval_queries import CREATE_APPROVAL_REQUESTS
 from app.storage.queries.event_queries import CREATE_TASK_EVENTS
 from app.storage.queries.provider_queries import CREATE_PROVIDER_OAUTH_STATES, CREATE_PROVIDER_TOKENS
@@ -49,17 +50,7 @@ class SQLiteTaskRepository:
                     ]
                 )
             )
-            self._ensure_column(connection, "provider_oauth_states", "code_verifier", "TEXT")
-            self._ensure_column(connection, "task_runs", "title", "TEXT NOT NULL DEFAULT ''")
-            self._ensure_column(connection, "task_runs", "task_type", "TEXT")
-            self._ensure_column(connection, "task_runs", "intent_type", "TEXT")
-            self._ensure_column(connection, "task_runs", "entry_capability", "TEXT")
-            self._ensure_column(connection, "task_runs", "current_step_run_id", "TEXT")
-            self._ensure_column(connection, "step_runs", "title", "TEXT NOT NULL DEFAULT ''")
-            self._ensure_column(connection, "step_runs", "executor_key", "TEXT")
-            self._ensure_column(connection, "step_runs", "detail_json", "TEXT NOT NULL DEFAULT '{}'")
-            self._ensure_column(connection, "step_runs", "created_at", "TEXT")
-            self._ensure_column(connection, "step_runs", "updated_at", "TEXT")
+            apply_sqlite_migrations(connection)
 
     def create_task(self, task: TaskRun) -> TaskRun:
         now_dt = utc_now()
@@ -493,12 +484,6 @@ class SQLiteTaskRepository:
             started_at=self._dt(row["started_at"]),
             ended_at=self._dt(row["ended_at"]),
         )
-
-    @staticmethod
-    def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, sql_type: str) -> None:
-        columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()}
-        if column_name not in columns:
-            connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {sql_type}")
 
     @staticmethod
     def _iso(value) -> str | None:
