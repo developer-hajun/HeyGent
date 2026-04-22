@@ -38,6 +38,9 @@ DEFAULT_STEP_DETAIL: dict[str, Any] = {
         # child agent 가 남긴 한 줄 요약.
         # parent step 이 child 전체 로그를 열지 않아도 delegation 결과를 바로 보여 주기 위해 둔다.
         "summary": None,
+        # child agent 의 최종 상태.
+        # parent step 이 linkage 만 보고도 child 성공/실패/대기를 바로 판단할 수 있게 남긴다.
+        "status": None,
     },
     "toolDetail": {
         # 사용한 tool 이름 목록.

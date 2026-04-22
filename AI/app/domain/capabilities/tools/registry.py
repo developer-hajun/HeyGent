@@ -5,6 +5,7 @@ from app.domain.capabilities.tools.model.generate import ModelGenerateCapability
 from app.domain.capabilities.tools.notion.database_append import NotionDatabaseAppendCapability
 from app.domain.capabilities.tools.notion.page_create import NotionPageCreateCapability
 from app.domain.capabilities.tools.stub.approval_wait import ApprovalWaitCapability
+from app.domain.capabilities.tools.stub.delegate_echo import DelegateEchoCapability
 from app.domain.capabilities.tools.stub.echo import EchoCapability
 
 
@@ -19,6 +20,7 @@ class CapabilityRegistry:
         default_provider = provider_registry.get("openai_oauth")
         executors = [
             EchoCapability(),
+            DelegateEchoCapability(),
             ApprovalWaitCapability(),
             ModelGenerateCapability(default_provider),
             NotionPageCreateCapability(notion_client, notion_mapper, default_provider),

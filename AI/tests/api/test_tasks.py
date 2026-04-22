@@ -90,3 +90,22 @@ def test_list_tasks_with_status_filter_and_current_step_summary(client):
     assert waiting_payload["status_filter"] == "WAITING"
     assert waiting_payload["total_count"] == 1
     assert waiting_payload["items"][0]["task_run_id"] == waiting_task["task_run_id"]
+
+
+def test_delegate_child_task_linkage(client):
+    create_response = client.post("/api/v1/tasks", json={"intent_type": "stub.delegate_echo", "input_payload": {"message": "child hello"}})
+    task = create_response.json()
+    steps = client.get(f"/api/v1/tasks/{task['task_run_id']}/steps").json()
+    listed = client.get("/api/v1/tasks?page=1&page_size=10&status=ALL").json()
+
+    assert create_response.status_code == 200
+    assert task["status"] == "COMPLETED"
+    assert task["result_payload"]["delegated"] is True
+    assert task["result_payload"]["childTaskRunId"]
+    assert steps[0]["detail_json"]["agentDetail"]["called"] is True
+    assert steps[0]["detail_json"]["agentDetail"]["childTaskRunId"] == task["result_payload"]["childTaskRunId"]
+    assert steps[0]["detail_json"]["agentDetail"]["status"] == "COMPLETED"
+    assert steps[0]["output_payload"]["childStatus"] == "COMPLETED"
+    assert len(listed["items"]) == 2
+    child_ids = {item["task_run_id"] for item in listed["items"]}
+    assert task["result_payload"]["childTaskRunId"] in child_ids

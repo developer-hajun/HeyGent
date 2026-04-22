@@ -61,3 +61,22 @@ class AgentLoopRunner:
         executor = self.capability_registry.get(executor_key)
         self.planner.materialize_resume_step(task=task, step=step, executor=executor)
         return await self.task_engine.resume(task=task, executor=executor, approval_id=approval_id, payload=payload)
+
+    async def start_child(
+        self,
+        *,
+        owner_key: str,
+        input_payload: dict,
+        intent_type: str,
+        entry_capability: str,
+    ) -> TaskRun:
+        """child 세션도 flow 추론 없이 동일한 loop-first 진입점을 재사용한다."""
+
+        return await self.start(
+            OrchestrationRequest(
+                owner_key=owner_key,
+                input_payload=input_payload,
+                intent_type=intent_type,
+                entry_capability=entry_capability,
+            )
+        )

@@ -23,6 +23,7 @@ _ACTIVE_STEP_STATUSES = {status.value for status in (StepStatus.PENDING, StepSta
 _TASK_TITLE_FALLBACKS = {
     "model.generate": "모델 응답 생성",
     "stub.echo": "Echo 응답",
+    "stub.delegate_echo": "Child Echo 위임",
     "stub.approval_wait": "사용자 승인 대기",
     "notion.page.create": "Notion 페이지 생성",
     "notion.database.append": "Notion 데이터 추가",

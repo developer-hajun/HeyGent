@@ -10,6 +10,7 @@ from app.api.ws.runtime.session_registry import SessionRegistry
 from app.api.ws.runtime.ws_manager import WebSocketManager
 from app.core.config import get_settings
 from app.core.logger import configure_logging
+from app.domain.capabilities.children.runtime.launcher import ChildSessionLauncher
 from app.domain.capabilities.tools.notion.client import NotionClient
 from app.domain.capabilities.tools.notion.mapper import NotionMapper
 from app.domain.capabilities.tools.registry import CapabilityRegistry
@@ -40,7 +41,8 @@ async def lifespan(app: FastAPI):
     provider_registry = ProviderRegistry([OpenAIOAuthProvider(settings, repository)])
     notion_client = NotionClient(settings.notion_api_base_url)
     notion_mapper = NotionMapper()
-    task_engine = TaskEngine(repository, broadcaster, approval_service)
+    child_session_launcher = ChildSessionLauncher()
+    task_engine = TaskEngine(repository, broadcaster, approval_service, child_session_launcher)
     capability_registry = CapabilityRegistry(
         provider_registry=provider_registry,
         notion_client=notion_client,
@@ -53,6 +55,7 @@ async def lifespan(app: FastAPI):
         task_engine=task_engine,
         capability_registry=capability_registry,
     )
+    child_session_launcher.bind_start(loop_runner.start_child)
     orchestrator = Orchestrator(loop_runner, repository)
 
     app.state.settings = settings
@@ -63,6 +66,7 @@ async def lifespan(app: FastAPI):
     app.state.notion_client = notion_client
     app.state.notion_mapper = notion_mapper
     app.state.capability_registry = capability_registry
+    app.state.child_session_launcher = child_session_launcher
     app.state.orchestrator = orchestrator
     app.state.task_engine = task_engine
     yield

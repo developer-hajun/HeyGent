@@ -47,6 +47,7 @@ TASK_FILTER_CODES = {code for code, _ in TASK_BROWSER_FILTERS}
 TASK_TITLE_FALLBACKS = {
     "model.generate": "모델 응답 생성",
     "stub.echo": "Echo 응답",
+    "stub.delegate_echo": "Child Echo 위임",
     "stub.approval_wait": "사용자 승인 대기",
     "notion.page.create": "Notion 페이지 생성",
     "notion.database.append": "Notion 데이터 추가",
@@ -54,11 +55,13 @@ TASK_TITLE_FALLBACKS = {
 STEP_TITLE_FALLBACKS = {
     "model.generate.execute": "모델 응답 생성 단계",
     "echo.execute": "입력 메시지 반영",
+    "delegate.child": "Child Echo 위임",
     "approval.wait": "사용자 승인 대기",
 }
 SUMMARY_FALLBACKS = {
     "model generate capability completed": "모델 응답 생성 완료",
     "echo capability completed": "입력 메시지 반영 완료",
+    "child delegation completed": "Child 세션 위임 완료",
     "approval required": "사용자 승인이 필요함",
     "approval completed": "사용자 승인 완료",
     "notion page create capability completed": "Notion 페이지 생성 완료",
@@ -541,9 +544,11 @@ def _step_detail_summary_lines(step: dict[str, Any]) -> list[str]:
     tool_names = ", ".join(tool_detail.get("toolNames") or []) or "없음"
     return [
         f"- Agent 호출: {'yes' if agent_detail.get('called') else 'no'}",
+        f"- Agent 상태: {agent_detail.get('status') or '-'}",
         f"- Tool 사용: {tool_names}",
         f"- LLM 호출: {llm_detail.get('callCount') or 0}회 ({llm_detail.get('model') or '-'})",
         f"- Child task: {agent_detail.get('childTaskRunId') or '없음'}",
+        f"- Child 요약: {agent_detail.get('summary') or '없음'}",
     ]
 
 

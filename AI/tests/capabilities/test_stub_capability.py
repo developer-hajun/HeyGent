@@ -1,4 +1,5 @@
 from app.domain.capabilities.tools.stub.approval_wait import ApprovalWaitCapability
+from app.domain.capabilities.tools.stub.delegate_echo import DelegateEchoCapability
 from app.domain.capabilities.tools.stub.echo import EchoCapability
 
 
@@ -20,3 +21,13 @@ def test_approval_wait_capability_waits_then_completes(task_run, step_run):
     assert waiting["approval_payload"]["action"] == "approve"
     assert waiting["detail_json"]["agentDetail"]["called"] is False
     assert completed["result_payload"]["approved"] is True
+
+
+def test_delegate_echo_capability_requests_child_session(task_run, step_run):
+    capability = DelegateEchoCapability()
+
+    outcome = capability.execute(task=task_run, step=step_run)
+
+    assert outcome["task_status"] == "COMPLETED"
+    assert outcome["child_session"]["intent_type"] == "stub.echo"
+    assert outcome["child_session"]["entry_capability"] == "stub.echo"
