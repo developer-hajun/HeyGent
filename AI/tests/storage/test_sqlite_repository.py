@@ -1,15 +1,15 @@
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.domain.tasks.events import build_task_event
-from app.domain.tasks.models import StepRun, TaskRun
+from app.domain.tasks.runtime import StepRun, TaskRun
 from app.storage.sqlite import SQLiteTaskRepository
 
 
 def test_sqlite_repository_persists_task_step_event_approval_and_provider_auth(tmp_path):
     repository = SQLiteTaskRepository(tmp_path / "repo.db")
-    task = TaskRun(task_run_id="task_1", task_type="stub", flow_name="echo_flow", owner_key="user", status=TaskStatus.PENDING, title="테스트 태스크")
-    second_task = TaskRun(task_run_id="task_2", task_type="stub", flow_name="echo_flow", owner_key="user", status=TaskStatus.COMPLETED, title="완료 태스크")
-    step = StepRun(step_run_id="step_1", task_run_id="task_1", step_order=1, step_type="echo", status=StepStatus.PENDING, title="테스트 스텝")
+    task = TaskRun(task_run_id="task_1", task_type="stub", intent_type="stub.echo", entry_capability="stub.echo", owner_key="user", status=TaskStatus.PENDING, title="테스트 태스크")
+    second_task = TaskRun(task_run_id="task_2", task_type="stub", intent_type="stub.echo", entry_capability="stub.echo", owner_key="user", status=TaskStatus.COMPLETED, title="완료 태스크")
+    step = StepRun(step_run_id="step_1", task_run_id="task_1", step_order=1, step_type="echo", executor_key="stub.echo", status=StepStatus.PENDING, title="테스트 스텝")
 
     repository.create_task(task)
     repository.create_task(second_task)
@@ -42,6 +42,12 @@ def test_sqlite_repository_persists_task_step_event_approval_and_provider_auth(t
     assert repository.list_steps("task_1")[0].step_run_id == "step_1"
     assert repository.list_steps("task_1")[0].title == "테스트 스텝"
     assert "agentDetail" in repository.list_steps("task_1")[0].detail_json
+    with repository._connect() as connection:
+        applied_migrations = {
+            row["migration_id"] for row in connection.execute("SELECT migration_id FROM schema_migrations").fetchall()
+        }
+    assert "20260422_task_loop_anchors" in applied_migrations
+    assert "20260422_provider_oauth_code_verifier" in applied_migrations
     assert repository.list_events("task_1")[0].event_id == event.event_id
     assert repository.get_open_approval("task_1")["approval_id"] == approval["approval_id"]
     assert oauth_state["state"] == "state_123"

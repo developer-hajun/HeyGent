@@ -1,50 +1,38 @@
 from __future__ import annotations
 
-from app.contracts.task.task_status import TaskStatus
-from app.domain.orchestration.contracts import InspectionResult, ORCHESTRATION_DETAIL_KEY
-from app.domain.tasks.models import StepRun, TaskRun
+from app.domain.orchestration.planning.todo_state import apply_operation_results, build_todo_detail_patch
+from app.domain.tasks.detail import build_operation_detail
 
 
-class ResultInspector:
-    """worker 실행 결과를 next action 으로 해석한다."""
+class OutcomeInspector:
+    """executor outcome 에서 StepRun detail 과 summary 를 보강한다."""
 
-    def inspect(self, *, task: TaskRun, step: StepRun) -> InspectionResult:
-        orchestration = (step.detail_json or {}).get(ORCHESTRATION_DETAIL_KEY, {})
-        next_action = orchestration.get("nextAction")
-        handoff_to = orchestration.get("handoffTo")
-        followup_question = orchestration.get("followupQuestion")
+    def inspect(self, *, step, outcome: dict) -> dict:
+        operations = list(outcome.get("operations") or [])
+        detail_json = dict(outcome.get("detail_json") or {})
+        summary_message = outcome.get("summary_message")
 
-        if next_action == "handoff":
-            return InspectionResult(
-                next_action="handoff",
-                handoff_to=handoff_to,
-                next_input_payload=self._build_handoff_input(task, step),
-            )
+        if operations:
+            detail_json = {
+                **detail_json,
+                **build_operation_detail(operations),
+            }
+            todo_state = apply_operation_results(step.detail_json, operations)
+            detail_json = {
+                **detail_json,
+                **build_todo_detail_patch(todo_state),
+            }
+            summary_message = summary_message or self._build_operation_summary(operations)
 
-        if task.status == TaskStatus.WAITING:
-            return InspectionResult(
-                next_action="ask_user",
-                followup_question=followup_question or self._extract_followup_question(task, step),
-            )
-
-        if task.status == TaskStatus.COMPLETED:
-            return InspectionResult(next_action="done")
-
-        if task.status == TaskStatus.FAILED:
-            return InspectionResult(next_action="fail")
-
-        return InspectionResult(next_action="fail")
-
-    def _extract_followup_question(self, task: TaskRun, step: StepRun) -> str | None:
-        wait_payload = step.wait_payload or task.wait_payload or {}
-        question = wait_payload.get("followup_question")
-        if isinstance(question, str) and question.strip():
-            return question
-        return None
-
-    def _build_handoff_input(self, task: TaskRun, step: StepRun) -> dict:
         return {
-            "previous_step_output": step.output_payload,
-            "task_result": task.result_payload,
-            "original_input": task.input_payload,
+            **outcome,
+            "detail_json": detail_json,
+            "summary_message": summary_message or step.summary_message or step.title or step.step_type,
         }
+
+    @staticmethod
+    def _build_operation_summary(operations: list[dict]) -> str:
+        completed_titles = [str(operation.get("title")) for operation in operations if operation.get("status") == "completed"]
+        if completed_titles:
+            return ", ".join(completed_titles[:2])
+        return "step operation updated"

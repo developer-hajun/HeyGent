@@ -3,7 +3,7 @@ import httpx
 import json
 
 from app.core.config import Settings
-from app.domain.providers.openai_oauth import OpenAIOAuthProvider
+from app.domain.providers.model import OpenAIOAuthProvider
 from app.domain.providers.registry import ProviderRegistry
 from app.storage.sqlite import SQLiteTaskRepository
 
@@ -101,7 +101,7 @@ def test_openai_provider_imports_local_codex_auth_and_generates_live(monkeypatch
             )
         raise AssertionError(f"unexpected url: {url}")
 
-    monkeypatch.setattr("app.domain.providers.openai_oauth.httpx.stream", fake_stream)
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.stream", fake_stream)
     auth = provider.start_auth(force_oauth=False)
     generated = provider.generate("연결 확인")
 
@@ -150,8 +150,8 @@ def test_openai_provider_completes_auth_and_generates_live(monkeypatch, tmp_path
             )
         raise AssertionError(f"unexpected url: {url}")
 
-    monkeypatch.setattr("app.domain.providers.openai_oauth.httpx.post", fake_post)
-    monkeypatch.setattr("app.domain.providers.openai_oauth.httpx.stream", fake_stream)
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.post", fake_post)
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.stream", fake_stream)
     connected = provider.complete_auth(code="code-123", state=auth.state)
     generated = provider.generate("연결 확인")
 
@@ -196,7 +196,7 @@ def test_openai_provider_refresh_and_disconnect(monkeypatch, tmp_path):
             )
         raise AssertionError(f"unexpected url: {url}")
 
-    monkeypatch.setattr("app.domain.providers.openai_oauth.httpx.post", fake_post)
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.post", fake_post)
     refreshed = provider.refresh_connection()
     disconnected = provider.disconnect()
 

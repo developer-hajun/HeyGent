@@ -8,7 +8,12 @@ import re
 
 from app.cli.constants import COMMAND_ALIASES, OPENAI_PROVIDER_NAME, SHELL_SLASH_COMMANDS
 from app.core.config import Settings
-from wcwidth import wcswidth
+
+try:
+    from wcwidth import wcswidth
+except ImportError:  # pragma: no cover
+    def wcswidth(value: str) -> int:
+        return len(value)
 
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")

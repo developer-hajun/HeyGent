@@ -1,6 +1,6 @@
 """CLI 전역 상수 모음.
 
-상수는 parser, shell, renderer, workflow 여러 영역에서 같이 쓰인다.
+상수는 parser, shell, renderer, tasks 브라우저 여러 영역에서 같이 쓰인다.
 한 파일에서만 정의해 두면 slash command 이름이나 provider 이름이 갈라지는 일을 막을 수 있다.
 """
 
@@ -33,7 +33,6 @@ COMMAND_ALIASES = {
     "watch-task": "작업 조회",
     "tasks": "작업 브라우저",
     "resume-task": "승인 재개",
-    "list-flows": "플로우 목록",
     "list-providers": "프로바이더 목록",
     "provider-auth": "프로바이더 인증 시작",
     "list-steps": "단계 목록",

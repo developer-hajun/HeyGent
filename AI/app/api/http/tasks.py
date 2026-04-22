@@ -15,7 +15,7 @@ from app.contracts.task.task_response import (
 )
 from app.contracts.task.task_status import TaskStatus
 from app.domain.orchestration.contracts import OrchestrationRequest
-from app.domain.tasks.models import StepRun
+from app.domain.tasks.runtime import StepRun
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -23,7 +23,10 @@ _ACTIVE_STEP_STATUSES = {status.value for status in (StepStatus.PENDING, StepSta
 _TASK_TITLE_FALLBACKS = {
     "model.generate": "모델 응답 생성",
     "stub.echo": "Echo 응답",
+    "stub.delegate_echo": "Child Echo 위임",
     "stub.approval_wait": "사용자 승인 대기",
+    "notion.page.create": "Notion 페이지 생성",
+    "notion.database.append": "Notion 데이터 추가",
 }
 
 
@@ -86,13 +89,13 @@ def _summarize_task_input_payload(payload: dict) -> str | None:
 
 def _display_task_title(task, *, input_summary: str | None) -> str:
     raw_title = (task.title or "").strip()
-    if raw_title and raw_title != task.task_type:
+    if raw_title and raw_title not in {task.task_type, task.intent_type}:
         return raw_title
     if task.task_type in _TASK_TITLE_FALLBACKS:
         return _TASK_TITLE_FALLBACKS[task.task_type]
     if input_summary:
         return _truncate_text(input_summary, limit=28)
-    return task.flow_name or task.task_type
+    return task.intent_type or task.task_type
 
 
 
@@ -105,7 +108,8 @@ def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse
     return TaskRunListItemResponse(
         task_run_id=task.task_run_id,
         task_type=task.task_type,
-        flow_name=task.flow_name,
+        intent_type=task.intent_type,
+        entry_capability=task.entry_capability,
         status=task.status,
         title=_display_task_title(task, input_summary=input_summary),
         input_summary=input_summary,
@@ -148,11 +152,12 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
             OrchestrationRequest(
                 owner_key=payload.owner_key,
                 input_payload=payload.input_payload,
-                requested_route=payload.flow_name,
+                intent_type=payload.intent_type,
+                entry_capability=payload.entry_capability,
             )
         )
     except KeyError as error:
-        raise HTTPException(status_code=404, detail=f"unknown flow: {error.args[0]}") from error
+        raise HTTPException(status_code=404, detail=f"unknown intent or capability: {error.args[0]}") from error
     return TaskRunResponse.model_validate(task, from_attributes=True)
 
 

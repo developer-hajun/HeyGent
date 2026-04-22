@@ -107,7 +107,7 @@ def test_provider_callback_connects_provider(monkeypatch, tmp_path):
             )
         raise AssertionError(f"unexpected url: {url}")
 
-    monkeypatch.setattr("app.domain.providers.openai_oauth.httpx.post", fake_post)
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.post", fake_post)
 
     with TestClient(app) as local_client:
         auth_response = local_client.post("/api/v1/providers/openai_oauth/auth", json={"force_oauth": True})
@@ -153,7 +153,7 @@ def test_provider_disconnect_clears_connection(monkeypatch, tmp_path):
             )
         raise AssertionError(f"unexpected url: {url}")
 
-    monkeypatch.setattr("app.domain.providers.openai_oauth.httpx.post", fake_post)
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.post", fake_post)
 
     with TestClient(app) as local_client:
         auth_response = local_client.post("/api/v1/providers/openai_oauth/auth", json={"force_oauth": True})

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.http.flows import router as flows_router
 from app.api.http.health import router as health_router
 from app.api.http.providers import router as providers_router
 from app.api.http.tasks import router as tasks_router
@@ -21,6 +20,5 @@ def build_api_router(settings: Settings) -> APIRouter:
     api_router.include_router(health_router)
     api_router.include_router(tasks_router)
     api_router.include_router(providers_router)
-    api_router.include_router(flows_router)
     api_router.include_router(ws_router)
     return api_router

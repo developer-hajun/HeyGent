@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 
 
 class CreateTaskRequest(BaseModel):
-    flow_name: str = Field(..., description="실행할 flow 이름")
+    intent_type: str = Field(..., description="사용자 요청 의도 타입")
+    entry_capability: str | None = Field(default=None, description="필요하면 시작 capability 를 명시")
     input_payload: dict[str, Any] = Field(default_factory=dict)
     owner_key: str = "local-user"
 

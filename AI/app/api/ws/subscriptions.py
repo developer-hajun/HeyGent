@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from fastapi import WebSocket
 
-from app.domain.gateway.session_registry import SessionRegistry
-from app.domain.gateway.ws_manager import WebSocketManager
+from app.api.ws.runtime.session_registry import SessionRegistry
+from app.api.ws.runtime.ws_manager import WebSocketManager
 
 
 async def handle_subscription(
