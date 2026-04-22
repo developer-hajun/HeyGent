@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.contracts.provider.provider_response import ProviderHealthResponse
-from app.domain.providers.base import BaseProvider
+from app.domain.providers.model.base import BaseProvider
 
 
 class ProviderRegistry:

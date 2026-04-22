@@ -1,7 +1,7 @@
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.domain.tasks.events import build_task_event
-from app.domain.tasks.models import StepRun, TaskRun
+from app.domain.tasks.runtime import StepRun, TaskRun
 from app.storage.sqlite import SQLiteTaskRepository
 
 

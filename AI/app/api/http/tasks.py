@@ -15,7 +15,7 @@ from app.contracts.task.task_response import (
 )
 from app.contracts.task.task_status import TaskStatus
 from app.domain.orchestration.contracts import OrchestrationRequest
-from app.domain.tasks.models import StepRun
+from app.domain.tasks.runtime import StepRun
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 

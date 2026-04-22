@@ -7,7 +7,6 @@ from app.core.time import utc_now
 from app.core.utils.ids import new_id
 
 
-
 def build_task_event(
     *,
     event_type: str,

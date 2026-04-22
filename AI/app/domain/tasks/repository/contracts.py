@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Protocol
 
 from app.contracts.event.task_events import TaskEventEnvelope
-from app.domain.tasks.models import StepRun, TaskRun
+from app.domain.tasks.runtime import StepRun, TaskRun
 
 
 class TaskRepository(Protocol):

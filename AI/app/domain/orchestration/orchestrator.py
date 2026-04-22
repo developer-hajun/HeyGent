@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.orchestration.loop.runner import AgentLoopRunner
-from app.domain.tasks.models import TaskRun
 from app.domain.tasks.repository import TaskRepository
+from app.domain.tasks.runtime import TaskRun
 
 
 class Orchestrator:

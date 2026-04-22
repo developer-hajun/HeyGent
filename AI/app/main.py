@@ -19,7 +19,7 @@ from app.domain.orchestration.loop.runner import AgentLoopRunner
 from app.domain.orchestration.loop.task_engine import TaskEngine
 from app.domain.orchestration.orchestrator import Orchestrator
 from app.domain.orchestration.planning.planner import Planner
-from app.domain.providers.openai_oauth import OpenAIOAuthProvider
+from app.domain.providers.model import OpenAIOAuthProvider
 from app.domain.providers.registry import ProviderRegistry
 from app.storage.sqlite import SQLiteTaskRepository
 

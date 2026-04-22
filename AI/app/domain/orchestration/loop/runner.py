@@ -4,8 +4,8 @@ from app.domain.capabilities.tools.registry import CapabilityRegistry
 from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.orchestration.loop.task_engine import TaskEngine
 from app.domain.orchestration.planning.planner import Planner
-from app.domain.tasks.models import TaskRun
 from app.domain.tasks.repository import TaskRepository
+from app.domain.tasks.runtime import TaskRun
 
 
 class AgentLoopRunner:

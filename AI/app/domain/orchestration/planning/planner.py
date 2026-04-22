@@ -3,8 +3,8 @@ from __future__ import annotations
 from app.core.utils.ids import new_id
 from app.domain.capabilities.tools.contracts import TaskCapabilityExecutor
 from app.domain.orchestration.contracts import build_orchestration_detail
-from app.domain.tasks.models import StepRun, TaskRun
-from app.domain.tasks.step_detail import build_default_step_detail, merge_step_detail
+from app.domain.tasks.detail import build_default_step_detail, merge_step_detail
+from app.domain.tasks.runtime import StepRun, TaskRun
 
 
 class Planner:

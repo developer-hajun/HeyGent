@@ -9,7 +9,7 @@ from typing import Any
 from app.contracts.event.task_events import TaskEventEnvelope
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
-from app.domain.tasks.models import StepRun, TaskRun
+from app.domain.tasks.runtime import StepRun, TaskRun
 from app.storage.queries.approval_queries import CREATE_APPROVAL_REQUESTS
 from app.storage.queries.event_queries import CREATE_TASK_EVENTS
 from app.storage.queries.provider_queries import CREATE_PROVIDER_OAUTH_STATES, CREATE_PROVIDER_TOKENS
@@ -57,7 +57,7 @@ class SQLiteTaskRepository:
             self._ensure_column(connection, "task_runs", "current_step_run_id", "TEXT")
             self._ensure_column(connection, "step_runs", "title", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(connection, "step_runs", "executor_key", "TEXT")
-            self._ensure_column(connection, "step_runs", "detail_json", "TEXT NOT NULL DEFAULT '{}'" )
+            self._ensure_column(connection, "step_runs", "detail_json", "TEXT NOT NULL DEFAULT '{}'")
             self._ensure_column(connection, "step_runs", "created_at", "TEXT")
             self._ensure_column(connection, "step_runs", "updated_at", "TEXT")
 

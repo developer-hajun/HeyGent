@@ -15,7 +15,7 @@ from app.contracts.provider.provider_response import ProviderAuthResponse, Provi
 from app.core.config import Settings
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
-from app.domain.providers.base import BaseProvider
+from app.domain.providers.model.base import BaseProvider
 
 
 OPENAI_CODEX_JWT_CLAIM_PATH = "https://api.openai.com/auth"

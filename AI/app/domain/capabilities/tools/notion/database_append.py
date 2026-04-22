@@ -5,7 +5,7 @@ from app.contracts.task.task_status import TaskStatus
 from app.domain.capabilities.tools.contracts import CapabilitySpec
 from app.domain.capabilities.tools.notion.client import NotionClient
 from app.domain.capabilities.tools.notion.mapper import NotionMapper
-from app.domain.providers.base import BaseProvider
+from app.domain.providers.model import BaseProvider
 
 
 class NotionDatabaseAppendCapability:

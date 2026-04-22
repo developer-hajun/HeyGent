@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from app.domain.tasks.models import StepRun, TaskRun
+from app.domain.tasks.runtime import StepRun, TaskRun
 
 
 @dataclass(slots=True)

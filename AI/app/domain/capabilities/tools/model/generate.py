@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.domain.capabilities.tools.contracts import CapabilitySpec
-from app.domain.providers.base import BaseProvider
+from app.domain.providers.model import BaseProvider
 
 
 class ModelGenerateCapability:

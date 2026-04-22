@@ -6,10 +6,10 @@ from app.core.time import utc_now
 from app.domain.orchestration.approval.service import ApprovalService
 from app.domain.orchestration.loop.step_executor import StepExecutor
 from app.domain.orchestration.policies.state_machine import ensure_step_transition, ensure_task_transition
+from app.domain.tasks.detail import merge_step_detail
 from app.domain.tasks.events import build_task_event
-from app.domain.tasks.models import StepRun, TaskRun
 from app.domain.tasks.repository import TaskRepository
-from app.domain.tasks.step_detail import merge_step_detail
+from app.domain.tasks.runtime import StepRun, TaskRun
 
 
 class TaskEngine:

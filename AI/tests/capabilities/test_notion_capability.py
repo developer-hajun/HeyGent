@@ -3,7 +3,7 @@ from app.domain.capabilities.tools.notion.client import NotionClient
 from app.domain.capabilities.tools.notion.database_append import NotionDatabaseAppendCapability
 from app.domain.capabilities.tools.notion.mapper import NotionMapper
 from app.domain.capabilities.tools.notion.page_create import NotionPageCreateCapability
-from app.domain.providers.openai_oauth import OpenAIOAuthProvider
+from app.domain.providers.model import OpenAIOAuthProvider
 
 
 def test_notion_mapper_builds_page_payload():

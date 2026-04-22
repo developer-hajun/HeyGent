@@ -52,7 +52,7 @@ def merge_step_detail(current: dict[str, Any] | None, patch: dict[str, Any] | No
     """StepRun detail 에 부분 patch 를 합친다.
 
     v1 에서는 detailJson 을 StepRun 아래에 보관하기 때문에,
-    flow 가 반환한 일부 정보만 덮어쓸 수 있게 얕은-중첩 merge 를 제공한다.
+    loop 실행 중 계산된 일부 정보만 덮어쓸 수 있게 얕은-중첩 merge 를 제공한다.
     """
 
     merged = build_default_step_detail()

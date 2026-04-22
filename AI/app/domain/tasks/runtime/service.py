@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from app.contracts.task.task_status import TaskStatus
-from app.domain.tasks.models import TaskRun
 from app.domain.tasks.repository import TaskRepository
+from app.domain.tasks.runtime.task_run import TaskRun
 
 
 class TaskService:
