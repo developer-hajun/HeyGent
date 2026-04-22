@@ -6,7 +6,18 @@ import time
 from collections import deque
 
 import pytest
-from prompt_toolkit.document import Document
+
+try:
+    from prompt_toolkit.document import Document
+except ModuleNotFoundError:  # pragma: no cover
+    class Document:
+        def __init__(self, text: str = "", cursor_position: int | None = None):
+            self.text = text
+            self.cursor_position = cursor_position if cursor_position is not None else len(text)
+
+        @property
+        def text_before_cursor(self) -> str:
+            return self.text[: self.cursor_position]
 
 from app.cli import RemoteCLIClient, _SlashCommandCompleter, _should_open_slash_menu, build_parser, main
 import app.cli.ui.prompt as PROMPT_UI

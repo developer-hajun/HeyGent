@@ -32,21 +32,99 @@ try:
 except ImportError:  # pragma: no cover
     PromptSession = None
     Completer = object  # type: ignore[assignment]
-    Completion = None  # type: ignore[assignment]
-    has_completions = None  # type: ignore[assignment]
-    is_done = None  # type: ignore[assignment]
-    to_filter = None  # type: ignore[assignment]
-    KeyBindings = None  # type: ignore[assignment]
-    ConditionalContainer = None  # type: ignore[assignment]
-    ScrollOffsets = None  # type: ignore[assignment]
-    Window = None  # type: ignore[assignment]
-    Dimension = None  # type: ignore[assignment]
-    CompletionsMenuControl = None  # type: ignore[assignment]
+    class Completion:  # type: ignore[no-redef]
+        def __init__(self, text, *, start_position=0, display="", display_meta=""):
+            self.text = text
+            self.start_position = start_position
+            self.display = display
+            self.display_meta = display_meta
+
+    class _Filter:
+        def __init__(self, value=True):
+            self.value = value
+
+        def __and__(self, other):
+            return _Filter(self.value and getattr(other, "value", bool(other)))
+
+        def __invert__(self):
+            return _Filter(not self.value)
+
+    has_completions = _Filter(True)
+    is_done = _Filter(False)
+
+    def to_filter(value):  # type: ignore[no-redef]
+        return _Filter(bool(value))
+
+    class KeyBindings:  # type: ignore[no-redef]
+        def add(self, *_keys, **_kwargs):
+            def decorator(func):
+                return func
+
+            return decorator
+
+    class ConditionalContainer:  # type: ignore[no-redef]
+        def __init__(self, *, content, filter):
+            self.content = content
+            self.filter = filter
+
+    class ScrollOffsets:  # type: ignore[no-redef]
+        def __init__(self, *, top=0, bottom=0):
+            self.top = top
+            self.bottom = bottom
+
+    class Window:  # type: ignore[no-redef]
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class Dimension:  # type: ignore[no-redef]
+        def __init__(self, *, min=None, max=None):
+            self.min = min
+            self.max = max
+
+    class CompletionsMenuControl:  # type: ignore[no-redef]
+        pass
+
     patch_stdout = None  # type: ignore[assignment]
     choice = None  # type: ignore[assignment]
-    CompleteStyle = None  # type: ignore[assignment]
-    prompt_shortcuts = None  # type: ignore[assignment]
-    Style = None  # type: ignore[assignment]
+    class CompleteStyle:  # type: ignore[no-redef]
+        COLUMN = "COLUMN"
+
+    class _FallbackPromptShortcuts:
+        CompletionsMenu = object
+
+    prompt_shortcuts = _FallbackPromptShortcuts()
+
+    class _FallbackStyleAttrs:
+        def __init__(self):
+            self.color = None
+            self.bgcolor = None
+            self.reverse = False
+
+    class Style:  # type: ignore[no-redef]
+        def __init__(self, mapping: dict[str, str]):
+            self.mapping = mapping
+
+        @classmethod
+        def from_dict(cls, mapping: dict[str, str]):
+            return cls(mapping)
+
+        def get_attrs_for_style_str(self, style_str: str):
+            attrs = _FallbackStyleAttrs()
+            keys = [segment.replace("class:", "").strip() for segment in style_str.split() if segment.strip()]
+            combined_key = " ".join(keys)
+            ordered_keys = [*keys, combined_key] if combined_key else keys
+            for key in ordered_keys:
+                spec = self.mapping.get(key)
+                if spec is None:
+                    continue
+                for token in spec.split():
+                    if token == "noreverse":
+                        attrs.reverse = False
+                    elif token.startswith("bg:"):
+                        attrs.bgcolor = token[3:]
+                    elif token.startswith("#"):
+                        attrs.color = token[1:]
+            return attrs
 
 
 class _SlashCommandCompleter(Completer):
