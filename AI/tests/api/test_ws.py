@@ -8,7 +8,7 @@ def test_websocket_receives_task_events(client):
         ping_pong = websocket.receive_json()
         assert ping_pong["type"] == "pong"
 
-        client.post("/api/v1/tasks", json={"flow_name": "echo_flow", "input_payload": {"message": "event"}})
+        client.post("/api/v1/tasks", json={"intent_type": "stub.echo", "input_payload": {"message": "event"}})
         event = websocket.receive_json()
         assert event["type"] == "task.event"
         assert event["data"]["event_type"].startswith("task.")

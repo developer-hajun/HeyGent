@@ -1,5 +1,5 @@
 def test_create_echo_task_and_read_back(client):
-    response = client.post("/api/v1/tasks", json={"flow_name": "echo_flow", "input_payload": {"message": "hello"}})
+    response = client.post("/api/v1/tasks", json={"intent_type": "stub.echo", "input_payload": {"message": "hello"}})
     data = response.json()
 
     assert response.status_code == 200
@@ -24,7 +24,7 @@ def test_create_echo_task_and_read_back(client):
 
 
 def test_approval_wait_and_resume(client):
-    create_response = client.post("/api/v1/tasks", json={"flow_name": "approval_wait_flow", "input_payload": {"subject": "demo"}})
+    create_response = client.post("/api/v1/tasks", json={"intent_type": "stub.approval_wait", "input_payload": {"subject": "demo"}})
     task = create_response.json()
 
     assert create_response.status_code == 200
@@ -49,9 +49,9 @@ def test_approval_wait_and_resume(client):
 
 
 def test_list_tasks_with_status_filter_and_current_step_summary(client):
-    completed_task = client.post("/api/v1/tasks", json={"flow_name": "echo_flow", "input_payload": {"message": "first"}}).json()
-    waiting_task = client.post("/api/v1/tasks", json={"flow_name": "approval_wait_flow", "input_payload": {"subject": "approval"}}).json()
-    client.post("/api/v1/tasks", json={"flow_name": "echo_flow", "input_payload": {"message": "third"}}).json()
+    completed_task = client.post("/api/v1/tasks", json={"intent_type": "stub.echo", "input_payload": {"message": "first"}}).json()
+    waiting_task = client.post("/api/v1/tasks", json={"intent_type": "stub.approval_wait", "input_payload": {"subject": "approval"}}).json()
+    client.post("/api/v1/tasks", json={"intent_type": "stub.echo", "input_payload": {"message": "third"}}).json()
 
     list_response = client.get("/api/v1/tasks?page=1&page_size=2&status=ALL")
     waiting_response = client.get("/api/v1/tasks?page=1&page_size=5&status=WAITING")

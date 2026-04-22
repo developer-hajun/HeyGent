@@ -1,19 +1,15 @@
 from __future__ import annotations
 
-from typing import Any
 import time
+from typing import Any
 
-from app.cli.core.transport import request_path
 from app.cli.constants import OPENAI_PROVIDER_NAME
+from app.cli.core.transport import request_path
 from app.core.config import Settings
 
 
 def fetch_openai_provider_state(client, settings: Settings) -> dict[str, Any] | None:
-    """저장된 OpenAI provider 연결 상태를 조회한다.
-
-    shell 명령 처리에서는 조회 실패가 사용자 입력 루프를 깨면 안 되므로,
-    예외와 실패 응답은 None 으로 정리한다.
-    """
+    """저장된 OpenAI provider 연결 상태를 조회한다."""
 
     try:
         response = client.request("GET", request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}"))

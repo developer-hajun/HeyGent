@@ -165,7 +165,7 @@ def test_tasks_browser_renders_task_step_and_step_detail_views(monkeypatch):
         detail_task={
             "task_run_id": "task_wait",
             "task_type": "approval.wait",
-            "flow_name": "approval_wait_flow",
+            "entry_capability": "stub.approval_wait",
             "status": "WAITING",
             "title": "승인 대기 태스크",
             "input_payload": {"subject": "배포 전 승인해줘"},
@@ -304,7 +304,8 @@ def test_tasks_browser_run_flow_navigates_without_prompt(monkeypatch):
                             {
                                 "task_run_id": "task_1",
                                 "task_type": "model.generate",
-                                "flow_name": "model_generate_flow",
+                                "intent_type": "model.generate",
+                                "entry_capability": "model.generate",
                                 "status": "COMPLETED",
                                 "title": "모델 생성 요청",
                                 "input_summary": "헤르메스 알아?",
@@ -348,7 +349,8 @@ def test_tasks_browser_run_flow_navigates_without_prompt(monkeypatch):
                 {
                     "task_run_id": "task_1",
                     "task_type": "model.generate",
-                    "flow_name": "model_generate_flow",
+                    "intent_type": "model.generate",
+                    "entry_capability": "model.generate",
                     "status": "COMPLETED",
                     "title": "모델 생성 요청",
                     "input_payload": {"prompt": "헤르메스 알아?"},
@@ -676,9 +678,9 @@ def test_cli_tasks_list_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-tasks.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    main(["--mode", "local", "create-task", "--type", "echo_flow", "--payload", '{"message":"one"}'])
+    main(["--mode", "local", "create-task", "--type", "stub.echo", "--payload", '{"message":"one"}'])
     capsys.readouterr()
-    main(["--mode", "local", "create-task", "--type", "approval_wait_flow", "--payload", '{"subject":"two"}'])
+    main(["--mode", "local", "create-task", "--type", "stub.approval_wait", "--payload", '{"subject":"two"}'])
     capsys.readouterr()
 
     exit_code = main(["--mode", "local", "--json", "tasks", "--status", "WAITING"])
@@ -693,7 +695,7 @@ def test_cli_create_task_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    exit_code = main(["--mode", "local", "create-task", "--type", "echo_flow", "--payload", '{"message":"cli"}'])
+    exit_code = main(["--mode", "local", "create-task", "--type", "stub.echo", "--payload", '{"message":"cli"}'])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
@@ -705,7 +707,7 @@ def test_cli_resume_task_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-resume.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    create_code = main(["--mode", "local", "create-task", "--type", "approval_wait_flow", "--payload", '{"subject":"demo"}'])
+    create_code = main(["--mode", "local", "create-task", "--type", "stub.approval_wait", "--payload", '{"subject":"demo"}'])
     create_output = capsys.readouterr().out
     task_id = create_output.split('"task_run_id": "')[1].split('"')[0]
 
@@ -722,11 +724,11 @@ def test_cli_create_task_prompt_shortcut(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-prompt.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    exit_code = main(["--mode", "local", "create-task", "--type", "model_generate_flow", "--prompt", "한 줄 요약해줘"])
+    exit_code = main(["--mode", "local", "create-task", "--type", "model.generate", "--prompt", "한 줄 요약해줘"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
-    assert '"flow_name": "model_generate_flow"' in captured
+    assert '"intent_type": "model.generate"' in captured
     assert '"status": "COMPLETED"' in captured
 
 
@@ -734,15 +736,10 @@ def test_cli_list_commands_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-list.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    flow_code = main(["--mode", "local", "list-flows"])
-    flow_output = capsys.readouterr().out
     provider_code = main(["--mode", "local", "list-providers"])
     provider_output = capsys.readouterr().out
 
-    assert flow_code == 0
     assert provider_code == 0
-    assert "[HeyGent CLI] 플로우 목록 결과" in flow_output
-    assert "model_generate_flow" in flow_output
     assert "[HeyGent CLI] 프로바이더 목록" in provider_output
     assert "OpenAI Status" in provider_output
     assert "openai_oauth" in provider_output
@@ -858,7 +855,8 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
                 {
                     "task_run_id": "task_test",
                     "task_type": "model.generate",
-                    "flow_name": "model_generate_flow",
+                    "intent_type": "model.generate",
+                    "entry_capability": "model.generate",
                     "status": "COMPLETED",
                     "input_payload": {"prompt": "테스트"},
                     "result_payload": {"provider_name": "openai_oauth", "text": "연결 확인 완료", "metadata": {"mode": "live"}},
@@ -1007,7 +1005,8 @@ def test_cli_shell_interrupt(monkeypatch, tmp_path, capsys):
             {
                 "task_run_id": "task_interrupt",
                 "task_type": "model.generate",
-                "flow_name": "model_generate_flow",
+                "intent_type": "model.generate",
+                "entry_capability": "model.generate",
                 "status": "COMPLETED",
                 "input_payload": {"prompt": prompt},
                 "result_payload": {"provider_name": "openai_oauth", "text": "늦게 도착한 응답", "metadata": {"mode": "live", "model": "gpt-5.4"}},

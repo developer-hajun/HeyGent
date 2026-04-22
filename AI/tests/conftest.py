@@ -28,7 +28,8 @@ def task_run() -> TaskRun:
     return TaskRun(
         task_run_id="task_test",
         task_type="stub.echo",
-        flow_name="echo_flow",
+        intent_type="stub.echo",
+        entry_capability="stub.echo",
         owner_key="tester",
         status="PENDING",
         title="Echo 응답 태스크",
@@ -43,6 +44,7 @@ def step_run() -> StepRun:
         task_run_id="task_test",
         step_order=1,
         step_type="echo.execute",
+        executor_key="stub.echo",
         status="PENDING",
         title="입력 메시지 반영",
         input_payload={"message": "hello"},

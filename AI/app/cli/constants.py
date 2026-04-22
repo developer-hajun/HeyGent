@@ -33,7 +33,6 @@ COMMAND_ALIASES = {
     "watch-task": "작업 조회",
     "tasks": "작업 브라우저",
     "resume-task": "승인 재개",
-    "list-flows": "플로우 목록",
     "list-providers": "프로바이더 목록",
     "provider-auth": "프로바이더 인증 시작",
     "list-steps": "단계 목록",

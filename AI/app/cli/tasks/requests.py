@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
-import json
 
 import httpx
 
@@ -38,7 +38,7 @@ def run_model_check_task(client, settings: Settings, prompt: str) -> httpx.Respo
         "POST",
         request_path(settings, "/tasks"),
         json_body={
-            "flow_name": "model_generate_flow",
+            "intent_type": "model.generate",
             "owner_key": "cli-user",
             "input_payload": {"prompt": prompt},
         },
@@ -46,13 +46,13 @@ def run_model_check_task(client, settings: Settings, prompt: str) -> httpx.Respo
 
 
 def run_prompt_task(client, settings: Settings, prompt: str):
-    """대화형 셸 일반 입력을 model_generate_flow TaskRun 으로 보낸다."""
+    """대화형 셸 일반 입력을 `model.generate` TaskRun 으로 보낸다."""
 
     return client.request(
         "POST",
         request_path(settings, "/tasks"),
         json_body={
-            "flow_name": "model_generate_flow",
+            "intent_type": "model.generate",
             "owner_key": "cli-user",
             "input_payload": {"prompt": prompt},
         },

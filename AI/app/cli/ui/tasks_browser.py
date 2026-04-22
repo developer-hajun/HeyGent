@@ -48,9 +48,8 @@ TASK_TITLE_FALLBACKS = {
     "model.generate": "모델 응답 생성",
     "stub.echo": "Echo 응답",
     "stub.approval_wait": "사용자 승인 대기",
-    "model_generate_flow": "모델 응답 생성",
-    "echo_flow": "Echo 응답",
-    "approval_wait_flow": "사용자 승인 대기",
+    "notion.page.create": "Notion 페이지 생성",
+    "notion.database.append": "Notion 데이터 추가",
 }
 STEP_TITLE_FALLBACKS = {
     "model.generate.execute": "모델 응답 생성 단계",
@@ -58,10 +57,12 @@ STEP_TITLE_FALLBACKS = {
     "approval.wait": "사용자 승인 대기",
 }
 SUMMARY_FALLBACKS = {
-    "model generate flow completed": "모델 응답 생성 완료",
-    "echo flow completed": "입력 메시지 반영 완료",
+    "model generate capability completed": "모델 응답 생성 완료",
+    "echo capability completed": "입력 메시지 반영 완료",
     "approval required": "사용자 승인이 필요함",
     "approval completed": "사용자 승인 완료",
+    "notion page create capability completed": "Notion 페이지 생성 완료",
+    "notion database append capability completed": "Notion 데이터 추가 완료",
 }
 _ACTIVE_STEP_STATUSES = {"PENDING", "RUNNING", "WAITING", "BLOCKED"}
 
@@ -205,10 +206,10 @@ def _style_line(text: str, *, selected: bool = False, muted: bool = False, accen
 def _friendly_task_title(payload: dict[str, Any]) -> str:
     title = str(payload.get("title") or "").strip()
     task_type = str(payload.get("task_type") or "").strip()
-    flow_name = str(payload.get("flow_name") or "").strip()
-    if title and title not in {task_type, flow_name} and not title.endswith("_flow"):
+    intent_type = str(payload.get("intent_type") or "").strip()
+    if title and title not in {task_type, intent_type}:
         return _truncate_text(title, limit=42)
-    return _truncate_text(TASK_TITLE_FALLBACKS.get(task_type) or TASK_TITLE_FALLBACKS.get(flow_name) or flow_name or task_type or "Task", limit=42)
+    return _truncate_text(TASK_TITLE_FALLBACKS.get(task_type) or TASK_TITLE_FALLBACKS.get(intent_type) or intent_type or task_type or "Task", limit=42)
 
 
 
@@ -475,7 +476,7 @@ def render_task_detail(state: TaskBrowserState) -> str:
         f"상태: {task.get('status') or '-'}",
         f"입력: {_task_detail_input_summary(task)}",
         "TaskRun = 전체 작업 / StepRun = 한 단계 / detail_json = step 저장 실행 정보",
-        f"step: {len(steps)}개   flow: {task.get('flow_name') or '-'}",
+        f"step: {len(steps)}개   capability: {task.get('entry_capability') or '-'}",
         f"최근 갱신: {_format_time(task.get('updated_at') or task.get('created_at'))}",
         "",
         *_render_step_preview_lines(state),

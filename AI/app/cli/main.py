@@ -30,8 +30,8 @@ from app.cli.ui.prompt import (
     shell_read_input as _shell_read_input,
 )
 from app.cli.ui.spinner import msvcrt, run_with_working_indicator as _run_with_working_indicator, shell_interrupt_requested as _shell_interrupt_requested
-from app.cli.workflows.providers import fetch_openai_provider_state as _fetch_openai_provider_state, wait_for_provider_connection as _wait_for_provider_connection
-from app.cli.workflows.tasks import build_task_input_payload as _build_task_input_payload, load_payload as _load_payload, run_model_check_task as _run_model_check_task, run_prompt_task as _run_prompt_task
+from app.cli.providers.connection import fetch_openai_provider_state as _fetch_openai_provider_state, wait_for_provider_connection as _wait_for_provider_connection
+from app.cli.tasks.requests import build_task_input_payload as _build_task_input_payload, load_payload as _load_payload, run_model_check_task as _run_model_check_task, run_prompt_task as _run_prompt_task
 from app.core.config import Settings, get_settings
 
 
@@ -59,8 +59,8 @@ def _build_examples() -> str:
         "  python -m app.cli provider-refresh --provider openai_oauth\n"
         "  python -m app.cli provider-disconnect --provider openai_oauth\n"
         "  python -m app.cli list-providers\n"
-        "  python -m app.cli create-task --type model_generate_flow --prompt \"안녕하세요\"\n"
-        "  python -m app.cli create-task --type notion_page_create --payload '{\"title\":\"백로그\",\"content\":\"정리\"}'\n"
+        "  python -m app.cli create-task --type model.generate --prompt \"안녕하세요\"\n"
+        "  python -m app.cli create-task --type notion.page.create --payload '{\"title\":\"백로그\",\"content\":\"정리\"}'\n"
         "  python -m app.cli tasks --status WAITING\n"
         "  python -m app.cli resume-task --task-id task_xxx --payload '{\"approved\": true}'"
     )
@@ -162,11 +162,11 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     create_parser = subparsers.add_parser(
         "create-task",
         help="새 작업을 바로 실행합니다",
-        description="플로우 이름과 입력 payload 로 TaskRun 을 생성하고 즉시 실행합니다.",
+        description="intent type 과 입력 payload 로 TaskRun 을 생성하고 즉시 실행합니다.",
     )
-    create_parser.add_argument("--type", required=True, dest="flow_name", help="실행할 flow 이름")
+    create_parser.add_argument("--type", required=True, dest="intent_type", help="실행할 intent type")
     create_parser.add_argument("--payload", dest="payload", default=None, help="JSON 문자열 또는 JSON 파일 경로")
-    create_parser.add_argument("--prompt", default=None, help="model_generate_flow 용 prompt 바로 입력")
+    create_parser.add_argument("--prompt", default=None, help="model.generate 용 prompt 바로 입력")
     create_parser.add_argument("--owner-key", default="cli-user", help="작업 소유자 키, 기본값은 cli-user")
     command_parsers["create-task"] = create_parser
 
@@ -210,7 +210,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     resume_parser = subparsers.add_parser(
         "resume-task",
         help="대기 중 작업을 다시 진행합니다",
-        description="approval_wait_flow 같은 WAITING 상태 작업을 승인 payload 와 함께 재개합니다.",
+        description="stub.approval_wait 같은 WAITING 상태 작업을 승인 payload 와 함께 재개합니다.",
     )
     resume_parser.add_argument("--task-id", required=True, help="재개할 task_run_id")
     resume_parser.add_argument("--approval-id", default=None, help="특정 approval_id 가 있으면 함께 전달")
@@ -220,13 +220,6 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
         help="기본값은 '{\"approved\": true}', JSON 문자열 또는 JSON 파일 경로",
     )
     command_parsers["resume-task"] = resume_parser
-
-    flows_parser = subparsers.add_parser(
-        "list-flows",
-        help="사용 가능한 플로우 목록을 봅니다",
-        description="현재 백본에 등록된 flow 이름을 확인합니다.",
-    )
-    command_parsers["list-flows"] = flows_parser
 
     providers_parser = subparsers.add_parser(
         "list-providers",
@@ -610,7 +603,7 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
         if task_response.is_success:
             print("\n온보딩 완료. 이제 바로 사용할 수 있어.")
             print("- 상태 확인: py -3.11 -m app.cli status")
-            print("- 빠른 테스트: py -3.11 -m app.cli create-task --type model_generate_flow --prompt \"안녕하세요\"")
+            print("- 빠른 테스트: py -3.11 -m app.cli create-task --type model.generate --prompt \"안녕하세요\"")
             return 0
         print("\n연결은 완료됐지만 테스트 작업은 실패했어. 응답을 보고 확인해 줘.")
         return 1
@@ -640,7 +633,7 @@ def _handle_remote_command(args, settings: Settings) -> int:
                 "POST",
                 _request_path(settings, "/tasks"),
                 json_body={
-                    "flow_name": args.flow_name,
+                    "intent_type": args.intent_type,
                     "owner_key": args.owner_key,
                     "input_payload": _build_task_input_payload(args),
                 },
@@ -665,8 +658,6 @@ def _handle_remote_command(args, settings: Settings) -> int:
                     "payload": _load_payload(args.payload),
                 },
             )
-        elif args.command == "list-flows":
-            response = client.request("GET", _request_path(settings, "/flows"))
         elif args.command == "list-providers":
             response = client.request("GET", _request_path(settings, "/providers"))
         elif args.command == "provider-auth":
