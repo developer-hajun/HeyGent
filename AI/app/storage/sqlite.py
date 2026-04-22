@@ -51,6 +51,7 @@ class SQLiteTaskRepository:
             )
             self._ensure_column(connection, "provider_oauth_states", "code_verifier", "TEXT")
             self._ensure_column(connection, "task_runs", "title", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "task_runs", "task_type", "TEXT")
             self._ensure_column(connection, "task_runs", "intent_type", "TEXT")
             self._ensure_column(connection, "task_runs", "entry_capability", "TEXT")
             self._ensure_column(connection, "task_runs", "current_step_run_id", "TEXT")
@@ -68,16 +69,15 @@ class SQLiteTaskRepository:
             connection.execute(
                 """
                 INSERT INTO task_runs (
-                    task_run_id, task_type, flow_name, intent_type, entry_capability, current_step_run_id, owner_key, status, title,
+                    task_run_id, task_type, intent_type, entry_capability, current_step_run_id, owner_key, status, title,
                     input_payload, result_payload, wait_payload, error_message,
                     progress_summary, revision, created_at, started_at, updated_at, ended_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task.task_run_id,
                     task.task_type,
-                    task.flow_name,
                     task.intent_type,
                     task.entry_capability,
                     task.current_step_run_id,
@@ -455,7 +455,6 @@ class SQLiteTaskRepository:
         return TaskRun(
             task_run_id=row["task_run_id"],
             task_type=row["task_type"],
-            flow_name=row["flow_name"],
             intent_type=row["intent_type"],
             entry_capability=row["entry_capability"],
             current_step_run_id=row["current_step_run_id"],

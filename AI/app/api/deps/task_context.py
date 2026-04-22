@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from fastapi import Request
 
-from app.domain.execution.task_engine import TaskEngine
+from app.domain.orchestration.loop.task_engine import TaskEngine
 from app.domain.tasks.repository import TaskRepository
 from app.domain.tasks.service import TaskService
 

@@ -4,8 +4,6 @@ CREATE TABLE IF NOT EXISTS task_runs (
     task_run_id TEXT PRIMARY KEY,
     -- 사용자가 요청한 작업 종류. 목록/필터링/라우팅 기준으로 쓴다.
     task_type TEXT NOT NULL,
-    -- 실제 실행한 flow 이름. 같은 작업도 어떤 흐름으로 처리됐는지 남긴다.
-    flow_name TEXT NOT NULL,
     -- 사용자가 요청한 의도 타입. flow 제거 이후 canonical intent 기준점으로 쓴다.
     intent_type TEXT,
     -- 처음 진입한 capability 키. 시작 지점을 flow 대신 capability 기준으로 추적한다.

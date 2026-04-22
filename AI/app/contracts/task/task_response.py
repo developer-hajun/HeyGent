@@ -12,6 +12,7 @@ class StepRunResponse(BaseModel):
     step_order: int
     step_type: str
     status: str
+    executor_key: str | None = None
     title: str | None = None
     input_payload: dict[str, Any] = Field(default_factory=dict)
     output_payload: dict[str, Any] = Field(default_factory=dict)
@@ -28,7 +29,9 @@ class StepRunResponse(BaseModel):
 class TaskRunResponse(BaseModel):
     task_run_id: str
     task_type: str
-    flow_name: str
+    intent_type: str | None = None
+    entry_capability: str | None = None
+    current_step_run_id: str | None = None
     status: str
     title: str | None = None
     input_payload: dict[str, Any] = Field(default_factory=dict)
@@ -56,7 +59,8 @@ class StepRunSummaryResponse(BaseModel):
 class TaskRunListItemResponse(BaseModel):
     task_run_id: str
     task_type: str
-    flow_name: str
+    intent_type: str | None = None
+    entry_capability: str | None = None
     status: str
     title: str | None = None
     input_summary: str | None = None
