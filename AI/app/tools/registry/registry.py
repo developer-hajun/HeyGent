@@ -2,18 +2,14 @@ from __future__ import annotations
 
 from app.tools.contracts import TaskCapabilityExecutor
 from app.tools.model.generate import ModelGenerateCapability
-from app.tools.notion.database_append import NotionDatabaseAppendCapability
-from app.tools.notion.page_create import NotionPageCreateCapability
+from app.tools.integrations.notion import NotionDatabaseAppendCapability, NotionPageCreateCapability
 from app.tools.registry.tool_entry import ToolEntry
-from app.tools.stub.approval_wait import ApprovalWaitCapability
-from app.tools.stub.delegate_echo import DelegateEchoCapability
-from app.tools.stub.echo import EchoCapability
 from app.tools.toolsets import list_toolsets as _list_toolsets
 from app.tools.toolsets import resolve_executor_keys
 
 
-class CapabilityRegistry:
-    """Resolve task intents into executable tool/capability handlers."""
+class ToolRegistry:
+    """Resolve task intents into executable tool handlers."""
 
     def __init__(
         self,
@@ -26,9 +22,6 @@ class CapabilityRegistry:
     ) -> None:
         default_provider = provider_registry.get("openai_oauth")
         entries = [
-            ToolEntry("stub.echo", "stub", EchoCapability()),
-            ToolEntry("stub.delegate_echo", "stub", DelegateEchoCapability()),
-            ToolEntry("stub.approval_wait", "stub", ApprovalWaitCapability()),
             ToolEntry("model.generate", "model", ModelGenerateCapability(default_provider, prompt_builder)),
             ToolEntry(
                 "notion.page.create",

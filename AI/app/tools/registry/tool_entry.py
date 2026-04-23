@@ -7,7 +7,7 @@ from app.tools.contracts import TaskCapabilityExecutor
 
 @dataclass(frozen=True, slots=True)
 class ToolEntry:
-    """Capability registry entry aligned with Hermes-style tool metadata."""
+    """Tool registry entry aligned with Hermes-style tool metadata."""
 
     name: str
     toolset: str

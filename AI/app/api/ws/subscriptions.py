@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import WebSocket
 
-from app.domain.gateway.sessions.session_service import SessionService
+from app.domain.gateway.gateway_sessions.session_service import SessionService
 
 
 async def handle_subscription(

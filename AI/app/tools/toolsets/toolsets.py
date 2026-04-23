@@ -12,10 +12,6 @@ class ToolsetDefinition:
 
 
 TOOLSETS: dict[str, ToolsetDefinition] = {
-    "stub": ToolsetDefinition(
-        description="Local stub capabilities for approval and delegation flow tests.",
-        tools=("stub.echo", "stub.delegate_echo", "stub.approval_wait"),
-    ),
     "model": ToolsetDefinition(
         description="LLM-backed response generation capability.",
         tools=("model.generate",),
@@ -26,7 +22,7 @@ TOOLSETS: dict[str, ToolsetDefinition] = {
     ),
     "core": ToolsetDefinition(
         description="Union of the minimal runtime toolsets exposed by the current agent.",
-        includes=("stub", "model", "notion"),
+        includes=("model", "notion"),
     ),
 }
 

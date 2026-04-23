@@ -176,7 +176,7 @@ def test_tasks_browser_renders_task_step_and_step_detail_views(monkeypatch):
         detail_task={
             "task_run_id": "task_wait",
             "task_type": "approval.wait",
-            "entry_capability": "stub.approval_wait",
+            "entry_capability": "approval.wait",
             "status": "WAITING",
             "title": "승인 대기 태스크",
             "input_payload": {"subject": "배포 전 승인해줘"},
@@ -391,7 +391,7 @@ def test_tasks_browser_preview_changes_with_selected_row(monkeypatch):
             "items": [
                 {
                     "task_run_id": "task_1",
-                    "task_type": "stub.echo",
+                    "task_type": "model.generate",
                     "status": "COMPLETED",
                     "title": "첫 번째 작업",
                     "input_summary": "첫 번째 입력",
@@ -446,8 +446,8 @@ def test_tasks_browser_down_from_last_task_moves_to_footer():
     state = TASK_BROWSER_UI.TaskBrowserState(
         list_payload={
             "items": [
-                {"task_run_id": "task_1", "task_type": "stub.echo", "status": "COMPLETED", "title": "작업 1", "step_count": 1},
-                {"task_run_id": "task_2", "task_type": "stub.echo", "status": "COMPLETED", "title": "작업 2", "step_count": 1},
+                {"task_run_id": "task_1", "task_type": "model.generate", "status": "COMPLETED", "title": "작업 1", "step_count": 1},
+                {"task_run_id": "task_2", "task_type": "model.generate", "status": "COMPLETED", "title": "작업 2", "step_count": 1},
             ]
         },
         selected_index=1,
@@ -533,7 +533,7 @@ def test_tasks_browser_list_viewport_follows_selected_row(monkeypatch):
         items.append(
             {
                 "task_run_id": f"task_{index}",
-                "task_type": "stub.echo",
+                "task_type": "model.generate",
                 "status": "COMPLETED",
                 "title": f"작업 {index}",
                 "input_summary": f"입력 {index}",
@@ -685,50 +685,16 @@ def test_shell_slash_tasks_runs_browser(monkeypatch):
     assert called == {"filter": "WAITING", "task_id": None}
 
 
-def test_cli_tasks_list_local(monkeypatch, tmp_path, capsys):
-    db_path = tmp_path / "cli-tasks.db"
-    monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
-
-    main(["--mode", "local", "create-task", "--type", "stub.echo", "--payload", '{"message":"one"}'])
-    capsys.readouterr()
-    main(["--mode", "local", "create-task", "--type", "stub.approval_wait", "--payload", '{"subject":"two"}'])
-    capsys.readouterr()
-
-    exit_code = main(["--mode", "local", "--json", "tasks", "--status", "WAITING"])
-    captured = capsys.readouterr().out
-
-    assert exit_code == 0
-    assert '"status_filter": "WAITING"' in captured
-    assert '"status": "WAITING"' in captured
-
-
 def test_cli_create_task_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    exit_code = main(["--mode", "local", "create-task", "--type", "stub.echo", "--payload", '{"message":"cli"}'])
+    exit_code = main(["--mode", "local", "create-task", "--type", "model.generate", "--prompt", "cli"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
     assert "[HeyGent CLI] 작업 생성 결과" in captured
     assert '"status": "COMPLETED"' in captured
-
-
-def test_cli_resume_task_local(monkeypatch, tmp_path, capsys):
-    db_path = tmp_path / "cli-resume.db"
-    monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
-
-    create_code = main(["--mode", "local", "create-task", "--type", "stub.approval_wait", "--payload", '{"subject":"demo"}'])
-    create_output = capsys.readouterr().out
-    task_id = create_output.split('"task_run_id": "')[1].split('"')[0]
-
-    resume_code = main(["--mode", "local", "resume-task", "--task-id", task_id, "--payload", '{"approved": true}'])
-    resume_output = capsys.readouterr().out
-
-    assert create_code == 0
-    assert resume_code == 0
-    assert "[HeyGent CLI] 승인 재개 결과" in resume_output
-    assert '"status": "COMPLETED"' in resume_output
 
 
 def test_cli_create_task_prompt_shortcut(monkeypatch, tmp_path, capsys):

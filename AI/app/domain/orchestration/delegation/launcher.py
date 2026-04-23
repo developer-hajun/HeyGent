@@ -9,7 +9,7 @@ from app.domain.orchestration.delegation.linkage import (
 )
 from app.domain.orchestration.delegation.spec import ChildSessionLaunchResult, ChildSessionSpec
 from app.domain.orchestration.delegation.summary import summarize_child_task
-from app.domain.tasks.runtime import TaskRun
+from app.domain.tasks.models import TaskRun
 
 
 class ChildSessionLauncher:

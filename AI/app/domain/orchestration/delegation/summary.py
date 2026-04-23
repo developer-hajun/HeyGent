@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from app.domain.tasks.runtime import TaskRun
+from app.domain.tasks.models import TaskRun
 
 
 def summarize_child_task(task: TaskRun, summary_prompt: str | None) -> str | None:

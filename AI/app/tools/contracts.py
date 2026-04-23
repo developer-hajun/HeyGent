@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from app.domain.tasks.runtime.step_run import StepRun
-    from app.domain.tasks.runtime.task_run import TaskRun
+    from app.domain.tasks.models.step_run import StepRun
+    from app.domain.tasks.models.task_run import TaskRun
 
 
 @dataclass(frozen=True, slots=True)

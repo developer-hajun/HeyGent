@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.domain.orchestration.planning.todo_state import apply_operation_results, build_todo_detail_patch
+from app.domain.orchestration.runtime_planning.todo_state import apply_operation_results, build_todo_detail_patch
 from app.domain.tasks.detail import build_operation_detail
 
 

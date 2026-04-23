@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from app.tools.registry import CapabilityRegistry
+from app.tools.registry import ToolRegistry
 from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.orchestration.agent.loop import TaskEngine
-from app.domain.orchestration.planning.planner import Planner
+from app.domain.orchestration.runtime_planning import Planner
 from app.domain.orchestration.resume import ResumeTargetResolver
 from app.domain.tasks.repository import TaskRepository
-from app.domain.tasks.runtime import TaskRun
+from app.domain.tasks.models import TaskRun
 
 
 class AgentLoopRunner:
@@ -18,16 +18,16 @@ class AgentLoopRunner:
         repository: TaskRepository,
         planner: Planner,
         task_engine: TaskEngine,
-        capability_registry: CapabilityRegistry,
+        tool_registry: ToolRegistry,
     ) -> None:
         self.repository = repository
         self.planner = planner
         self.task_engine = task_engine
-        self.capability_registry = capability_registry
+        self.tool_registry = tool_registry
         self.resume_target_resolver = ResumeTargetResolver()
 
     async def start(self, request: OrchestrationRequest) -> TaskRun:
-        executor = self.capability_registry.resolve(
+        executor = self.tool_registry.resolve(
             intent_type=request.intent_type,
             entry_capability=request.entry_capability,
         )
@@ -56,7 +56,7 @@ class AgentLoopRunner:
         if not executor_key:
             raise ValueError("step executor key is missing")
 
-        executor = self.capability_registry.get(executor_key)
+        executor = self.tool_registry.get(executor_key)
         self.planner.materialize_resume_step(task=task, step=step, executor=executor)
         return await self.task_engine.resume(task=task, executor=executor, approval_id=approval_id, payload=payload)
 

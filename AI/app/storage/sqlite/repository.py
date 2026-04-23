@@ -9,7 +9,7 @@ from typing import Any
 from app.contracts.event.task_events import TaskEventEnvelope
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
-from app.domain.tasks.runtime import StepRun, TaskRun
+from app.domain.tasks.models import StepRun, TaskRun
 from app.storage.migrations import apply_sqlite_migrations
 from app.storage.queries.approval_queries import CREATE_APPROVAL_REQUESTS
 from app.storage.queries.event_queries import CREATE_TASK_EVENTS
