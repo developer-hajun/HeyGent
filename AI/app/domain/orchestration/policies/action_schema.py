@@ -19,6 +19,7 @@ def normalize_executor_outcome(outcome: dict) -> dict:
         "wait_payload": dict(outcome.get("wait_payload") or {}),
         "approval_payload": dict(outcome.get("approval_payload") or {}),
         "detail_json": dict(outcome.get("detail_json") or {}),
+        "todo_state": dict(outcome.get("todo_state") or {}),
         "summary_message": outcome.get("summary_message"),
         "error_message": outcome.get("error_message"),
         "child_session": outcome.get("child_session"),

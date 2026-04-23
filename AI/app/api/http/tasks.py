@@ -15,16 +15,13 @@ from app.contracts.task.task_response import (
 )
 from app.contracts.task.task_status import TaskStatus
 from app.domain.orchestration.contracts import OrchestrationRequest
-from app.domain.tasks.runtime import StepRun
+from app.domain.tasks.models import StepRun
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 _ACTIVE_STEP_STATUSES = {status.value for status in (StepStatus.PENDING, StepStatus.RUNNING, StepStatus.WAITING, StepStatus.BLOCKED)}
 _TASK_TITLE_FALLBACKS = {
     "model.generate": "모델 응답 생성",
-    "stub.echo": "Echo 응답",
-    "stub.delegate_echo": "Child Echo 위임",
-    "stub.approval_wait": "사용자 승인 대기",
     "notion.page.create": "Notion 페이지 생성",
     "notion.database.append": "Notion 데이터 추가",
 }
@@ -39,13 +36,17 @@ def _normalize_task_status_filter(raw_status: str) -> str | None:
     return normalized
 
 
-def _select_current_step(steps: list[StepRun]) -> StepRun | None:
+def _select_current_step(task, steps: list[StepRun]) -> StepRun | None:
     """상세/목록 양쪽에서 보여 줄 대표 StepRun 을 고른다.
 
     아직 여러 step 이 쌓이지 않는 MVP 구조라도,
     앞으로 멀티 스텝으로 확장될 것을 감안해 활성 step 우선 규칙을 고정해 둔다.
     """
 
+    if task.current_step_run_id:
+        for step in steps:
+            if step.step_run_id == task.current_step_run_id:
+                return step
     for step in steps:
         if step.status in _ACTIVE_STEP_STATUSES:
             return step
@@ -100,7 +101,7 @@ def _display_task_title(task, *, input_summary: str | None) -> str:
 
 
 def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse:
-    current_step = _select_current_step(steps)
+    current_step = _select_current_step(task, steps)
     current_step_response = None
     if current_step is not None:
         current_step_response = StepRunSummaryResponse.model_validate(current_step, from_attributes=True)

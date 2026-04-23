@@ -210,7 +210,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     resume_parser = subparsers.add_parser(
         "resume-task",
         help="대기 중 작업을 다시 진행합니다",
-        description="stub.approval_wait 같은 WAITING 상태 작업을 승인 payload 와 함께 재개합니다.",
+        description="WAITING 상태 작업을 승인 payload 와 함께 재개합니다.",
     )
     resume_parser.add_argument("--task-id", required=True, help="재개할 task_run_id")
     resume_parser.add_argument("--approval-id", default=None, help="특정 approval_id 가 있으면 함께 전달")

@@ -1,6 +1,6 @@
-from app.domain.orchestration.loop.runner import AgentLoopRunner
+from app.domain.orchestration.agent.runner import AgentLoopRunner
 from app.domain.orchestration.orchestrator import Orchestrator
-from app.domain.orchestration.planning.planner import Planner
+from app.domain.orchestration.runtime_planning import Planner
 
 __all__ = [
     "AgentLoopRunner",

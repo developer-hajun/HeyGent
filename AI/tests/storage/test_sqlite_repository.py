@@ -1,15 +1,15 @@
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.domain.tasks.events import build_task_event
-from app.domain.tasks.runtime import StepRun, TaskRun
+from app.domain.tasks.models import StepRun, TaskRun
 from app.storage.sqlite import SQLiteTaskRepository
 
 
 def test_sqlite_repository_persists_task_step_event_approval_and_provider_auth(tmp_path):
     repository = SQLiteTaskRepository(tmp_path / "repo.db")
-    task = TaskRun(task_run_id="task_1", task_type="stub", intent_type="stub.echo", entry_capability="stub.echo", owner_key="user", status=TaskStatus.PENDING, title="테스트 태스크")
-    second_task = TaskRun(task_run_id="task_2", task_type="stub", intent_type="stub.echo", entry_capability="stub.echo", owner_key="user", status=TaskStatus.COMPLETED, title="완료 태스크")
-    step = StepRun(step_run_id="step_1", task_run_id="task_1", step_order=1, step_type="echo", executor_key="stub.echo", status=StepStatus.PENDING, title="테스트 스텝")
+    task = TaskRun(task_run_id="task_1", task_type="model.generate", intent_type="model.generate", entry_capability="model.generate", owner_key="user", status=TaskStatus.PENDING, title="테스트 태스크")
+    second_task = TaskRun(task_run_id="task_2", task_type="model.generate", intent_type="model.generate", entry_capability="model.generate", owner_key="user", status=TaskStatus.COMPLETED, title="완료 태스크")
+    step = StepRun(step_run_id="step_1", task_run_id="task_1", step_order=1, step_type="model.generate.execute", executor_key="model.generate", status=StepStatus.PENDING, title="테스트 스텝")
 
     repository.create_task(task)
     repository.create_task(second_task)
