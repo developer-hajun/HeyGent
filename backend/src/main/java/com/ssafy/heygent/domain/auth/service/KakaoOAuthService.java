@@ -18,6 +18,9 @@ public class KakaoOAuthService {
     @Value("${kakao.redirect-uri}")
     private String redirectUri;
 
+    @Value("${kakao.client-secret}")
+    private String clientSecret;
+
     public String getAccessToken(String code) {
 
         RestTemplate restTemplate = new RestTemplate();
@@ -26,6 +29,7 @@ public class KakaoOAuthService {
         params.add("grant_type", "authorization_code");
         params.add("client_id", clientId);
         params.add("redirect_uri", redirectUri);
+        params.add("client_secret", clientSecret);
         params.add("code", code);
 
         HttpHeaders headers = new HttpHeaders();
