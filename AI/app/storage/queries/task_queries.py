@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS task_runs (
     input_payload TEXT NOT NULL,
     -- 작업이 끝난 뒤 최종 결과를 담는 JSON.
     result_payload TEXT NOT NULL,
+    -- task 단위 todo/planning 상태 JSON.
+    todo_state TEXT NOT NULL,
     -- WAITING 상태 이유와 재개 문맥을 담는 JSON.
     wait_payload TEXT NOT NULL,
     -- 실패 시 바로 보여 줄 핵심 에러 메시지.

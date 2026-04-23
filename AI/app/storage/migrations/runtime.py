@@ -42,6 +42,13 @@ MIGRATIONS: tuple[SQLiteMigration, ...] = (
             ColumnMigration("step_runs", "updated_at", "TEXT"),
         ),
     ),
+    SQLiteMigration(
+        migration_id="20260423_task_todo_state",
+        description="task 단위 canonical todo state 컬럼을 추가한다.",
+        columns=(
+            ColumnMigration("task_runs", "todo_state", "TEXT NOT NULL DEFAULT '{}'"),
+        ),
+    ),
 )
 
 

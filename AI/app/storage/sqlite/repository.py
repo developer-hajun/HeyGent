@@ -61,10 +61,10 @@ class SQLiteTaskRepository:
                 """
                 INSERT INTO task_runs (
                     task_run_id, task_type, intent_type, entry_capability, current_step_run_id, owner_key, status, title,
-                    input_payload, result_payload, wait_payload, error_message,
+                    input_payload, result_payload, todo_state, wait_payload, error_message,
                     progress_summary, revision, created_at, started_at, updated_at, ended_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task.task_run_id,
@@ -77,6 +77,7 @@ class SQLiteTaskRepository:
                     task.title or task.task_type,
                     json.dumps(task.input_payload),
                     json.dumps(task.result_payload),
+                    json.dumps(task.todo_state),
                     json.dumps(task.wait_payload),
                     task.error_message,
                     task.progress_summary,
@@ -96,7 +97,7 @@ class SQLiteTaskRepository:
             connection.execute(
                 """
                 UPDATE task_runs
-                SET status=?, title=?, intent_type=?, entry_capability=?, current_step_run_id=?, result_payload=?, wait_payload=?, error_message=?, progress_summary=?, revision=?, started_at=?, updated_at=?, ended_at=?
+                SET status=?, title=?, intent_type=?, entry_capability=?, current_step_run_id=?, result_payload=?, todo_state=?, wait_payload=?, error_message=?, progress_summary=?, revision=?, started_at=?, updated_at=?, ended_at=?
                 WHERE task_run_id=?
                 """,
                 (
@@ -106,6 +107,7 @@ class SQLiteTaskRepository:
                     task.entry_capability,
                     task.current_step_run_id,
                     json.dumps(task.result_payload),
+                    json.dumps(task.todo_state),
                     json.dumps(task.wait_payload),
                     task.error_message,
                     task.progress_summary,
@@ -454,6 +456,7 @@ class SQLiteTaskRepository:
             title=row["title"],
             input_payload=json.loads(row["input_payload"]),
             result_payload=json.loads(row["result_payload"]),
+            todo_state=json.loads(row["todo_state"]) if row["todo_state"] else {},
             wait_payload=json.loads(row["wait_payload"]),
             error_message=row["error_message"],
             progress_summary=row["progress_summary"],

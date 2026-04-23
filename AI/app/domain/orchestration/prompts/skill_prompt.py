@@ -51,5 +51,8 @@ class SkillPromptBuilder:
             return ""
         lines = ["적용 가능한 작업 힌트:"]
         for skill in resolved:
-            lines.append(f"- {skill['name']}")
+            lines.append(f"[{skill['name']}]")
+            body = str(skill.get("body") or "").strip()
+            if body:
+                lines.append(body[:600].rstrip())
         return "\n".join(lines)

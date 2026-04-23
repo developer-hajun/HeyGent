@@ -21,6 +21,9 @@ class TodoState:
     current_key: str | None = None
 
 
+_ACTIVE_TODO_STATUSES = {"pending", "in_progress"}
+
+
 def build_initial_todo_state(*, step_title: str, operation_templates: tuple[OperationTemplate, ...]) -> TodoState:
     """semantic step 시작 시점의 계획 상태를 만든다.
 
@@ -93,3 +96,60 @@ def build_todo_detail_patch(state: TodoState) -> dict[str, Any]:
         ],
         current_key=state.current_key,
     )
+
+
+def build_task_todo_payload(state: TodoState) -> dict[str, Any]:
+    return {
+        "items": [
+            {
+                "id": item.key,
+                "key": item.key,
+                "content": item.title,
+                "title": item.title,
+                "kind": item.kind,
+                "status": item.status,
+            }
+            for item in state.items
+        ],
+        "currentId": state.current_key,
+        "currentKey": state.current_key,
+        "totalCount": len(state.items),
+        "completedCount": sum(1 for item in state.items if item.status == "completed"),
+    }
+
+
+def parse_task_todo_payload(payload: dict[str, Any] | None) -> TodoState:
+    raw_items = list((payload or {}).get("items") or [])
+    items = tuple(_normalize_todo_item(item) for item in raw_items if _has_todo_identity(item))
+    current_key = str((payload or {}).get("currentKey") or (payload or {}).get("currentId") or "").strip() or None
+    if current_key and not any(item.key == current_key for item in items):
+        current_key = None
+    if current_key is None:
+        next_item = next((item for item in items if item.status in _ACTIVE_TODO_STATUSES), None)
+        current_key = next_item.key if next_item is not None else None
+    return TodoState(items=items, current_key=current_key)
+
+
+def apply_tool_results_to_todo_state(current_payload: dict[str, Any] | None, tool_results: list[dict[str, Any]]) -> TodoState:
+    updated_payload = current_payload or {}
+    for result in tool_results:
+        if str(result.get("name") or "").strip() != "todo.write":
+            continue
+        tool_payload = result.get("result")
+        if not isinstance(tool_payload, dict):
+            continue
+        state = parse_task_todo_payload({"items": list(tool_payload.get("items") or [])})
+        updated_payload = build_task_todo_payload(state)
+    return parse_task_todo_payload(updated_payload)
+
+
+def _has_todo_identity(item: Any) -> bool:
+    return isinstance(item, dict) and bool(str(item.get("id") or item.get("key") or "").strip())
+
+
+def _normalize_todo_item(item: dict[str, Any]) -> TodoItem:
+    key = str(item.get("id") or item.get("key") or "").strip()
+    title = str(item.get("content") or item.get("title") or key).strip() or key
+    kind = str(item.get("kind") or "todo").strip() or "todo"
+    status = str(item.get("status") or "pending").strip().lower() or "pending"
+    return TodoItem(key=key, title=title, kind=kind, status=status)

@@ -18,11 +18,13 @@ class ToolRegistry:
         notion_client,
         notion_mapper,
         prompt_builder,
+        tool_runtime,
+        tool_catalog,
         enabled_toolsets: tuple[str, ...] | None = None,
     ) -> None:
-        default_provider = provider_registry.get("openai_oauth")
+        default_provider = provider_registry.preferred_model_provider()
         entries = [
-            ToolEntry("model.generate", "model", ModelGenerateCapability(default_provider, prompt_builder)),
+            ToolEntry("model.generate", "model", ModelGenerateCapability(default_provider, prompt_builder, tool_runtime, tool_catalog)),
             ToolEntry(
                 "notion.page.create",
                 "notion",

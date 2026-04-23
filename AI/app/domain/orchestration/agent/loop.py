@@ -7,8 +7,10 @@ from app.domain.orchestration.agent.step_executor import StepExecutor
 from app.domain.orchestration.approval import ApprovalRuntime, ApprovalService
 from app.domain.orchestration.delegation import ChildSessionLauncher, DelegateRuntime
 from app.domain.orchestration.policies import ensure_step_transition, ensure_task_transition, normalize_executor_outcome
+from app.domain.orchestration.runtime_planning import Planner
+from app.domain.orchestration.runtime_planning.todo_state import parse_task_todo_payload
 from app.domain.orchestration.result_inspector import OutcomeInspector
-from app.domain.tasks.detail import build_semantic_step_detail, merge_step_detail
+from app.domain.tasks.detail import build_planning_detail, build_semantic_step_detail, merge_step_detail
 from app.domain.tasks.events import build_task_event
 from app.domain.tasks.repository import TaskRepository
 from app.domain.tasks.models import StepRun, TaskRun
@@ -23,11 +25,13 @@ class TaskEngine:
         broadcaster,
         approval_service: ApprovalService,
         child_session_launcher: ChildSessionLauncher,
+        planner: Planner,
     ) -> None:
         self.repository = repository
         self.broadcaster = broadcaster
         self.approval_service = approval_service
         self.child_session_launcher = child_session_launcher
+        self.planner = planner
         self.approval_runtime = ApprovalRuntime()
         self.delegate_runtime = DelegateRuntime(child_session_launcher)
         self.outcome_inspector = OutcomeInspector()
@@ -93,9 +97,9 @@ class TaskEngine:
         outcome = normalize_executor_outcome(
             self.step_executor.execute(handler=executor, task=task, step=step, resume_payload=resume_payload)
         )
-        return await self._apply_outcome(task=task, step=step, outcome=outcome)
+        return await self._apply_outcome(task=task, step=step, executor=executor, outcome=outcome)
 
-    async def _apply_outcome(self, *, task: TaskRun, step: StepRun, outcome: dict) -> TaskRun:
+    async def _apply_outcome(self, *, task: TaskRun, step: StepRun, executor, outcome: dict) -> TaskRun:
         outcome = await self.delegate_runtime.apply(task=task, step=step, outcome=outcome, repository=self.repository)
         outcome = self.outcome_inspector.inspect(step=step, outcome=outcome)
         task_status = outcome["task_status"]
@@ -107,6 +111,7 @@ class TaskEngine:
         step.status = step_status
         task.current_step_run_id = step.step_run_id
         task.result_payload = outcome.get("result_payload", task.result_payload)
+        task.todo_state = dict(outcome.get("todo_state") or task.todo_state)
         task.wait_payload = outcome.get("wait_payload", {})
         task.error_message = outcome.get("error_message")
         task.progress_summary = outcome.get("summary_message")
@@ -131,6 +136,7 @@ class TaskEngine:
             step.ended_at = utc_now()
         self.repository.update_task(task)
         self.repository.update_step(step)
+        await self._sync_todo_steps(task=task, executor=executor)
 
         if task_status == TaskStatus.WAITING:
             approval = self.approval_service.request(
@@ -188,3 +194,110 @@ class TaskEngine:
         )
         self.repository.append_event(event)
         await self.broadcaster.publish(event)
+
+    async def _sync_todo_steps(self, *, task: TaskRun, executor) -> None:
+        todo_state = parse_task_todo_payload(task.todo_state)
+        if not todo_state.items:
+            return
+
+        existing_steps = self.repository.list_steps(task.task_run_id)
+        projected_steps = {
+            str(step.input_payload.get("todo_key") or "").strip(): step
+            for step in existing_steps
+            if str(step.input_payload.get("todo_key") or "").strip()
+        }
+        next_order = max((step.step_order for step in existing_steps), default=0) + 1
+
+        for item in todo_state.items:
+            target_status = self._todo_status_to_step_status(item.status)
+            projected = projected_steps.get(item.key)
+            if projected is None:
+                projected = self.planner.materialize_todo_step(
+                    task=task,
+                    executor=executor,
+                    todo_item=item,
+                    step_order=next_order,
+                )
+                next_order += 1
+                projected.status = target_status
+                now = utc_now()
+                if target_status != StepStatus.PENDING:
+                    projected.started_at = now
+                if target_status in {StepStatus.COMPLETED, StepStatus.CANCELED, StepStatus.FAILED}:
+                    projected.ended_at = now
+                projected.detail_json = merge_step_detail(
+                    projected.detail_json,
+                    build_semantic_step_detail(
+                        step_run_id=projected.step_run_id,
+                        semantic_key=f"todo.{item.key}",
+                        semantic_step=item.title,
+                        semantic_goal=item.title,
+                        lifecycle=self._todo_lifecycle(item.status),
+                    ),
+                )
+                self.repository.create_step(projected)
+                continue
+
+            projected.title = item.title
+            projected.input_payload = {
+                **projected.input_payload,
+                "todo_key": item.key,
+                "todo_title": item.title,
+                "todo_status": item.status,
+            }
+            projected.summary_message = item.title
+            projected.status = target_status
+            projected.detail_json = merge_step_detail(
+                projected.detail_json,
+                build_semantic_step_detail(
+                    step_run_id=projected.step_run_id,
+                    semantic_key=f"todo.{item.key}",
+                    semantic_step=item.title,
+                    semantic_goal=item.title,
+                    lifecycle=self._todo_lifecycle(item.status),
+                ),
+            )
+            projected.detail_json = merge_step_detail(
+                projected.detail_json,
+                build_planning_detail(
+                    todo_items=[
+                        {
+                            "key": item.key,
+                            "title": item.title,
+                            "kind": item.kind,
+                            "status": item.status,
+                        }
+                    ],
+                    current_key=item.key if item.status in {"pending", "in_progress"} else None,
+                ),
+            )
+            now = utc_now()
+            if target_status != StepStatus.PENDING and projected.started_at is None:
+                projected.started_at = now
+            if target_status in {StepStatus.COMPLETED, StepStatus.CANCELED, StepStatus.FAILED}:
+                projected.ended_at = projected.ended_at or now
+            else:
+                projected.ended_at = None
+            self.repository.update_step(projected)
+
+    @staticmethod
+    def _todo_status_to_step_status(todo_status: str) -> str:
+        normalized = str(todo_status or "pending").strip().lower()
+        if normalized == "in_progress":
+            return StepStatus.RUNNING
+        if normalized == "completed":
+            return StepStatus.COMPLETED
+        if normalized == "cancelled":
+            return StepStatus.CANCELED
+        return StepStatus.PENDING
+
+    @staticmethod
+    def _todo_lifecycle(todo_status: str) -> str:
+        normalized = str(todo_status or "pending").strip().lower()
+        if normalized == "in_progress":
+            return "running"
+        if normalized == "completed":
+            return "completed"
+        if normalized == "cancelled":
+            return "canceled"
+        return "pending"

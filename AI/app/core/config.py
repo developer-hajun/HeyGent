@@ -25,6 +25,7 @@ class Settings:
     log_level: str = "info"
     db_path: Path = Path("tmp/app.db")
     api_base_url: str | None = None
+    openai_api_key: str | None = None
     openai_oauth_client_id: str | None = "app_EMoamEEZ73f0CkXaXp7hrann"
     openai_oauth_client_secret: str | None = None
     openai_oauth_redirect_uri: str | None = "http://localhost:1455/auth/callback"
@@ -33,7 +34,9 @@ class Settings:
     openai_oauth_scopes: list[str] = field(default_factory=lambda: ["openid", "profile", "email", "offline_access"])
     openai_auth_file: Path | None = None
     openai_api_base_url: str = "https://chatgpt.com/backend-api"
+    openai_rest_api_base_url: str = "https://api.openai.com/v1"
     openai_response_model: str = "gpt-5.4"
+    openai_embedding_model: str = "text-embedding-3-small"
     notion_api_base_url: str = "https://api.notion.com/v1"
 
     def resolved_api_base_url(self) -> str:
@@ -123,6 +126,7 @@ def get_settings() -> Settings:
         log_level=_read_env("HEYGENT_LOG_LEVEL", "info", dotenv_values),
         db_path=Path(_read_env("HEYGENT_AI_DB_PATH", "tmp/app.db", dotenv_values)),
         api_base_url=_read_env("HEYGENT_API_BASE_URL", None, dotenv_values),
+        openai_api_key=_read_env("HEYGENT_OPENAI_API_KEY", None, dotenv_values),
         openai_oauth_client_id=_read_env("HEYGENT_OPENAI_OAUTH_CLIENT_ID", "app_EMoamEEZ73f0CkXaXp7hrann", dotenv_values),
         openai_oauth_client_secret=_read_env("HEYGENT_OPENAI_OAUTH_CLIENT_SECRET", None, dotenv_values),
         openai_oauth_redirect_uri=_read_env("HEYGENT_OPENAI_OAUTH_REDIRECT_URI", "http://localhost:1455/auth/callback", dotenv_values),
@@ -131,6 +135,8 @@ def get_settings() -> Settings:
         openai_oauth_scopes=_parse_scopes(_read_env("HEYGENT_OPENAI_OAUTH_SCOPES", "openid,profile,email,offline_access", dotenv_values)),
         openai_auth_file=_parse_optional_path(_read_env("HEYGENT_OPENAI_AUTH_FILE", None, dotenv_values)),
         openai_api_base_url=_read_env("HEYGENT_OPENAI_API_BASE_URL", "https://chatgpt.com/backend-api", dotenv_values),
+        openai_rest_api_base_url=_read_env("HEYGENT_OPENAI_REST_API_BASE_URL", "https://api.openai.com/v1", dotenv_values),
         openai_response_model=_read_env("HEYGENT_OPENAI_RESPONSE_MODEL", "gpt-5.4", dotenv_values),
+        openai_embedding_model=_read_env("HEYGENT_OPENAI_EMBEDDING_MODEL", "text-embedding-3-small", dotenv_values),
         notion_api_base_url=_read_env("HEYGENT_NOTION_API_BASE_URL", "https://api.notion.com/v1", dotenv_values),
     )

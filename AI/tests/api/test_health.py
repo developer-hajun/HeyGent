@@ -13,4 +13,6 @@ def test_ready(client):
     body = response.json()
     assert body["status"] == "ready"
     assert body["db_path"].endswith("test.db")
-    assert body["providers"][0]["provider_name"] == "openai_oauth"
+    provider_names = [provider["provider_name"] for provider in body["providers"]]
+    assert "openai_api" in provider_names
+    assert "openai_oauth" in provider_names

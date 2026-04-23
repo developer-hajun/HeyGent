@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from app.contracts.task.step_status import StepStatus
-from app.contracts.task.task_status import TaskStatus
 from app.domain.providers.model import BaseProvider
+from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopExecutor
 from app.tools.contracts import CapabilitySpec, OperationTemplate
 
 
@@ -24,39 +23,17 @@ class ModelGenerateCapability:
         ),
     )
 
-    def __init__(self, provider: BaseProvider, prompt_manager) -> None:
+    def __init__(self, provider: BaseProvider, prompt_manager, tool_runtime, tool_catalog) -> None:
         self.provider = provider
         self.prompt_manager = prompt_manager
+        self.tool_runtime = tool_runtime
+        self.tool_catalog = tool_catalog
+        self.loop_executor = ToolCallingLoopExecutor(
+            provider=provider,
+            prompt_builder=prompt_manager,
+            tool_runtime=tool_runtime,
+            tool_catalog=tool_catalog,
+        )
 
     def execute(self, *, task, step, resume_payload=None):
-        prompt = self.prompt_manager.build_model_prompt(input_payload=task.input_payload)
-        generated = self.provider.generate(prompt, purpose="task_loop")
-        return {
-            "task_status": TaskStatus.COMPLETED,
-            "step_status": StepStatus.COMPLETED,
-            "result_payload": {
-                "provider_name": generated.provider_name,
-                "text": generated.output_text,
-                "metadata": generated.metadata,
-            },
-            "output_payload": {
-                "prompt": prompt,
-                "text": generated.output_text,
-                "usage": generated.usage,
-            },
-            "detail_json": {
-                "agentDetail": {"called": False, "agentId": None, "childTaskRunId": None},
-                "toolDetail": {"toolNames": [], "primaryTool": None},
-                "llmDetail": {"model": generated.provider_name, "callCount": 1},
-            },
-            "summary_message": "model generate capability completed",
-            "operations": [
-                {
-                    "key": "llm.generate",
-                    "title": "모델 응답 생성",
-                    "kind": "llm",
-                    "status": "completed",
-                    "summary": generated.output_text[:80],
-                }
-            ],
-        }
+        return self.loop_executor.execute(task=task, step=step, resume_payload=resume_payload)

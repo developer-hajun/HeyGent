@@ -12,15 +12,17 @@ from app.domain.gateway.routing.topic_router import TopicRouter
 from app.domain.session import SessionStore
 from app.tools.integrations.notion import NotionClient, NotionMapper
 from app.tools.registry import ToolRegistry
+from app.tools.runtime import LocalToolRuntime
 from app.domain.orchestration.delegation import ChildSessionLauncher
 from app.domain.orchestration.prompts import PromptBuilder, SkillLoader, SkillPromptBuilder, SkillRegistry
 from app.domain.orchestration.approval.queue import ApprovalQueue
 from app.domain.orchestration.approval.service import ApprovalService
 from app.domain.orchestration.agent.runner import AgentLoopRunner
 from app.domain.orchestration.agent.loop import TaskEngine
+from app.domain.orchestration.agent.tool_catalog import ToolCatalog
 from app.domain.orchestration.orchestrator import Orchestrator
 from app.domain.orchestration.runtime_planning import Planner
-from app.domain.providers.model import OpenAIOAuthProvider
+from app.domain.providers.model import OpenAIAPIProvider, OpenAIOAuthProvider
 from app.domain.providers.registry import ProviderRegistry
 from app.storage.sqlite import SQLiteTaskRepository
 
@@ -41,7 +43,12 @@ async def lifespan(app: FastAPI):
     session_service = SessionService(session_registry, ws_manager, topic_router)
     broadcaster = EventBroadcaster(ws_manager, topic_router)
     approval_service = ApprovalService(repository, ApprovalQueue())
-    provider_registry = ProviderRegistry([OpenAIOAuthProvider(settings, repository)])
+    provider_registry = ProviderRegistry(
+        [
+            OpenAIAPIProvider(settings),
+            OpenAIOAuthProvider(settings, repository),
+        ]
+    )
     session_store = SessionStore(settings.db_path.with_name("session_state.db"))
     # recall_service = RecallService(session_store)
     # memory_store = MemoryStore()
@@ -52,16 +59,20 @@ async def lifespan(app: FastAPI):
     skill_registry.register_many(skill_loader.load_builtin())
     skill_prompt_builder = SkillPromptBuilder(skill_registry)
     prompt_builder = PromptBuilder(skill_prompt_builder)
+    tool_runtime = LocalToolRuntime(skill_registry=skill_registry, session_store=session_store)
+    tool_catalog = ToolCatalog(tool_runtime, default_toolsets=("skills", "session", "planning", "terminal"))
     child_session_launcher = ChildSessionLauncher()
-    task_engine = TaskEngine(repository, broadcaster, approval_service, child_session_launcher)
+    planner = Planner()
+    task_engine = TaskEngine(repository, broadcaster, approval_service, child_session_launcher, planner)
     tool_registry = ToolRegistry(
         provider_registry=provider_registry,
         notion_client=notion_client,
         notion_mapper=notion_mapper,
         prompt_builder=prompt_builder,
+        tool_runtime=tool_runtime,
+        tool_catalog=tool_catalog,
         enabled_toolsets=("core",),
     )
-    planner = Planner()
     loop_runner = AgentLoopRunner(
         repository=repository,
         planner=planner,
@@ -86,6 +97,8 @@ async def lifespan(app: FastAPI):
     app.state.prompt_builder = prompt_builder
     app.state.prompt_manager = prompt_builder
     app.state.tool_registry = tool_registry
+    app.state.tool_catalog = tool_catalog
+    app.state.tool_runtime = tool_runtime
     app.state.child_session_launcher = child_session_launcher
     app.state.orchestrator = orchestrator
     app.state.task_engine = task_engine

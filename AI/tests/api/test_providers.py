@@ -33,8 +33,10 @@ def test_list_providers(client):
     response = client.get("/api/v1/providers")
 
     assert response.status_code == 200
-    assert response.json()[0]["provider_name"] == "openai_oauth"
-    assert response.json()[0]["configured"] is True
+    providers = {item["provider_name"]: item for item in response.json()}
+    assert "openai_api" in providers
+    assert "openai_oauth" in providers
+    assert providers["openai_oauth"]["configured"] is True
 
 
 def test_get_provider_detail(client):
