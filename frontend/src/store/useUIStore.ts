@@ -25,10 +25,6 @@ interface UIState {
   rightPanelType: RightPanelType
   setRightPanelType: (type: RightPanelType) => void
   toggleRightPanel: (type: Exclude<RightPanelType, null>) => void
-
-  // 현재 활성 페이지 경로
-  activePage: string
-  setActivePage: (path: string) => void
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
@@ -55,7 +51,4 @@ export const useUIStore = create<UIState>((set, get) => ({
   rightPanelType: null,
   setRightPanelType: (type) => set({ rightPanelType: type }),
   toggleRightPanel: (type) => set({ rightPanelType: get().rightPanelType === type ? null : type }),
-
-  activePage: '/',
-  setActivePage: (path) => set({ activePage: path }),
 }))

@@ -694,11 +694,7 @@ export function DashboardPage() {
               <Bot className="h-5 w-5 text-white" />
             </div>
             <div>
-              <p className="text-muted-foreground text-xs">{greeting}, Alex</p>
-            </div>
-            <div className="ml-auto flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1">
-              <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-              <span className="text-xs font-medium text-emerald-600">모든 에이전트 온라인</span>
+              <p className="text-muted-foreground text-xs">{greeting}, 민수님</p>
             </div>
           </div>
         </motion.div>
