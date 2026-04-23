@@ -5,8 +5,13 @@ const MAX_WIDTH = 420
 export const DEFAULT_SIDEBAR_WIDTH = 280
 
 type RightPanelType = 'schedule' | 'agent' | null
+type Theme = 'light' | 'dark'
 
 interface UIState {
+  // 테마
+  theme: Theme
+  setTheme: (theme: Theme) => void
+
   // 좌측 사이드바
   sidebarCollapsed: boolean
   sidebarWidth: number
@@ -27,6 +32,17 @@ interface UIState {
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
+  theme: (localStorage.getItem('heygent-theme') as Theme) ?? 'dark',
+  setTheme: (theme) => {
+    localStorage.setItem('heygent-theme', theme)
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+    set({ theme })
+  },
+
   sidebarCollapsed: false,
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   settingsOpen: false,

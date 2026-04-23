@@ -8,6 +8,9 @@ import {
   ChevronDown,
   Check,
   SlidersHorizontal,
+  Eye,
+  EyeOff,
+  Search,
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog'
 import { Switch } from './ui/switch'
@@ -36,14 +39,14 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="h-[85vh] max-w-5xl gap-0 p-0"
+        className="flex h-[85vh] max-w-5xl flex-col gap-0 p-0"
         aria-describedby="settings-description"
       >
         <DialogTitle className="sr-only">설정</DialogTitle>
         <DialogDescription id="settings-description" className="sr-only">
           애플리케이션 설정을 관리합니다
         </DialogDescription>
-        <div className="flex h-full">
+        <div className="flex min-h-0 flex-1">
           {/* Left Sidebar */}
           <div className="border-border bg-muted/30 flex w-48 flex-col border-r p-4">
             <div className="mb-6">
@@ -69,7 +72,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           </div>
 
           {/* Right Content */}
-          <div className="relative flex-1 overflow-y-auto p-8">
+          <div className="relative min-h-0 flex-1 overflow-y-auto p-8">
             <AnimatePresence mode="wait">
               <motion.div
                 key={activeTab}
@@ -237,12 +240,19 @@ function SkillsContent() {
       description: 'IoT 기기로 알림을 전송합니다',
     },
   ])
+  const [searchQuery, setSearchQuery] = useState('')
 
   const toggleSkill = (id: string) => {
     setSkills((prev) =>
       prev.map((skill) => (skill.id === id ? { ...skill, enabled: !skill.enabled } : skill)),
     )
   }
+
+  const filteredSkills = skills.filter(
+    (skill) =>
+      skill.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      skill.description.toLowerCase().includes(searchQuery.toLowerCase()),
+  )
 
   return (
     <div className="space-y-6">
@@ -251,8 +261,19 @@ function SkillsContent() {
         <p className="text-muted-foreground text-sm">Heygent가 사용할 수 있는 스킬을 관리합니다</p>
       </div>
 
+      <div className="relative">
+        <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="스킬 검색..."
+          className="border-border text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-lg border bg-white py-2 pr-3 pl-9 text-sm focus:ring-2 focus:outline-none"
+        />
+      </div>
+
       <div className="space-y-3">
-        {skills.map((skill) => (
+        {filteredSkills.map((skill) => (
           <div
             key={skill.id}
             className="bg-muted/30 border-border hover:bg-muted/50 flex items-start justify-between rounded-xl border p-4 transition-colors"
@@ -264,6 +285,9 @@ function SkillsContent() {
             <Switch checked={skill.enabled} onCheckedChange={() => toggleSkill(skill.id)} />
           </div>
         ))}
+        {filteredSkills.length === 0 && (
+          <p className="text-muted-foreground py-8 text-center text-sm">검색 결과가 없습니다</p>
+        )}
       </div>
     </div>
   )
@@ -465,10 +489,14 @@ function PersonalizationContent() {
 // ────────────────────────────────────────────────────────────────────────────
 function ApiKeysContent() {
   const [apiKeys, setApiKeys] = useState([
-    { id: 'openai', name: 'OpenAI API', value: 'sk-proj-***************', masked: true },
-    { id: 'anthropic', name: 'Anthropic API', value: 'sk-ant-***************', masked: true },
-    { id: 'github', name: 'GitHub Token', value: '', masked: true },
+    { id: 'openai', name: 'OpenAI API', value: 'sk-proj-***************', visible: false },
+    { id: 'anthropic', name: 'Anthropic API', value: 'sk-ant-***************', visible: false },
+    { id: 'github', name: 'GitHub Token', value: '', visible: false },
   ])
+
+  const toggleVisibility = (id: string) => {
+    setApiKeys((prev) => prev.map((k) => (k.id === id ? { ...k, visible: !k.visible } : k)))
+  }
 
   return (
     <div className="space-y-6">
@@ -481,17 +509,26 @@ function ApiKeysContent() {
         {apiKeys.map((key) => (
           <div key={key.id} className="bg-muted/30 border-border rounded-xl border p-4">
             <label className="text-foreground mb-2 block text-sm font-medium">{key.name}</label>
-            <input
-              type={key.masked ? 'password' : 'text'}
-              value={key.value}
-              onChange={(e) => {
-                setApiKeys((prev) =>
-                  prev.map((k) => (k.id === key.id ? { ...k, value: e.target.value } : k)),
-                )
-              }}
-              placeholder={`${key.name} 키를 입력하세요`}
-              className="border-border text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-lg border bg-white px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-            />
+            <div className="relative">
+              <input
+                type={key.visible ? 'text' : 'password'}
+                value={key.value}
+                onChange={(e) => {
+                  setApiKeys((prev) =>
+                    prev.map((k) => (k.id === key.id ? { ...k, value: e.target.value } : k)),
+                  )
+                }}
+                placeholder={`${key.name} 키를 입력하세요`}
+                className="border-border text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-lg border bg-white py-2 pr-10 pl-3 text-sm focus:ring-2 focus:outline-none"
+              />
+              <button
+                type="button"
+                onClick={() => toggleVisibility(key.id)}
+                className="text-muted-foreground hover:text-foreground absolute top-1/2 right-3 -translate-y-1/2 transition-colors"
+              >
+                {key.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
         ))}
       </div>

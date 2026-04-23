@@ -22,6 +22,7 @@ import { sessions } from '@/data/sessions'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { useUIStore } from '@/store/useUIStore'
+import { useSessionStore } from '@/store/useSessionStore'
 
 interface Task {
   id: string
@@ -52,6 +53,7 @@ export function LeftSidebar() {
     clampSidebarWidth,
     setSettingsOpen,
   } = useUIStore()
+  const { selectedSessionId, setSelectedSessionId } = useSessionStore()
   const [profileOpen, setProfileOpen] = useState(false)
   const [tasksPopoverOpen, setTasksPopoverOpen] = useState(false)
   const [sessionsPopoverOpen, setSessionsPopoverOpen] = useState(false)
@@ -176,12 +178,14 @@ export function LeftSidebar() {
                 </div>
                 <div className="space-y-1.5">
                   {sessions.slice(0, 3).map((session) => {
-                    const isActive = location.pathname === `/session/${session.id}`
+                    const isActive =
+                      location.pathname === '/agent-status' && selectedSessionId === session.id
                     return (
                       <div
                         key={session.id}
                         onClick={() => {
-                          navigate(`/session/${session.id}`)
+                          setSelectedSessionId(session.id)
+                          navigate('/agent-status')
                           setSessionsPopoverOpen(false)
                         }}
                         className={`cursor-pointer rounded-lg p-2.5 transition-colors ${
@@ -302,11 +306,15 @@ export function LeftSidebar() {
                 </div>
                 <div className="space-y-1">
                   {sessions.map((session) => {
-                    const isActive = location.pathname === `/session/${session.id}`
+                    const isActive =
+                      location.pathname === '/agent-status' && selectedSessionId === session.id
                     return (
                       <div
                         key={session.id}
-                        onClick={() => navigate(`/session/${session.id}`)}
+                        onClick={() => {
+                          setSelectedSessionId(session.id)
+                          navigate('/agent-status')
+                        }}
                         className={`cursor-pointer rounded-lg p-2.5 transition-colors ${
                           isActive
                             ? 'bg-primary/8 border-primary/15 border'

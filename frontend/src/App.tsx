@@ -4,7 +4,6 @@ import { TopNavBar } from '@/components/layout/TopNavBar'
 import { RightPanel } from '@/components/layout/RightPanel'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
-import { SessionChatPage } from '@/pages/SessionChatPage'
 
 export default function App() {
   return (
@@ -20,7 +19,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/agent-status" element={<AgentStatusPage />} />
-            <Route path="/session/:sessionId" element={<SessionChatPage />} />
+            <Route path="/session/:sessionId" element={<Navigate to="/agent-status" replace />} />
 
             <Route path="/chat" element={<Navigate to="/" replace />} />
             <Route path="/agents" element={<Navigate to="/agent-status" replace />} />
