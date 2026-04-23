@@ -21,8 +21,8 @@ import {
 import { motion, AnimatePresence } from 'motion/react'
 import { useState } from 'react'
 import * as React from 'react'
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../components/ui/dialog'
-import type { Agent } from '../components/layout/RightPanel'
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { useSessionStore } from '@/store/useSessionStore'
 
 type EventType = 'event' | 'task' | 'repeat'
 
@@ -414,19 +414,7 @@ function CalendarWidget({ onClose }: { onClose: () => void }) {
 }
 
 // Month Calendar Component
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function MonthCalendar({
-  events,
-}: {
-  events: Array<{
-    id: number
-    title: string
-    time: string
-    date: string
-    type: string
-    color: string
-  }>
-}) {
+function MonthCalendar() {
   const today = new Date()
   const [currentDate, setCurrentDate] = useState(today)
 
@@ -666,11 +654,8 @@ const healthInsights = [
   },
 ]
 
-interface MainWorkspaceProps {
-  onAgentSelect?: (agent: Agent) => void
-}
-
-export function DashboardPage({ onAgentSelect }: MainWorkspaceProps = {}) {
+export function DashboardPage() {
+  const { setSelectedAgent } = useSessionStore()
   const [inputValue, setInputValue] = useState('')
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
@@ -691,7 +676,7 @@ export function DashboardPage({ onAgentSelect }: MainWorkspaceProps = {}) {
   }
 
   const handleAgentClick = (agent: (typeof agents)[0]) => {
-    onAgentSelect?.(agent)
+    setSelectedAgent(agent)
   }
 
   return (
@@ -884,7 +869,7 @@ export function DashboardPage({ onAgentSelect }: MainWorkspaceProps = {}) {
                     exit={{ opacity: 0, x: 10 }}
                     transition={{ duration: 0.2 }}
                   >
-                    <MonthCalendar events={upcomingReminders} />
+                    <MonthCalendar />
                   </motion.div>
                 )}
               </AnimatePresence>

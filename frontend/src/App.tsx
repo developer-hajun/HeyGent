@@ -1,20 +1,15 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router'
-import { LeftSidebar } from './components/layout/LeftSidebar'
-import { TopNavBar } from './components/layout/TopNavBar'
-import { RightPanel } from './components/layout/RightPanel'
-import { DashboardPage } from './pages/DashboardPage'
-import { AgentStatusPage } from './pages/AgentStatusPage'
-import { SessionChatPage } from './pages/SessionChatPage'
-import { useState } from 'react'
-import type { Agent } from './components/layout/RightPanel'
+import { LeftSidebar } from '@/components/layout/LeftSidebar'
+import { TopNavBar } from '@/components/layout/TopNavBar'
+import { RightPanel } from '@/components/layout/RightPanel'
+import { DashboardPage } from '@/pages/DashboardPage'
+import { AgentStatusPage } from '@/pages/AgentStatusPage'
+import { SessionChatPage } from '@/pages/SessionChatPage'
 
 export default function App() {
-  const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
-
   return (
     <BrowserRouter>
-      {/* Fixed right-side floating tabs */}
-      <RightPanel selectedAgent={selectedAgent} onCloseAgent={() => setSelectedAgent(null)} />
+      <RightPanel />
 
       <div className="bg-background flex size-full flex-col">
         <TopNavBar />
@@ -23,11 +18,10 @@ export default function App() {
           <LeftSidebar />
 
           <Routes>
-            <Route path="/" element={<DashboardPage onAgentSelect={setSelectedAgent} />} />
+            <Route path="/" element={<DashboardPage />} />
             <Route path="/agent-status" element={<AgentStatusPage />} />
             <Route path="/session/:sessionId" element={<SessionChatPage />} />
 
-            {/* Legacy redirects */}
             <Route path="/chat" element={<Navigate to="/" replace />} />
             <Route path="/agents" element={<Navigate to="/agent-status" replace />} />
             <Route path="/reminders" element={<Navigate to="/" replace />} />

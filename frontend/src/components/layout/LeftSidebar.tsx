@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useRef, useCallback, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router'
 import {
   ChevronLeft,
@@ -16,10 +16,12 @@ import {
   X,
   Edit3,
 } from 'lucide-react'
+import { useState } from 'react'
 import { motion } from 'motion/react'
-import { sessions } from '../../data/sessions'
-import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
-import { SettingsDialog } from '../SettingsDialog'
+import { sessions } from '@/data/sessions'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { SettingsDialog } from '@/components/SettingsDialog'
+import { useUIStore } from '@/store/useUIStore'
 
 interface Task {
   id: string
@@ -41,15 +43,16 @@ const ongoingTasks: Task[] = [
   { id: 'T-3', title: '일일 알림 설정', agent: '스케줄러', status: 'running', time: '5분 전' },
 ]
 
-const MIN_WIDTH = 220
-const MAX_WIDTH = 420
-const DEFAULT_WIDTH = 280
-
 export function LeftSidebar() {
-  const [collapsed, setCollapsed] = useState(false)
-  const [width, setWidth] = useState(DEFAULT_WIDTH)
+  const {
+    sidebarCollapsed: collapsed,
+    sidebarWidth: width,
+    settingsOpen,
+    setSidebarCollapsed,
+    clampSidebarWidth,
+    setSettingsOpen,
+  } = useUIStore()
   const [profileOpen, setProfileOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [tasksPopoverOpen, setTasksPopoverOpen] = useState(false)
   const [sessionsPopoverOpen, setSessionsPopoverOpen] = useState(false)
   const isResizing = useRef(false)
@@ -74,8 +77,7 @@ export function LeftSidebar() {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing.current) return
       const delta = e.clientX - startX.current
-      const newWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth.current + delta))
-      setWidth(newWidth)
+      clampSidebarWidth(startWidth.current + delta)
     }
     const handleMouseUp = () => {
       if (!isResizing.current) return
@@ -89,7 +91,7 @@ export function LeftSidebar() {
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [])
+  }, [clampSidebarWidth])
 
   return (
     <>
@@ -104,7 +106,7 @@ export function LeftSidebar() {
           <div className="flex h-full flex-col items-center gap-1 py-3">
             {/* Expand button */}
             <button
-              onClick={() => setCollapsed(false)}
+              onClick={() => setSidebarCollapsed(false)}
               title="Expand sidebar"
               className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
             >
@@ -247,7 +249,7 @@ export function LeftSidebar() {
                   <Plus className="h-3.5 w-3.5" />
                 </button>
                 <button
-                  onClick={() => setCollapsed(true)}
+                  onClick={() => setSidebarCollapsed(true)}
                   className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-7 w-7 items-center justify-center rounded-md transition-colors"
                 >
                   <ChevronLeft className="h-3.5 w-3.5" />

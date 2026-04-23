@@ -1,8 +1,9 @@
-import { useState } from 'react'
 import type { ComponentType, CSSProperties } from 'react'
 import { Calendar, X, Clock, AlertCircle, MoreVertical, Trash2 } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
-import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { useUIStore } from '@/store/useUIStore'
+import { useSessionStore } from '@/store/useSessionStore'
 
 const upcomingReminders = [
   { id: 1, title: '팀 회의 준비', time: '1시간 30분 후', type: '일정', urgent: false },
@@ -10,8 +11,6 @@ const upcomingReminders = [
   { id: 3, title: '프로틴 섭취', time: '2시간 후', type: '할 일', urgent: false },
   { id: 4, title: '데일리 스탠드업', time: '내일 오전 10시', type: '반복', urgent: false },
 ]
-
-type PanelType = 'schedule' | 'agent'
 
 const typeColors: Record<string, string> = {
   일정: 'bg-blue-50 text-blue-600',
@@ -26,20 +25,9 @@ export interface Agent {
   description: string
 }
 
-export interface RightPanelProps {
-  selectedAgent?: Agent | null
-  onCloseAgent?: () => void
-}
-
-export function RightPanel({
-  selectedAgent = null,
-  onCloseAgent = () => {},
-}: RightPanelProps = {}) {
-  const [openPanel, setOpenPanel] = useState<PanelType | null>(null)
-
-  const toggle = (panel: PanelType) => {
-    setOpenPanel((prev) => (prev === panel ? null : panel))
-  }
+export function RightPanel() {
+  const { rightPanelType, toggleRightPanel, setRightPanelType } = useUIStore()
+  const { selectedAgent, clearSelectedAgent } = useSessionStore()
 
   const urgentCount = upcomingReminders.filter((r) => r.urgent).length
 
@@ -48,7 +36,7 @@ export function RightPanel({
       {/* ── Schedule Panel ── */}
       <div className="pointer-events-auto flex items-center gap-0">
         <AnimatePresence>
-          {openPanel === 'schedule' && (
+          {rightPanelType === 'schedule' && (
             <motion.div
               initial={{ opacity: 0, x: 16, scale: 0.97 }}
               animate={{ opacity: 1, x: 0, scale: 1 }}
@@ -56,7 +44,6 @@ export function RightPanel({
               transition={{ duration: 0.18, ease: 'easeOut' }}
               className="border-border mr-2 w-64 overflow-hidden rounded-xl border bg-white shadow-xl"
             >
-              {/* Panel header */}
               <div className="border-border flex items-center justify-between border-b px-4 py-3">
                 <div className="flex items-center gap-2">
                   <Calendar className="text-primary h-4 w-4" />
@@ -68,14 +55,13 @@ export function RightPanel({
                   )}
                 </div>
                 <button
-                  onClick={() => setOpenPanel(null)}
+                  onClick={() => setRightPanelType(null)}
                   className="hover:bg-muted text-muted-foreground flex h-6 w-6 items-center justify-center rounded-md transition-colors"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
 
-              {/* Schedule list */}
               <div className="max-h-72 space-y-2 overflow-y-auto p-3">
                 {upcomingReminders.map((reminder) => (
                   <div
@@ -112,11 +98,10 @@ export function RightPanel({
           )}
         </AnimatePresence>
 
-        {/* Schedule Tab Button */}
         <button
-          onClick={() => toggle('schedule')}
+          onClick={() => toggleRightPanel('schedule')}
           className={`relative flex h-24 w-9 flex-col items-center justify-center gap-1.5 rounded-l-xl border border-r-0 shadow-md transition-all duration-150 ${
-            openPanel === 'schedule'
+            rightPanelType === 'schedule'
               ? 'bg-primary border-primary shadow-primary/20 text-white'
               : 'text-muted-foreground border-border hover:text-primary bg-white hover:border-blue-200 hover:bg-blue-50'
           }`}
@@ -128,7 +113,7 @@ export function RightPanel({
           >
             일정
           </span>
-          {urgentCount > 0 && openPanel !== 'schedule' && (
+          {urgentCount > 0 && rightPanelType !== 'schedule' && (
             <span
               className="absolute -top-1 -left-1 flex h-4 w-4 items-center justify-center rounded-full bg-orange-500 text-xs font-bold text-white"
               style={{ fontSize: '9px' }}
@@ -150,7 +135,6 @@ export function RightPanel({
               transition={{ duration: 0.18, ease: 'easeOut' }}
               className="border-border mr-2 w-64 overflow-hidden rounded-xl border bg-white shadow-xl"
             >
-              {/* Panel header */}
               <div className="border-border flex items-center justify-between border-b px-4 py-3">
                 <div className="flex items-center gap-2">
                   <selectedAgent.icon className="h-4 w-4" style={{ color: selectedAgent.accent }} />
@@ -167,7 +151,7 @@ export function RightPanel({
                     </PopoverTrigger>
                     <PopoverContent className="w-48 rounded-xl p-1.5" align="end">
                       <button
-                        onClick={onCloseAgent}
+                        onClick={clearSelectedAgent}
                         className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-red-600 transition-colors hover:bg-red-50"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -176,7 +160,7 @@ export function RightPanel({
                     </PopoverContent>
                   </Popover>
                   <button
-                    onClick={onCloseAgent}
+                    onClick={clearSelectedAgent}
                     className="hover:bg-muted text-muted-foreground flex h-6 w-6 items-center justify-center rounded-md transition-colors"
                   >
                     <X className="h-3.5 w-3.5" />
@@ -184,10 +168,8 @@ export function RightPanel({
                 </div>
               </div>
 
-              {/* Agent content */}
               <div className="p-4">
                 <p className="text-muted-foreground mb-4 text-sm">{selectedAgent.description}</p>
-
                 <div className="space-y-2">
                   <button
                     className="w-full rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors hover:opacity-90"
@@ -203,9 +185,8 @@ export function RightPanel({
             </motion.div>
           </AnimatePresence>
 
-          {/* Agent Tab Button */}
           <button
-            onClick={onCloseAgent}
+            onClick={clearSelectedAgent}
             className="text-muted-foreground border-border hover:bg-muted/30 relative flex h-24 w-9 flex-col items-center justify-center gap-1.5 rounded-l-xl border border-r-0 bg-white shadow-md transition-all duration-150"
             style={{
               backgroundColor: `${selectedAgent.accent}14`,
