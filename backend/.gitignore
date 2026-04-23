@@ -39,3 +39,5 @@ out/
 .env
 tmp
 src/main/resources/application-local.yaml
+/.agents/
+notes/daily-dev/
