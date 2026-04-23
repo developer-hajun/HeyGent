@@ -20,6 +20,10 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class AuthService {
 
+    private static final long DEV_USER_KAKAO_ID = -1L;
+    private static final String DEV_USER_NICKNAME = "개발용 테스트 사용자";
+    private static final String DEV_USER_PROFILE_IMAGE = "https://placehold.co/256x256?text=DEV";
+
     private final KakaoOAuthService kakaoOAuthService;
     private final UserRepository userRepository;
     private final JwtProvider jwtProvider;
@@ -42,15 +46,22 @@ public class AuthService {
                                 .build()
                 ));
 
-        String accessToken = jwtProvider.createAccessToken(user.getId());
-        String refreshToken = UUID.randomUUID().toString();
+        return issueTokens(user);
+    }
 
-        redisTemplate.opsForValue()
-                .set(refreshToken, user.getId().toString(), REFRESH_EXP, TimeUnit.SECONDS);
+    @Transactional
+    public TokenResponse devLogin() {
 
-        return TokenResponse.builder()
-                .accessToken(accessToken)
-                .build();
+        User devUser = userRepository.findByKakaoId(DEV_USER_KAKAO_ID)
+                .orElseGet(() -> userRepository.save(
+                        User.builder()
+                                .kakaoId(DEV_USER_KAKAO_ID)
+                                .nickname(DEV_USER_NICKNAME)
+                                .profileImage(DEV_USER_PROFILE_IMAGE)
+                                .build()
+                ));
+
+        return issueTokens(devUser);
     }
 
     public void logout(String refreshToken) {
@@ -77,6 +88,20 @@ public class AuthService {
 
         return TokenResponse.builder()
                 .accessToken(newAccessToken)
+                .refreshToken(refreshToken)
+                .build();
+    }
+
+    private TokenResponse issueTokens(User user) {
+
+        String accessToken = jwtProvider.createAccessToken(user.getId());
+        String refreshToken = UUID.randomUUID().toString();
+
+        redisTemplate.opsForValue()
+                .set(refreshToken, user.getId().toString(), REFRESH_EXP, TimeUnit.SECONDS);
+
+        return TokenResponse.builder()
+                .accessToken(accessToken)
                 .refreshToken(refreshToken)
                 .build();
     }

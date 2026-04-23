@@ -39,4 +39,13 @@ public class User {
 
     @LastModifiedDate
     private LocalDateTime updatedAt;
+
+    public void updateProfile(String nickname, String profileImage) {
+        if (nickname != null) {
+            this.nickname = nickname;
+        }
+        if (profileImage != null) {
+            this.profileImage = profileImage;
+        }
+    }
 }
