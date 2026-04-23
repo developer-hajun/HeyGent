@@ -36,6 +36,7 @@ class TaskRunResponse(BaseModel):
     title: str | None = None
     input_payload: dict[str, Any] = Field(default_factory=dict)
     result_payload: dict[str, Any] = Field(default_factory=dict)
+    todo_state: dict[str, Any] = Field(default_factory=dict)
     wait_payload: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = None
     progress_summary: str | None = None

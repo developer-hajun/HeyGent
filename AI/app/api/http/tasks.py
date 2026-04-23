@@ -36,13 +36,17 @@ def _normalize_task_status_filter(raw_status: str) -> str | None:
     return normalized
 
 
-def _select_current_step(steps: list[StepRun]) -> StepRun | None:
+def _select_current_step(task, steps: list[StepRun]) -> StepRun | None:
     """상세/목록 양쪽에서 보여 줄 대표 StepRun 을 고른다.
 
     아직 여러 step 이 쌓이지 않는 MVP 구조라도,
     앞으로 멀티 스텝으로 확장될 것을 감안해 활성 step 우선 규칙을 고정해 둔다.
     """
 
+    if task.current_step_run_id:
+        for step in steps:
+            if step.step_run_id == task.current_step_run_id:
+                return step
     for step in steps:
         if step.status in _ACTIVE_STEP_STATUSES:
             return step
@@ -97,7 +101,7 @@ def _display_task_title(task, *, input_summary: str | None) -> str:
 
 
 def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse:
-    current_step = _select_current_step(steps)
+    current_step = _select_current_step(task, steps)
     current_step_response = None
     if current_step is not None:
         current_step_response = StepRunSummaryResponse.model_validate(current_step, from_attributes=True)
