@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from app.domain.capabilities.tools.contracts import OperationTemplate
+from app.tools.contracts import OperationTemplate
 from app.domain.tasks.detail import build_planning_detail
 
 

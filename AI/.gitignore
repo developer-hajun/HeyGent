@@ -11,4 +11,4 @@ __pycache__/
 coverage.xml
 *.log
 *.sqlite3
-*.db
+*.d

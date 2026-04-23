@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from app.contracts.task.task_status import TaskStatus
-from app.domain.capabilities.children.runtime.launcher import ChildSessionLauncher
-from app.domain.capabilities.children.specs.child_session import ChildSessionSpec
+from app.domain.orchestration.delegation.launcher import ChildSessionLauncher
+from app.domain.orchestration.delegation.policies import child_task_unsuccessful
+from app.domain.orchestration.delegation.spec import ChildSessionSpec
 from app.domain.tasks.detail import merge_step_detail
 
 
@@ -76,19 +77,19 @@ class DelegateRuntime:
                 "key": "agent.delegate",
                 "title": "Child 세션 실행",
                 "kind": "agent",
-                "status": "completed" if launch_result.status not in {TaskStatus.FAILED, TaskStatus.CANCELED} else "failed",
+                "status": "completed" if not child_task_unsuccessful(launch_result.status) else "failed",
                 "summary": launch_result.summary or launch_result.child_task_run_id,
             },
             {
                 "key": "agent.collect_summary",
                 "title": "Child 결과 회수",
                 "kind": "agent",
-                "status": "completed" if launch_result.status not in {TaskStatus.FAILED, TaskStatus.CANCELED} else "failed",
+                "status": "completed" if not child_task_unsuccessful(launch_result.status) else "failed",
                 "summary": launch_result.summary or launch_result.child_task_run_id,
             },
         ]
 
-        if launch_result.status in {TaskStatus.FAILED, TaskStatus.CANCELED}:
+        if child_task_unsuccessful(launch_result.status):
             terminal_status = TaskStatus.FAILED if launch_result.status == TaskStatus.FAILED else TaskStatus.CANCELED
             return {
                 **outcome,

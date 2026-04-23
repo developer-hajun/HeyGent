@@ -1,6 +1,6 @@
-from app.domain.capabilities.tools.stub.approval_wait import ApprovalWaitCapability
-from app.domain.capabilities.tools.stub.delegate_echo import DelegateEchoCapability
-from app.domain.capabilities.tools.stub.echo import EchoCapability
+from app.tools.stub.approval_wait import ApprovalWaitCapability
+from app.tools.stub.delegate_echo import DelegateEchoCapability
+from app.tools.stub.echo import EchoCapability
 
 
 def test_echo_capability_returns_input_payload(task_run, step_run):

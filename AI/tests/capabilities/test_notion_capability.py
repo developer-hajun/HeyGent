@@ -1,8 +1,8 @@
 from app.core.config import Settings
-from app.domain.capabilities.tools.notion.client import NotionClient
-from app.domain.capabilities.tools.notion.database_append import NotionDatabaseAppendCapability
-from app.domain.capabilities.tools.notion.mapper import NotionMapper
-from app.domain.capabilities.tools.notion.page_create import NotionPageCreateCapability
+from app.tools.notion.client import NotionClient
+from app.tools.notion.database_append import NotionDatabaseAppendCapability
+from app.tools.notion.mapper import NotionMapper
+from app.tools.notion.page_create import NotionPageCreateCapability
 from app.domain.providers.model import OpenAIOAuthProvider
 
 
@@ -16,8 +16,7 @@ def test_notion_mapper_builds_page_payload():
 
 
 def test_notion_page_create_capability_returns_stub_result(task_run, step_run):
-    from app.domain.capabilities.skills import SkillPromptBuilder, SkillRegistry
-    from app.domain.orchestration.prompts import PromptManager
+    from app.domain.orchestration.prompts import PromptManager, SkillPromptBuilder, SkillRegistry
 
     capability = NotionPageCreateCapability(
         NotionClient("https://api.notion.test/v1"),
@@ -40,8 +39,7 @@ def test_notion_page_create_capability_returns_stub_result(task_run, step_run):
 
 
 def test_notion_database_append_capability_returns_stub_result(task_run, step_run):
-    from app.domain.capabilities.skills import SkillPromptBuilder, SkillRegistry
-    from app.domain.orchestration.prompts import PromptManager
+    from app.domain.orchestration.prompts import PromptManager, SkillPromptBuilder, SkillRegistry
 
     capability = NotionDatabaseAppendCapability(
         NotionClient("https://api.notion.test/v1"),

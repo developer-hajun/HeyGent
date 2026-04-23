@@ -9,7 +9,7 @@ router = APIRouter()
 
 async def _handle_gateway_socket(websocket: WebSocket) -> None:
     manager = websocket.app.state.ws_manager
-    session_registry = websocket.app.state.session_registry
+    session_service = websocket.app.state.session_service
     session_id = websocket.query_params.get("session_id", "anonymous")
     await manager.connect(websocket)
     try:
@@ -19,18 +19,17 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
             if action == "subscribe" and message.get("task_run_id"):
                 await handle_subscription(
                     websocket,
-                    manager=manager,
-                    session_registry=session_registry,
+                    session_service=session_service,
                     session_id=session_id,
                     task_run_id=message["task_run_id"],
                 )
             elif action == "subscribe_all":
-                manager.subscribe(websocket, "all")
+                session_service.subscribe_all(session_id=session_id, websocket=websocket)
                 await websocket.send_json({"type": "subscribed", "task_run_id": "all"})
             elif action == "ping":
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
-        session_registry.unsubscribe_all(session_id)
+        session_service.unsubscribe_all(session_id)
         manager.disconnect(websocket)
 
 
