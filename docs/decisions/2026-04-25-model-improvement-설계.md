@@ -217,3 +217,31 @@
 - 다음 모델 개선은 "모델이 엔진을 대신하도록" 만드는 것이 아니다.
 - 목표는 모델이 tool/delegate/final 선택을 더 안정적으로 하고, handoff에 쓸 수 있는 짧은 구조화 힌트를 남기게 하는 것이다.
 - 1차는 parser-compatible schema 확장 + prompt 강화 + handoff summary 추가가 적절하다.
+
+## 2026-04-25 1차 구현 반영
+
+- `AgentResponseParser`가 아래 optional 필드를 읽을 수 있게 했다.
+  - `action`
+  - `action_summary`
+  - `handoff_summary`
+  - `semantic_hint`
+- `PromptBuilder.build_agent_loop_prompt(...)`에 종료 기준과 action 예시를 추가했다.
+- `ToolCallingLoopExecutor`는 `action_summary`를 step/task summary 보강에 사용한다.
+- `handoff_summary`는 result/output payload 와 `detail_json.modelDecisionDetail`에 반영한다.
+- `semantic_hint`는 `detail_json.modelDecisionDetail.semanticHint`로 저장하고, 실제 `StepRun` 경계 결정은 여전히 엔진이 담당한다.
+
+## 2026-04-25 handoff summary 연동 반영
+
+- workflow 다음 step 입력 생성 시 `handoff_summary`를 raw result text 보다 우선 사용한다.
+- `model.generate` 다음 step prompt 에는 `이전 단계 인계 요약`을 우선 넣고, 필요할 때만 raw 결과 요약을 함께 붙인다.
+- `notion.page.create`, `notion.database.append` 같은 후속 executor 는 `content`/`fields` 기본값을 `handoff_summary` 기준으로 채운다.
+- 즉 모델은 handoff 품질을 높이는 짧은 요약을 남기고, 실제 다음 step 입력 조합과 executor routing 은 계속 엔진이 담당한다.
+
+## 2026-04-25 over-tooling guard 반영
+
+- 일반 사용자 화면에는 `modelDecisionDetail` 전체 노출보다 runtime 품질 개선이 더 중요하다고 판단했다.
+- 따라서 1차 후속 작업은 `steps/flow` 노출 확대 대신 `over-tooling guard`를 우선 적용한다.
+- 현재 guard 규칙은 아래 두 가지다.
+  - 직전에 실행한 것과 완전히 같은 `tool_calls` batch 를 즉시 반복 요청하면 차단
+  - iteration limit 에 도달한 턴에서는 새 `tool_calls`보다 `final` 응답을 우선
+- 이 규칙은 모델의 자유도를 완전히 없애는 것이 아니라, 비용과 지연만 늘리는 반복 호출을 엔진이 마지막으로 걸러내는 안전장치다.
