@@ -55,6 +55,7 @@ def test_build_operation_detail_normalizes_legacy_kinds_and_merges_by_key():
     assert operations[1]["rawKind"] == "summary"
     assert patch["operationDetail"]["totalCount"] == 2
     assert patch["operationDetail"]["completedCount"] == 1
+    assert patch["operationDetail"]["runningCount"] == 1
 
 
 def test_infer_semantic_status_returns_partial_for_running_step_with_some_completed_operations():
@@ -64,3 +65,58 @@ def test_infer_semantic_status_returns_partial_for_running_step_with_some_comple
     )
 
     assert status == "partially_completed"
+
+
+def test_infer_semantic_status_reflects_failed_and_waiting_operations():
+    failed_status = infer_semantic_status(
+        lifecycle="running",
+        operation_detail={
+            "operations": [
+                {"key": "prepare", "status": "completed"},
+                {"key": "execute", "status": "failed"},
+            ]
+        },
+    )
+    waiting_status = infer_semantic_status(
+        lifecycle="running",
+        operation_detail={
+            "totalCount": 2,
+            "completedCount": 1,
+            "waitingCount": 1,
+        },
+    )
+
+    assert failed_status == "failed"
+    assert waiting_status == "waiting"
+
+
+def test_build_operation_detail_counts_pending_running_and_canceled_operations():
+    patch = build_operation_detail(
+        [
+            {"key": "prepare", "status": "completed"},
+            {"key": "execute", "status": "running"},
+            {"key": "review", "status": "pending"},
+            {"key": "cleanup", "status": "cancelled"},
+        ]
+    )
+
+    detail = patch["operationDetail"]
+    assert detail["totalCount"] == 4
+    assert detail["completedCount"] == 1
+    assert detail["runningCount"] == 1
+    assert detail["canceledCount"] == 1
+    assert detail["statusCounts"]["pending"] == 1
+    assert detail["statusCounts"]["canceled"] == 1
+
+
+def test_infer_semantic_status_returns_canceled_when_remaining_operations_are_canceled():
+    status = infer_semantic_status(
+        lifecycle="running",
+        operation_detail={
+            "totalCount": 2,
+            "completedCount": 1,
+            "canceledCount": 1,
+        },
+    )
+
+    assert status == "canceled"
