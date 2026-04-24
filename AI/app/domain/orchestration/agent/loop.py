@@ -7,6 +7,7 @@ from app.domain.orchestration.agent.step_executor import StepExecutor
 from app.domain.orchestration.approval import ApprovalRuntime, ApprovalService
 from app.domain.orchestration.delegation import ChildSessionLauncher, DelegateRuntime
 from app.domain.orchestration.policies import (
+    decide_todo_projection_boundary,
     ensure_step_transition,
     ensure_task_transition,
     normalize_executor_outcome,
@@ -217,7 +218,10 @@ class TaskEngine:
         for item in todo_state.items:
             target_status = self._todo_status_to_step_status(item.status)
             projected = projected_steps.get(item.key)
-            if projected is None:
+            boundary = decide_todo_projection_boundary(
+                existing_step_run_id=projected.step_run_id if projected is not None else None,
+            )
+            if boundary.action == "create_new_step":
                 projected = self.planner.materialize_todo_step(
                     task=task,
                     executor=executor,
@@ -245,6 +249,8 @@ class TaskEngine:
                 self.repository.create_step(projected)
                 continue
 
+            if projected is None:
+                continue
             projected.title = item.title
             projected.input_payload = {
                 **projected.input_payload,

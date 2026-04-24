@@ -17,6 +17,8 @@ class StepRunResponse(BaseModel):
     input_payload: dict[str, Any] = Field(default_factory=dict)
     output_payload: dict[str, Any] = Field(default_factory=dict)
     wait_payload: dict[str, Any] = Field(default_factory=dict)
+    # 시각화 기준은 StepRun 이고, semantic/operation/tool 정보도 현재는
+    # detail_json 안에서 같이 해석한다. 정규화된 view 모델은 필요가 생기면 나중에 추가한다.
     detail_json: dict[str, Any] = Field(default_factory=dict)
     summary_message: str | None = None
     error_message: str | None = None

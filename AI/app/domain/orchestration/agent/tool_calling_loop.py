@@ -29,6 +29,7 @@ class ToolCallingLoopExecutor:
         requested_toolsets = self._requested_toolsets(task_input)
         available_tools = self.tool_catalog.list_available_tools(requested_toolsets=requested_toolsets)
         available_tool_names = {tool["name"] for tool in available_tools}
+        operation_counters: dict[str, int] = {}
 
         pending_tool_calls = self._normalize_calls(task_input.get("tool_calls"))
         all_tool_results: list[dict[str, Any]] = []
@@ -40,7 +41,11 @@ class ToolCallingLoopExecutor:
 
         if resume_payload is not None and not bool(resume_payload.get("approved", False)):
             if pending_tool_calls:
-                batch_result = self._execute_tool_calls(pending_tool_calls, available_tool_names)
+                batch_result = self._execute_tool_calls(
+                    pending_tool_calls,
+                    available_tool_names,
+                    operation_counters=operation_counters,
+                )
                 all_tool_results.extend(batch_result["tool_results"])
                 operations.extend(batch_result["operations"])
                 current_todo_state = self._next_todo_state(current_todo_state, batch_result["tool_results"])
@@ -49,6 +54,7 @@ class ToolCallingLoopExecutor:
                 operations=operations,
                 resume_payload=resume_payload,
                 todo_state=current_todo_state,
+                operation_counters=operation_counters,
             )
 
         max_iterations = self._max_iterations(task_input)
@@ -62,7 +68,11 @@ class ToolCallingLoopExecutor:
         for turn_index in range(1, max_iterations + 1):
             if pending_tool_calls:
                 try:
-                    batch_result = self._execute_tool_calls(pending_tool_calls, available_tool_names)
+                    batch_result = self._execute_tool_calls(
+                        pending_tool_calls,
+                        available_tool_names,
+                        operation_counters=operation_counters,
+                    )
                 except KeyError as error:
                     return self._build_failed_outcome(
                         error_message=str(error.args[0]),
@@ -71,6 +81,7 @@ class ToolCallingLoopExecutor:
                         llm_call_count=llm_call_count,
                         model_name=self._model_name(generated, task_input),
                         todo_state=current_todo_state,
+                        operation_counters=operation_counters,
                     )
                 all_tool_results.extend(batch_result["tool_results"])
                 operations.extend(batch_result["operations"])
@@ -86,6 +97,7 @@ class ToolCallingLoopExecutor:
                     llm_call_count=llm_call_count,
                     model_name=self._model_name(generated, task_input),
                     todo_state=current_todo_state,
+                    operation_counters=operation_counters,
                 )
 
             last_prompt = self.prompt_builder.build_agent_loop_prompt(
@@ -106,7 +118,11 @@ class ToolCallingLoopExecutor:
 
             operations.append(
                 {
-                    "key": f"llm.generate.{turn_index}",
+                    "key": self._next_operation_key(
+                        operation_counters,
+                        namespace="llm",
+                        base_key="generate",
+                    ),
                     "title": f"모델 응답 생성 {turn_index}",
                     "kind": "llm",
                     "status": "completed",
@@ -124,6 +140,7 @@ class ToolCallingLoopExecutor:
                     llm_call_count=llm_call_count,
                     model_name=self._model_name(generated, task_input),
                     todo_state=current_todo_state,
+                    operation_counters=operation_counters,
                 )
 
             if directive.delegate_prompt:
@@ -148,6 +165,7 @@ class ToolCallingLoopExecutor:
                 llm_call_count=llm_call_count,
                 model_name=self._model_name(generated, task_input),
                 todo_state=current_todo_state,
+                operation_counters=operation_counters,
             )
 
         if final_text is None:
@@ -166,9 +184,16 @@ class ToolCallingLoopExecutor:
             delegate_summary_prompt=delegate_summary_prompt,
             resume_payload=resume_payload,
             todo_state=current_todo_state,
+            operation_counters=operation_counters,
         )
 
-    def _execute_tool_calls(self, calls: list[dict[str, Any]], available_tool_names: set[str]) -> dict[str, Any]:
+    def _execute_tool_calls(
+        self,
+        calls: list[dict[str, Any]],
+        available_tool_names: set[str],
+        *,
+        operation_counters: dict[str, int],
+    ) -> dict[str, Any]:
         tool_results: list[dict[str, Any]] = []
         operations: list[dict[str, Any]] = []
         for call in calls:
@@ -180,7 +205,11 @@ class ToolCallingLoopExecutor:
             tool_results.append({"name": name, "args": args, "result": result})
             operations.append(
                 {
-                    "key": name,
+                    "key": self._next_operation_key(
+                        operation_counters,
+                        namespace="tool",
+                        base_key=name,
+                    ),
                     "title": name,
                     "kind": "tool",
                     "status": "completed",
@@ -204,6 +233,7 @@ class ToolCallingLoopExecutor:
         delegate_summary_prompt: str | None,
         resume_payload: dict[str, Any] | None,
         todo_state: dict[str, Any],
+        operation_counters: dict[str, int],
     ) -> dict[str, Any]:
         provider_name = generated.provider_name if generated is not None else self.provider.name
         metadata = dict(generated.metadata or {}) if generated is not None else {}
@@ -233,7 +263,11 @@ class ToolCallingLoopExecutor:
         if resume_payload is not None:
             operations.append(
                 {
-                    "key": "approval.resume",
+                    "key": self._next_operation_key(
+                        operation_counters,
+                        namespace="approval",
+                        base_key="resume",
+                    ),
                     "title": "승인 후 재개",
                     "kind": "approval",
                     "status": "completed",
@@ -275,6 +309,7 @@ class ToolCallingLoopExecutor:
         llm_call_count: int,
         model_name: str | None,
         todo_state: dict[str, Any],
+        operation_counters: dict[str, int],
     ) -> dict[str, Any]:
         tool_names = [str(item["name"]) for item in tool_results]
         return {
@@ -303,7 +338,11 @@ class ToolCallingLoopExecutor:
             "operations": [
                 *operations,
                 {
-                    "key": "approval.request",
+                    "key": self._next_operation_key(
+                        operation_counters,
+                        namespace="approval",
+                        base_key="request",
+                    ),
                     "title": "사용자 승인 요청",
                     "kind": "approval",
                     "status": "waiting",
@@ -319,6 +358,7 @@ class ToolCallingLoopExecutor:
         operations: list[dict[str, Any]],
         resume_payload: dict[str, Any],
         todo_state: dict[str, Any],
+        operation_counters: dict[str, int],
     ) -> dict[str, Any]:
         tool_names = [str(item["name"]) for item in tool_results]
         return {
@@ -340,7 +380,11 @@ class ToolCallingLoopExecutor:
             "operations": [
                 *operations,
                 {
-                    "key": "approval.reject",
+                    "key": self._next_operation_key(
+                        operation_counters,
+                        namespace="approval",
+                        base_key="reject",
+                    ),
                     "title": "사용자 승인 거절",
                     "kind": "approval",
                     "status": "completed",
@@ -358,6 +402,7 @@ class ToolCallingLoopExecutor:
         llm_call_count: int,
         model_name: str | None,
         todo_state: dict[str, Any],
+        operation_counters: dict[str, int],
     ) -> dict[str, Any]:
         tool_names = [str(item["name"]) for item in tool_results]
         return {
@@ -379,7 +424,11 @@ class ToolCallingLoopExecutor:
             "operations": [
                 *operations,
                 {
-                    "key": "agent.loop",
+                    "key": self._next_operation_key(
+                        operation_counters,
+                        namespace="agent",
+                        base_key="loop",
+                    ),
                     "title": "Tool-calling loop",
                     "kind": "agent",
                     "status": "failed",
@@ -488,3 +537,11 @@ class ToolCallingLoopExecutor:
                     return f"{key}={value}"
             return json.dumps(result, ensure_ascii=False)[:80]
         return str(result)[:80]
+
+    @staticmethod
+    def _next_operation_key(operation_counters: dict[str, int], *, namespace: str, base_key: str) -> str:
+        sanitized_base_key = str(base_key or "operation").strip().replace(" ", "_")
+        counter_key = f"{namespace}:{sanitized_base_key}"
+        next_index = operation_counters.get(counter_key, 0) + 1
+        operation_counters[counter_key] = next_index
+        return f"{namespace}.{sanitized_base_key}.{next_index}"

@@ -169,6 +169,46 @@ def test_model_generate_executes_model_requested_tool_loop(client, monkeypatch):
     assert step["detail_json"]["operationDetail"]["totalCount"] >= 2
 
 
+def test_model_generate_keeps_repeated_tool_calls_as_distinct_operations(client, monkeypatch):
+    response_payload = ProviderGenerateResponse(
+        provider_name="openai_oauth",
+        output_text='{"final":"REPEATED_TOOL_FINAL"}',
+        usage={"output_tokens": 3},
+        metadata={"mode": "stub", "model": "gpt-5.4"},
+    )
+
+    def fake_generate(self, prompt, **kwargs):
+        return response_payload
+
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.generate", fake_generate)
+
+    response = client.post(
+        "/api/v1/tasks",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "repeated-tool-user",
+            "input_payload": {
+                "prompt": "같은 tool 을 두 번 호출해도 step 안에서 둘 다 보여줘.",
+                "tool_calls": [
+                    {"name": "skills.list", "args": {}},
+                    {"name": "skills.list", "args": {}},
+                ],
+                "model": "gpt-5.4",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+
+    steps_response = client.get(f"/api/v1/tasks/{body['task_run_id']}/steps")
+    step = steps_response.json()[0]
+    operation_keys = [item["key"] for item in step["detail_json"]["operationDetail"]["operations"]]
+    assert "tool.skills.list.1" in operation_keys
+    assert "tool.skills.list.2" in operation_keys
+
+
 def test_model_generate_respects_runtime_toolsets(client):
     response = client.post(
         "/api/v1/tasks",
