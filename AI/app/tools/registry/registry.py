@@ -51,12 +51,9 @@ class ToolRegistry:
         *,
         intent_type: str | None = None,
         entry_executor_key: str | None = None,
-        entry_capability: str | None = None,
     ) -> TaskExecutor:
         if entry_executor_key:
             return self.get(entry_executor_key)
-        if entry_capability:
-            return self.get(entry_capability)
 
         canonical_intent = str(intent_type or "model.generate")
         try:

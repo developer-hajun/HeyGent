@@ -45,7 +45,7 @@ class Planner:
             step.detail_json,
             build_orchestration_detail(
                 intent_type=task.intent_type or executor.spec.intent_type,
-                entry_executor_key=task.entry_executor_key or task.entry_capability or executor.spec.entry_executor_key,
+                entry_executor_key=task.entry_executor_key or executor.spec.entry_executor_key,
                 executor_key=executor.spec.executor_key,
                 semantic_step=executor.spec.step_title,
             ),
@@ -88,7 +88,7 @@ class Planner:
             step.detail_json,
             build_orchestration_detail(
                 intent_type=task.intent_type or executor.spec.intent_type,
-                entry_executor_key=task.entry_executor_key or task.entry_capability or executor.spec.entry_executor_key,
+                entry_executor_key=task.entry_executor_key or executor.spec.entry_executor_key,
                 executor_key=executor.spec.executor_key,
                 semantic_step=todo_item.title,
             ),
@@ -131,7 +131,7 @@ class Planner:
             step.detail_json,
             build_orchestration_detail(
                 intent_type=task.intent_type or executor.spec.intent_type,
-                entry_executor_key=task.entry_executor_key or task.entry_capability or executor.spec.entry_executor_key,
+                entry_executor_key=task.entry_executor_key or executor.spec.entry_executor_key,
                 executor_key=step.executor_key,
                 semantic_step=step.title or executor.spec.step_title,
             ),

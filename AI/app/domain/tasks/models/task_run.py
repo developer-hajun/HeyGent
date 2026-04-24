@@ -25,8 +25,6 @@ class TaskRun:
     intent_type: str | None = None
     # 이 TaskRun 이 처음 어떤 executor 로 진입했는지 남기는 canonical key.
     entry_executor_key: str | None = None
-    # Deprecated 호환 필드. 기존 API/DB 사용자를 위해 한동안 유지한다.
-    entry_capability: str | None = None
     # 현재 루프가 붙잡고 있는 StepRun ID.
     # waiting/resume/이벤트 발행이 "마지막 step 추측"이 아니라 정확한 step 기준으로 움직이게 만드는 최소 앵커다.
     current_step_run_id: str | None = None

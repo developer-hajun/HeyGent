@@ -8,8 +8,6 @@ CREATE TABLE IF NOT EXISTS task_runs (
     intent_type TEXT,
     -- 처음 진입한 executor key. executor 실행 계층의 canonical entry 기준이다.
     entry_executor_key TEXT,
-    -- Deprecated 호환 필드. 기존 DB/API 사용자를 위해 한동안 유지한다.
-    entry_capability TEXT,
     -- 현재 루프가 붙잡고 있는 StepRun ID. exact resume/waiting anchor 로 사용한다.
     current_step_run_id TEXT,
     -- 작업 소유 주체를 구분하는 키. 사용자/세션 범위를 나눌 때 필요하다.

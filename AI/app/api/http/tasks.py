@@ -155,7 +155,6 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
                 input_payload=payload.input_payload,
                 intent_type=payload.intent_type,
                 entry_executor_key=payload.entry_executor_key,
-                entry_capability=payload.entry_capability,
             )
         )
     except KeyError as error:

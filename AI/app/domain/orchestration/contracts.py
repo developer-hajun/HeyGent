@@ -16,8 +16,6 @@ class OrchestrationRequest:
     input_payload: dict[str, Any]
     intent_type: str | None = None
     entry_executor_key: str | None = None
-    # Deprecated 호환 입력. 내부 기준은 entry_executor_key 다.
-    entry_capability: str | None = None
 
 
 ORCHESTRATION_DETAIL_KEY = "orchestration"

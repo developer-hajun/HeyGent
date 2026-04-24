@@ -30,7 +30,6 @@ class AgentLoopRunner:
         executor = self.tool_registry.resolve(
             intent_type=request.intent_type,
             entry_executor_key=request.entry_executor_key,
-            entry_capability=request.entry_capability,
         )
         task = self.planner.materialize_task(
             owner_key=request.owner_key,
@@ -53,7 +52,7 @@ class AgentLoopRunner:
         if step is None:
             raise KeyError(step_run_id)
 
-        executor_key = step.executor_key or task.entry_executor_key or task.entry_capability
+        executor_key = step.executor_key or task.entry_executor_key
         if not executor_key:
             raise ValueError("step executor key is missing")
 

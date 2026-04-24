@@ -22,7 +22,7 @@ class DelegateRuntime:
             parent_task_run_id=task.task_run_id,
             parent_step_run_id=step.step_run_id,
             child_intent_type=str(child_session["intent_type"]),
-            child_entry_executor_key=str(child_session.get("entry_executor_key") or child_session.get("entry_capability")),
+            child_entry_executor_key=str(child_session["entry_executor_key"]),
             summary_prompt=child_session.get("summary_prompt"),
             metadata=dict(child_session.get("metadata") or {}),
         )

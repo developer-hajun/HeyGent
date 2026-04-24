@@ -34,7 +34,6 @@ MIGRATIONS: tuple[SQLiteMigration, ...] = (
             ColumnMigration("task_runs", "task_type", "TEXT"),
             ColumnMigration("task_runs", "intent_type", "TEXT"),
             ColumnMigration("task_runs", "entry_executor_key", "TEXT"),
-            ColumnMigration("task_runs", "entry_capability", "TEXT"),
             ColumnMigration("task_runs", "current_step_run_id", "TEXT"),
             ColumnMigration("step_runs", "title", "TEXT NOT NULL DEFAULT ''"),
             ColumnMigration("step_runs", "executor_key", "TEXT"),
@@ -48,13 +47,6 @@ MIGRATIONS: tuple[SQLiteMigration, ...] = (
         description="task 단위 canonical todo state 컬럼을 추가한다.",
         columns=(
             ColumnMigration("task_runs", "todo_state", "TEXT NOT NULL DEFAULT '{}'"),
-        ),
-    ),
-    SQLiteMigration(
-        migration_id="20260424_entry_executor_key",
-        description="task 진입 executor key 컬럼을 canonical 필드로 추가한다.",
-        columns=(
-            ColumnMigration("task_runs", "entry_executor_key", "TEXT"),
         ),
     ),
 )
