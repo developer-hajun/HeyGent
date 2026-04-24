@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 import json
 import sys
 
@@ -85,6 +86,15 @@ def test_model_generate_waits_for_approval_and_resumes(client):
     assert resumed_anchor_steps[0]["step_run_id"] == waiting_step_run_id
     assert resumed_anchor_steps[0]["status"] == "COMPLETED"
 
+    flow_response = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/flow")
+    assert flow_response.status_code == 200
+    flow = flow_response.json()
+    anchor_nodes = [node for node in flow["nodes"] if not node["is_projected"]]
+    assert len(anchor_nodes) == 1
+    activity_types = [item["event_type"] for item in anchor_nodes[0]["activity"]]
+    assert "approval.requested" in activity_types
+    assert "approval.resolved" in activity_types
+
 def test_model_generate_delegates_child_task(client):
     response = client.post(
         "/api/v1/taskRuns",
@@ -107,6 +117,18 @@ def test_model_generate_delegates_child_task(client):
     child_task = client.get(f"/api/v1/taskRuns/{body['result_payload']['childTaskRunId']}").json()
     assert child_task["status"] == "COMPLETED"
     assert child_task["result_payload"]["text"]
+
+    flow_response = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/flow")
+    assert flow_response.status_code == 200
+    flow = flow_response.json()
+    delegate_edges = [edge for edge in flow["edges"] if edge["relation"] == "delegates_to"]
+    assert len(delegate_edges) == 1
+    assert delegate_edges[0]["to_task_run_id"] == body["result_payload"]["childTaskRunId"]
+    assert flow["nodes"][0]["child_task_run_id"] == body["result_payload"]["childTaskRunId"]
+    assert flow["nodes"][0]["child_task"]["task_run_id"] == body["result_payload"]["childTaskRunId"]
+    assert flow["nodes"][0]["child_task"]["status"] == "COMPLETED"
+    assert flow["nodes"][0]["child_task"]["summary"]
+    assert flow["nodes"][0]["child_task"]["agent_id"]
 
 
 def test_model_generate_executes_model_requested_tool_loop(client, monkeypatch):
@@ -416,14 +438,43 @@ def test_taskruns_active_returns_only_live_task_snapshots(client):
     assert active_response.status_code == 200
     body = active_response.json()
 
-    assert body["total_count"] == 1
-    assert len(body["items"]) == 1
+    assert body["total_count"] == 2
+    assert len(body["items"]) == 2
     active_item = body["items"][0]
     assert active_item["task_run_id"] == waiting_task["task_run_id"]
+    assert active_item["source"] == "active"
     assert active_item["status"] == "WAITING"
     assert active_item["wait_reason"] == "approval_required"
     assert active_item["current_step"]["status"] == "WAITING"
     assert active_item["current_step_run_id"] == waiting_task["current_step_run_id"]
+    recent_item = body["items"][1]
+    assert recent_item["source"] == "recent"
+    assert recent_item["status"] == "COMPLETED"
+
+
+def test_taskruns_active_excludes_recent_terminal_tasks_after_ttl(client, monkeypatch):
+    completed_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "recent-expired-user",
+            "input_payload": {"prompt": "곧 recent TTL 에서 사라질 작업"},
+        },
+    )
+    assert completed_response.status_code == 200
+    completed_task = completed_response.json()
+    completed_at = datetime.fromisoformat(completed_task["updated_at"])
+
+    monkeypatch.setattr(
+        "app.api.http.tasks.utc_now",
+        lambda: completed_at + timedelta(seconds=301),
+    )
+
+    active_response = client.get("/api/v1/taskRuns/active")
+    assert active_response.status_code == 200
+    body = active_response.json()
+    assert body["total_count"] == 0
+    assert body["items"] == []
 
 
 def test_taskruns_flow_returns_step_nodes_and_edges_for_workflow(client, monkeypatch):
@@ -473,4 +524,6 @@ def test_taskruns_flow_returns_step_nodes_and_edges_for_workflow(client, monkeyp
     assert flow["nodes"][3]["executor_key"] == "notion.page.create"
     assert sum(1 for node in flow["nodes"] if node["is_current"]) == 1
     assert flow["nodes"][-1]["step_run_id"] == flow["current_step_run_id"]
+    assert any(item["event_type"] == "step.started" for item in flow["nodes"][0]["activity"])
+    assert any(item["event_type"] == "task.completed" for item in flow["nodes"][-1]["activity"])
 

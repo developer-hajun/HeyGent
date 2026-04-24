@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.api.deps.task_context import TaskContext, get_task_context
+from app.core.time import utc_now
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_request import CreateTaskRequest, ResumeTaskRequest
 from app.contracts.task.task_response import (
@@ -12,6 +15,8 @@ from app.contracts.task.task_response import (
     StepRunResponse,
     StepRunSummaryResponse,
     TaskEventResponse,
+    TaskRunFlowActivityResponse,
+    TaskRunFlowChildTaskResponse,
     TaskRunFlowEdgeResponse,
     TaskRunFlowNodeResponse,
     TaskRunFlowResponse,
@@ -27,7 +32,9 @@ from app.domain.tasks.models import StepRun
 router = APIRouter(prefix="/taskRuns", tags=["taskRuns"])
 
 _ACTIVE_TASK_STATUSES = [status.value for status in (TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.WAITING, TaskStatus.BLOCKED)]
+_RECENT_TERMINAL_TASK_STATUSES = [status.value for status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED)]
 _ACTIVE_STEP_STATUSES = {status.value for status in (StepStatus.PENDING, StepStatus.RUNNING, StepStatus.WAITING, StepStatus.BLOCKED)}
+_RECENT_ACTIVE_TTL_SECONDS = 300
 _TASK_TITLE_FALLBACKS = {
     "model.generate": "모델 응답 생성",
     "notion.page.create": "Notion 페이지 생성",
@@ -130,7 +137,7 @@ def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse
     )
 
 
-def _build_active_task_item(task, steps: list[StepRun]) -> ActiveTaskRunListItemResponse:
+def _build_active_task_item(task, steps: list[StepRun], *, source: str) -> ActiveTaskRunListItemResponse:
     current_step = _select_current_step(task, steps)
     current_step_response = None
     if current_step is not None:
@@ -143,6 +150,7 @@ def _build_active_task_item(task, steps: list[StepRun]) -> ActiveTaskRunListItem
     input_summary = _summarize_task_input_payload(task.input_payload)
     return ActiveTaskRunListItemResponse(
         task_run_id=task.task_run_id,
+        source=source,
         status=task.status,
         title=_display_task_title(task, input_summary=input_summary),
         current_step_run_id=task.current_step_run_id,
@@ -152,7 +160,48 @@ def _build_active_task_item(task, steps: list[StepRun]) -> ActiveTaskRunListItem
     )
 
 
-def _build_flow_nodes(task, steps: list[StepRun]) -> list[TaskRunFlowNodeResponse]:
+def _recent_task_reference_time(task):
+    return task.ended_at or task.updated_at or task.created_at
+
+
+def _is_recent_terminal_task(task, *, now, ttl_seconds: int) -> bool:
+    if task.status not in _RECENT_TERMINAL_TASK_STATUSES:
+        return False
+    reference_time = _recent_task_reference_time(task)
+    if reference_time is None:
+        return False
+    return reference_time >= now - timedelta(seconds=ttl_seconds)
+
+
+def _sort_active_snapshot_items(items: list[ActiveTaskRunListItemResponse]) -> list[ActiveTaskRunListItemResponse]:
+    source_priority = {"active": 0, "recent": 1}
+    return sorted(
+        items,
+        key=lambda item: (
+            source_priority.get(item.source, 99),
+            -(item.updated_at.timestamp() if item.updated_at is not None else 0),
+        ),
+    )
+
+
+def _build_flow_activity_map(events: list) -> dict[str, list[TaskRunFlowActivityResponse]]:
+    activity_by_step: dict[str, list[TaskRunFlowActivityResponse]] = {}
+    for event in events:
+        step_run_id = str(event.step_run_id or "").strip()
+        if not step_run_id:
+            continue
+        activity_by_step.setdefault(step_run_id, []).append(
+            TaskRunFlowActivityResponse(
+                event_type=event.event_type,
+                status=event.status,
+                summary_message=event.summary_message,
+                occurred_at=event.occurred_at,
+            )
+        )
+    return activity_by_step
+
+
+def _build_flow_nodes(task, steps: list[StepRun], *, activity_by_step: dict[str, list[TaskRunFlowActivityResponse]]) -> list[TaskRunFlowNodeResponse]:
     nodes: list[TaskRunFlowNodeResponse] = []
     for step in steps:
         semantic_detail = (step.detail_json or {}).get("semanticDetail") or {}
@@ -165,6 +214,15 @@ def _build_flow_nodes(task, steps: list[StepRun]) -> list[TaskRunFlowNodeRespons
                 goal=semantic_detail.get("goal"),
                 status=semantic_detail.get("status"),
             )
+        child_task = None
+        child_task_run_id = str(agent_detail.get("childTaskRunId") or "").strip() or None
+        if child_task_run_id is not None:
+            child_task = TaskRunFlowChildTaskResponse(
+                task_run_id=child_task_run_id,
+                status=agent_detail.get("status"),
+                summary=agent_detail.get("summary"),
+                agent_id=agent_detail.get("agentId"),
+            )
         nodes.append(
             TaskRunFlowNodeResponse(
                 step_run_id=step.step_run_id,
@@ -176,15 +234,15 @@ def _build_flow_nodes(task, steps: list[StepRun]) -> list[TaskRunFlowNodeRespons
                 semantic=semantic,
                 is_current=step.step_run_id == task.current_step_run_id,
                 is_projected=bool((step.input_payload or {}).get("todo_key")),
-                child_task_run_id=agent_detail.get("childTaskRunId"),
+                child_task_run_id=child_task_run_id,
+                child_task=child_task,
+                activity=activity_by_step.get(step.step_run_id, []),
             )
         )
     return nodes
 
 
 def _build_flow_edges(steps: list[StepRun]) -> list[TaskRunFlowEdgeResponse]:
-    if len(steps) < 2:
-        return []
     edges: list[TaskRunFlowEdgeResponse] = []
     for previous_step, next_step in zip(steps, steps[1:]):
         edges.append(
@@ -192,6 +250,17 @@ def _build_flow_edges(steps: list[StepRun]) -> list[TaskRunFlowEdgeResponse]:
                 from_step_run_id=previous_step.step_run_id,
                 to_step_run_id=next_step.step_run_id,
                 relation="next",
+            )
+        )
+    for step in steps:
+        child_task_run_id = str((((step.detail_json or {}).get("agentDetail") or {}).get("childTaskRunId")) or "").strip()
+        if not child_task_run_id:
+            continue
+        edges.append(
+            TaskRunFlowEdgeResponse(
+                from_step_run_id=step.step_run_id,
+                to_task_run_id=child_task_run_id,
+                relation="delegates_to",
             )
         )
     return edges
@@ -222,12 +291,34 @@ def list_tasks(
 
 @router.get("/active", response_model=ActiveTaskRunListResponse)
 def list_active_tasks(context: TaskContext = Depends(get_task_context)) -> ActiveTaskRunListResponse:
-    total_count = context.repository.count_tasks_by_statuses(_ACTIVE_TASK_STATUSES)
-    tasks = context.repository.list_tasks_by_statuses(_ACTIVE_TASK_STATUSES, limit=max(total_count, 1), offset=0)
-    items = [_build_active_task_item(task, context.repository.list_steps(task.task_run_id)) for task in tasks]
+    now = utc_now()
+    active_total_count = context.repository.count_tasks_by_statuses(_ACTIVE_TASK_STATUSES)
+    active_tasks = context.repository.list_tasks_by_statuses(_ACTIVE_TASK_STATUSES, limit=max(active_total_count, 1), offset=0)
+
+    recent_total_pool = context.repository.count_tasks_by_statuses(_RECENT_TERMINAL_TASK_STATUSES)
+    recent_candidates = context.repository.list_tasks_by_statuses(
+        _RECENT_TERMINAL_TASK_STATUSES,
+        limit=max(recent_total_pool, 1),
+        offset=0,
+    )
+
+    items_by_task_run_id: dict[str, ActiveTaskRunListItemResponse] = {}
+    for task in active_tasks:
+        steps = context.repository.list_steps(task.task_run_id)
+        items_by_task_run_id[task.task_run_id] = _build_active_task_item(task, steps, source="active")
+
+    for task in recent_candidates:
+        if not _is_recent_terminal_task(task, now=now, ttl_seconds=_RECENT_ACTIVE_TTL_SECONDS):
+            continue
+        if task.task_run_id in items_by_task_run_id:
+            continue
+        steps = context.repository.list_steps(task.task_run_id)
+        items_by_task_run_id[task.task_run_id] = _build_active_task_item(task, steps, source="recent")
+
+    items = _sort_active_snapshot_items(list(items_by_task_run_id.values()))
     return ActiveTaskRunListResponse(
         items=items,
-        total_count=total_count,
+        total_count=len(items),
     )
 
 
@@ -254,7 +345,9 @@ def get_task_flow(task_run_id: str, context: TaskContext = Depends(get_task_cont
     if task is None:
         raise HTTPException(status_code=404, detail="task not found")
     steps = context.repository.list_steps(task_run_id)
+    events = context.repository.list_events(task_run_id)
     input_summary = _summarize_task_input_payload(task.input_payload)
+    activity_by_step = _build_flow_activity_map(events)
     return TaskRunFlowResponse(
         task_run_id=task.task_run_id,
         status=task.status,
@@ -262,7 +355,7 @@ def get_task_flow(task_run_id: str, context: TaskContext = Depends(get_task_cont
         current_step_run_id=task.current_step_run_id,
         entry_executor_key=task.entry_executor_key,
         summary=task.progress_summary,
-        nodes=_build_flow_nodes(task, steps),
+        nodes=_build_flow_nodes(task, steps, activity_by_step=activity_by_step),
         edges=_build_flow_edges(steps),
     )
 

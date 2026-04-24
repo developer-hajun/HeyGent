@@ -91,6 +91,20 @@ class TaskRunFlowSemanticResponse(BaseModel):
     status: str | None = None
 
 
+class TaskRunFlowActivityResponse(BaseModel):
+    event_type: str
+    status: str | None = None
+    summary_message: str | None = None
+    occurred_at: str
+
+
+class TaskRunFlowChildTaskResponse(BaseModel):
+    task_run_id: str
+    status: str | None = None
+    summary: str | None = None
+    agent_id: str | None = None
+
+
 class TaskRunFlowNodeResponse(BaseModel):
     step_run_id: str
     step_order: int
@@ -102,11 +116,14 @@ class TaskRunFlowNodeResponse(BaseModel):
     is_current: bool
     is_projected: bool
     child_task_run_id: str | None = None
+    child_task: TaskRunFlowChildTaskResponse | None = None
+    activity: list[TaskRunFlowActivityResponse] = Field(default_factory=list)
 
 
 class TaskRunFlowEdgeResponse(BaseModel):
-    from_step_run_id: str
-    to_step_run_id: str
+    from_step_run_id: str | None = None
+    to_step_run_id: str | None = None
+    to_task_run_id: str | None = None
     relation: str
 
 
@@ -130,6 +147,7 @@ class ActiveTaskRunCurrentStepResponse(BaseModel):
 
 class ActiveTaskRunListItemResponse(BaseModel):
     task_run_id: str
+    source: str
     status: str
     title: str | None = None
     current_step_run_id: str | None = None
