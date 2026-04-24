@@ -6,7 +6,7 @@ from app.contracts.provider.provider_response import ProviderGenerateResponse
 
 def test_model_generate_tool_calls_and_skill_prompt(client):
     response = client.post(
-        "/api/v1/tasks",
+        "/api/v1/taskRuns",
         json={
             "intent_type": "model.generate",
             "entry_executor_key": "model.generate",
@@ -33,7 +33,7 @@ def test_model_generate_tool_calls_and_skill_prompt(client):
     assert "tool_results" in body["result_payload"]
     assert len(body["result_payload"]["tool_results"]) == 6
 
-    steps_response = client.get(f"/api/v1/tasks/{body['task_run_id']}/steps")
+    steps_response = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps")
     step = steps_response.json()[0]
     assert "skills.list" in step["detail_json"]["toolDetail"]["toolNames"]
     assert "terminal.run" in step["detail_json"]["toolDetail"]["toolNames"]
@@ -45,7 +45,7 @@ def test_model_generate_tool_calls_and_skill_prompt(client):
 
 def test_model_generate_waits_for_approval_and_resumes(client):
     create_response = client.post(
-        "/api/v1/tasks",
+        "/api/v1/taskRuns",
         json={
             "intent_type": "model.generate",
             "owner_key": "approval-user",
@@ -61,25 +61,25 @@ def test_model_generate_waits_for_approval_and_resumes(client):
     created = create_response.json()
     assert created["status"] == "WAITING"
     assert created["wait_payload"]["reason"] == "approval_required"
-    waiting_steps = client.get(f"/api/v1/tasks/{created['task_run_id']}/steps").json()
+    waiting_steps = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/steps").json()
     waiting_anchor_steps = [step for step in waiting_steps if not step["input_payload"].get("todo_key")]
     assert len(waiting_anchor_steps) == 1
     waiting_step_run_id = waiting_anchor_steps[0]["step_run_id"]
     assert waiting_anchor_steps[0]["status"] == "WAITING"
 
-    events = client.get(f"/api/v1/tasks/{created['task_run_id']}/events").json()
+    events = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/events").json()
     approval_event = [event for event in events if event["event_type"] == "approval.requested"]
     assert approval_event
     approval_id = approval_event[0]["payload"]["approval_id"]
 
     resume_response = client.post(
-        f"/api/v1/tasks/{created['task_run_id']}/resume",
+        f"/api/v1/taskRuns/{created['task_run_id']}/resume",
         json={"approval_id": approval_id, "payload": {"approved": True}},
     )
     resumed = resume_response.json()
     assert resume_response.status_code == 200
     assert resumed["status"] == "COMPLETED"
-    resumed_steps = client.get(f"/api/v1/tasks/{created['task_run_id']}/steps").json()
+    resumed_steps = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/steps").json()
     resumed_anchor_steps = [step for step in resumed_steps if not step["input_payload"].get("todo_key")]
     assert len(resumed_anchor_steps) == 1
     assert resumed_anchor_steps[0]["step_run_id"] == waiting_step_run_id
@@ -87,7 +87,7 @@ def test_model_generate_waits_for_approval_and_resumes(client):
 
 def test_model_generate_delegates_child_task(client):
     response = client.post(
-        "/api/v1/tasks",
+        "/api/v1/taskRuns",
         json={
             "intent_type": "model.generate",
             "owner_key": "delegate-user",
@@ -104,7 +104,7 @@ def test_model_generate_delegates_child_task(client):
     assert body["result_payload"]["delegation_requested"] is True
     assert body["result_payload"]["childTaskRunId"].startswith("task_")
 
-    child_task = client.get(f"/api/v1/tasks/{body['result_payload']['childTaskRunId']}").json()
+    child_task = client.get(f"/api/v1/taskRuns/{body['result_payload']['childTaskRunId']}").json()
     assert child_task["status"] == "COMPLETED"
     assert child_task["result_payload"]["text"]
 
@@ -142,7 +142,7 @@ def test_model_generate_executes_model_requested_tool_loop(client, monkeypatch):
     monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.generate", fake_generate)
 
     response = client.post(
-        "/api/v1/tasks",
+        "/api/v1/taskRuns",
         json={
             "intent_type": "model.generate",
             "owner_key": "loop-user",
@@ -159,7 +159,7 @@ def test_model_generate_executes_model_requested_tool_loop(client, monkeypatch):
     assert body["result_payload"]["text"] == "MODEL_LOOP_FINAL"
     assert [item["name"] for item in body["result_payload"]["tool_results"]] == ["skills.list", "terminal.run"]
 
-    steps_response = client.get(f"/api/v1/tasks/{body['task_run_id']}/steps")
+    steps_response = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps")
     steps = steps_response.json()
     anchor_steps = [step for step in steps if not step["input_payload"].get("todo_key")]
     assert len(anchor_steps) == 1
@@ -183,7 +183,7 @@ def test_model_generate_keeps_repeated_tool_calls_as_distinct_operations(client,
     monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.generate", fake_generate)
 
     response = client.post(
-        "/api/v1/tasks",
+        "/api/v1/taskRuns",
         json={
             "intent_type": "model.generate",
             "owner_key": "repeated-tool-user",
@@ -202,7 +202,7 @@ def test_model_generate_keeps_repeated_tool_calls_as_distinct_operations(client,
     body = response.json()
     assert body["status"] == "COMPLETED"
 
-    steps_response = client.get(f"/api/v1/tasks/{body['task_run_id']}/steps")
+    steps_response = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps")
     step = steps_response.json()[0]
     operation_keys = [item["key"] for item in step["detail_json"]["operationDetail"]["operations"]]
     assert "tool.skills.list.1" in operation_keys
@@ -223,7 +223,7 @@ def test_model_generate_executes_top_level_workflow_steps_from_workflow_key(clie
     monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.generate", fake_generate)
 
     response = client.post(
-        "/api/v1/tasks",
+        "/api/v1/taskRuns",
         json={
             "intent_type": "model.generate",
             "owner_key": "workflow-plan-user",
@@ -247,7 +247,7 @@ def test_model_generate_executes_top_level_workflow_steps_from_workflow_key(clie
     ]
     assert all(item["status"] == "completed" for item in body["todo_state"]["items"])
 
-    steps = client.get(f"/api/v1/tasks/{body['task_run_id']}/steps").json()
+    steps = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps").json()
     anchor_steps = [step for step in steps if not step["input_payload"].get("todo_key")]
     projected_steps = [step for step in steps if step["input_payload"].get("todo_key")]
 
@@ -281,7 +281,7 @@ def test_model_generate_routes_handoff_to_explicit_step_executor(client, monkeyp
     monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.generate", fake_generate)
 
     response = client.post(
-        "/api/v1/tasks",
+        "/api/v1/taskRuns",
         json={
             "intent_type": "model.generate",
             "owner_key": "workflow-routing-user",
@@ -317,7 +317,7 @@ def test_model_generate_routes_handoff_to_explicit_step_executor(client, monkeyp
     assert body["todo_state"]["currentKey"] is None
     assert [item["status"] for item in body["todo_state"]["items"]] == ["completed"]
 
-    steps = client.get(f"/api/v1/tasks/{body['task_run_id']}/steps").json()
+    steps = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps").json()
     assert len(steps) == 2
     assert steps[0]["title"] == "변경 요약"
     assert steps[1]["title"] == "노션 페이지 반영"
@@ -327,7 +327,7 @@ def test_model_generate_routes_handoff_to_explicit_step_executor(client, monkeyp
 
 def test_model_generate_respects_runtime_toolsets(client):
     response = client.post(
-        "/api/v1/tasks",
+        "/api/v1/taskRuns",
         json={
             "intent_type": "model.generate",
             "owner_key": "restricted-tools-user",
@@ -349,7 +349,7 @@ def test_model_generate_respects_runtime_toolsets(client):
 
 def test_model_generate_promotes_todo_state_and_materializes_todo_steps(client):
     response = client.post(
-        "/api/v1/tasks",
+        "/api/v1/taskRuns",
         json={
             "intent_type": "model.generate",
             "owner_key": "todo-user",
@@ -375,10 +375,102 @@ def test_model_generate_promotes_todo_state_and_materializes_todo_steps(client):
     assert body["todo_state"]["currentKey"] == "ship"
     assert [item["id"] for item in body["todo_state"]["items"]] == ["plan", "ship"]
 
-    steps_response = client.get(f"/api/v1/tasks/{body['task_run_id']}/steps")
+    steps_response = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps")
     steps = steps_response.json()
     assert len(steps) == 3
     projected_steps = [step for step in steps if step["input_payload"].get("todo_key")]
     assert [step["input_payload"]["todo_key"] for step in projected_steps] == ["plan", "ship"]
     assert projected_steps[0]["status"] == "COMPLETED"
     assert projected_steps[1]["status"] == "PENDING"
+
+
+def test_taskruns_active_returns_only_live_task_snapshots(client):
+    completed_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "completed-user",
+            "input_payload": {"prompt": "완료된 작업 하나를 만든다."},
+        },
+    )
+    assert completed_response.status_code == 200
+    assert completed_response.json()["status"] == "COMPLETED"
+
+    waiting_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "waiting-user",
+            "input_payload": {
+                "prompt": "승인 전까지 기다린다.",
+                "approval_required": True,
+                "approval_reason": "운영 반영 승인 필요",
+            },
+        },
+    )
+    assert waiting_response.status_code == 200
+    waiting_task = waiting_response.json()
+    assert waiting_task["status"] == "WAITING"
+
+    active_response = client.get("/api/v1/taskRuns/active")
+    assert active_response.status_code == 200
+    body = active_response.json()
+
+    assert body["total_count"] == 1
+    assert len(body["items"]) == 1
+    active_item = body["items"][0]
+    assert active_item["task_run_id"] == waiting_task["task_run_id"]
+    assert active_item["status"] == "WAITING"
+    assert active_item["wait_reason"] == "approval_required"
+    assert active_item["current_step"]["status"] == "WAITING"
+    assert active_item["current_step_run_id"] == waiting_task["current_step_run_id"]
+
+
+def test_taskruns_flow_returns_step_nodes_and_edges_for_workflow(client, monkeypatch):
+    response_payload = ProviderGenerateResponse(
+        provider_name="openai_oauth",
+        output_text='{"final":"FLOW_OK"}',
+        usage={"output_tokens": 3},
+        metadata={"mode": "stub", "model": "gpt-5.4"},
+    )
+
+    def fake_generate(self, prompt, **kwargs):
+        return response_payload
+
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.generate", fake_generate)
+
+    create_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "flow-user",
+            "input_payload": {
+                "prompt": "커밋 분석부터 노션 반영까지 순서를 보여줘.",
+                "workflow_key": "workspace_publish_to_notion",
+                "model": "gpt-5.4",
+            },
+        },
+    )
+
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["status"] == "COMPLETED"
+
+    flow_response = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/flow")
+    assert flow_response.status_code == 200
+    flow = flow_response.json()
+
+    assert flow["task_run_id"] == created["task_run_id"]
+    assert flow["status"] == "COMPLETED"
+    assert flow["entry_executor_key"] == "model.generate"
+    assert flow["current_step_run_id"] == created["current_step_run_id"]
+    assert len(flow["nodes"]) == 5
+    assert len(flow["edges"]) == 4
+    assert [edge["relation"] for edge in flow["edges"]] == ["next", "next", "next", "next"]
+    assert flow["nodes"][0]["semantic"]["key"] == "workflow.workspace_publish_to_notion.analyze_commit"
+    assert flow["nodes"][0]["is_projected"] is False
+    assert [node["is_projected"] for node in flow["nodes"][1:]] == [True, True, True, True]
+    assert flow["nodes"][3]["executor_key"] == "notion.page.create"
+    assert sum(1 for node in flow["nodes"] if node["is_current"]) == 1
+    assert flow["nodes"][-1]["step_run_id"] == flow["current_step_run_id"]
+

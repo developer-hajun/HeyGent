@@ -84,6 +84,65 @@ class TaskRunListResponse(BaseModel):
     status_filter: str
 
 
+class TaskRunFlowSemanticResponse(BaseModel):
+    key: str | None = None
+    step: str | None = None
+    goal: str | None = None
+    status: str | None = None
+
+
+class TaskRunFlowNodeResponse(BaseModel):
+    step_run_id: str
+    step_order: int
+    title: str | None = None
+    status: str
+    step_type: str
+    executor_key: str | None = None
+    semantic: TaskRunFlowSemanticResponse | None = None
+    is_current: bool
+    is_projected: bool
+    child_task_run_id: str | None = None
+
+
+class TaskRunFlowEdgeResponse(BaseModel):
+    from_step_run_id: str
+    to_step_run_id: str
+    relation: str
+
+
+class TaskRunFlowResponse(BaseModel):
+    task_run_id: str
+    status: str
+    title: str | None = None
+    current_step_run_id: str | None = None
+    entry_executor_key: str | None = None
+    summary: str | None = None
+    nodes: list[TaskRunFlowNodeResponse] = Field(default_factory=list)
+    edges: list[TaskRunFlowEdgeResponse] = Field(default_factory=list)
+
+
+class ActiveTaskRunCurrentStepResponse(BaseModel):
+    step_run_id: str
+    title: str | None = None
+    status: str
+    executor_key: str | None = None
+
+
+class ActiveTaskRunListItemResponse(BaseModel):
+    task_run_id: str
+    status: str
+    title: str | None = None
+    current_step_run_id: str | None = None
+    current_step: ActiveTaskRunCurrentStepResponse | None = None
+    updated_at: datetime | None = None
+    wait_reason: str | None = None
+
+
+class ActiveTaskRunListResponse(BaseModel):
+    items: list[ActiveTaskRunListItemResponse] = Field(default_factory=list)
+    total_count: int
+
+
 class TaskEventResponse(BaseModel):
     event_id: str
     event_type: str

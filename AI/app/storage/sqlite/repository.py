@@ -172,6 +172,37 @@ class SQLiteTaskRepository:
             row = connection.execute(query, parameters).fetchone()
         return int(row["count"] if row is not None else 0)
 
+    def list_tasks_by_statuses(self, statuses: list[str], *, limit: int = 50, offset: int = 0) -> list[TaskRun]:
+        if not statuses:
+            return []
+        placeholders = ", ".join("?" for _ in statuses)
+        query = f"""
+            SELECT *
+            FROM task_runs
+            WHERE status IN ({placeholders})
+            ORDER BY
+                CASE
+                    WHEN status IN ('PENDING', 'RUNNING', 'WAITING', 'BLOCKED') THEN 0
+                    ELSE 1
+                END,
+                COALESCE(updated_at, created_at) DESC,
+                created_at DESC
+            LIMIT ? OFFSET ?
+        """
+        parameters: list[Any] = [*statuses, limit, offset]
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(parameters)).fetchall()
+        return [self._task_from_row(row) for row in rows]
+
+    def count_tasks_by_statuses(self, statuses: list[str]) -> int:
+        if not statuses:
+            return 0
+        placeholders = ", ".join("?" for _ in statuses)
+        query = f"SELECT COUNT(*) AS count FROM task_runs WHERE status IN ({placeholders})"
+        with self._connect() as connection:
+            row = connection.execute(query, tuple(statuses)).fetchone()
+        return int(row["count"] if row is not None else 0)
+
     def create_step(self, step: StepRun) -> StepRun:
         now_dt = utc_now()
         step.created_at = step.created_at or now_dt

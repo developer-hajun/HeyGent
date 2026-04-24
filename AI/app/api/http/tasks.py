@@ -6,9 +6,16 @@ from app.api.deps.task_context import TaskContext, get_task_context
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_request import CreateTaskRequest, ResumeTaskRequest
 from app.contracts.task.task_response import (
+    ActiveTaskRunCurrentStepResponse,
+    ActiveTaskRunListItemResponse,
+    ActiveTaskRunListResponse,
     StepRunResponse,
     StepRunSummaryResponse,
     TaskEventResponse,
+    TaskRunFlowEdgeResponse,
+    TaskRunFlowNodeResponse,
+    TaskRunFlowResponse,
+    TaskRunFlowSemanticResponse,
     TaskRunListItemResponse,
     TaskRunListResponse,
     TaskRunResponse,
@@ -17,8 +24,9 @@ from app.contracts.task.task_status import TaskStatus
 from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.tasks.models import StepRun
 
-router = APIRouter(prefix="/tasks", tags=["tasks"])
+router = APIRouter(prefix="/taskRuns", tags=["taskRuns"])
 
+_ACTIVE_TASK_STATUSES = [status.value for status in (TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.WAITING, TaskStatus.BLOCKED)]
 _ACTIVE_STEP_STATUSES = {status.value for status in (StepStatus.PENDING, StepStatus.RUNNING, StepStatus.WAITING, StepStatus.BLOCKED)}
 _TASK_TITLE_FALLBACKS = {
     "model.generate": "모델 응답 생성",
@@ -122,6 +130,73 @@ def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse
     )
 
 
+def _build_active_task_item(task, steps: list[StepRun]) -> ActiveTaskRunListItemResponse:
+    current_step = _select_current_step(task, steps)
+    current_step_response = None
+    if current_step is not None:
+        current_step_response = ActiveTaskRunCurrentStepResponse(
+            step_run_id=current_step.step_run_id,
+            title=current_step.title,
+            status=current_step.status,
+            executor_key=current_step.executor_key,
+        )
+    input_summary = _summarize_task_input_payload(task.input_payload)
+    return ActiveTaskRunListItemResponse(
+        task_run_id=task.task_run_id,
+        status=task.status,
+        title=_display_task_title(task, input_summary=input_summary),
+        current_step_run_id=task.current_step_run_id,
+        current_step=current_step_response,
+        updated_at=task.updated_at,
+        wait_reason=(task.wait_payload or {}).get("reason"),
+    )
+
+
+def _build_flow_nodes(task, steps: list[StepRun]) -> list[TaskRunFlowNodeResponse]:
+    nodes: list[TaskRunFlowNodeResponse] = []
+    for step in steps:
+        semantic_detail = (step.detail_json or {}).get("semanticDetail") or {}
+        agent_detail = (step.detail_json or {}).get("agentDetail") or {}
+        semantic = None
+        if semantic_detail:
+            semantic = TaskRunFlowSemanticResponse(
+                key=semantic_detail.get("semanticKey"),
+                step=semantic_detail.get("semanticStep") or step.title,
+                goal=semantic_detail.get("goal"),
+                status=semantic_detail.get("status"),
+            )
+        nodes.append(
+            TaskRunFlowNodeResponse(
+                step_run_id=step.step_run_id,
+                step_order=step.step_order,
+                title=step.title,
+                status=step.status,
+                step_type=step.step_type,
+                executor_key=step.executor_key,
+                semantic=semantic,
+                is_current=step.step_run_id == task.current_step_run_id,
+                is_projected=bool((step.input_payload or {}).get("todo_key")),
+                child_task_run_id=agent_detail.get("childTaskRunId"),
+            )
+        )
+    return nodes
+
+
+def _build_flow_edges(steps: list[StepRun]) -> list[TaskRunFlowEdgeResponse]:
+    if len(steps) < 2:
+        return []
+    edges: list[TaskRunFlowEdgeResponse] = []
+    for previous_step, next_step in zip(steps, steps[1:]):
+        edges.append(
+            TaskRunFlowEdgeResponse(
+                from_step_run_id=previous_step.step_run_id,
+                to_step_run_id=next_step.step_run_id,
+                relation="next",
+            )
+        )
+    return edges
+
+
 @router.get("", response_model=TaskRunListResponse)
 def list_tasks(
     page: int = Query(default=1, ge=1),
@@ -145,6 +220,17 @@ def list_tasks(
     )
 
 
+@router.get("/active", response_model=ActiveTaskRunListResponse)
+def list_active_tasks(context: TaskContext = Depends(get_task_context)) -> ActiveTaskRunListResponse:
+    total_count = context.repository.count_tasks_by_statuses(_ACTIVE_TASK_STATUSES)
+    tasks = context.repository.list_tasks_by_statuses(_ACTIVE_TASK_STATUSES, limit=max(total_count, 1), offset=0)
+    items = [_build_active_task_item(task, context.repository.list_steps(task.task_run_id)) for task in tasks]
+    return ActiveTaskRunListResponse(
+        items=items,
+        total_count=total_count,
+    )
+
+
 @router.post("", response_model=TaskRunResponse)
 async def create_task(request: Request, payload: CreateTaskRequest, context: TaskContext = Depends(get_task_context)) -> TaskRunResponse:
     orchestrator = request.app.state.orchestrator
@@ -160,6 +246,25 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
     except KeyError as error:
         raise HTTPException(status_code=404, detail=f"unknown intent or executor: {error.args[0]}") from error
     return TaskRunResponse.model_validate(task, from_attributes=True)
+
+
+@router.get("/{task_run_id}/flow", response_model=TaskRunFlowResponse)
+def get_task_flow(task_run_id: str, context: TaskContext = Depends(get_task_context)) -> TaskRunFlowResponse:
+    task = context.repository.get_task(task_run_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    steps = context.repository.list_steps(task_run_id)
+    input_summary = _summarize_task_input_payload(task.input_payload)
+    return TaskRunFlowResponse(
+        task_run_id=task.task_run_id,
+        status=task.status,
+        title=_display_task_title(task, input_summary=input_summary),
+        current_step_run_id=task.current_step_run_id,
+        entry_executor_key=task.entry_executor_key,
+        summary=task.progress_summary,
+        nodes=_build_flow_nodes(task, steps),
+        edges=_build_flow_edges(steps),
+    )
 
 
 @router.get("/{task_run_id}", response_model=TaskRunResponse)

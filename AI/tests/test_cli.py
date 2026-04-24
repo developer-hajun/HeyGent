@@ -258,7 +258,7 @@ def test_tasks_browser_explains_old_server_405():
     with pytest.raises(TASK_BROWSER_UI.TaskBrowserRequestError) as error:
         TASK_BROWSER_UI.fetch_tasks_page(FailingClient(), get_settings(), status_filter="ALL", page=1, page_size=8)
 
-    assert "GET /tasks" in str(error.value)
+    assert "GET /taskRuns" in str(error.value)
     assert "재시작" in str(error.value)
 
 
@@ -1230,3 +1230,4 @@ def test_cli_command_help(capsys):
     assert exit_code == 0
     assert "[HeyGent CLI] create-task 도움말" in captured
     assert "--type" in captured
+

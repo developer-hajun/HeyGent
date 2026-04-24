@@ -137,7 +137,7 @@ def normalize_browser_filter(raw_value: str | None) -> str:
 
 def build_tasks_list_path(settings: Settings, *, status_filter: str, page: int, page_size: int) -> str:
     query = urlencode({"status": status_filter, "page": page, "page_size": page_size})
-    return request_path(settings, f"/tasks?{query}")
+    return request_path(settings, f"/taskRuns?{query}")
 
 
 
@@ -146,7 +146,7 @@ def _raise_request_error(response, payload: Any, *, action: str) -> None:
     detail = payload.get("detail") if isinstance(payload, dict) else None
 
     if action == "list" and status_code == 405:
-        raise TaskBrowserRequestError("현재 실행 중인 서버가 아직 GET /tasks 를 지원하지 않아. 최신 코드 반영 후 서버를 재시작해 줘.")
+        raise TaskBrowserRequestError("현재 실행 중인 서버가 아직 GET /taskRuns 를 지원하지 않아. 최신 코드 반영 후 서버를 재시작해 줘.")
     if action == "detail" and status_code == 404:
         raise TaskBrowserRequestError("선택한 task 를 서버에서 찾지 못했어. 이미 정리됐거나 다른 DB 를 보고 있을 수 있어.")
     if detail:
@@ -165,9 +165,9 @@ def fetch_tasks_page(client, settings: Settings, *, status_filter: str, page: in
 
 
 def fetch_task_detail_bundle(client, settings: Settings, task_run_id: str) -> dict[str, Any]:
-    task_response = client.request("GET", request_path(settings, f"/tasks/{task_run_id}"))
-    steps_response = client.request("GET", request_path(settings, f"/tasks/{task_run_id}/steps"))
-    events_response = client.request("GET", request_path(settings, f"/tasks/{task_run_id}/events"))
+    task_response = client.request("GET", request_path(settings, f"/taskRuns/{task_run_id}"))
+    steps_response = client.request("GET", request_path(settings, f"/taskRuns/{task_run_id}/steps"))
+    events_response = client.request("GET", request_path(settings, f"/taskRuns/{task_run_id}/events"))
 
     task_payload = task_response.json()
     steps_payload = steps_response.json()

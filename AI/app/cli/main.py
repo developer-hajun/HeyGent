@@ -631,7 +631,7 @@ def _handle_remote_command(args, settings: Settings) -> int:
         elif args.command == "create-task":
             response = client.request(
                 "POST",
-                _request_path(settings, "/tasks"),
+                _request_path(settings, "/taskRuns"),
                 json_body={
                     "intent_type": args.intent_type,
                     "owner_key": args.owner_key,
@@ -639,20 +639,20 @@ def _handle_remote_command(args, settings: Settings) -> int:
                 },
             )
         elif args.command == "watch-task":
-            response = client.request("GET", _request_path(settings, f"/tasks/{args.task_id}"))
+            response = client.request("GET", _request_path(settings, f"/taskRuns/{args.task_id}"))
         elif args.command in {"tasks", "/tasks"}:
             if args.task_id:
-                response = client.request("GET", _request_path(settings, f"/tasks/{args.task_id}"))
+                response = client.request("GET", _request_path(settings, f"/taskRuns/{args.task_id}"))
             else:
                 normalized_status = _normalize_browser_filter(args.status)
                 response = client.request(
                     "GET",
-                    _request_path(settings, f"/tasks?status={normalized_status}&page={args.page}&page_size={args.page_size}"),
+                    _request_path(settings, f"/taskRuns?status={normalized_status}&page={args.page}&page_size={args.page_size}"),
                 )
         elif args.command == "resume-task":
             response = client.request(
                 "POST",
-                _request_path(settings, f"/tasks/{args.task_id}/resume"),
+                _request_path(settings, f"/taskRuns/{args.task_id}/resume"),
                 json_body={
                     "approval_id": args.approval_id,
                     "payload": _load_payload(args.payload),
@@ -667,9 +667,9 @@ def _handle_remote_command(args, settings: Settings) -> int:
                 json_body={"redirect_uri": args.redirect_uri, "state": args.state, "force_oauth": args.force_oauth},
             )
         elif args.command == "list-steps":
-            response = client.request("GET", _request_path(settings, f"/tasks/{args.task_id}/steps"))
+            response = client.request("GET", _request_path(settings, f"/taskRuns/{args.task_id}/steps"))
         else:
-            response = client.request("GET", _request_path(settings, f"/tasks/{args.task_id}/events"))
+            response = client.request("GET", _request_path(settings, f"/taskRuns/{args.task_id}/events"))
 
     response_json = response.json()
     _print_response(args.command, response_json, settings, as_json=args.json)
