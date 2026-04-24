@@ -6,7 +6,13 @@ from app.core.time import utc_now
 from app.domain.orchestration.agent.step_executor import StepExecutor
 from app.domain.orchestration.approval import ApprovalRuntime, ApprovalService
 from app.domain.orchestration.delegation import ChildSessionLauncher, DelegateRuntime
-from app.domain.orchestration.policies import ensure_step_transition, ensure_task_transition, normalize_executor_outcome
+from app.domain.orchestration.policies import (
+    ensure_step_transition,
+    ensure_task_transition,
+    normalize_executor_outcome,
+    semantic_lifecycle_for_status,
+    task_is_terminal,
+)
 from app.domain.orchestration.runtime_planning import Planner
 from app.domain.orchestration.runtime_planning.todo_state import parse_task_todo_payload
 from app.domain.orchestration.result_inspector import OutcomeInspector
@@ -122,7 +128,7 @@ class TaskEngine:
         step.wait_payload = outcome.get("wait_payload", {})
         step.error_message = outcome.get("error_message")
         step.detail_json = merge_step_detail(step.detail_json, outcome.get("detail_json"))
-        semantic_lifecycle = self._semantic_lifecycle(task_status)
+        semantic_lifecycle = semantic_lifecycle_for_status(task_status)
         step.detail_json = merge_step_detail(
             step.detail_json,
             build_semantic_step_detail(
@@ -135,7 +141,7 @@ class TaskEngine:
             ),
         )
         step.summary_message = outcome.get("summary_message")
-        if task_status in {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED}:
+        if task_is_terminal(task_status):
             task.ended_at = utc_now()
             step.ended_at = utc_now()
         self.repository.update_task(task)
@@ -173,18 +179,6 @@ class TaskEngine:
 
         await self._emit("task.updated", task, step)
         return task
-
-    @staticmethod
-    def _semantic_lifecycle(task_status: str) -> str:
-        if task_status == TaskStatus.WAITING:
-            return "waiting"
-        if task_status == TaskStatus.COMPLETED:
-            return "completed"
-        if task_status == TaskStatus.FAILED:
-            return "failed"
-        if task_status == TaskStatus.CANCELED:
-            return "canceled"
-        return "running"
 
     async def _emit(self, event_type: str, task: TaskRun, step: StepRun | None = None, payload: dict | None = None) -> None:
         event = build_task_event(

@@ -8,6 +8,9 @@ class InvalidTransitionError(ValueError):
     pass
 
 
+TERMINAL_TASK_STATUSES = {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED}
+TERMINAL_STEP_STATUSES = {StepStatus.COMPLETED, StepStatus.FAILED, StepStatus.CANCELED}
+
 TASK_TRANSITIONS = {
     TaskStatus.PENDING: {TaskStatus.RUNNING, TaskStatus.CANCELED},
     TaskStatus.RUNNING: {TaskStatus.WAITING, TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED},
@@ -46,3 +49,33 @@ def ensure_step_transition(current: str, target: str) -> None:
         return
     if target not in STEP_TRANSITIONS.get(StepStatus(current), set()):
         raise InvalidTransitionError(f"invalid step transition: {current} -> {target}")
+
+
+def semantic_lifecycle_for_status(status: str) -> str:
+    """TaskRun/StepRun 상태를 semanticDetail.lifecycle 값으로 변환한다.
+
+    loop 가 직접 문자열을 고르기 시작하면 WAITING/FAILED 같은 상태와
+    semanticDetail.status 가 쉽게 어긋난다. 상태 -> lifecycle 매핑은
+    orchestration 정책으로 고정해 두고, detail 계산은 이 값을 기준으로 한다.
+    """
+
+    normalized = str(status or TaskStatus.RUNNING).strip().upper()
+    if normalized == TaskStatus.WAITING:
+        return "waiting"
+    if normalized == TaskStatus.COMPLETED:
+        return "completed"
+    if normalized == TaskStatus.FAILED:
+        return "failed"
+    if normalized == TaskStatus.CANCELED:
+        return "canceled"
+    if normalized == TaskStatus.PENDING:
+        return "pending"
+    return "running"
+
+
+def task_is_terminal(status: str) -> bool:
+    return TaskStatus(status) in TERMINAL_TASK_STATUSES
+
+
+def step_is_terminal(status: str) -> bool:
+    return StepStatus(status) in TERMINAL_STEP_STATUSES
