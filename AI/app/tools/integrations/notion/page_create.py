@@ -13,7 +13,7 @@ class NotionPageCreateExecutor:
 
     spec = ExecutorSpec(
         intent_type="notion.page.create",
-        entry_capability="notion.page.create",
+        entry_executor_key="notion.page.create",
         executor_key="notion.page.create",
         task_type="notion.page.create",
         task_title="Notion 페이지 생성",

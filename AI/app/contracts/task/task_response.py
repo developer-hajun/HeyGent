@@ -30,7 +30,7 @@ class TaskRunResponse(BaseModel):
     task_run_id: str
     task_type: str
     intent_type: str | None = None
-    entry_capability: str | None = None
+    entry_executor_key: str | None = None
     current_step_run_id: str | None = None
     status: str
     title: str | None = None
@@ -61,7 +61,7 @@ class TaskRunListItemResponse(BaseModel):
     task_run_id: str
     task_type: str
     intent_type: str | None = None
-    entry_capability: str | None = None
+    entry_executor_key: str | None = None
     status: str
     title: str | None = None
     input_summary: str | None = None

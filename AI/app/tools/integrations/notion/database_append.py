@@ -13,7 +13,7 @@ class NotionDatabaseAppendExecutor:
 
     spec = ExecutorSpec(
         intent_type="notion.database.append",
-        entry_capability="notion.database.append",
+        entry_executor_key="notion.database.append",
         executor_key="notion.database.append",
         task_type="notion.database.append",
         task_title="Notion 데이터 추가",

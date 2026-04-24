@@ -60,17 +60,18 @@ class SQLiteTaskRepository:
             connection.execute(
                 """
                 INSERT INTO task_runs (
-                    task_run_id, task_type, intent_type, entry_capability, current_step_run_id, owner_key, status, title,
+                    task_run_id, task_type, intent_type, entry_executor_key, entry_capability, current_step_run_id, owner_key, status, title,
                     input_payload, result_payload, todo_state, wait_payload, error_message,
                     progress_summary, revision, created_at, started_at, updated_at, ended_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task.task_run_id,
                     task.task_type,
                     task.intent_type,
-                    task.entry_capability,
+                    task.entry_executor_key or task.entry_capability,
+                    task.entry_capability or task.entry_executor_key,
                     task.current_step_run_id,
                     task.owner_key,
                     task.status,
@@ -97,14 +98,15 @@ class SQLiteTaskRepository:
             connection.execute(
                 """
                 UPDATE task_runs
-                SET status=?, title=?, intent_type=?, entry_capability=?, current_step_run_id=?, result_payload=?, todo_state=?, wait_payload=?, error_message=?, progress_summary=?, revision=?, started_at=?, updated_at=?, ended_at=?
+                SET status=?, title=?, intent_type=?, entry_executor_key=?, entry_capability=?, current_step_run_id=?, result_payload=?, todo_state=?, wait_payload=?, error_message=?, progress_summary=?, revision=?, started_at=?, updated_at=?, ended_at=?
                 WHERE task_run_id=?
                 """,
                 (
                     task.status,
                     task.title or task.task_type,
                     task.intent_type,
-                    task.entry_capability,
+                    task.entry_executor_key or task.entry_capability,
+                    task.entry_capability or task.entry_executor_key,
                     task.current_step_run_id,
                     json.dumps(task.result_payload),
                     json.dumps(task.todo_state),
@@ -445,11 +447,13 @@ class SQLiteTaskRepository:
         return result.rowcount
 
     def _task_from_row(self, row: sqlite3.Row) -> TaskRun:
+        entry_executor_key = row["entry_executor_key"] or row["entry_capability"]
         return TaskRun(
             task_run_id=row["task_run_id"],
             task_type=row["task_type"],
             intent_type=row["intent_type"],
-            entry_capability=row["entry_capability"],
+            entry_executor_key=entry_executor_key,
+            entry_capability=row["entry_capability"] or entry_executor_key,
             current_step_run_id=row["current_step_run_id"],
             owner_key=row["owner_key"],
             status=row["status"],

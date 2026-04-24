@@ -29,6 +29,7 @@ class AgentLoopRunner:
     async def start(self, request: OrchestrationRequest) -> TaskRun:
         executor = self.tool_registry.resolve(
             intent_type=request.intent_type,
+            entry_executor_key=request.entry_executor_key,
             entry_capability=request.entry_capability,
         )
         task = self.planner.materialize_task(
@@ -52,7 +53,7 @@ class AgentLoopRunner:
         if step is None:
             raise KeyError(step_run_id)
 
-        executor_key = step.executor_key or task.entry_capability
+        executor_key = step.executor_key or task.entry_executor_key or task.entry_capability
         if not executor_key:
             raise ValueError("step executor key is missing")
 
@@ -66,13 +67,13 @@ class AgentLoopRunner:
         owner_key: str,
         input_payload: dict,
         intent_type: str,
-        entry_capability: str,
+        entry_executor_key: str,
     ) -> TaskRun:
         return await self.start(
             OrchestrationRequest(
                 owner_key=owner_key,
                 input_payload=input_payload,
                 intent_type=intent_type,
-                entry_capability=entry_capability,
+                entry_executor_key=entry_executor_key,
             )
         )

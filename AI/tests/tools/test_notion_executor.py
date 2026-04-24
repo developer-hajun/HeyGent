@@ -28,7 +28,7 @@ def test_notion_page_create_executor_returns_stub_result(task_run, step_run):
     )
     task_run.task_type = "notion.page.create"
     task_run.intent_type = "notion.page.create"
-    task_run.entry_capability = "notion.page.create"
+    task_run.entry_executor_key = "notion.page.create"
     task_run.input_payload = {"title": "Weekly Sync", "content": "Agenda"}
     step_run.executor_key = "notion.page.create"
 
@@ -51,7 +51,7 @@ def test_notion_database_append_executor_returns_stub_result(task_run, step_run)
     )
     task_run.task_type = "notion.database.append"
     task_run.intent_type = "notion.database.append"
-    task_run.entry_capability = "notion.database.append"
+    task_run.entry_executor_key = "notion.database.append"
     task_run.input_payload = {"database_id": "db123", "fields": {"Name": "Jun"}}
     step_run.executor_key = "notion.database.append"
 

@@ -26,7 +26,7 @@ class PlannedTask:
 
     task_type: str
     intent_type: str
-    entry_capability: str
+    entry_executor_key: str
     owner_key: str
     title: str | None = None
     input_payload: dict[str, Any] = field(default_factory=dict)

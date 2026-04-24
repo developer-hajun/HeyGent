@@ -43,15 +43,18 @@ class ToolRegistry:
 
         self._entries_by_key = {entry.name: entry for entry in entries}
         self._default_entry_by_intent = {
-            entry.executor.spec.intent_type: entry.executor.spec.entry_capability for entry in entries
+            entry.executor.spec.intent_type: entry.executor.spec.entry_executor_key for entry in entries
         }
 
     def resolve(
         self,
         *,
         intent_type: str | None = None,
+        entry_executor_key: str | None = None,
         entry_capability: str | None = None,
     ) -> TaskExecutor:
+        if entry_executor_key:
+            return self.get(entry_executor_key)
         if entry_capability:
             return self.get(entry_capability)
 

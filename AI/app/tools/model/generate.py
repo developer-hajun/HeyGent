@@ -10,7 +10,7 @@ class ModelGenerateExecutor:
 
     spec = ExecutorSpec(
         intent_type="model.generate",
-        entry_capability="model.generate",
+        entry_executor_key="model.generate",
         executor_key="model.generate",
         task_type="model.generate",
         task_title="모델 생성 요청",

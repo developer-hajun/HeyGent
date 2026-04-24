@@ -43,7 +43,7 @@ class ChildSessionLauncher:
             owner_key=owner_key,
             input_payload=input_payload,
             intent_type=spec.child_intent_type,
-            entry_capability=spec.child_entry_capability,
+            entry_executor_key=spec.child_entry_executor_key,
         )
         return ChildSessionLaunchResult(
             agent_id=self._agent_id(spec),
@@ -54,4 +54,4 @@ class ChildSessionLauncher:
 
     @staticmethod
     def _agent_id(spec: ChildSessionSpec) -> str:
-        return f"{spec.parent_step_run_id}:{spec.child_entry_capability}"
+        return f"{spec.parent_step_run_id}:{spec.child_entry_executor_key}"

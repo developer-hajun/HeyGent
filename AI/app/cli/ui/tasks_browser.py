@@ -476,7 +476,7 @@ def render_task_detail(state: TaskBrowserState) -> str:
         f"상태: {task.get('status') or '-'}",
         f"입력: {_task_detail_input_summary(task)}",
         "TaskRun = 전체 작업 / StepRun = 한 단계 / detail_json = step 저장 실행 정보",
-        f"step: {len(steps)}개   executor: {task.get('entry_capability') or '-'}",
+        f"step: {len(steps)}개   executor: {task.get('entry_executor_key') or task.get('entry_capability') or '-'}",
         f"최근 갱신: {_format_time(task.get('updated_at') or task.get('created_at'))}",
         "",
         *_render_step_preview_lines(state),

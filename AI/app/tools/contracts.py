@@ -29,7 +29,7 @@ class ExecutorSpec:
     """loop 가 실행자를 이해하는 데 필요한 최소 정적 정보다."""
 
     intent_type: str
-    entry_capability: str
+    entry_executor_key: str
     executor_key: str
     task_type: str
     task_title: str

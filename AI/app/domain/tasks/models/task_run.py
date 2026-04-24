@@ -23,8 +23,9 @@ class TaskRun:
     # 사용자가 요청한 의도 타입.
     # flow 제거 이후에는 이 값이 "무슨 작업을 하려는가"를 설명하는 정식 기준점이 된다.
     intent_type: str | None = None
-    # 호환 필드: 이 TaskRun 이 처음 어떤 executor 로 진입했는지 남기는 키.
-    # 2차 migration 에서 entry_executor_key 로 이름을 분리한다.
+    # 이 TaskRun 이 처음 어떤 executor 로 진입했는지 남기는 canonical key.
+    entry_executor_key: str | None = None
+    # Deprecated 호환 필드. 기존 API/DB 사용자를 위해 한동안 유지한다.
     entry_capability: str | None = None
     # 현재 루프가 붙잡고 있는 StepRun ID.
     # waiting/resume/이벤트 발행이 "마지막 step 추측"이 아니라 정확한 step 기준으로 움직이게 만드는 최소 앵커다.
