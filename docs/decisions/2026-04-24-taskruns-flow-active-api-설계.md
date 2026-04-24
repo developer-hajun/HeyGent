@@ -179,8 +179,50 @@
   - `active`는 spinner/waiting 복원 대상이고, `recent`는 완료/실패 결과를 잠깐 보여준 뒤 사라질 수 있는 항목이다.
 - 현재 기준
   - `active`: `PENDING`, `RUNNING`, `WAITING`, `BLOCKED`
-  - `recent`: `COMPLETED`, `FAILED`, `CANCELED` 중 최근 TTL 이내 항목
-  - 1차 구현 TTL 기본값은 300초다.
+- `recent`: `COMPLETED`, `FAILED`, `CANCELED` 중 최근 TTL 이내 항목
+- 1차 구현 TTL 기본값은 300초다.
+
+## 3. GET `/api/v1/taskRuns/{taskRunId}/steps`
+
+### 목적
+
+- 특정 TaskRun 을 화면에서 카드/리스트 형태로 보여 주는 StepRun 시각화 목록이다.
+- raw 내부 저장 구조를 그대로 노출하는 API가 아니라, StepRun 을 FE가 바로 해석할 수 있게 주는 데 목적이 있다.
+
+### 현재 계약 기준
+
+- `StepRun`은 계속 시각화의 기본 단위다.
+- 따라서 `steps` 응답은 실행 상세 raw dump 보다는 화면용 step card 목록으로 보는 편이 맞다.
+- 현재 응답에는 아래 정보가 포함된다.
+  - `semantic`
+  - `isCurrent`
+  - `isProjected`
+  - `childTaskRunId`
+  - `childTask`
+  - 기존 raw payload/detail_json
+
+### 2026-04-25 반영
+
+- `steps` 응답에 `semantic`, `isCurrent`, `isProjected`, `childTask`를 함께 내려준다.
+- projected step 역시 시각화 대상에 포함한다.
+- 따라서 `steps`는 "실행된 step만"이 아니라 "현재 TaskRun 에서 보여 줄 step card 목록"으로 해석한다.
+
+## 4. POST `/api/v1/taskRuns/{taskRunId}/resume`
+
+### 목적
+
+- 사용자 승인 등으로 `WAITING` 상태에 들어간 TaskRun 을 재개한다.
+
+### 현재 계약 기준
+
+- 현재 엔진에서 공식 resume 대상은 `WAITING`만이다.
+- `BLOCKED`는 enum 에 존재하지만 실제 런타임 전이가 없으므로 아직 resume contract 에 넣지 않는다.
+- approval 기반 재개가 기준이므로 `approvalId`와 `payload`를 받는다.
+
+### 2026-04-25 반영
+
+- `resume`는 `WAITING` 상태가 아니면 `409`로 거절한다.
+- 따라서 현재 명세 문구도 "WAITING/BLOCKED" 보다는 "WAITING 상태 TaskRun 재개"로 맞추는 편이 정확하다.
 
 ## 우선순위
 
