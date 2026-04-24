@@ -36,7 +36,7 @@ def run_model_check_task(client, settings: Settings, prompt: str) -> httpx.Respo
 
     return client.request(
         "POST",
-        request_path(settings, "/tasks"),
+        request_path(settings, "/taskRuns"),
         json_body={
             "intent_type": "model.generate",
             "owner_key": "cli-user",
@@ -50,7 +50,7 @@ def run_prompt_task(client, settings: Settings, prompt: str):
 
     return client.request(
         "POST",
-        request_path(settings, "/tasks"),
+        request_path(settings, "/taskRuns"),
         json_body={
             "intent_type": "model.generate",
             "owner_key": "cli-user",

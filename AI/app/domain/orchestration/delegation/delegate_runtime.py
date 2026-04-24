@@ -37,6 +37,7 @@ class DelegateRuntime:
             launch_result = await self.child_session_launcher.launch(
                 spec=spec,
                 owner_key=task.owner_key,
+                session_key=task.session_key,
                 input_payload=dict(child_session.get("input_payload") or {}),
             )
         except Exception as error:

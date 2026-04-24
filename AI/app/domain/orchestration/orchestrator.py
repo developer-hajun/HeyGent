@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.contracts.task.task_status import TaskStatus
 from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.orchestration.agent.runner import AgentLoopRunner
 from app.domain.tasks.repository import TaskRepository
@@ -20,9 +21,17 @@ class Orchestrator:
         task = self.repository.get_task(task_run_id)
         if task is None:
             raise KeyError(task_run_id)
+        if task.status != TaskStatus.WAITING:
+            raise ValueError("task is not waiting")
         approval = self.repository.get_open_approval(task_run_id)
         if approval is None:
             raise ValueError("no open approval")
         resolved_approval_id = approval_id or approval["approval_id"]
         task.current_step_run_id = approval["step_run_id"]
         return await self.loop_runner.resume(task=task, approval_id=resolved_approval_id, payload=payload)
+
+    async def cancel(self, *, task_run_id: str) -> TaskRun:
+        task = self.repository.get_task(task_run_id)
+        if task is None:
+            raise KeyError(task_run_id)
+        return await self.loop_runner.cancel_waiting(task=task)

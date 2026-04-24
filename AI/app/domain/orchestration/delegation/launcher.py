@@ -35,12 +35,13 @@ class ChildSessionLauncher:
             summary=result.summary,
         )
 
-    async def launch(self, *, spec: ChildSessionSpec, owner_key: str, input_payload: dict) -> ChildSessionLaunchResult:
+    async def launch(self, *, spec: ChildSessionSpec, owner_key: str, session_key: str | None, input_payload: dict) -> ChildSessionLaunchResult:
         if self._start_child is None:
             raise RuntimeError("child session start callback is not bound")
 
         task = await self._start_child(
             owner_key=owner_key,
+            session_key=session_key,
             input_payload=input_payload,
             intent_type=spec.child_intent_type,
             entry_executor_key=spec.child_entry_executor_key,

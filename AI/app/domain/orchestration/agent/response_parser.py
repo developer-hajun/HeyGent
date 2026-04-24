@@ -11,6 +11,7 @@ _JSON_BLOCK_PATTERN = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL | re.IG
 
 @dataclass(slots=True)
 class AgentLoopDirective:
+    action: str | None = None
     final_text: str | None = None
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     approval_required: bool = False
@@ -18,6 +19,9 @@ class AgentLoopDirective:
     delegate_prompt: str | None = None
     delegate_skill_hints: list[str] = field(default_factory=list)
     delegate_summary_prompt: str | None = None
+    action_summary: str | None = None
+    handoff_summary: str | None = None
+    semantic_hint: dict[str, str] | None = None
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
 
@@ -32,6 +36,7 @@ class AgentResponseParser:
         tool_calls = self._normalize_tool_calls(payload.get("tool_calls"))
         final_text = self._normalize_final_text(payload)
         return AgentLoopDirective(
+            action=self._normalize_action(payload, tool_calls=tool_calls, final_text=final_text),
             final_text=final_text,
             tool_calls=tool_calls,
             approval_required=bool(payload.get("approval_required")),
@@ -39,6 +44,9 @@ class AgentResponseParser:
             delegate_prompt=self._normalize_optional_text(payload.get("delegate_prompt")),
             delegate_skill_hints=self._normalize_string_list(payload.get("delegate_skill_hints")),
             delegate_summary_prompt=self._normalize_optional_text(payload.get("delegate_summary_prompt")),
+            action_summary=self._normalize_optional_text(payload.get("action_summary")),
+            handoff_summary=self._normalize_optional_text(payload.get("handoff_summary")),
+            semantic_hint=self._normalize_semantic_hint(payload.get("semantic_hint")),
             raw_payload=payload,
         )
 
@@ -107,6 +115,23 @@ class AgentResponseParser:
                 return value
         return None
 
+    @classmethod
+    def _normalize_action(cls, payload: dict[str, Any], *, tool_calls: list[dict[str, Any]], final_text: str | None) -> str | None:
+        raw_action = cls._normalize_optional_text(payload.get("action"))
+        if raw_action:
+            normalized = raw_action.lower()
+            if normalized in {"tool_calls", "approval", "delegate", "final"}:
+                return normalized
+        if bool(payload.get("approval_required")):
+            return "approval"
+        if cls._normalize_optional_text(payload.get("delegate_prompt")):
+            return "delegate"
+        if tool_calls:
+            return "tool_calls"
+        if final_text:
+            return "final"
+        return None
+
     @staticmethod
     def _normalize_optional_text(value: Any) -> str | None:
         if not isinstance(value, str):
@@ -119,3 +144,18 @@ class AgentResponseParser:
         if not isinstance(value, list):
             return []
         return [str(item).strip() for item in value if str(item).strip()]
+
+    @classmethod
+    def _normalize_semantic_hint(cls, value: Any) -> dict[str, str] | None:
+        if not isinstance(value, dict):
+            return None
+        label = cls._normalize_optional_text(value.get("label"))
+        goal = cls._normalize_optional_text(value.get("goal"))
+        if not label and not goal:
+            return None
+        normalized: dict[str, str] = {}
+        if label:
+            normalized["label"] = label
+        if goal:
+            normalized["goal"] = goal
+        return normalized

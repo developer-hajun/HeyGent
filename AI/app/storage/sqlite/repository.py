@@ -60,11 +60,11 @@ class SQLiteTaskRepository:
             connection.execute(
                 """
                 INSERT INTO task_runs (
-                    task_run_id, task_type, intent_type, entry_executor_key, current_step_run_id, owner_key, status, title,
+                    task_run_id, task_type, intent_type, entry_executor_key, current_step_run_id, owner_key, session_key, status, title,
                     input_payload, result_payload, todo_state, wait_payload, error_message,
                     progress_summary, revision, created_at, started_at, updated_at, ended_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     task.task_run_id,
@@ -73,6 +73,7 @@ class SQLiteTaskRepository:
                     task.entry_executor_key,
                     task.current_step_run_id,
                     task.owner_key,
+                    task.session_key,
                     task.status,
                     task.title or task.task_type,
                     json.dumps(task.input_payload),
@@ -131,7 +132,7 @@ class SQLiteTaskRepository:
             row = connection.execute("SELECT * FROM step_runs WHERE step_run_id=?", (step_run_id,)).fetchone()
         return self._step_from_row(row) if row else None
 
-    def list_tasks(self, *, status: str | None = None, limit: int = 20, offset: int = 0) -> list[TaskRun]:
+    def list_tasks(self, *, status: str | None = None, session_key: str | None = None, limit: int = 20, offset: int = 0) -> list[TaskRun]:
         """최근 TaskRun 목록을 조회한다.
 
         목록 화면에서는 진행 중 작업을 먼저 보여 주는 편이 유용하므로,
@@ -153,23 +154,72 @@ class SQLiteTaskRepository:
             LIMIT ? OFFSET ?
         """
         parameters: list[Any] = []
-        where_clause = ""
+        conditions: list[str] = []
         if status is not None:
-            where_clause = "WHERE status = ?"
+            conditions.append("status = ?")
             parameters.append(status)
+        if session_key is not None:
+            conditions.append("session_key = ?")
+            parameters.append(session_key)
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         parameters.extend([limit, offset])
         with self._connect() as connection:
             rows = connection.execute(query.format(where_clause=where_clause), tuple(parameters)).fetchall()
         return [self._task_from_row(row) for row in rows]
 
-    def count_tasks(self, *, status: str | None = None) -> int:
+    def count_tasks(self, *, status: str | None = None, session_key: str | None = None) -> int:
         query = "SELECT COUNT(*) AS count FROM task_runs"
-        parameters: tuple[Any, ...] = ()
+        parameters: list[Any] = []
+        conditions: list[str] = []
         if status is not None:
-            query += " WHERE status = ?"
-            parameters = (status,)
+            conditions.append("status = ?")
+            parameters.append(status)
+        if session_key is not None:
+            conditions.append("session_key = ?")
+            parameters.append(session_key)
+        if conditions:
+            query += f" WHERE {' AND '.join(conditions)}"
         with self._connect() as connection:
-            row = connection.execute(query, parameters).fetchone()
+            row = connection.execute(query, tuple(parameters)).fetchone()
+        return int(row["count"] if row is not None else 0)
+
+    def list_tasks_by_statuses(self, statuses: list[str], *, session_key: str | None = None, limit: int = 50, offset: int = 0) -> list[TaskRun]:
+        if not statuses:
+            return []
+        placeholders = ", ".join("?" for _ in statuses)
+        session_clause = " AND session_key = ?" if session_key is not None else ""
+        query = f"""
+            SELECT *
+            FROM task_runs
+            WHERE status IN ({placeholders}){session_clause}
+            ORDER BY
+                CASE
+                    WHEN status IN ('PENDING', 'RUNNING', 'WAITING', 'BLOCKED') THEN 0
+                    ELSE 1
+                END,
+                COALESCE(updated_at, created_at) DESC,
+                created_at DESC
+            LIMIT ? OFFSET ?
+        """
+        parameters: list[Any] = [*statuses]
+        if session_key is not None:
+            parameters.append(session_key)
+        parameters.extend([limit, offset])
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(parameters)).fetchall()
+        return [self._task_from_row(row) for row in rows]
+
+    def count_tasks_by_statuses(self, statuses: list[str], *, session_key: str | None = None) -> int:
+        if not statuses:
+            return 0
+        placeholders = ", ".join("?" for _ in statuses)
+        session_clause = " AND session_key = ?" if session_key is not None else ""
+        query = f"SELECT COUNT(*) AS count FROM task_runs WHERE status IN ({placeholders}){session_clause}"
+        parameters: list[Any] = [*statuses]
+        if session_key is not None:
+            parameters.append(session_key)
+        with self._connect() as connection:
+            row = connection.execute(query, tuple(parameters)).fetchone()
         return int(row["count"] if row is not None else 0)
 
     def create_step(self, step: StepRun) -> StepRun:
@@ -299,6 +349,27 @@ class SQLiteTaskRepository:
             "status": "RESOLVED",
             "request_payload": json.loads(row["request_payload"]),
             "response_payload": payload,
+            "created_at": row["created_at"],
+            "resolved_at": resolved_at,
+        }
+
+    def cancel_approval_request(self, approval_id: str) -> dict[str, Any] | None:
+        resolved_at = utc_now().isoformat()
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM approval_requests WHERE approval_id=?", (approval_id,)).fetchone()
+            if row is None:
+                return None
+            connection.execute(
+                "UPDATE approval_requests SET status=?, response_payload=?, resolved_at=? WHERE approval_id=?",
+                ("CANCELED", json.dumps({"canceled": True}), resolved_at, approval_id),
+            )
+        return {
+            "approval_id": approval_id,
+            "task_run_id": row["task_run_id"],
+            "step_run_id": row["step_run_id"],
+            "status": "CANCELED",
+            "request_payload": json.loads(row["request_payload"]),
+            "response_payload": {"canceled": True},
             "created_at": row["created_at"],
             "resolved_at": resolved_at,
         }
@@ -452,6 +523,7 @@ class SQLiteTaskRepository:
             entry_executor_key=row["entry_executor_key"],
             current_step_run_id=row["current_step_run_id"],
             owner_key=row["owner_key"],
+            session_key=row["session_key"],
             status=row["status"],
             title=row["title"],
             input_payload=json.loads(row["input_payload"]),

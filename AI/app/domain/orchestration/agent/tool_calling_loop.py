@@ -12,6 +12,7 @@ from app.domain.orchestration.runtime_planning.todo_state import (
     build_todo_detail_patch,
     parse_task_todo_payload,
 )
+from app.domain.tasks.detail import build_model_decision_detail
 
 
 class ToolCallingLoopExecutor:
@@ -34,6 +35,7 @@ class ToolCallingLoopExecutor:
         pending_tool_calls = self._normalize_calls(task_input.get("tool_calls"))
         all_tool_results: list[dict[str, Any]] = []
         operations: list[dict[str, Any]] = []
+        last_executed_tool_batch_signature: tuple[str, ...] | None = None
         last_prompt = ""
         generated = None
         llm_call_count = 0
@@ -82,10 +84,12 @@ class ToolCallingLoopExecutor:
                         model_name=self._model_name(generated, task_input),
                         todo_state=current_todo_state,
                         operation_counters=operation_counters,
+                        directive=None,
                     )
                 all_tool_results.extend(batch_result["tool_results"])
                 operations.extend(batch_result["operations"])
                 current_todo_state = self._next_todo_state(current_todo_state, batch_result["tool_results"])
+                last_executed_tool_batch_signature = self._tool_call_signature(pending_tool_calls)
                 pending_tool_calls = []
 
             if task_input.get("approval_required") and resume_payload is None and turn_index == 1:
@@ -98,6 +102,7 @@ class ToolCallingLoopExecutor:
                     model_name=self._model_name(generated, task_input),
                     todo_state=current_todo_state,
                     operation_counters=operation_counters,
+                    directive=None,
                 )
 
             last_prompt = self.prompt_builder.build_agent_loop_prompt(
@@ -116,6 +121,8 @@ class ToolCallingLoopExecutor:
             )
             llm_call_count += 1
 
+            directive = self.response_parser.parse(generated.output_text)
+
             operations.append(
                 {
                     "key": self._next_operation_key(
@@ -126,11 +133,9 @@ class ToolCallingLoopExecutor:
                     "title": f"모델 응답 생성 {turn_index}",
                     "kind": "llm",
                     "status": "completed",
-                    "summary": generated.output_text[:80],
+                    "summary": directive.action_summary or generated.output_text[:80],
                 }
             )
-
-            directive = self.response_parser.parse(generated.output_text)
             if directive.approval_required and resume_payload is None:
                 approval_reason = directive.approval_reason or "사용자 확인이 필요합니다"
                 return self._build_waiting_outcome(
@@ -141,6 +146,7 @@ class ToolCallingLoopExecutor:
                     model_name=self._model_name(generated, task_input),
                     todo_state=current_todo_state,
                     operation_counters=operation_counters,
+                    directive=directive,
                 )
 
             if directive.delegate_prompt:
@@ -149,6 +155,27 @@ class ToolCallingLoopExecutor:
                 delegate_skill_hints = directive.delegate_skill_hints
             if directive.delegate_summary_prompt:
                 delegate_summary_prompt = directive.delegate_summary_prompt
+
+            tool_call_guard = self._guard_tool_calls(
+                directive=directive,
+                turn_index=turn_index,
+                max_iterations=max_iterations,
+                last_executed_tool_batch_signature=last_executed_tool_batch_signature,
+            )
+            if tool_call_guard == "prefer_final":
+                final_text = directive.final_text or generated.output_text
+                break
+            if isinstance(tool_call_guard, str):
+                return self._build_failed_outcome(
+                    error_message=tool_call_guard,
+                    tool_results=all_tool_results,
+                    operations=operations,
+                    llm_call_count=llm_call_count,
+                    model_name=self._model_name(generated, task_input),
+                    todo_state=current_todo_state,
+                    operation_counters=operation_counters,
+                    directive=directive,
+                )
 
             if directive.tool_calls:
                 pending_tool_calls = directive.tool_calls
@@ -166,6 +193,7 @@ class ToolCallingLoopExecutor:
                 model_name=self._model_name(generated, task_input),
                 todo_state=current_todo_state,
                 operation_counters=operation_counters,
+                directive=None,
             )
 
         if final_text is None:
@@ -185,6 +213,7 @@ class ToolCallingLoopExecutor:
             resume_payload=resume_payload,
             todo_state=current_todo_state,
             operation_counters=operation_counters,
+            directive=directive if generated is not None else None,
         )
 
     def _execute_tool_calls(
@@ -234,18 +263,23 @@ class ToolCallingLoopExecutor:
         resume_payload: dict[str, Any] | None,
         todo_state: dict[str, Any],
         operation_counters: dict[str, int],
+        directive,
     ) -> dict[str, Any]:
         provider_name = generated.provider_name if generated is not None else self.provider.name
         metadata = dict(generated.metadata or {}) if generated is not None else {}
         usage = dict(generated.usage or {}) if generated is not None else {}
         model_name = self._model_name(generated, task_input)
         tool_names = [str(item["name"]) for item in tool_results]
+        action_summary = directive.action_summary if directive is not None else None
+        handoff_summary = directive.handoff_summary if directive is not None else None
         result_payload = {
             "provider_name": provider_name,
             "text": final_text,
             "metadata": metadata,
             "tool_results": tool_results,
         }
+        if handoff_summary:
+            result_payload["handoff_summary"] = handoff_summary
         output_payload = {
             "prompt": prompt,
             "text": final_text,
@@ -253,12 +287,15 @@ class ToolCallingLoopExecutor:
             "tool_results": tool_results,
             "approval_response": resume_payload or {},
         }
+        if handoff_summary:
+            output_payload["handoff_summary"] = handoff_summary
         detail_json = self._build_detail_json(
             tool_names=tool_names,
             llm_call_count=llm_call_count,
             model_name=model_name,
             delegated=bool(delegate_prompt),
             todo_state=todo_state,
+            directive=directive,
         )
         if resume_payload is not None:
             operations.append(
@@ -281,7 +318,7 @@ class ToolCallingLoopExecutor:
             "output_payload": output_payload,
             "detail_json": detail_json,
             "todo_state": todo_state,
-            "summary_message": "tool-calling loop completed",
+            "summary_message": action_summary or "tool-calling loop completed",
             "operations": operations,
         }
         if delegate_prompt:
@@ -295,7 +332,7 @@ class ToolCallingLoopExecutor:
                     "skill_hints": delegate_skill_hints,
                     "model": task_input.get("model"),
                 },
-                "summary_prompt": delegate_summary_prompt or "child model task completed",
+                "summary_prompt": delegate_summary_prompt or handoff_summary or action_summary or "child model task completed",
                 "metadata": {"source": "model.generate"},
             }
         return outcome
@@ -310,8 +347,10 @@ class ToolCallingLoopExecutor:
         model_name: str | None,
         todo_state: dict[str, Any],
         operation_counters: dict[str, int],
+        directive,
     ) -> dict[str, Any]:
         tool_names = [str(item["name"]) for item in tool_results]
+        action_summary = directive.action_summary if directive is not None else None
         return {
             "task_status": TaskStatus.WAITING,
             "step_status": StepStatus.WAITING,
@@ -328,9 +367,10 @@ class ToolCallingLoopExecutor:
                 model_name=model_name,
                 delegated=False,
                 todo_state=todo_state,
+                directive=directive,
             ),
             "todo_state": todo_state,
-            "summary_message": "approval required",
+            "summary_message": action_summary or "approval required",
             "approval_payload": {
                 "reason": approval_reason,
                 "tool_results": tool_results,
@@ -359,8 +399,10 @@ class ToolCallingLoopExecutor:
         resume_payload: dict[str, Any],
         todo_state: dict[str, Any],
         operation_counters: dict[str, int],
+        directive=None,
     ) -> dict[str, Any]:
         tool_names = [str(item["name"]) for item in tool_results]
+        action_summary = directive.action_summary if directive is not None else None
         return {
             "task_status": TaskStatus.CANCELED,
             "step_status": StepStatus.CANCELED,
@@ -374,9 +416,10 @@ class ToolCallingLoopExecutor:
                 model_name=None,
                 delegated=False,
                 todo_state=todo_state,
+                directive=directive,
             ),
             "todo_state": todo_state,
-            "summary_message": "approval rejected",
+            "summary_message": action_summary or "approval rejected",
             "operations": [
                 *operations,
                 {
@@ -403,8 +446,10 @@ class ToolCallingLoopExecutor:
         model_name: str | None,
         todo_state: dict[str, Any],
         operation_counters: dict[str, int],
+        directive,
     ) -> dict[str, Any]:
         tool_names = [str(item["name"]) for item in tool_results]
+        action_summary = directive.action_summary if directive is not None else None
         return {
             "task_status": TaskStatus.FAILED,
             "step_status": StepStatus.FAILED,
@@ -417,9 +462,10 @@ class ToolCallingLoopExecutor:
                 model_name=model_name,
                 delegated=False,
                 todo_state=todo_state,
+                directive=directive,
             ),
             "todo_state": todo_state,
-            "summary_message": "tool-calling loop failed",
+            "summary_message": action_summary or "tool-calling loop failed",
             "error_message": error_message,
             "operations": [
                 *operations,
@@ -503,6 +549,7 @@ class ToolCallingLoopExecutor:
         model_name: str | None,
         delegated: bool,
         todo_state: dict[str, Any],
+        directive,
     ) -> dict[str, Any]:
         unique_tool_names = list(dict.fromkeys(tool_names))
         detail_json = {
@@ -520,7 +567,21 @@ class ToolCallingLoopExecutor:
                 "callCount": llm_call_count,
             },
         }
-        return {**detail_json, **build_todo_detail_patch(parse_task_todo_payload(todo_state))}
+        detail_json = {
+            **detail_json,
+            **build_todo_detail_patch(parse_task_todo_payload(todo_state)),
+        }
+        if directive is not None:
+            detail_json = {
+                **detail_json,
+                **build_model_decision_detail(
+                    action=directive.action,
+                    action_summary=directive.action_summary,
+                    handoff_summary=directive.handoff_summary,
+                    semantic_hint=directive.semantic_hint,
+                ),
+            }
+        return detail_json
 
     @staticmethod
     def _next_todo_state(current_todo_state: dict[str, Any], tool_results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -545,3 +606,38 @@ class ToolCallingLoopExecutor:
         next_index = operation_counters.get(counter_key, 0) + 1
         operation_counters[counter_key] = next_index
         return f"{namespace}.{sanitized_base_key}.{next_index}"
+
+    @staticmethod
+    def _tool_call_signature(calls: list[dict[str, Any]]) -> tuple[str, ...]:
+        signature: list[str] = []
+        for call in calls:
+            name = str(call.get("name") or "").strip()
+            args = dict(call.get("args") or {})
+            if not name:
+                continue
+            signature.append(f"{name}:{json.dumps(args, ensure_ascii=False, sort_keys=True)}")
+        return tuple(signature)
+
+    def _guard_tool_calls(
+        self,
+        *,
+        directive,
+        turn_index: int,
+        max_iterations: int,
+        last_executed_tool_batch_signature: tuple[str, ...] | None,
+    ) -> str | None:
+        if not directive.tool_calls:
+            return None
+
+        current_signature = self._tool_call_signature(directive.tool_calls)
+        if current_signature and current_signature == (last_executed_tool_batch_signature or ()):
+            if directive.final_text:
+                return "prefer_final"
+            return "repeated tool_calls batch requested immediately after the same calls"
+
+        if turn_index >= max_iterations:
+            if directive.final_text:
+                return "prefer_final"
+            return "model requested additional tool_calls at the iteration limit"
+
+        return None

@@ -20,6 +20,9 @@ class TaskRun:
     # 현재 작업 상태(PENDING/RUNNING/WAITING/COMPLETED 등).
     # UI, 재개 처리, 후속 로직이 모두 이 상태를 보고 분기한다.
     status: str
+    # Spring 이 관리하는 외부 세션 식별자.
+    # AI 서비스는 세션 자체를 소유하지 않고, 이 참조값으로 TaskRun 을 세션에 연결한다.
+    session_key: str | None = None
     # 사용자가 요청한 의도 타입.
     # flow 제거 이후에는 이 값이 "무슨 작업을 하려는가"를 설명하는 정식 기준점이 된다.
     intent_type: str | None = None

@@ -49,6 +49,13 @@ MIGRATIONS: tuple[SQLiteMigration, ...] = (
             ColumnMigration("task_runs", "todo_state", "TEXT NOT NULL DEFAULT '{}'"),
         ),
     ),
+    SQLiteMigration(
+        migration_id="20260425_task_session_key",
+        description="Spring session 과 TaskRun 을 연결할 session_key 컬럼을 추가한다.",
+        columns=(
+            ColumnMigration("task_runs", "session_key", "TEXT"),
+        ),
+    ),
 )
 
 

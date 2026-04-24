@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class CreateTaskRequest(BaseModel):
@@ -10,6 +10,7 @@ class CreateTaskRequest(BaseModel):
     entry_executor_key: str | None = Field(default=None, description="필요하면 시작 executor key 를 명시")
     input_payload: dict[str, Any] = Field(default_factory=dict)
     owner_key: str = "local-user"
+    session_key: str | None = Field(default=None, validation_alias=AliasChoices("session_key", "sessionKey"))
 
 
 class ResumeTaskRequest(BaseModel):
