@@ -187,11 +187,17 @@ def build_approval_detail(
 def build_operation_detail(operations: list[dict[str, Any]], *, current_detail: dict[str, Any] | None = None) -> dict[str, Any]:
     existing_operations = ((_safe_dict(current_detail).get("operationDetail") or {}).get("operations") or [])
     normalized_operations = _merge_operations(existing_operations=existing_operations, new_operations=operations)
+    status_counts = _operation_status_counts(normalized_operations)
     return {
         "operationDetail": {
             "operations": normalized_operations,
             "totalCount": len(normalized_operations),
-            "completedCount": sum(1 for operation in normalized_operations if operation["status"] == "completed"),
+            "completedCount": status_counts["completed"],
+            "failedCount": status_counts["failed"],
+            "canceledCount": status_counts["canceled"],
+            "waitingCount": status_counts["waiting"],
+            "runningCount": status_counts["running"],
+            "statusCounts": status_counts,
         }
     }
 
@@ -241,8 +247,22 @@ def infer_semantic_status(*, lifecycle: str, operation_detail: dict[str, Any] | 
         return mapped
 
     detail = _safe_dict(operation_detail)
+    operation_counts = _operation_status_counts(list(detail.get("operations") or []))
     total_count = _safe_int(detail.get("totalCount"))
     completed_count = _safe_int(detail.get("completedCount"))
+    failed_count = _safe_int(detail.get("failedCount")) or operation_counts["failed"]
+    canceled_count = _safe_int(detail.get("canceledCount")) or operation_counts["canceled"]
+    waiting_count = _safe_int(detail.get("waitingCount")) or operation_counts["waiting"]
+    if total_count == 0 and operation_counts:
+        total_count = sum(operation_counts.values())
+    if completed_count == 0 and operation_counts:
+        completed_count = operation_counts["completed"]
+    if failed_count > 0:
+        return "failed"
+    if canceled_count > 0 and completed_count + canceled_count >= total_count:
+        return "canceled"
+    if waiting_count > 0:
+        return "waiting"
     if total_count > 0 and 0 < completed_count < total_count:
         return "partially_completed"
     return mapped
@@ -309,6 +329,21 @@ def _normalize_operation(operation: dict[str, Any] | None) -> dict[str, Any] | N
     if raw_kind and normalized_kind != raw_kind.lower():
         normalized["rawKind"] = raw_kind
     return normalized
+
+
+def _operation_status_counts(operations: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {
+        "pending": 0,
+        "running": 0,
+        "waiting": 0,
+        "completed": 0,
+        "failed": 0,
+        "canceled": 0,
+    }
+    for operation in operations:
+        status = normalize_operation_status(_safe_dict(operation).get("status"))
+        counts[status] = counts.get(status, 0) + 1
+    return counts
 
 
 def _safe_dict(value: dict[str, Any] | None) -> dict[str, Any]:
