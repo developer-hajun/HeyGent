@@ -13,6 +13,42 @@
 
 따라서 `flow`와 `active`는 새 테이블을 추가하지 않고도 현재 저장 데이터를 조합하는 방식으로 먼저 설계할 수 있다.
 
+## 용어 사전
+
+- `StepRun`
+  - 사용자에게 보여 주는 단계 카드의 기본 단위다.
+  - 실제 실행 상태, 제목, semantic 정보, child task 정보가 이 단위에 붙는다.
+
+- `projected step`
+  - 아직 실제 실행되지는 않았지만, 현재 workflow/todo 기준으로 앞으로 실행될 예정인 step 이다.
+  - 화면에서는 미래 단계 preview 카드처럼 보일 수 있다.
+  - 현재 구현에서는 보통 `input_payload.todo_key` 존재 여부로 구분한다.
+
+- `child task`
+  - 현재 step 안에서 다른 task 를 위임 실행한 경우의 직계 자식 task 다.
+  - 부모 step 카드에는 `childTaskRunId`, 상태, 요약 같은 정보만 붙고, 더 깊은 하위 단계는 child task 상세에서 본다.
+
+- `child task badge/요약`
+  - 부모 step 카드에서 "이 단계가 child task 를 띄웠다"는 사실과 결과를 빠르게 보여 주는 UI 정보다.
+  - 예: child 존재 여부, 상태, 한 줄 요약
+
+- `semantic`
+  - 이 step 을 사용자에게 어떤 의미 단계로 설명할지 나타내는 메타데이터다.
+  - `key`, `step`, `goal`, `status` 같은 필드를 포함한다.
+
+- `lifecycle`
+  - step/task 가 현재 어떤 진행 국면에 있는지 나타내는 의미 상태다.
+  - 예: `pending`, `running`, `resuming`, `waiting`, `completed`, `failed`, `canceled`
+  - 단순 저장 상태값보다 "지금 이 단계가 어떤 흐름에 있는가"를 설명하는 데 가깝다.
+
+- `active`
+  - 아직 실행 중이거나, 방금 끝나서 recent TTL 안에 남아 있는 task snapshot 을 뜻한다.
+  - 재접속/새로고침 후 화면 복원에 쓰는 API 관점 용어다.
+
+- `recent`
+  - `active` 응답 안에서 방금 끝난 terminal task 를 잠깐 보여 주는 분류다.
+  - 현재 구현에서는 `source = "recent"`로 구분한다.
+
 ## 설계 원칙
 
 - `StepRun`은 계속 시각화의 1급 단위로 유지한다.
@@ -207,6 +243,37 @@
 - projected step 역시 시각화 대상에 포함한다.
 - 따라서 `steps`는 "실행된 step만"이 아니라 "현재 TaskRun 에서 보여 줄 step card 목록"으로 해석한다.
 
+### FE 사용 기준
+
+- `steps`는 기본 화면 목록 API다.
+- 채팅/작업 화면에서 사용자가 보는 Step 카드 목록, 현재 단계 강조, projected 단계 표시에는 `steps`를 우선 사용한다.
+- FE는 `steps`만으로도 아래를 바로 그릴 수 있다.
+  - 카드 순서
+  - 현재 step
+  - projected step
+  - child task 존재 여부
+  - step 제목/semantic 이름
+- 즉 `steps`는 "읽기 쉬운 StepRun 카드 목록"으로 보는 것이 맞다.
+
+### 포함하는 것
+
+- 카드/리스트 렌더링에 필요한 step 단위 필드
+- `semantic`
+- `isCurrent`
+- `isProjected`
+- `childTaskRunId`
+- `childTask`
+- 디버깅/상세 확장을 위한 raw payload/detail_json
+
+### 포함하지 않는 것
+
+- step 간 edge 관계
+- delegation edge
+- graph/타임라인 전용 구조
+- 이벤트 타임라인 요약
+
+즉 `steps`는 카드 목록이며, 관계 그래프는 책임 범위에 넣지 않는다.
+
 ## 4. POST `/api/v1/taskRuns/{taskRunId}/resume`
 
 ### 목적
@@ -223,6 +290,104 @@
 
 - `resume`는 `WAITING` 상태가 아니면 `409`로 거절한다.
 - 따라서 현재 명세 문구도 "WAITING/BLOCKED" 보다는 "WAITING 상태 TaskRun 재개"로 맞추는 편이 정확하다.
+
+## 5. POST `/api/v1/taskRuns/{taskRunId}/cancel`
+
+### 목적
+
+- 사용자가 더 이상 진행하지 않을 `TaskRun`을 명시적으로 종료한다.
+- 특히 approval 대기 중인 작업이 화면에 계속 남거나, projected step 이 다음 실행 예정처럼 보이는 문제를 막는다.
+
+### 현재 구조에서 필요한 이유
+
+- 상태 enum 과 state machine 에는 이미 `CANCELED`가 있다.
+- 하지만 현재 runtime 에는 cancel entrypoint 가 없어서, `WAITING` 작업도 실제로는 resume 외에 끝내는 방법이 없다.
+- FE 입장에서는 "승인 대기 중인 작업 취소"가 가장 먼저 필요한 제어 동작이다.
+
+### 1차 계약 범위
+
+- 공식 cancel 대상은 `WAITING` 상태 `TaskRun`만으로 제한한다.
+- `RUNNING` cancel 은 1차 범위에서 제외한다.
+  - 현재 엔진은 background worker 나 cooperative cancellation token 없이 한 요청 안에서 동기적으로 실행된다.
+  - 따라서 외부 `cancel` 요청이 들어와도 안전하게 중단시킬 지점이 없다.
+- `BLOCKED`도 현재 실제 런타임에서 생성하지 않으므로 대상에 넣지 않는다.
+
+### 성공 시 동작
+
+1. `task.status == WAITING`인지 확인한다.
+2. `task.current_step_run_id` 기준 현재 step 을 찾고, 해당 step 이 `WAITING`인지 확인한다.
+3. 열려 있는 approval 이 있으면 `CANCELED`로 종료한다.
+4. task 와 current step 을 `CANCELED`로 전이한다.
+5. `wait_payload`는 비우되, 필요하면 취소 사유 메타데이터를 별도 payload 로 남긴다.
+6. `semanticDetail.lifecycle`는 `canceled`로 갱신한다.
+7. `todo_state`가 있으면 `completed`가 아닌 현재/미래 item 을 `cancelled`로 바꾼다.
+8. `_sync_todo_steps(...)`를 다시 돌려 projected step 도 `CANCELED`로 정리한다.
+9. `step.canceled`, `task.canceled` 이벤트를 발행한다.
+
+### 응답/에러 기준
+
+- `404`
+  - task 가 없을 때
+- `409`
+  - task 가 `WAITING`이 아닐 때
+  - current step 이 없거나 `WAITING` anchor 와 어긋날 때
+  - 이미 terminal 상태일 때
+
+### 구현 메모
+
+- approval 저장소에는 `resolve` 외에 `cancel_approval_request(...)` 또는 동등한 전용 API 가 필요하다.
+- `cancel`은 `resume`과 달리 payload 기반 재개가 아니라 terminal 전이다.
+- 따라서 approval 을 "해결된 승인"으로 취급하지 말고 별도 `CANCELED` 상태를 두는 편이 기록상 더 정확하다.
+
+### 후속 확장
+
+- `RUNNING` task cancel
+  - executor safe point 또는 cancellation token 도입 후 지원
+- parent cancel 시 immediate child task cascade cancel 여부
+- `cancelReason`, `canceledBy` 등 감사용 메타데이터 추가
+- CLI/FE 에서 cancellable 상태를 명시적으로 노출
+
+### 2026-04-25 1차 구현 반영
+
+- `POST /api/v1/taskRuns/{taskRunId}/cancel`을 추가했다.
+- 현재 구현은 `WAITING` 상태 task만 취소할 수 있다.
+- 취소 시 open approval 은 `CANCELED`로 닫고, current step 과 projected step 을 함께 `CANCELED`로 정리한다.
+- 취소된 task 는 `GET /api/v1/taskRuns/active`에서 `source = "recent"`로 잠시 노출된다.
+
+## Steps / Flow 역할 분리
+
+### `steps`
+
+- 목적: 화면에 보이는 Step 카드 목록
+- 기준 단위: `StepRun`
+- 사용처:
+  - 작업 상세 화면 기본 리스트
+  - 현재 단계 강조
+  - projected 단계 표시
+  - child task badge/요약
+
+### `flow`
+
+- 목적: StepRun 사이의 관계와 실행 흐름 복원
+- 기준 단위: `StepRun node + edge`
+- 사용처:
+  - 그래프/타임라인 뷰
+  - delegation 관계 표시
+  - activity 기반 lifecycle 복원
+  - "현재 step 이 어떤 경로로 여기까지 왔는가" 해석
+
+### FE 우선순위
+
+1. 일반 작업 화면
+   - `steps`
+2. 그래프/타임라인/관계 시각화
+   - `flow`
+
+### 중복 허용 범위
+
+- `semantic`, `isCurrent`, `isProjected`, `childTask`는 `steps`와 `flow.nodes`에 모두 존재할 수 있다.
+- 이는 `steps`를 기본 카드 목록으로, `flow`를 관계 복원용으로 각각 독립 사용 가능하게 하기 위한 의도된 중복이다.
+- 다만 edge/activity 는 `flow`의 책임으로 유지한다.
 
 ## 우선순위
 
