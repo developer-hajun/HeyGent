@@ -255,7 +255,7 @@ class ToolCallingLoopExecutor:
             output_payload["delegation_requested"] = True
             outcome["child_session"] = {
                 "intent_type": "model.generate",
-                "entry_capability": "model.generate",
+                "entry_executor_key": "model.generate",
                 "input_payload": {
                     "prompt": delegate_prompt,
                     "skill_hints": delegate_skill_hints,

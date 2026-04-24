@@ -3,17 +3,17 @@ from __future__ import annotations
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.domain.providers.model import BaseProvider
-from app.tools.contracts import CapabilitySpec, OperationTemplate
+from app.tools.contracts import ExecutorSpec, OperationTemplate
 from app.tools.integrations.notion.client import NotionClient
 from app.tools.integrations.notion.mapper import NotionMapper
 
 
-class NotionPageCreateCapability:
-    """Notion 페이지 생성 시나리오를 검증하는 capability 다."""
+class NotionPageCreateExecutor:
+    """Notion 페이지 생성 시나리오를 검증하는 executor 다."""
 
-    spec = CapabilitySpec(
+    spec = ExecutorSpec(
         intent_type="notion.page.create",
-        entry_capability="notion.page.create",
+        entry_executor_key="notion.page.create",
         executor_key="notion.page.create",
         task_type="notion.page.create",
         task_title="Notion 페이지 생성",
@@ -51,7 +51,7 @@ class NotionPageCreateCapability:
                 "toolDetail": {"toolNames": ["notion.create_page"], "primaryTool": "notion.create_page"},
                 "llmDetail": {"model": summary.provider_name, "callCount": 1},
             },
-            "summary_message": "notion page create capability completed",
+            "summary_message": "notion page create executor completed",
             "operations": [
                 {
                     "key": "notion.payload.map",

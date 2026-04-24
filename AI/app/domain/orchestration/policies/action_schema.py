@@ -2,10 +2,10 @@ from __future__ import annotations
 
 
 def normalize_executor_outcome(outcome: dict) -> dict:
-    """capability 실행 결과를 loop 가 다루기 쉬운 canonical schema 로 맞춘다.
+    """executor 실행 결과를 loop 가 다루기 쉬운 canonical schema 로 맞춘다.
 
-    capability 마다 일부 키를 생략하더라도 loop 는 항상 같은 모양의 dict 를 받아야 한다.
-    그래야 approval, delegation, summary, event 발행 로직이 capability 별 분기 없이 동작한다.
+    executor 마다 일부 키를 생략하더라도 loop 는 항상 같은 모양의 dict 를 받아야 한다.
+    그래야 approval, delegation, summary, event 발행 로직이 executor 별 분기 없이 동작한다.
     """
 
     if "task_status" not in outcome or "step_status" not in outcome:

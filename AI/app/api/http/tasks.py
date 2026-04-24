@@ -110,7 +110,7 @@ def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse
         task_run_id=task.task_run_id,
         task_type=task.task_type,
         intent_type=task.intent_type,
-        entry_capability=task.entry_capability,
+        entry_executor_key=task.entry_executor_key,
         status=task.status,
         title=_display_task_title(task, input_summary=input_summary),
         input_summary=input_summary,
@@ -154,11 +154,11 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
                 owner_key=payload.owner_key,
                 input_payload=payload.input_payload,
                 intent_type=payload.intent_type,
-                entry_capability=payload.entry_capability,
+                entry_executor_key=payload.entry_executor_key,
             )
         )
     except KeyError as error:
-        raise HTTPException(status_code=404, detail=f"unknown intent or capability: {error.args[0]}") from error
+        raise HTTPException(status_code=404, detail=f"unknown intent or executor: {error.args[0]}") from error
     return TaskRunResponse.model_validate(task, from_attributes=True)
 
 

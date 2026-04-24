@@ -9,6 +9,7 @@ def test_model_generate_tool_calls_and_skill_prompt(client):
         "/api/v1/tasks",
         json={
             "intent_type": "model.generate",
+            "entry_executor_key": "model.generate",
             "owner_key": "tool-user",
             "input_payload": {
                 "prompt": "도구 결과와 스킬 힌트를 짧게 요약해줘.",
@@ -28,6 +29,7 @@ def test_model_generate_tool_calls_and_skill_prompt(client):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "COMPLETED"
+    assert body["entry_executor_key"] == "model.generate"
     assert "tool_results" in body["result_payload"]
     assert len(body["result_payload"]["tool_results"]) == 6
 
@@ -35,6 +37,8 @@ def test_model_generate_tool_calls_and_skill_prompt(client):
     step = steps_response.json()[0]
     assert "skills.list" in step["detail_json"]["toolDetail"]["toolNames"]
     assert "terminal.run" in step["detail_json"]["toolDetail"]["toolNames"]
+    assert step["detail_json"]["orchestration"]["entryExecutorKey"] == "model.generate"
+    assert step["detail_json"]["semanticDetail"]["status"] == "completed"
     assert "Writing Plans" in step["output_payload"]["prompt"]
     assert "복잡한 구현을 시작하기 전에 목표" in step["output_payload"]["prompt"]
 
@@ -70,7 +74,6 @@ def test_model_generate_waits_for_approval_and_resumes(client):
     resumed = resume_response.json()
     assert resume_response.status_code == 200
     assert resumed["status"] == "COMPLETED"
-
 
 def test_model_generate_delegates_child_task(client):
     response = client.post(

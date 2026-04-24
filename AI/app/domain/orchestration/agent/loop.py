@@ -10,7 +10,7 @@ from app.domain.orchestration.policies import ensure_step_transition, ensure_tas
 from app.domain.orchestration.runtime_planning import Planner
 from app.domain.orchestration.runtime_planning.todo_state import parse_task_todo_payload
 from app.domain.orchestration.result_inspector import OutcomeInspector
-from app.domain.tasks.detail import build_planning_detail, build_semantic_step_detail, merge_step_detail
+from app.domain.tasks.detail import build_planning_detail, build_semantic_step_detail, infer_semantic_status, merge_step_detail
 from app.domain.tasks.events import build_task_event
 from app.domain.tasks.repository import TaskRepository
 from app.domain.tasks.models import StepRun, TaskRun
@@ -63,6 +63,7 @@ class TaskEngine:
                 semantic_step=(step.detail_json.get("semanticDetail") or {}).get("semanticStep") or step.title or step.step_type,
                 semantic_goal=(step.detail_json.get("semanticDetail") or {}).get("goal") or step.title or step.step_type,
                 lifecycle="resuming",
+                status=infer_semantic_status(lifecycle="resuming", operation_detail=step.detail_json.get("operationDetail")),
             ),
         )
         self.repository.update_step(step)
@@ -87,6 +88,7 @@ class TaskEngine:
                 semantic_step=(step.detail_json.get("semanticDetail") or {}).get("semanticStep") or step.title or executor.spec.step_title,
                 semantic_goal=(step.detail_json.get("semanticDetail") or {}).get("goal") or executor.spec.semantic_goal or step.title or executor.spec.step_title,
                 lifecycle="running",
+                status=infer_semantic_status(lifecycle="running", operation_detail=step.detail_json.get("operationDetail")),
             ),
         )
         self.repository.update_task(task)
@@ -120,6 +122,7 @@ class TaskEngine:
         step.wait_payload = outcome.get("wait_payload", {})
         step.error_message = outcome.get("error_message")
         step.detail_json = merge_step_detail(step.detail_json, outcome.get("detail_json"))
+        semantic_lifecycle = self._semantic_lifecycle(task_status)
         step.detail_json = merge_step_detail(
             step.detail_json,
             build_semantic_step_detail(
@@ -127,7 +130,8 @@ class TaskEngine:
                 semantic_key=(step.detail_json.get("semanticDetail") or {}).get("semanticKey") or step.step_type,
                 semantic_step=(step.detail_json.get("semanticDetail") or {}).get("semanticStep") or step.title or step.step_type,
                 semantic_goal=(step.detail_json.get("semanticDetail") or {}).get("goal") or step.title or step.step_type,
-                lifecycle=self._semantic_lifecycle(task_status),
+                lifecycle=semantic_lifecycle,
+                status=infer_semantic_status(lifecycle=semantic_lifecycle, operation_detail=step.detail_json.get("operationDetail")),
             ),
         )
         step.summary_message = outcome.get("summary_message")
@@ -233,6 +237,7 @@ class TaskEngine:
                         semantic_step=item.title,
                         semantic_goal=item.title,
                         lifecycle=self._todo_lifecycle(item.status),
+                        status=infer_semantic_status(lifecycle=self._todo_lifecycle(item.status), operation_detail=projected.detail_json.get("operationDetail")),
                     ),
                 )
                 self.repository.create_step(projected)
@@ -255,6 +260,7 @@ class TaskEngine:
                     semantic_step=item.title,
                     semantic_goal=item.title,
                     lifecycle=self._todo_lifecycle(item.status),
+                    status=infer_semantic_status(lifecycle=self._todo_lifecycle(item.status), operation_detail=projected.detail_json.get("operationDetail")),
                 ),
             )
             projected.detail_json = merge_step_detail(

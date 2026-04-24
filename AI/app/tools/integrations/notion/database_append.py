@@ -3,17 +3,17 @@ from __future__ import annotations
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.domain.providers.model import BaseProvider
-from app.tools.contracts import CapabilitySpec, OperationTemplate
+from app.tools.contracts import ExecutorSpec, OperationTemplate
 from app.tools.integrations.notion.client import NotionClient
 from app.tools.integrations.notion.mapper import NotionMapper
 
 
-class NotionDatabaseAppendCapability:
-    """Notion 데이터베이스에 row 를 추가하는 capability 다."""
+class NotionDatabaseAppendExecutor:
+    """Notion 데이터베이스에 row 를 추가하는 executor 다."""
 
-    spec = CapabilitySpec(
+    spec = ExecutorSpec(
         intent_type="notion.database.append",
-        entry_capability="notion.database.append",
+        entry_executor_key="notion.database.append",
         executor_key="notion.database.append",
         task_type="notion.database.append",
         task_title="Notion 데이터 추가",
@@ -51,7 +51,7 @@ class NotionDatabaseAppendCapability:
                 "toolDetail": {"toolNames": ["notion.append_database_item"], "primaryTool": "notion.append_database_item"},
                 "llmDetail": {"model": summary.provider_name, "callCount": 1},
             },
-            "summary_message": "notion database append capability completed",
+            "summary_message": "notion database append executor completed",
             "operations": [
                 {
                     "key": "notion.payload.map",

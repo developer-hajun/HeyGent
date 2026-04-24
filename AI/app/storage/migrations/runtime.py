@@ -33,7 +33,7 @@ MIGRATIONS: tuple[SQLiteMigration, ...] = (
             ColumnMigration("task_runs", "title", "TEXT NOT NULL DEFAULT ''"),
             ColumnMigration("task_runs", "task_type", "TEXT"),
             ColumnMigration("task_runs", "intent_type", "TEXT"),
-            ColumnMigration("task_runs", "entry_capability", "TEXT"),
+            ColumnMigration("task_runs", "entry_executor_key", "TEXT"),
             ColumnMigration("task_runs", "current_step_run_id", "TEXT"),
             ColumnMigration("step_runs", "title", "TEXT NOT NULL DEFAULT ''"),
             ColumnMigration("step_runs", "executor_key", "TEXT"),

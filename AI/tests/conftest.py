@@ -30,7 +30,7 @@ def task_run() -> TaskRun:
         task_run_id="task_test",
         task_type="model.generate",
         intent_type="model.generate",
-        entry_capability="model.generate",
+        entry_executor_key="model.generate",
         owner_key="tester",
         status="PENDING",
         title="모델 생성 요청",
