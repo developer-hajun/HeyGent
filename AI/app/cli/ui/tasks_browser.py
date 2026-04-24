@@ -56,13 +56,13 @@ STEP_TITLE_FALLBACKS = {
     "approval.wait": "사용자 승인 대기",
 }
 SUMMARY_FALLBACKS = {
-    "model generate capability completed": "모델 응답 생성 완료",
-    "echo capability completed": "입력 메시지 반영 완료",
+    "model generate executor completed": "모델 응답 생성 완료",
+    "echo executor completed": "입력 메시지 반영 완료",
     "child delegation completed": "Child 세션 위임 완료",
     "approval required": "사용자 승인이 필요함",
     "approval completed": "사용자 승인 완료",
-    "notion page create capability completed": "Notion 페이지 생성 완료",
-    "notion database append capability completed": "Notion 데이터 추가 완료",
+    "notion page create executor completed": "Notion 페이지 생성 완료",
+    "notion database append executor completed": "Notion 데이터 추가 완료",
 }
 _ACTIVE_STEP_STATUSES = {"PENDING", "RUNNING", "WAITING", "BLOCKED"}
 
@@ -476,7 +476,7 @@ def render_task_detail(state: TaskBrowserState) -> str:
         f"상태: {task.get('status') or '-'}",
         f"입력: {_task_detail_input_summary(task)}",
         "TaskRun = 전체 작업 / StepRun = 한 단계 / detail_json = step 저장 실행 정보",
-        f"step: {len(steps)}개   capability: {task.get('entry_capability') or '-'}",
+        f"step: {len(steps)}개   executor: {task.get('entry_capability') or '-'}",
         f"최근 갱신: {_format_time(task.get('updated_at') or task.get('created_at'))}",
         "",
         *_render_step_preview_lines(state),

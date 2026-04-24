@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from app.tools.contracts import TaskCapabilityExecutor
-from app.tools.model.generate import ModelGenerateCapability
-from app.tools.integrations.notion import NotionDatabaseAppendCapability, NotionPageCreateCapability
+from app.tools.contracts import TaskExecutor
+from app.tools.model.generate import ModelGenerateExecutor
+from app.tools.integrations.notion import NotionDatabaseAppendExecutor, NotionPageCreateExecutor
 from app.tools.registry.tool_entry import ToolEntry
 from app.tools.toolsets import list_toolsets as _list_toolsets
 from app.tools.toolsets import resolve_executor_keys
@@ -24,16 +24,16 @@ class ToolRegistry:
     ) -> None:
         default_provider = provider_registry.preferred_model_provider()
         entries = [
-            ToolEntry("model.generate", "model", ModelGenerateCapability(default_provider, prompt_builder, tool_runtime, tool_catalog)),
+            ToolEntry("model.generate", "model", ModelGenerateExecutor(default_provider, prompt_builder, tool_runtime, tool_catalog)),
             ToolEntry(
                 "notion.page.create",
                 "notion",
-                NotionPageCreateCapability(notion_client, notion_mapper, default_provider, prompt_builder),
+                NotionPageCreateExecutor(notion_client, notion_mapper, default_provider, prompt_builder),
             ),
             ToolEntry(
                 "notion.database.append",
                 "notion",
-                NotionDatabaseAppendCapability(notion_client, notion_mapper, default_provider, prompt_builder),
+                NotionDatabaseAppendExecutor(notion_client, notion_mapper, default_provider, prompt_builder),
             ),
         ]
 
@@ -51,7 +51,7 @@ class ToolRegistry:
         *,
         intent_type: str | None = None,
         entry_capability: str | None = None,
-    ) -> TaskCapabilityExecutor:
+    ) -> TaskExecutor:
         if entry_capability:
             return self.get(entry_capability)
 
@@ -61,7 +61,7 @@ class ToolRegistry:
         except KeyError as error:
             raise KeyError(canonical_intent) from error
 
-    def get(self, executor_key: str) -> TaskCapabilityExecutor:
+    def get(self, executor_key: str) -> TaskExecutor:
         try:
             return self._entries_by_key[executor_key].executor
         except KeyError as error:

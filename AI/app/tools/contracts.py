@@ -14,7 +14,7 @@ class OperationTemplate:
 
     key: str
     title: str
-    # kind 는 capability 별 자유 문자열이 아니라 공통 의미 집합을 따르는 편이 좋다.
+    # kind 는 executor 별 자유 문자열이 아니라 공통 의미 집합을 따르는 편이 좋다.
     # 권장 값:
     # - prepare
     # - execute
@@ -25,7 +25,7 @@ class OperationTemplate:
 
 
 @dataclass(slots=True)
-class CapabilitySpec:
+class ExecutorSpec:
     """loop 가 실행자를 이해하는 데 필요한 최소 정적 정보다."""
 
     intent_type: str
@@ -40,8 +40,8 @@ class CapabilitySpec:
     operation_templates: tuple[OperationTemplate, ...] = ()
 
 
-class TaskCapabilityExecutor(Protocol):
-    spec: CapabilitySpec
+class TaskExecutor(Protocol):
+    spec: ExecutorSpec
 
     def execute(
         self,

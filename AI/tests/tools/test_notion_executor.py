@@ -1,9 +1,9 @@
 from app.core.config import Settings
 from app.tools.integrations.notion import (
     NotionClient,
-    NotionDatabaseAppendCapability,
+    NotionDatabaseAppendExecutor,
     NotionMapper,
-    NotionPageCreateCapability,
+    NotionPageCreateExecutor,
 )
 from app.domain.providers.model import OpenAIOAuthProvider
 
@@ -17,10 +17,10 @@ def test_notion_mapper_builds_page_payload():
     assert payload["children"][0]["text"] == "hello"
 
 
-def test_notion_page_create_capability_returns_stub_result(task_run, step_run):
+def test_notion_page_create_executor_returns_stub_result(task_run, step_run):
     from app.domain.orchestration.prompts import PromptManager, SkillPromptBuilder, SkillRegistry
 
-    capability = NotionPageCreateCapability(
+    executor = NotionPageCreateExecutor(
         NotionClient("https://api.notion.test/v1"),
         NotionMapper(),
         OpenAIOAuthProvider(Settings()),
@@ -32,7 +32,7 @@ def test_notion_page_create_capability_returns_stub_result(task_run, step_run):
     task_run.input_payload = {"title": "Weekly Sync", "content": "Agenda"}
     step_run.executor_key = "notion.page.create"
 
-    outcome = capability.execute(task=task_run, step=step_run)
+    outcome = executor.execute(task=task_run, step=step_run)
 
     assert outcome["task_status"] == "COMPLETED"
     assert outcome["result_payload"]["notion"]["object"] == "page"
@@ -40,10 +40,10 @@ def test_notion_page_create_capability_returns_stub_result(task_run, step_run):
     assert len(outcome["operations"]) == 3
 
 
-def test_notion_database_append_capability_returns_stub_result(task_run, step_run):
+def test_notion_database_append_executor_returns_stub_result(task_run, step_run):
     from app.domain.orchestration.prompts import PromptManager, SkillPromptBuilder, SkillRegistry
 
-    capability = NotionDatabaseAppendCapability(
+    executor = NotionDatabaseAppendExecutor(
         NotionClient("https://api.notion.test/v1"),
         NotionMapper(),
         OpenAIOAuthProvider(Settings()),
@@ -55,7 +55,7 @@ def test_notion_database_append_capability_returns_stub_result(task_run, step_ru
     task_run.input_payload = {"database_id": "db123", "fields": {"Name": "Jun"}}
     step_run.executor_key = "notion.database.append"
 
-    outcome = capability.execute(task=task_run, step=step_run)
+    outcome = executor.execute(task=task_run, step=step_run)
 
     assert outcome["task_status"] == "COMPLETED"
     assert outcome["result_payload"]["notion"]["resource_id"] == "db-item-db123"

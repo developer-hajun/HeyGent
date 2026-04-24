@@ -27,7 +27,7 @@ class StepRun:
     # TaskRun 전체 상태와 별개로 "어느 단계가 멈췄는지/실패했는지" 파악하려고 저장한다.
     status: str
     # 실제 실행자를 식별하는 키.
-    # flow/route 를 지운 뒤에도 "어느 capability executor 가 이 step 을 돌렸는가"를 복원하려면 step 단위 실행자 식별자가 필요하다.
+    # flow/route 를 지운 뒤에도 어느 executor 가 이 step 을 돌렸는지 복원하려면 step 단위 실행자 식별자가 필요하다.
     executor_key: str | None = None
     # 사람이 읽는 단계 제목.
     # 내부 타입명만 노출하면 이해가 어려워서 UI 표시용 이름을 따로 둔다.

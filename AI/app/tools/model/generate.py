@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from app.domain.providers.model import BaseProvider
 from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopExecutor
-from app.tools.contracts import CapabilitySpec, OperationTemplate
+from app.tools.contracts import ExecutorSpec, OperationTemplate
 
 
-class ModelGenerateCapability:
-    """모델 프로바이더 연결 이후 실제 텍스트 생성을 검증하는 기본 capability 다."""
+class ModelGenerateExecutor:
+    """모델 프로바이더 연결 이후 실제 텍스트 생성을 검증하는 기본 executor 다."""
 
-    spec = CapabilitySpec(
+    spec = ExecutorSpec(
         intent_type="model.generate",
         entry_capability="model.generate",
         executor_key="model.generate",

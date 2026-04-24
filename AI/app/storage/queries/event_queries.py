@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS task_events (
     task_run_id TEXT NOT NULL,
     -- 특정 step 과 연결되는 이벤트라면 그 StepRun ID 를 저장한다.
     step_run_id TEXT,
-    -- 이벤트를 만든 주체(engine, capability 등). 문제 원인 추적에 도움이 된다.
+    -- 이벤트를 만든 주체(engine, executor 등). 문제 원인 추적에 도움이 된다.
     producer TEXT NOT NULL,
     occurred_at TEXT NOT NULL,
     -- 이벤트 시점의 상태 스냅샷. 로그만 봐도 상태 변화를 따라갈 수 있다.

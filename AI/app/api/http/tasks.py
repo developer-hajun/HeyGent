@@ -158,7 +158,7 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
             )
         )
     except KeyError as error:
-        raise HTTPException(status_code=404, detail=f"unknown intent or capability: {error.args[0]}") from error
+        raise HTTPException(status_code=404, detail=f"unknown intent or executor: {error.args[0]}") from error
     return TaskRunResponse.model_validate(task, from_attributes=True)
 
 

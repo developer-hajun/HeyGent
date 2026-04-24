@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS task_runs (
     task_type TEXT NOT NULL,
     -- 사용자가 요청한 의도 타입. flow 제거 이후 canonical intent 기준점으로 쓴다.
     intent_type TEXT,
-    -- 처음 진입한 capability 키. 시작 지점을 flow 대신 capability 기준으로 추적한다.
+    -- 호환 필드: 처음 진입한 executor key. 2차 migration 에서 entry_executor_key 로 분리한다.
     entry_capability TEXT,
     -- 현재 루프가 붙잡고 있는 StepRun ID. exact resume/waiting anchor 로 사용한다.
     current_step_run_id TEXT,

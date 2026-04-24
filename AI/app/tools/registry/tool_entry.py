@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.tools.contracts import TaskCapabilityExecutor
+from app.tools.contracts import TaskExecutor
 
 
 @dataclass(frozen=True, slots=True)
@@ -11,4 +11,4 @@ class ToolEntry:
 
     name: str
     toolset: str
-    executor: TaskCapabilityExecutor
+    executor: TaskExecutor

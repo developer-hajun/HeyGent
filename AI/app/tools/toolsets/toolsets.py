@@ -13,7 +13,7 @@ class ToolsetDefinition:
 
 TOOLSETS: dict[str, ToolsetDefinition] = {
     "model": ToolsetDefinition(
-        description="LLM-backed response generation capability.",
+        description="LLM-backed response generation executor.",
         tools=("model.generate",),
     ),
     "notion": ToolsetDefinition(
