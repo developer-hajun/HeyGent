@@ -95,6 +95,27 @@ def test_model_generate_waits_for_approval_and_resumes(client):
     assert "approval.requested" in activity_types
     assert "approval.resolved" in activity_types
 
+
+def test_taskruns_resume_rejects_non_waiting_task(client):
+    create_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "non-waiting-user",
+            "input_payload": {"prompt": "바로 완료되는 작업"},
+        },
+    )
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["status"] == "COMPLETED"
+
+    resume_response = client.post(
+        f"/api/v1/taskRuns/{created['task_run_id']}/resume",
+        json={"payload": {"approved": True}},
+    )
+    assert resume_response.status_code == 409
+    assert resume_response.json()["detail"] == "task is not waiting"
+
 def test_model_generate_delegates_child_task(client):
     response = client.post(
         "/api/v1/taskRuns",
@@ -345,6 +366,9 @@ def test_model_generate_routes_handoff_to_explicit_step_executor(client, monkeyp
     assert steps[1]["title"] == "노션 페이지 반영"
     assert steps[1]["executor_key"] == "notion.page.create"
     assert steps[1]["output_payload"]["request"]["properties"]["title"] == "API 변경 요약"
+    assert steps[0]["semantic"]["key"] == "plan.summarize"
+    assert steps[0]["is_projected"] is False
+    assert steps[1]["is_current"] is True
 
 
 def test_model_generate_respects_runtime_toolsets(client):
@@ -404,6 +428,8 @@ def test_model_generate_promotes_todo_state_and_materializes_todo_steps(client):
     assert [step["input_payload"]["todo_key"] for step in projected_steps] == ["plan", "ship"]
     assert projected_steps[0]["status"] == "COMPLETED"
     assert projected_steps[1]["status"] == "PENDING"
+    assert projected_steps[0]["is_projected"] is True
+    assert projected_steps[1]["is_projected"] is True
 
 
 def test_taskruns_active_returns_only_live_task_snapshots(client):

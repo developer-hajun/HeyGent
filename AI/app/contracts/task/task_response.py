@@ -14,6 +14,11 @@ class StepRunResponse(BaseModel):
     status: str
     executor_key: str | None = None
     title: str | None = None
+    semantic: TaskRunFlowSemanticResponse | None = None
+    is_current: bool = False
+    is_projected: bool = False
+    child_task_run_id: str | None = None
+    child_task: TaskRunFlowChildTaskResponse | None = None
     input_payload: dict[str, Any] = Field(default_factory=dict)
     output_payload: dict[str, Any] = Field(default_factory=dict)
     wait_payload: dict[str, Any] = Field(default_factory=dict)

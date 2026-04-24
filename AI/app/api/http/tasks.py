@@ -242,6 +242,52 @@ def _build_flow_nodes(task, steps: list[StepRun], *, activity_by_step: dict[str,
     return nodes
 
 
+def _build_step_response(task, step: StepRun) -> StepRunResponse:
+    semantic_detail = (step.detail_json or {}).get("semanticDetail") or {}
+    agent_detail = (step.detail_json or {}).get("agentDetail") or {}
+    semantic = None
+    if semantic_detail:
+        semantic = TaskRunFlowSemanticResponse(
+            key=semantic_detail.get("semanticKey"),
+            step=semantic_detail.get("semanticStep") or step.title,
+            goal=semantic_detail.get("goal"),
+            status=semantic_detail.get("status"),
+        )
+    child_task = None
+    child_task_run_id = str(agent_detail.get("childTaskRunId") or "").strip() or None
+    if child_task_run_id is not None:
+        child_task = TaskRunFlowChildTaskResponse(
+            task_run_id=child_task_run_id,
+            status=agent_detail.get("status"),
+            summary=agent_detail.get("summary"),
+            agent_id=agent_detail.get("agentId"),
+        )
+    return StepRunResponse(
+        step_run_id=step.step_run_id,
+        task_run_id=step.task_run_id,
+        step_order=step.step_order,
+        step_type=step.step_type,
+        status=step.status,
+        executor_key=step.executor_key,
+        title=step.title,
+        semantic=semantic,
+        is_current=step.step_run_id == task.current_step_run_id,
+        is_projected=bool((step.input_payload or {}).get("todo_key")),
+        child_task_run_id=child_task_run_id,
+        child_task=child_task,
+        input_payload=step.input_payload,
+        output_payload=step.output_payload,
+        wait_payload=step.wait_payload,
+        detail_json=step.detail_json,
+        summary_message=step.summary_message,
+        error_message=step.error_message,
+        created_at=step.created_at,
+        updated_at=step.updated_at,
+        started_at=step.started_at,
+        ended_at=step.ended_at,
+    )
+
+
 def _build_flow_edges(steps: list[StepRun]) -> list[TaskRunFlowEdgeResponse]:
     edges: list[TaskRunFlowEdgeResponse] = []
     for previous_step, next_step in zip(steps, steps[1:]):
@@ -370,8 +416,11 @@ def get_task(task_run_id: str, context: TaskContext = Depends(get_task_context))
 
 @router.get("/{task_run_id}/steps", response_model=list[StepRunResponse])
 def list_steps(task_run_id: str, context: TaskContext = Depends(get_task_context)) -> list[StepRunResponse]:
+    task = context.repository.get_task(task_run_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="task not found")
     steps = context.repository.list_steps(task_run_id)
-    return [StepRunResponse.model_validate(step, from_attributes=True) for step in steps]
+    return [_build_step_response(task, step) for step in steps]
 
 
 @router.get("/{task_run_id}/events", response_model=list[TaskEventResponse])
