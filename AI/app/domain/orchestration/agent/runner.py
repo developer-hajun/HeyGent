@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.tools.registry import ToolRegistry
 from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.orchestration.agent.loop import TaskEngine
+from app.domain.orchestration.policies import decide_executor_step_boundary
 from app.domain.orchestration.runtime_planning import Planner
 from app.domain.orchestration.resume import ResumeTargetResolver
 from app.domain.tasks.repository import TaskRepository
@@ -36,6 +37,12 @@ class AgentLoopRunner:
             input_payload=request.input_payload,
             executor=executor,
         )
+        boundary = decide_executor_step_boundary(
+            current_detail=None,
+            next_semantic_key=executor.spec.semantic_key or executor.spec.step_type,
+        )
+        if boundary.action != "create_new_step":
+            raise ValueError(f"unexpected start boundary decision: {boundary.reason}")
         step = self.planner.materialize_step(
             task=task,
             executor=executor,
@@ -57,6 +64,13 @@ class AgentLoopRunner:
             raise ValueError("step executor key is missing")
 
         executor = self.tool_registry.get(executor_key)
+        boundary = decide_executor_step_boundary(
+            current_detail=step.detail_json,
+            next_semantic_key=executor.spec.semantic_key or step.step_type,
+            is_resume=True,
+        )
+        if boundary.action != "reuse_for_resume":
+            raise ValueError(f"unexpected resume boundary decision: {boundary.reason}")
         self.planner.materialize_resume_step(task=task, step=step, executor=executor)
         return await self.task_engine.resume(task=task, executor=executor, approval_id=approval_id, payload=payload)
 

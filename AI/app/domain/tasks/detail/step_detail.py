@@ -162,6 +162,44 @@ def build_semantic_step_detail(
     }
 
 
+def semantic_key_of(detail: dict[str, Any] | None) -> str | None:
+    """StepRun detail 에 저장된 semanticKey 를 안전하게 꺼낸다."""
+
+    semantic_key = (_safe_dict(detail).get("semanticDetail") or {}).get("semanticKey")
+    normalized = str(semantic_key or "").strip()
+    return normalized or None
+
+
+def should_open_new_semantic_step(
+    *,
+    current_detail: dict[str, Any] | None,
+    next_semantic_key: str,
+    requires_independent_anchor: bool = False,
+) -> bool:
+    """다음 동작이 새 StepRun anchor 를 요구하는지 판단한다.
+
+    StepRun 은 내부 operation 조각이 아니라 의미 단위 anchor 다. 같은 semanticKey 의
+    prepare/execute/summarize/finalize 는 기존 StepRun 에 누적하고, semanticKey 가
+    실제로 바뀌거나 별도 waiting/resume/delegation anchor 가 필요할 때만 새 step 후보로 본다.
+    """
+
+    if requires_independent_anchor:
+        return True
+
+    current_semantic_key = semantic_key_of(current_detail)
+    normalized_next_key = str(next_semantic_key or "").strip()
+    if not current_semantic_key or not normalized_next_key:
+        return False
+    return current_semantic_key != normalized_next_key
+
+
+def should_reuse_semantic_step(current_detail: dict[str, Any] | None, next_semantic_key: str) -> bool:
+    return not should_open_new_semantic_step(
+        current_detail=current_detail,
+        next_semantic_key=next_semantic_key,
+    )
+
+
 def build_approval_detail(
     *,
     approval_requested: bool,

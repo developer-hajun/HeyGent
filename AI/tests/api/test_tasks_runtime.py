@@ -61,6 +61,11 @@ def test_model_generate_waits_for_approval_and_resumes(client):
     created = create_response.json()
     assert created["status"] == "WAITING"
     assert created["wait_payload"]["reason"] == "approval_required"
+    waiting_steps = client.get(f"/api/v1/tasks/{created['task_run_id']}/steps").json()
+    waiting_anchor_steps = [step for step in waiting_steps if not step["input_payload"].get("todo_key")]
+    assert len(waiting_anchor_steps) == 1
+    waiting_step_run_id = waiting_anchor_steps[0]["step_run_id"]
+    assert waiting_anchor_steps[0]["status"] == "WAITING"
 
     events = client.get(f"/api/v1/tasks/{created['task_run_id']}/events").json()
     approval_event = [event for event in events if event["event_type"] == "approval.requested"]
@@ -74,6 +79,11 @@ def test_model_generate_waits_for_approval_and_resumes(client):
     resumed = resume_response.json()
     assert resume_response.status_code == 200
     assert resumed["status"] == "COMPLETED"
+    resumed_steps = client.get(f"/api/v1/tasks/{created['task_run_id']}/steps").json()
+    resumed_anchor_steps = [step for step in resumed_steps if not step["input_payload"].get("todo_key")]
+    assert len(resumed_anchor_steps) == 1
+    assert resumed_anchor_steps[0]["step_run_id"] == waiting_step_run_id
+    assert resumed_anchor_steps[0]["status"] == "COMPLETED"
 
 def test_model_generate_delegates_child_task(client):
     response = client.post(
@@ -150,9 +160,53 @@ def test_model_generate_executes_model_requested_tool_loop(client, monkeypatch):
     assert [item["name"] for item in body["result_payload"]["tool_results"]] == ["skills.list", "terminal.run"]
 
     steps_response = client.get(f"/api/v1/tasks/{body['task_run_id']}/steps")
-    step = steps_response.json()[0]
+    steps = steps_response.json()
+    anchor_steps = [step for step in steps if not step["input_payload"].get("todo_key")]
+    assert len(anchor_steps) == 1
+    step = anchor_steps[0]
     assert step["detail_json"]["llmDetail"]["callCount"] == 2
     assert step["detail_json"]["llmDetail"]["model"] == "gpt-5.4"
+    assert step["detail_json"]["operationDetail"]["totalCount"] >= 2
+
+
+def test_model_generate_keeps_repeated_tool_calls_as_distinct_operations(client, monkeypatch):
+    response_payload = ProviderGenerateResponse(
+        provider_name="openai_oauth",
+        output_text='{"final":"REPEATED_TOOL_FINAL"}',
+        usage={"output_tokens": 3},
+        metadata={"mode": "stub", "model": "gpt-5.4"},
+    )
+
+    def fake_generate(self, prompt, **kwargs):
+        return response_payload
+
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.generate", fake_generate)
+
+    response = client.post(
+        "/api/v1/tasks",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "repeated-tool-user",
+            "input_payload": {
+                "prompt": "같은 tool 을 두 번 호출해도 step 안에서 둘 다 보여줘.",
+                "tool_calls": [
+                    {"name": "skills.list", "args": {}},
+                    {"name": "skills.list", "args": {}},
+                ],
+                "model": "gpt-5.4",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+
+    steps_response = client.get(f"/api/v1/tasks/{body['task_run_id']}/steps")
+    step = steps_response.json()[0]
+    operation_keys = [item["key"] for item in step["detail_json"]["operationDetail"]["operations"]]
+    assert "tool.skills.list.1" in operation_keys
+    assert "tool.skills.list.2" in operation_keys
 
 
 def test_model_generate_respects_runtime_toolsets(client):

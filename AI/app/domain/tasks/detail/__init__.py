@@ -8,6 +8,9 @@ from app.domain.tasks.detail.step_detail import (
     infer_semantic_status,
     merge_step_detail,
     normalize_operation_kind,
+    semantic_key_of,
+    should_open_new_semantic_step,
+    should_reuse_semantic_step,
 )
 
 __all__ = [
@@ -21,4 +24,7 @@ __all__ = [
     "merge_step_detail",
     "infer_semantic_status",
     "normalize_operation_kind",
+    "semantic_key_of",
+    "should_open_new_semantic_step",
+    "should_reuse_semantic_step",
 ]
