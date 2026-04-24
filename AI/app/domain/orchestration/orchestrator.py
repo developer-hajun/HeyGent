@@ -29,3 +29,9 @@ class Orchestrator:
         resolved_approval_id = approval_id or approval["approval_id"]
         task.current_step_run_id = approval["step_run_id"]
         return await self.loop_runner.resume(task=task, approval_id=resolved_approval_id, payload=payload)
+
+    async def cancel(self, *, task_run_id: str) -> TaskRun:
+        task = self.repository.get_task(task_run_id)
+        if task is None:
+            raise KeyError(task_run_id)
+        return await self.loop_runner.cancel_waiting(task=task)

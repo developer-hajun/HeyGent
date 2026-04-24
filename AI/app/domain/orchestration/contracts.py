@@ -13,6 +13,7 @@ class OrchestrationRequest:
     """
 
     owner_key: str
+    session_key: str | None
     input_payload: dict[str, Any]
     intent_type: str | None = None
     entry_executor_key: str | None = None

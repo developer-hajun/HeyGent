@@ -34,6 +34,7 @@ class AgentLoopRunner:
         )
         task = self.planner.materialize_task(
             owner_key=request.owner_key,
+            session_key=request.session_key,
             input_payload=request.input_payload,
             executor=executor,
         )
@@ -74,10 +75,14 @@ class AgentLoopRunner:
         self.planner.materialize_resume_step(task=task, step=step, executor=executor)
         return await self.task_engine.resume(task=task, executor=executor, approval_id=approval_id, payload=payload)
 
+    async def cancel_waiting(self, *, task: TaskRun) -> TaskRun:
+        return await self.task_engine.cancel_waiting(task=task)
+
     async def start_child(
         self,
         *,
         owner_key: str,
+        session_key: str | None,
         input_payload: dict,
         intent_type: str,
         entry_executor_key: str,
@@ -85,6 +90,7 @@ class AgentLoopRunner:
         return await self.start(
             OrchestrationRequest(
                 owner_key=owner_key,
+                session_key=session_key,
                 input_payload=input_payload,
                 intent_type=intent_type,
                 entry_executor_key=entry_executor_key,

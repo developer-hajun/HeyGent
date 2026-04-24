@@ -116,6 +116,81 @@ def test_taskruns_resume_rejects_non_waiting_task(client):
     assert resume_response.status_code == 409
     assert resume_response.json()["detail"] == "task is not waiting"
 
+
+def test_taskruns_cancel_waiting_task_and_projected_steps(client):
+    create_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "cancel-user",
+            "input_payload": {
+                "prompt": "승인 대기 중인 workflow 를 취소한다.",
+                "approval_required": True,
+                "approval_reason": "중간 취소 테스트",
+                "workflow_key": "workspace_publish_to_notion",
+            },
+        },
+    )
+
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["status"] == "WAITING"
+
+    cancel_response = client.post(f"/api/v1/taskRuns/{created['task_run_id']}/cancel")
+    assert cancel_response.status_code == 200
+    canceled = cancel_response.json()
+    assert canceled["status"] == "CANCELED"
+    assert canceled["wait_payload"] == {}
+    assert canceled["current_step_run_id"] == created["current_step_run_id"]
+
+    steps = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/steps").json()
+    anchor_steps = [step for step in steps if not step["input_payload"].get("todo_key")]
+    projected_steps = [step for step in steps if step["input_payload"].get("todo_key")]
+    assert len(anchor_steps) == 1
+    assert anchor_steps[0]["status"] == "CANCELED"
+    assert anchor_steps[0]["wait_payload"] == {}
+    assert anchor_steps[0]["detail_json"]["semanticDetail"]["lifecycle"] == "canceled"
+    assert anchor_steps[0]["detail_json"]["approvalDetail"]["approvalRequested"] is False
+    assert projected_steps
+    assert all(step["status"] == "CANCELED" for step in projected_steps)
+
+    flow = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/flow").json()
+    anchor_node = next(node for node in flow["nodes"] if not node["is_projected"])
+    activity_types = [item["event_type"] for item in anchor_node["activity"]]
+    assert "approval.canceled" in activity_types
+    assert "step.canceled" in activity_types
+    assert "task.canceled" in activity_types
+
+    active = client.get("/api/v1/taskRuns/active").json()
+    active_item = next(item for item in active["items"] if item["task_run_id"] == created["task_run_id"])
+    assert active_item["source"] == "recent"
+    assert active_item["status"] == "CANCELED"
+
+    resume_response = client.post(
+        f"/api/v1/taskRuns/{created['task_run_id']}/resume",
+        json={"payload": {"approved": True}},
+    )
+    assert resume_response.status_code == 409
+    assert resume_response.json()["detail"] == "task is not waiting"
+
+
+def test_taskruns_cancel_rejects_non_waiting_task(client):
+    create_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "cancel-non-waiting-user",
+            "input_payload": {"prompt": "바로 완료되는 작업"},
+        },
+    )
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["status"] == "COMPLETED"
+
+    cancel_response = client.post(f"/api/v1/taskRuns/{created['task_run_id']}/cancel")
+    assert cancel_response.status_code == 409
+    assert cancel_response.json()["detail"] == "task is not waiting"
+
 def test_model_generate_delegates_child_task(client):
     response = client.post(
         "/api/v1/taskRuns",
@@ -478,6 +553,58 @@ def test_taskruns_active_returns_only_live_task_snapshots(client):
     assert recent_item["status"] == "COMPLETED"
 
 
+def test_taskruns_support_session_key_on_create_and_active_filter(client):
+    session_a_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "session-user",
+            "session_key": "sess_a",
+            "input_payload": {
+                "prompt": "세션 A 에서 승인 대기",
+                "approval_required": True,
+                "approval_reason": "세션 A 확인 필요",
+            },
+        },
+    )
+    assert session_a_response.status_code == 200
+    session_a_task = session_a_response.json()
+    assert session_a_task["session_key"] == "sess_a"
+    assert session_a_task["status"] == "WAITING"
+
+    session_b_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "session-user",
+            "sessionKey": "sess_b",
+            "input_payload": {
+                "prompt": "세션 B 에서 승인 대기",
+                "approval_required": True,
+                "approval_reason": "세션 B 확인 필요",
+            },
+        },
+    )
+    assert session_b_response.status_code == 200
+    session_b_task = session_b_response.json()
+    assert session_b_task["session_key"] == "sess_b"
+    assert session_b_task["status"] == "WAITING"
+
+    filtered_active = client.get("/api/v1/taskRuns/active", params={"sessionKey": "sess_a"})
+    assert filtered_active.status_code == 200
+    active_body = filtered_active.json()
+    assert active_body["total_count"] == 1
+    assert active_body["items"][0]["task_run_id"] == session_a_task["task_run_id"]
+    assert active_body["items"][0]["session_key"] == "sess_a"
+
+    filtered_list = client.get("/api/v1/taskRuns", params={"sessionKey": "sess_b"})
+    assert filtered_list.status_code == 200
+    list_body = filtered_list.json()
+    assert list_body["total_count"] == 1
+    assert list_body["items"][0]["task_run_id"] == session_b_task["task_run_id"]
+    assert list_body["items"][0]["session_key"] == "sess_b"
+
+
 def test_taskruns_active_excludes_recent_terminal_tasks_after_ttl(client, monkeypatch):
     completed_response = client.post(
         "/api/v1/taskRuns",
@@ -552,4 +679,27 @@ def test_taskruns_flow_returns_step_nodes_and_edges_for_workflow(client, monkeyp
     assert flow["nodes"][-1]["step_run_id"] == flow["current_step_run_id"]
     assert any(item["event_type"] == "step.started" for item in flow["nodes"][0]["activity"])
     assert any(item["event_type"] == "task.completed" for item in flow["nodes"][-1]["activity"])
+
+
+def test_model_generate_child_task_inherits_parent_session_key(client):
+    response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "delegate-session-user",
+            "session_key": "sess_delegate_parent",
+            "input_payload": {
+                "prompt": "자식 작업 세션 전파 확인",
+                "delegate_prompt": "Reply with exactly CHILD_SESSION_OK and nothing else.",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    child_task_run_id = body["result_payload"]["childTaskRunId"]
+
+    child_task = client.get(f"/api/v1/taskRuns/{child_task_run_id}").json()
+    assert child_task["session_key"] == "sess_delegate_parent"
 

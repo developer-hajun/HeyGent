@@ -17,6 +17,7 @@ from app.domain.orchestration.policies import (
 from app.domain.orchestration.runtime_planning import Planner, build_task_plan, find_task_plan_step
 from app.domain.orchestration.runtime_planning.todo_state import (
     build_task_todo_payload,
+    cancel_incomplete_task_todo_items,
     parse_task_todo_payload,
     update_task_todo_item_status,
 )
@@ -88,6 +89,73 @@ class TaskEngine:
         self.repository.update_step(step)
         await self._emit("approval.resolved", task, step, payload={"approval_id": approval_id, **payload})
         return await self._execute(task=task, step=step, executor=executor, resume_payload=payload)
+
+    async def cancel_waiting(self, *, task: TaskRun) -> TaskRun:
+        if task.status != TaskStatus.WAITING:
+            raise ValueError("task is not waiting")
+        if not task.current_step_run_id:
+            raise ValueError("task waiting step is missing")
+
+        step = self.repository.get_step(task.current_step_run_id)
+        if step is None:
+            raise KeyError(task.current_step_run_id)
+        if step.status != StepStatus.WAITING:
+            raise ValueError("current step is not waiting")
+
+        approval = self.repository.get_open_approval(task.task_run_id)
+        if approval is None:
+            raise ValueError("no open approval")
+        canceled_approval = self.approval_service.cancel(approval["approval_id"])
+        if canceled_approval is None:
+            raise ValueError("no open approval")
+
+        canceled_at = utc_now()
+        self.approval_runtime.mark_canceled_step(
+            step=step,
+            approval_id=canceled_approval["approval_id"],
+            request_payload=canceled_approval.get("request_payload"),
+        )
+
+        task.status = TaskStatus.CANCELED
+        task.wait_payload = {}
+        task.progress_summary = "작업이 취소되었습니다."
+        task.current_step_run_id = step.step_run_id
+        task.todo_state = build_task_todo_payload(cancel_incomplete_task_todo_items(task.todo_state))
+        task.revision += 1
+        task.ended_at = canceled_at
+
+        step.status = StepStatus.CANCELED
+        step.wait_payload = {}
+        step.summary_message = "사용자 요청으로 취소됨"
+        step.ended_at = canceled_at
+        step.detail_json = merge_step_detail(
+            step.detail_json,
+            build_semantic_step_detail(
+                step_run_id=step.step_run_id,
+                semantic_key=semantic_key_of(step.detail_json) or step.step_type,
+                semantic_step=(step.detail_json.get("semanticDetail") or {}).get("semanticStep") or step.title or step.step_type,
+                semantic_goal=(step.detail_json.get("semanticDetail") or {}).get("goal") or step.title or step.step_type,
+                lifecycle="canceled",
+                status=infer_semantic_status(lifecycle="canceled", operation_detail=step.detail_json.get("operationDetail")),
+            ),
+        )
+
+        self.repository.update_task(task)
+        self.repository.update_step(step)
+
+        executor_key = step.executor_key or task.entry_executor_key
+        if executor_key:
+            await self._sync_todo_steps(task=task, executor=self.tool_registry.get(executor_key))
+
+        await self._emit(
+            "approval.canceled",
+            task,
+            step,
+            payload={"approval_id": canceled_approval["approval_id"]},
+        )
+        await self._emit("step.canceled", task, step)
+        await self._emit("task.canceled", task, step)
+        return task
 
     async def _execute(self, *, task: TaskRun, step: StepRun, executor, resume_payload: dict | None) -> TaskRun:
         ensure_task_transition(task.status, TaskStatus.RUNNING)

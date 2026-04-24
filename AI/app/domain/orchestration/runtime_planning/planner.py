@@ -13,7 +13,7 @@ from app.domain.tasks.models import StepRun, TaskRun
 class Planner:
     """TaskRun / StepRun 의 semantic 골격을 만든다."""
 
-    def materialize_task(self, *, owner_key: str, input_payload: dict, executor: TaskExecutor) -> TaskRun:
+    def materialize_task(self, *, owner_key: str, session_key: str | None, input_payload: dict, executor: TaskExecutor) -> TaskRun:
         task_plan = build_task_plan(input_payload=input_payload, default_task_title=executor.spec.task_title)
         initial_todo_state = (
             build_task_plan_todo_state(task_plan)
@@ -29,6 +29,7 @@ class Planner:
             intent_type=executor.spec.intent_type,
             entry_executor_key=executor.spec.entry_executor_key,
             owner_key=owner_key,
+            session_key=session_key,
             status="PENDING",
             title=task_plan.title if task_plan is not None and task_plan.title else executor.spec.task_title,
             input_payload=input_payload,

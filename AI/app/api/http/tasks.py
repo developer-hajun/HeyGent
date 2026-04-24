@@ -126,6 +126,7 @@ def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse
         task_type=task.task_type,
         intent_type=task.intent_type,
         entry_executor_key=task.entry_executor_key,
+        session_key=task.session_key,
         status=task.status,
         title=_display_task_title(task, input_summary=input_summary),
         input_summary=input_summary,
@@ -151,6 +152,7 @@ def _build_active_task_item(task, steps: list[StepRun], *, source: str) -> Activ
     return ActiveTaskRunListItemResponse(
         task_run_id=task.task_run_id,
         source=source,
+        session_key=task.session_key,
         status=task.status,
         title=_display_task_title(task, input_summary=input_summary),
         current_step_run_id=task.current_step_run_id,
@@ -317,12 +319,13 @@ def list_tasks(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=8, ge=1, le=20),
     status: str = Query(default="ALL"),
+    session_key: str | None = Query(default=None, alias="sessionKey"),
     context: TaskContext = Depends(get_task_context),
 ) -> TaskRunListResponse:
     status_filter = _normalize_task_status_filter(status)
     offset = (page - 1) * page_size
-    tasks = context.repository.list_tasks(status=status_filter, limit=page_size, offset=offset)
-    total_count = context.repository.count_tasks(status=status_filter)
+    tasks = context.repository.list_tasks(status=status_filter, session_key=session_key, limit=page_size, offset=offset)
+    total_count = context.repository.count_tasks(status=status_filter, session_key=session_key)
     items = [_build_task_list_item(task, context.repository.list_steps(task.task_run_id)) for task in tasks]
     return TaskRunListResponse(
         items=items,
@@ -336,14 +339,18 @@ def list_tasks(
 
 
 @router.get("/active", response_model=ActiveTaskRunListResponse)
-def list_active_tasks(context: TaskContext = Depends(get_task_context)) -> ActiveTaskRunListResponse:
+def list_active_tasks(
+    session_key: str | None = Query(default=None, alias="sessionKey"),
+    context: TaskContext = Depends(get_task_context),
+) -> ActiveTaskRunListResponse:
     now = utc_now()
-    active_total_count = context.repository.count_tasks_by_statuses(_ACTIVE_TASK_STATUSES)
-    active_tasks = context.repository.list_tasks_by_statuses(_ACTIVE_TASK_STATUSES, limit=max(active_total_count, 1), offset=0)
+    active_total_count = context.repository.count_tasks_by_statuses(_ACTIVE_TASK_STATUSES, session_key=session_key)
+    active_tasks = context.repository.list_tasks_by_statuses(_ACTIVE_TASK_STATUSES, session_key=session_key, limit=max(active_total_count, 1), offset=0)
 
-    recent_total_pool = context.repository.count_tasks_by_statuses(_RECENT_TERMINAL_TASK_STATUSES)
+    recent_total_pool = context.repository.count_tasks_by_statuses(_RECENT_TERMINAL_TASK_STATUSES, session_key=session_key)
     recent_candidates = context.repository.list_tasks_by_statuses(
         _RECENT_TERMINAL_TASK_STATUSES,
+        session_key=session_key,
         limit=max(recent_total_pool, 1),
         offset=0,
     )
@@ -375,6 +382,7 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
         task = await orchestrator.start(
             OrchestrationRequest(
                 owner_key=payload.owner_key,
+                session_key=payload.session_key,
                 input_payload=payload.input_payload,
                 intent_type=payload.intent_type,
                 entry_executor_key=payload.entry_executor_key,
@@ -437,6 +445,17 @@ async def resume_task(request: Request, task_run_id: str, payload: ResumeTaskReq
             approval_id=payload.approval_id or "",
             payload=payload.payload,
         )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="task not found") from None
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return TaskRunResponse.model_validate(task, from_attributes=True)
+
+
+@router.post("/{task_run_id}/cancel", response_model=TaskRunResponse)
+async def cancel_task(request: Request, task_run_id: str, context: TaskContext = Depends(get_task_context)) -> TaskRunResponse:
+    try:
+        task = await request.app.state.orchestrator.cancel(task_run_id=task_run_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="task not found") from None
     except ValueError as error:

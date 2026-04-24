@@ -38,6 +38,7 @@ class TaskRunResponse(BaseModel):
     task_type: str
     intent_type: str | None = None
     entry_executor_key: str | None = None
+    session_key: str | None = None
     current_step_run_id: str | None = None
     status: str
     title: str | None = None
@@ -69,6 +70,7 @@ class TaskRunListItemResponse(BaseModel):
     task_type: str
     intent_type: str | None = None
     entry_executor_key: str | None = None
+    session_key: str | None = None
     status: str
     title: str | None = None
     input_summary: str | None = None
@@ -153,6 +155,7 @@ class ActiveTaskRunCurrentStepResponse(BaseModel):
 class ActiveTaskRunListItemResponse(BaseModel):
     task_run_id: str
     source: str
+    session_key: str | None = None
     status: str
     title: str | None = None
     current_step_run_id: str | None = None

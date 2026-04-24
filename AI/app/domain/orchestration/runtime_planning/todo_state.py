@@ -188,6 +188,20 @@ def update_task_todo_item_status(
     return TodoState(items=tuple(updated_items), current_key=current_key)
 
 
+def cancel_incomplete_task_todo_items(current_payload: dict[str, Any] | None) -> TodoState:
+    state = parse_task_todo_payload(current_payload)
+    updated_items = tuple(
+        TodoItem(
+            key=item.key,
+            title=item.title,
+            kind=item.kind,
+            status=item.status if item.status in {"completed", "failed", "canceled"} else "cancelled",
+        )
+        for item in state.items
+    )
+    return TodoState(items=updated_items, current_key=None)
+
+
 def _has_todo_identity(item: Any) -> bool:
     return isinstance(item, dict) and bool(str(item.get("id") or item.get("key") or "").strip())
 

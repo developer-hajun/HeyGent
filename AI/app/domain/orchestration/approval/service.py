@@ -20,3 +20,6 @@ class ApprovalService:
 
     def resolve(self, approval_id: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         return self.repository.resolve_approval_request(approval_id, payload)
+
+    def cancel(self, approval_id: str) -> dict[str, Any] | None:
+        return self.repository.cancel_approval_request(approval_id)
