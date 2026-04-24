@@ -54,7 +54,7 @@ class Planner:
             step.detail_json,
             build_semantic_step_detail(
                 step_run_id=step.step_run_id,
-                semantic_key=executor.spec.semantic_key or executor.spec.step_type,
+                semantic_key=self._executor_semantic_key(executor),
                 semantic_step=executor.spec.step_title,
                 semantic_goal=executor.spec.semantic_goal or executor.spec.step_title,
                 lifecycle="pending",
@@ -97,7 +97,7 @@ class Planner:
             step.detail_json,
             build_semantic_step_detail(
                 step_run_id=step.step_run_id,
-                semantic_key=f"todo.{todo_item.key}",
+                semantic_key=self._todo_semantic_key(todo_item),
                 semantic_step=todo_item.title,
                 semantic_goal=todo_item.title,
                 lifecycle="pending",
@@ -140,10 +140,26 @@ class Planner:
             step.detail_json,
             build_semantic_step_detail(
                 step_run_id=step.step_run_id,
-                semantic_key=executor.spec.semantic_key or step.step_type,
+                semantic_key=self._executor_semantic_key(executor, fallback=step.step_type),
                 semantic_step=step.title or executor.spec.step_title,
                 semantic_goal=executor.spec.semantic_goal or step.title or executor.spec.step_title,
                 lifecycle="resuming",
             ),
         )
         return step
+
+    @staticmethod
+    def _executor_semantic_key(executor: TaskExecutor, *, fallback: str | None = None) -> str:
+        """executor 기본 semanticKey 생성 규칙.
+
+        StepRun 은 내부 operation 이 아니라 의미 단위 anchor 이므로, executor 가 명시한
+        semantic_key 를 우선 사용하고 없으면 step_type 을 기준 semanticKey 로 고정한다.
+        """
+
+        return executor.spec.semantic_key or fallback or executor.spec.step_type
+
+    @staticmethod
+    def _todo_semantic_key(todo_item: TodoItem) -> str:
+        """todo projection 은 사용자에게 별도 단계로 보이는 독립 semantic step 이다."""
+
+        return f"todo.{todo_item.key}"

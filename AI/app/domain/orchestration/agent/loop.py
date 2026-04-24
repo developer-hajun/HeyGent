@@ -16,7 +16,13 @@ from app.domain.orchestration.policies import (
 from app.domain.orchestration.runtime_planning import Planner
 from app.domain.orchestration.runtime_planning.todo_state import parse_task_todo_payload
 from app.domain.orchestration.result_inspector import OutcomeInspector
-from app.domain.tasks.detail import build_planning_detail, build_semantic_step_detail, infer_semantic_status, merge_step_detail
+from app.domain.tasks.detail import (
+    build_planning_detail,
+    build_semantic_step_detail,
+    infer_semantic_status,
+    merge_step_detail,
+    semantic_key_of,
+)
 from app.domain.tasks.events import build_task_event
 from app.domain.tasks.repository import TaskRepository
 from app.domain.tasks.models import StepRun, TaskRun
@@ -65,7 +71,7 @@ class TaskEngine:
             step.detail_json,
             build_semantic_step_detail(
                 step_run_id=step.step_run_id,
-                semantic_key=(step.detail_json.get("semanticDetail") or {}).get("semanticKey") or step.step_type,
+                semantic_key=semantic_key_of(step.detail_json) or step.step_type,
                 semantic_step=(step.detail_json.get("semanticDetail") or {}).get("semanticStep") or step.title or step.step_type,
                 semantic_goal=(step.detail_json.get("semanticDetail") or {}).get("goal") or step.title or step.step_type,
                 lifecycle="resuming",
@@ -90,7 +96,7 @@ class TaskEngine:
             step.detail_json,
             build_semantic_step_detail(
                 step_run_id=step.step_run_id,
-                semantic_key=(step.detail_json.get("semanticDetail") or {}).get("semanticKey") or executor.spec.semantic_key or step.step_type,
+                semantic_key=semantic_key_of(step.detail_json) or executor.spec.semantic_key or step.step_type,
                 semantic_step=(step.detail_json.get("semanticDetail") or {}).get("semanticStep") or step.title or executor.spec.step_title,
                 semantic_goal=(step.detail_json.get("semanticDetail") or {}).get("goal") or executor.spec.semantic_goal or step.title or executor.spec.step_title,
                 lifecycle="running",
@@ -109,6 +115,8 @@ class TaskEngine:
 
     async def _apply_outcome(self, *, task: TaskRun, step: StepRun, executor, outcome: dict) -> TaskRun:
         outcome = await self.delegate_runtime.apply(task=task, step=step, outcome=outcome, repository=self.repository)
+        # operation-only outcome 은 새 StepRun 생성 사유가 아니다. semanticKey 가 유지되는 한
+        # result_inspector 가 기존 step.detail_json.operationDetail 에 operation 을 누적한다.
         outcome = self.outcome_inspector.inspect(step=step, outcome=outcome)
         task_status = outcome["task_status"]
         step_status = outcome["step_status"]
@@ -133,7 +141,7 @@ class TaskEngine:
             step.detail_json,
             build_semantic_step_detail(
                 step_run_id=step.step_run_id,
-                semantic_key=(step.detail_json.get("semanticDetail") or {}).get("semanticKey") or step.step_type,
+                semantic_key=semantic_key_of(step.detail_json) or step.step_type,
                 semantic_step=(step.detail_json.get("semanticDetail") or {}).get("semanticStep") or step.title or step.step_type,
                 semantic_goal=(step.detail_json.get("semanticDetail") or {}).get("goal") or step.title or step.step_type,
                 lifecycle=semantic_lifecycle,

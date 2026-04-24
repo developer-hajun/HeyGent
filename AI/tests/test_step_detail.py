@@ -1,7 +1,11 @@
 from app.domain.tasks.detail.step_detail import (
     build_default_step_detail,
     build_operation_detail,
+    build_semantic_step_detail,
     infer_semantic_status,
+    semantic_key_of,
+    should_open_new_semantic_step,
+    should_reuse_semantic_step,
 )
 
 
@@ -9,6 +13,31 @@ def test_default_step_detail_exposes_semantic_status():
     detail = build_default_step_detail()
 
     assert detail["semanticDetail"]["status"] == "pending"
+
+
+def test_semantic_step_reuse_rule_uses_semantic_key():
+    detail = build_semantic_step_detail(
+        step_run_id="step_1",
+        semantic_key="model.generate",
+        semantic_step="모델 응답 생성",
+        semantic_goal="사용자 요청에 답한다",
+        lifecycle="running",
+    )
+
+    assert semantic_key_of(detail) == "model.generate"
+    assert should_reuse_semantic_step(detail, "model.generate") is True
+    assert should_open_new_semantic_step(current_detail=detail, next_semantic_key="model.generate") is False
+    assert should_open_new_semantic_step(current_detail=detail, next_semantic_key="notion.page.create") is True
+    assert should_open_new_semantic_step(
+        current_detail=detail,
+        next_semantic_key="model.generate",
+        requires_independent_anchor=True,
+    ) is True
+
+
+def test_semantic_step_reuse_rule_does_not_open_step_when_key_is_missing():
+    assert should_open_new_semantic_step(current_detail=None, next_semantic_key="model.generate") is False
+    assert should_open_new_semantic_step(current_detail=build_default_step_detail(), next_semantic_key="") is False
 
 
 def test_build_operation_detail_normalizes_legacy_kinds_and_merges_by_key():
