@@ -490,6 +490,11 @@ class TaskEngine:
         previous_payload = dict(task.input_payload or {})
         previous_prompt = str(previous_payload.get("prompt") or "").strip()
         previous_text = str((task.result_payload or {}).get("text") or (task.result_payload or {}).get("summary") or "").strip()
+        model_decision_detail = (step.detail_json or {}).get("modelDecisionDetail") or {}
+        previous_handoff_summary = str(
+            model_decision_detail.get("handoffSummary") or (task.result_payload or {}).get("handoff_summary") or ""
+        ).strip()
+        preferred_previous_text = previous_handoff_summary or previous_text
         merged = {
             **previous_payload,
             **dict(next_step.input_payload or {}),
@@ -499,6 +504,8 @@ class TaskEngine:
                 "toStepKey": next_step.key,
                 "toStepTitle": next_step.title,
                 "previousPrompt": previous_prompt,
+                "previousHandoffSummary": previous_handoff_summary or None,
+                "previousResultText": previous_text or None,
                 "previousResult": task.result_payload,
             },
         }
@@ -509,16 +516,17 @@ class TaskEngine:
                     f"현재 단계: {next_step.title}",
                     f"목표: {next_step.goal}",
                     f"이전 단계: {step.title}",
-                    f"이전 결과 요약: {previous_text}" if previous_text else None,
+                    f"이전 단계 인계 요약: {previous_handoff_summary}" if previous_handoff_summary else None,
+                    f"이전 결과 요약: {previous_text}" if previous_text and previous_text != previous_handoff_summary else None,
                     f"원래 사용자 요청: {previous_prompt}" if previous_prompt else None,
                 ]
                 if part
             )
         elif (next_step.entry_executor_key or "") == "notion.page.create":
             merged.setdefault("title", next_step.title)
-            if previous_text and not str(merged.get("content") or "").strip():
-                merged["content"] = previous_text
+            if preferred_previous_text and not str(merged.get("content") or "").strip():
+                merged["content"] = preferred_previous_text
         elif (next_step.entry_executor_key or "") == "notion.database.append":
-            if previous_text and not dict(merged.get("fields") or {}):
-                merged["fields"] = {"Summary": previous_text}
+            if preferred_previous_text and not dict(merged.get("fields") or {}):
+                merged["fields"] = {"Summary": preferred_previous_text}
         return merged

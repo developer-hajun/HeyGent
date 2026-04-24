@@ -287,6 +287,84 @@ def test_model_generate_executes_model_requested_tool_loop(client, monkeypatch):
     assert step["detail_json"]["operationDetail"]["totalCount"] >= 2
 
 
+def test_model_generate_persists_action_and_handoff_hints(client, monkeypatch):
+    responses = iter(
+        [
+            ProviderGenerateResponse(
+                provider_name="openai_oauth",
+                output_text=json.dumps(
+                    {
+                        "action": "tool_calls",
+                        "tool_calls": [
+                            {"name": "skills.list", "args": {}},
+                        ],
+                        "action_summary": "필요한 skill 후보를 먼저 확인한다.",
+                        "semantic_hint": {
+                            "label": "자료 조사",
+                            "goal": "필요한 정보를 먼저 수집한다.",
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                usage={},
+                metadata={"mode": "stub", "model": "gpt-5.4"},
+            ),
+            ProviderGenerateResponse(
+                provider_name="openai_oauth",
+                output_text=json.dumps(
+                    {
+                        "action": "final",
+                        "final": "MODEL_HINTED_FINAL",
+                        "action_summary": "추가 도구 없이 답변을 마무리할 수 있다.",
+                        "handoff_summary": "핵심 결과와 다음 단계용 요약을 정리했다.",
+                        "semantic_hint": {
+                            "label": "응답 작성",
+                            "goal": "수집한 결과를 사용자에게 정리해 전달한다.",
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                usage={"output_tokens": 5},
+                metadata={"mode": "stub", "model": "gpt-5.4"},
+            ),
+        ]
+    )
+
+    def fake_generate(self, prompt, **kwargs):
+        return next(responses)
+
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.generate", fake_generate)
+
+    response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "hinted-loop-user",
+            "input_payload": {
+                "prompt": "필요하면 도구를 쓰고 마지막에는 구조화된 힌트를 남겨.",
+                "model": "gpt-5.4",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert body["result_payload"]["text"] == "MODEL_HINTED_FINAL"
+    assert body["result_payload"]["handoff_summary"] == "핵심 결과와 다음 단계용 요약을 정리했다."
+    assert body["progress_summary"] == "추가 도구 없이 답변을 마무리할 수 있다."
+
+    steps_response = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps")
+    steps = steps_response.json()
+    anchor_steps = [step for step in steps if not step["input_payload"].get("todo_key")]
+    assert len(anchor_steps) == 1
+    model_decision = anchor_steps[0]["detail_json"]["modelDecisionDetail"]
+    assert model_decision["action"] == "final"
+    assert model_decision["actionSummary"] == "추가 도구 없이 답변을 마무리할 수 있다."
+    assert model_decision["handoffSummary"] == "핵심 결과와 다음 단계용 요약을 정리했다."
+    assert model_decision["semanticHint"]["label"] == "응답 작성"
+
+
 def test_model_generate_keeps_repeated_tool_calls_as_distinct_operations(client, monkeypatch):
     response_payload = ProviderGenerateResponse(
         provider_name="openai_oauth",
@@ -325,6 +403,101 @@ def test_model_generate_keeps_repeated_tool_calls_as_distinct_operations(client,
     operation_keys = [item["key"] for item in step["detail_json"]["operationDetail"]["operations"]]
     assert "tool.skills.list.1" in operation_keys
     assert "tool.skills.list.2" in operation_keys
+
+
+def test_model_generate_blocks_immediate_repeated_tool_batch(client, monkeypatch):
+    responses = iter(
+        [
+            ProviderGenerateResponse(
+                provider_name="openai_oauth",
+                output_text=json.dumps(
+                    {
+                        "action": "tool_calls",
+                        "tool_calls": [{"name": "skills.list", "args": {}}],
+                    },
+                    ensure_ascii=False,
+                ),
+                usage={},
+                metadata={"mode": "stub", "model": "gpt-5.4"},
+            ),
+            ProviderGenerateResponse(
+                provider_name="openai_oauth",
+                output_text=json.dumps(
+                    {
+                        "action": "tool_calls",
+                        "tool_calls": [{"name": "skills.list", "args": {}}],
+                    },
+                    ensure_ascii=False,
+                ),
+                usage={},
+                metadata={"mode": "stub", "model": "gpt-5.4"},
+            ),
+        ]
+    )
+
+    def fake_generate(self, prompt, **kwargs):
+        return next(responses)
+
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.generate", fake_generate)
+
+    response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "repeated-batch-user",
+            "input_payload": {
+                "prompt": "같은 도구를 바로 반복 호출하지 말고 막아줘.",
+                "model": "gpt-5.4",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "FAILED"
+    assert body["error_message"] == "repeated tool_calls batch requested immediately after the same calls"
+
+
+def test_model_generate_prefers_final_over_new_tool_calls_at_iteration_limit(client, monkeypatch):
+    response_payload = ProviderGenerateResponse(
+        provider_name="openai_oauth",
+        output_text=json.dumps(
+            {
+                "action": "tool_calls",
+                "tool_calls": [{"name": "skills.list", "args": {}}],
+                "final": "ITERATION_LIMIT_FINAL",
+                "action_summary": "도구를 더 부르기보다 지금 답변을 끝내는 편이 낫다.",
+            },
+            ensure_ascii=False,
+        ),
+        usage={"output_tokens": 3},
+        metadata={"mode": "stub", "model": "gpt-5.4"},
+    )
+
+    def fake_generate(self, prompt, **kwargs):
+        return response_payload
+
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.generate", fake_generate)
+
+    response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "iteration-limit-user",
+            "input_payload": {
+                "prompt": "마지막 턴에서는 final 을 우선해.",
+                "model": "gpt-5.4",
+                "max_iterations": 1,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert body["result_payload"]["text"] == "ITERATION_LIMIT_FINAL"
+    assert body["result_payload"]["tool_results"] == []
+    assert body["progress_summary"] == "도구를 더 부르기보다 지금 답변을 끝내는 편이 낫다."
 
 
 def test_model_generate_executes_top_level_workflow_steps_from_workflow_key(client, monkeypatch):
@@ -386,15 +559,32 @@ def test_model_generate_executes_top_level_workflow_steps_from_workflow_key(clie
 
 
 def test_model_generate_routes_handoff_to_explicit_step_executor(client, monkeypatch):
-    response_payload = ProviderGenerateResponse(
-        provider_name="openai_oauth",
-        output_text='{"final":"HANDOFF_TO_NOTION"}',
-        usage={"output_tokens": 3},
-        metadata={"mode": "stub", "model": "gpt-5.4"},
+    responses = iter(
+        [
+            ProviderGenerateResponse(
+                provider_name="openai_oauth",
+                output_text=json.dumps(
+                    {
+                        "action": "final",
+                        "final": "HANDOFF_TO_NOTION",
+                        "handoff_summary": "이 요약을 다음 Notion 단계 본문으로 넘긴다.",
+                    },
+                    ensure_ascii=False,
+                ),
+                usage={"output_tokens": 3},
+                metadata={"mode": "stub", "model": "gpt-5.4"},
+            ),
+            ProviderGenerateResponse(
+                provider_name="openai_oauth",
+                output_text="NOTION_SUMMARY_OK",
+                usage={"output_tokens": 3},
+                metadata={"mode": "stub", "model": "gpt-5.4"},
+            ),
+        ]
     )
 
     def fake_generate(self, prompt, **kwargs):
-        return response_payload
+        return next(responses)
 
     monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.generate", fake_generate)
 
@@ -441,6 +631,7 @@ def test_model_generate_routes_handoff_to_explicit_step_executor(client, monkeyp
     assert steps[1]["title"] == "노션 페이지 반영"
     assert steps[1]["executor_key"] == "notion.page.create"
     assert steps[1]["output_payload"]["request"]["properties"]["title"] == "API 변경 요약"
+    assert steps[1]["output_payload"]["request"]["children"][0]["text"] == "이 요약을 다음 Notion 단계 본문으로 넘긴다."
     assert steps[0]["semantic"]["key"] == "plan.summarize"
     assert steps[0]["is_projected"] is False
     assert steps[1]["is_current"] is True

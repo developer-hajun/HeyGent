@@ -80,11 +80,17 @@ class PromptBuilder:
             "\n".join(
                 [
                     f"현재는 tool-calling loop {turn_index}/{max_iterations} 턴입니다.",
-                    "도구가 더 필요하면 JSON 객체 하나만 응답하세요.",
-                    '예시: {"tool_calls":[{"name":"skills.list","args":{}}],"message":"optional"}',
-                    '승인이 필요하면 {"approval_required":true,"approval_reason":"..."} 형식을 사용하세요.',
-                    '자식 작업 위임이 필요하면 {"delegate_prompt":"...","delegate_skill_hints":["..."]} 형식을 사용하세요.',
-                    '작업이 끝났으면 일반 텍스트로 답하거나 {"final":"..."} 형식을 사용하세요.',
+                    "추가 정보나 로컬 실행이 실제로 필요할 때만 tool_calls 를 사용하세요.",
+                    "이미 충분한 정보가 있으면 더 이상 도구를 부르지 말고 final 로 종료하세요.",
+                    "직전에 같은 tool_calls 를 같은 인자로 실행했다면 반복하지 말고 final 을 우선하세요.",
+                    "delegate 는 하위 작업으로 분리했을 때 더 명확한 경우에만 사용하세요.",
+                    "승인이 없으면 진행하면 안 되는 경우에만 approval 을 요청하세요.",
+                    "가능하면 JSON 객체 하나만 응답하고 action 필드를 포함하세요.",
+                    'tool 예시: {"action":"tool_calls","tool_calls":[{"name":"skills.list","args":{}}],"action_summary":"필요한 skill 후보를 먼저 확인한다."}',
+                    'approval 예시: {"action":"approval","approval_required":true,"approval_reason":"운영 반영 전 승인 필요","action_summary":"사용자 확인 없이는 진행하면 안 된다."}',
+                    'delegate 예시: {"action":"delegate","delegate_prompt":"...","delegate_skill_hints":["..."],"action_summary":"하위 작업으로 위임하는 편이 더 적절하다."}',
+                    'final 예시: {"action":"final","final":"...","action_summary":"추가 도구 없이 답변을 마무리할 수 있다.","handoff_summary":"다음 단계에 넘길 핵심 요약"}',
+                    "semantic_hint 는 선택 사항이며 label/goal 만 포함한 soft hint 로 사용하세요.",
                 ]
             )
         )

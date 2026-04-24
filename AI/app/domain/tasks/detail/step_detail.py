@@ -122,6 +122,20 @@ DEFAULT_STEP_DETAIL: dict[str, Any] = {
         # resume 가 끝난 뒤에도 어떤 입력으로 재개되었는지 이 step 에서 바로 볼 수 있게 남긴다.
         "response": None,
     },
+    "modelDecisionDetail": {
+        # 모델이 현재 턴에서 어떤 유형의 행동을 골랐는지 나타낸다.
+        # action 은 엔진 상태 전이를 대신하지 않고, 모델 선택 의도를 복기하는 용도다.
+        "action": None,
+        # 왜 이 행동을 골랐는지에 대한 한 줄 요약.
+        # step summary 와 handoff 품질을 보강할 때 쓴다.
+        "actionSummary": None,
+        # 다음 단계로 넘기기 좋은 짧은 요약.
+        # workflow handoff 시 raw payload 대신 먼저 참고할 수 있는 모델측 요약이다.
+        "handoffSummary": None,
+        # 현재 semantic 단계에 대한 soft hint.
+        # StepRun 경계는 엔진이 결정하고, 모델은 label/goal 수준의 힌트만 남긴다.
+        "semanticHint": None,
+    },
 }
 
 
@@ -219,6 +233,24 @@ def build_approval_detail(
         detail["response"] = response_payload
     return {
         "approvalDetail": detail
+    }
+
+
+def build_model_decision_detail(
+    *,
+    action: str | None,
+    action_summary: str | None = None,
+    handoff_summary: str | None = None,
+    semantic_hint: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    detail: dict[str, Any] = {
+        "action": action,
+        "actionSummary": action_summary,
+        "handoffSummary": handoff_summary,
+        "semanticHint": semantic_hint,
+    }
+    return {
+        "modelDecisionDetail": detail
     }
 
 
