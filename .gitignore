@@ -1,17 +1,2 @@
-/.gradle
-/.idea
-/.kotlin
-/local.properties
-
-/MOB/local.properties
-/MOB/.gradle
-/MOB/.idea
-/MOB/.kotlin
-/MOB/build
-/MOB/**/build
-/MOB/captures
-/MOB/.externalNativeBuild
-/MOB/.cxx
-
 *.iml
 .DS_Store
