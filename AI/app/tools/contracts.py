@@ -14,6 +14,13 @@ class OperationTemplate:
 
     key: str
     title: str
+    # kind 는 capability 별 자유 문자열이 아니라 공통 의미 집합을 따르는 편이 좋다.
+    # 권장 값:
+    # - prepare
+    # - execute
+    # - summarize
+    # - handoff
+    # - finalize
     kind: str
 
 

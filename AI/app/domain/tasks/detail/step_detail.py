@@ -4,6 +4,36 @@ from copy import deepcopy
 from typing import Any
 
 
+_SEMANTIC_STATUS_BY_LIFECYCLE = {
+    "pending": "pending",
+    "running": "running",
+    "resuming": "running",
+    "waiting": "waiting",
+    "completed": "completed",
+    "failed": "failed",
+    "canceled": "canceled",
+    "cancelled": "canceled",
+}
+
+_OPERATION_KIND_ALIASES = {
+    "prepare": "prepare",
+    "mapping": "prepare",
+    "plan": "prepare",
+    "input": "prepare",
+    "execute": "execute",
+    "tool": "execute",
+    "local": "execute",
+    "llm": "execute",
+    "summarize": "summarize",
+    "summary": "summarize",
+    "handoff": "handoff",
+    "delegate": "handoff",
+    "finalize": "finalize",
+    "finalise": "finalize",
+    "finish": "finalize",
+}
+
+
 # StepRun detail 은 v1 에서 별도 invocation 테이블 대신 한 곳에 모아 둔다.
 # 나중에 tool / agent / llm 계층을 분리하더라도 이 구조를 기준점으로 삼을 수 있게
 # 키 이름을 먼저 고정해 둔다.
@@ -21,6 +51,9 @@ DEFAULT_STEP_DETAIL: dict[str, Any] = {
         # semantic step 이 어떤 lifecycle 에 있는지 기록한다.
         # WAITING/RESUME/COMPLETED 전이를 detail 안에도 남겨 두어 이벤트만으로 잃어버리지 않게 한다.
         "lifecycle": "pending",
+        # semantic step 의 현재 의미 단위 상태.
+        # operation 진행 수와 lifecycle 을 같이 해석해야 하므로 별도 상태 필드로 유지한다.
+        "status": "pending",
         # semantic step 의 operational anchor 인 StepRun ID.
         # approval, waiting, resume, child linkage 가 모두 결국 이 anchor 로 되돌아오게 하기 위해 넣는다.
         "anchorStepRunId": None,
@@ -109,6 +142,7 @@ def build_semantic_step_detail(
     semantic_step: str,
     semantic_goal: str,
     lifecycle: str,
+    status: str | None = None,
 ) -> dict[str, Any]:
     """semantic step + operational anchor 메타데이터를 만든다.
 
@@ -122,6 +156,7 @@ def build_semantic_step_detail(
             "semanticStep": semantic_step,
             "goal": semantic_goal,
             "lifecycle": lifecycle,
+            "status": status or infer_semantic_status(lifecycle=lifecycle),
             "anchorStepRunId": step_run_id,
         }
     }
@@ -149,18 +184,9 @@ def build_approval_detail(
     }
 
 
-def build_operation_detail(operations: list[dict[str, Any]]) -> dict[str, Any]:
-    normalized_operations = [
-        {
-            "key": str(operation.get("key") or ""),
-            "title": str(operation.get("title") or ""),
-            "kind": str(operation.get("kind") or "operation"),
-            "status": str(operation.get("status") or "completed"),
-            "summary": operation.get("summary"),
-        }
-        for operation in operations
-        if operation.get("key")
-    ]
+def build_operation_detail(operations: list[dict[str, Any]], *, current_detail: dict[str, Any] | None = None) -> dict[str, Any]:
+    existing_operations = ((_safe_dict(current_detail).get("operationDetail") or {}).get("operations") or [])
+    normalized_operations = _merge_operations(existing_operations=existing_operations, new_operations=operations)
     return {
         "operationDetail": {
             "operations": normalized_operations,
@@ -206,3 +232,93 @@ def merge_step_detail(current: dict[str, Any] | None, patch: dict[str, Any] | No
             else:
                 merged[key] = value
     return merged
+
+
+def infer_semantic_status(*, lifecycle: str, operation_detail: dict[str, Any] | None = None) -> str:
+    normalized_lifecycle = str(lifecycle or "pending").strip().lower()
+    mapped = _SEMANTIC_STATUS_BY_LIFECYCLE.get(normalized_lifecycle, "running")
+    if mapped not in {"running", "pending"}:
+        return mapped
+
+    detail = _safe_dict(operation_detail)
+    total_count = _safe_int(detail.get("totalCount"))
+    completed_count = _safe_int(detail.get("completedCount"))
+    if total_count > 0 and 0 < completed_count < total_count:
+        return "partially_completed"
+    return mapped
+
+
+def normalize_operation_kind(kind: str | None) -> str:
+    normalized = str(kind or "execute").strip().lower()
+    if not normalized:
+        return "execute"
+    return _OPERATION_KIND_ALIASES.get(normalized, "execute")
+
+
+def normalize_operation_status(status: str | None) -> str:
+    normalized = str(status or "completed").strip().lower()
+    if normalized == "cancelled":
+        return "canceled"
+    if normalized in {"pending", "running", "waiting", "completed", "failed", "canceled"}:
+        return normalized
+    return "completed"
+
+
+def _merge_operations(*, existing_operations: list[dict[str, Any]], new_operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    order: list[str] = []
+
+    for operation in existing_operations:
+        normalized = _normalize_operation(operation)
+        if normalized is None:
+            continue
+        order.append(normalized["key"])
+        merged.append(normalized)
+
+    index_by_key = {operation["key"]: idx for idx, operation in enumerate(merged)}
+    for operation in new_operations:
+        normalized = _normalize_operation(operation)
+        if normalized is None:
+            continue
+        existing_index = index_by_key.get(normalized["key"])
+        if existing_index is None:
+            index_by_key[normalized["key"]] = len(merged)
+            order.append(normalized["key"])
+            merged.append(normalized)
+            continue
+        merged[existing_index] = normalized
+
+    return [merged[index_by_key[key]] for key in order if key in index_by_key]
+
+
+def _normalize_operation(operation: dict[str, Any] | None) -> dict[str, Any] | None:
+    raw = _safe_dict(operation)
+    key = str(raw.get("key") or "").strip()
+    if not key:
+        return None
+
+    raw_kind = str(raw.get("kind") or "execute").strip()
+    normalized_kind = normalize_operation_kind(raw_kind)
+    normalized = {
+        "key": key,
+        "title": str(raw.get("title") or key),
+        "kind": normalized_kind,
+        "status": normalize_operation_status(raw.get("status")),
+        "summary": raw.get("summary"),
+    }
+    if raw_kind and normalized_kind != raw_kind.lower():
+        normalized["rawKind"] = raw_kind
+    return normalized
+
+
+def _safe_dict(value: dict[str, Any] | None) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0

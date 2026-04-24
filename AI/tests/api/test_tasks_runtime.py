@@ -35,6 +35,7 @@ def test_model_generate_tool_calls_and_skill_prompt(client):
     step = steps_response.json()[0]
     assert "skills.list" in step["detail_json"]["toolDetail"]["toolNames"]
     assert "terminal.run" in step["detail_json"]["toolDetail"]["toolNames"]
+    assert step["detail_json"]["semanticDetail"]["status"] == "completed"
     assert "Writing Plans" in step["output_payload"]["prompt"]
     assert "복잡한 구현을 시작하기 전에 목표" in step["output_payload"]["prompt"]
 

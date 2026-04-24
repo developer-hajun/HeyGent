@@ -5,7 +5,9 @@ from app.domain.tasks.detail.step_detail import (
     build_operation_detail,
     build_planning_detail,
     build_semantic_step_detail,
+    infer_semantic_status,
     merge_step_detail,
+    normalize_operation_kind,
 )
 
 __all__ = [
@@ -17,4 +19,6 @@ __all__ = [
     "build_operation_detail",
     "build_planning_detail",
     "merge_step_detail",
+    "infer_semantic_status",
+    "normalize_operation_kind",
 ]

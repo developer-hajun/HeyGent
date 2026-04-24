@@ -15,7 +15,7 @@ class OutcomeInspector:
         if operations:
             detail_json = {
                 **detail_json,
-                **build_operation_detail(operations),
+                **build_operation_detail(operations, current_detail=step.detail_json),
             }
             todo_state = apply_operation_results(step.detail_json, operations)
             detail_json = {
