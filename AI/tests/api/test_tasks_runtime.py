@@ -209,6 +209,122 @@ def test_model_generate_keeps_repeated_tool_calls_as_distinct_operations(client,
     assert "tool.skills.list.2" in operation_keys
 
 
+def test_model_generate_executes_top_level_workflow_steps_from_workflow_key(client, monkeypatch):
+    response_payload = ProviderGenerateResponse(
+        provider_name="openai_oauth",
+        output_text='{"final":"WORKFLOW_PLAN_OK"}',
+        usage={"output_tokens": 3},
+        metadata={"mode": "stub", "model": "gpt-5.4"},
+    )
+
+    def fake_generate(self, prompt, **kwargs):
+        return response_payload
+
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.generate", fake_generate)
+
+    response = client.post(
+        "/api/v1/tasks",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "workflow-plan-user",
+            "input_payload": {
+                "prompt": "작업 커밋부터 문서와 Notion 반영까지 진행 계획을 보여줘.",
+                "workflow_key": "workspace_publish_to_notion",
+                "model": "gpt-5.4",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert body["todo_state"]["currentKey"] is None
+    assert [item["id"] for item in body["todo_state"]["items"]] == [
+        "summarize_changes",
+        "write_docs",
+        "publish_notion_api_spec",
+        "return_result",
+    ]
+    assert all(item["status"] == "completed" for item in body["todo_state"]["items"])
+
+    steps = client.get(f"/api/v1/tasks/{body['task_run_id']}/steps").json()
+    anchor_steps = [step for step in steps if not step["input_payload"].get("todo_key")]
+    projected_steps = [step for step in steps if step["input_payload"].get("todo_key")]
+
+    assert len(anchor_steps) == 1
+    assert len(projected_steps) == 4
+    assert anchor_steps[0]["title"] == "작업 커밋 분석 및 준비"
+    assert anchor_steps[0]["detail_json"]["semanticDetail"]["semanticKey"] == (
+        "workflow.workspace_publish_to_notion.analyze_commit"
+    )
+    assert [step["input_payload"]["todo_key"] for step in projected_steps] == [
+        "summarize_changes",
+        "write_docs",
+        "publish_notion_api_spec",
+        "return_result",
+    ]
+    assert projected_steps[-2]["executor_key"] == "notion.page.create"
+    assert all(step["status"] == "COMPLETED" for step in projected_steps)
+
+
+def test_model_generate_routes_handoff_to_explicit_step_executor(client, monkeypatch):
+    response_payload = ProviderGenerateResponse(
+        provider_name="openai_oauth",
+        output_text='{"final":"HANDOFF_TO_NOTION"}',
+        usage={"output_tokens": 3},
+        metadata={"mode": "stub", "model": "gpt-5.4"},
+    )
+
+    def fake_generate(self, prompt, **kwargs):
+        return response_payload
+
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.generate", fake_generate)
+
+    response = client.post(
+        "/api/v1/tasks",
+        json={
+            "intent_type": "model.generate",
+            "owner_key": "workflow-routing-user",
+            "input_payload": {
+                "prompt": "먼저 내용을 정리하고 그 결과를 노션에 올려줘.",
+                "task_plan": {
+                    "title": "정리 후 노션 반영",
+                    "steps": [
+                        {
+                            "key": "summarize",
+                            "title": "변경 요약",
+                            "goal": "변경 내용을 한 문단으로 요약한다.",
+                            "entryExecutorKey": "model.generate",
+                        },
+                        {
+                            "key": "publish_notion",
+                            "title": "노션 페이지 반영",
+                            "goal": "요약 결과를 노션 페이지로 남긴다.",
+                            "entryExecutorKey": "notion.page.create",
+                            "inputPayload": {"title": "API 변경 요약"},
+                        },
+                    ],
+                },
+                "model": "gpt-5.4",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert body["result_payload"]["notion"]["object"] == "page"
+    assert body["todo_state"]["currentKey"] is None
+    assert [item["status"] for item in body["todo_state"]["items"]] == ["completed"]
+
+    steps = client.get(f"/api/v1/tasks/{body['task_run_id']}/steps").json()
+    assert len(steps) == 2
+    assert steps[0]["title"] == "변경 요약"
+    assert steps[1]["title"] == "노션 페이지 반영"
+    assert steps[1]["executor_key"] == "notion.page.create"
+    assert steps[1]["output_payload"]["request"]["properties"]["title"] == "API 변경 요약"
+
+
 def test_model_generate_respects_runtime_toolsets(client):
     response = client.post(
         "/api/v1/tasks",

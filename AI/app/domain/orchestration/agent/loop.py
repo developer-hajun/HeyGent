@@ -14,8 +14,12 @@ from app.domain.orchestration.policies import (
     semantic_lifecycle_for_status,
     task_is_terminal,
 )
-from app.domain.orchestration.runtime_planning import Planner
-from app.domain.orchestration.runtime_planning.todo_state import parse_task_todo_payload
+from app.domain.orchestration.runtime_planning import Planner, build_task_plan, find_task_plan_step
+from app.domain.orchestration.runtime_planning.todo_state import (
+    build_task_todo_payload,
+    parse_task_todo_payload,
+    update_task_todo_item_status,
+)
 from app.domain.orchestration.result_inspector import OutcomeInspector
 from app.domain.tasks.detail import (
     build_planning_detail,
@@ -39,12 +43,14 @@ class TaskEngine:
         approval_service: ApprovalService,
         child_session_launcher: ChildSessionLauncher,
         planner: Planner,
+        tool_registry,
     ) -> None:
         self.repository = repository
         self.broadcaster = broadcaster
         self.approval_service = approval_service
         self.child_session_launcher = child_session_launcher
         self.planner = planner
+        self.tool_registry = tool_registry
         self.approval_runtime = ApprovalRuntime()
         self.delegate_runtime = DelegateRuntime(child_session_launcher)
         self.outcome_inspector = OutcomeInspector()
@@ -157,6 +163,10 @@ class TaskEngine:
         self.repository.update_step(step)
         await self._sync_todo_steps(task=task, executor=executor)
 
+        next_task = await self._maybe_continue_workflow(task=task, step=step)
+        if next_task is not None:
+            return next_task
+
         if task_status == TaskStatus.WAITING:
             approval = self.approval_service.request(
                 task_run_id=task.task_run_id,
@@ -188,6 +198,87 @@ class TaskEngine:
 
         await self._emit("task.updated", task, step)
         return task
+
+    async def _maybe_continue_workflow(self, *, task: TaskRun, step: StepRun) -> TaskRun | None:
+        if task.status != TaskStatus.COMPLETED:
+            return None
+
+        plan = build_task_plan(input_payload=task.input_payload, default_task_title=task.title)
+        if plan is None:
+            return None
+
+        current_todo_key = str(step.input_payload.get("todo_key") or "").strip() or None
+        if current_todo_key is not None:
+            completed_state = update_task_todo_item_status(
+                task.todo_state,
+                key=current_todo_key,
+                status="completed",
+                advance_current=True,
+            )
+            task.todo_state = build_task_todo_payload(completed_state)
+            self.repository.update_task(task)
+            await self._sync_todo_steps(task=task, executor=self.tool_registry.get(step.executor_key or task.entry_executor_key))
+
+        todo_state = parse_task_todo_payload(task.todo_state)
+        next_item = next((item for item in todo_state.items if item.key == todo_state.current_key), None)
+        if next_item is None:
+            return None
+
+        plan_step = find_task_plan_step(plan, step_key=next_item.key)
+        if plan_step is None:
+            return None
+
+        in_progress_state = update_task_todo_item_status(
+            task.todo_state,
+            key=plan_step.key,
+            status="in_progress",
+            advance_current=False,
+        )
+        task.todo_state = build_task_todo_payload(in_progress_state)
+        next_executor = self._resolve_workflow_executor(task=task, step_key=plan_step.key)
+        next_payload = self._build_handoff_input(task=task, step=step, next_step=plan_step)
+        task.status = TaskStatus.PENDING
+        task.ended_at = None
+        task.input_payload = next_payload
+        self.repository.update_task(task)
+        await self._sync_todo_steps(task=task, executor=next_executor)
+
+        existing_steps = self.repository.list_steps(task.task_run_id)
+        projected = next(
+            (
+                candidate
+                for candidate in existing_steps
+                if str(candidate.input_payload.get("todo_key") or "").strip() == plan_step.key
+            ),
+            None,
+        )
+        step_order = max((candidate.step_order for candidate in existing_steps), default=0) + 1
+        if projected is None:
+            projected = self.planner.materialize_todo_step(
+                task=task,
+                executor=next_executor,
+                todo_item=next_item,
+                step_order=step_order,
+            )
+            projected = self.planner.materialize_handoff_step(
+                task=task,
+                step=projected,
+                executor=next_executor,
+                plan_step=plan_step,
+                input_payload=next_payload,
+            )
+            self.repository.create_step(projected)
+        else:
+            projected = self.planner.materialize_handoff_step(
+                task=task,
+                step=projected,
+                executor=next_executor,
+                plan_step=plan_step,
+                input_payload=next_payload,
+            )
+            self.repository.update_step(projected)
+
+        return await self._execute(task=task, step=projected, executor=next_executor, resume_payload=None)
 
     async def _emit(self, event_type: str, task: TaskRun, step: StepRun | None = None, payload: dict | None = None) -> None:
         event = build_task_event(
@@ -315,3 +406,51 @@ class TaskEngine:
         if normalized == "cancelled":
             return "canceled"
         return "pending"
+
+    def _resolve_workflow_executor(self, *, task: TaskRun, step_key: str):
+        plan = build_task_plan(input_payload=task.input_payload, default_task_title=task.title)
+        plan_step = find_task_plan_step(plan, step_key=step_key)
+        if plan_step is None:
+            return self.tool_registry.resolve(intent_type=task.intent_type, entry_executor_key=task.entry_executor_key)
+        return self.tool_registry.resolve(
+            intent_type=plan_step.intent_type or task.intent_type,
+            entry_executor_key=plan_step.entry_executor_key or task.entry_executor_key,
+        )
+
+    @staticmethod
+    def _build_handoff_input(*, task: TaskRun, step: StepRun, next_step) -> dict:
+        previous_payload = dict(task.input_payload or {})
+        previous_prompt = str(previous_payload.get("prompt") or "").strip()
+        previous_text = str((task.result_payload or {}).get("text") or (task.result_payload or {}).get("summary") or "").strip()
+        merged = {
+            **previous_payload,
+            **dict(next_step.input_payload or {}),
+            "workflow_handoff": {
+                "fromStepRunId": step.step_run_id,
+                "fromStepTitle": step.title,
+                "toStepKey": next_step.key,
+                "toStepTitle": next_step.title,
+                "previousPrompt": previous_prompt,
+                "previousResult": task.result_payload,
+            },
+        }
+        if (next_step.entry_executor_key or "") == "model.generate":
+            merged["prompt"] = "\n\n".join(
+                part
+                for part in [
+                    f"현재 단계: {next_step.title}",
+                    f"목표: {next_step.goal}",
+                    f"이전 단계: {step.title}",
+                    f"이전 결과 요약: {previous_text}" if previous_text else None,
+                    f"원래 사용자 요청: {previous_prompt}" if previous_prompt else None,
+                ]
+                if part
+            )
+        elif (next_step.entry_executor_key or "") == "notion.page.create":
+            merged.setdefault("title", next_step.title)
+            if previous_text and not str(merged.get("content") or "").strip():
+                merged["content"] = previous_text
+        elif (next_step.entry_executor_key or "") == "notion.database.append":
+            if previous_text and not dict(merged.get("fields") or {}):
+                merged["fields"] = {"Summary": previous_text}
+        return merged

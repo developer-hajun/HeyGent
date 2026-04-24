@@ -63,7 +63,6 @@ async def lifespan(app: FastAPI):
     tool_catalog = ToolCatalog(tool_runtime, default_toolsets=("skills", "session", "planning", "terminal"))
     child_session_launcher = ChildSessionLauncher()
     planner = Planner()
-    task_engine = TaskEngine(repository, broadcaster, approval_service, child_session_launcher, planner)
     tool_registry = ToolRegistry(
         provider_registry=provider_registry,
         notion_client=notion_client,
@@ -73,6 +72,7 @@ async def lifespan(app: FastAPI):
         tool_catalog=tool_catalog,
         enabled_toolsets=("core",),
     )
+    task_engine = TaskEngine(repository, broadcaster, approval_service, child_session_launcher, planner, tool_registry)
     loop_runner = AgentLoopRunner(
         repository=repository,
         planner=planner,

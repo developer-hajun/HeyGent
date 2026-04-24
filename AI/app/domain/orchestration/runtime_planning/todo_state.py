@@ -143,6 +143,51 @@ def apply_tool_results_to_todo_state(current_payload: dict[str, Any] | None, too
     return parse_task_todo_payload(updated_payload)
 
 
+def update_task_todo_item_status(
+    current_payload: dict[str, Any] | None,
+    *,
+    key: str,
+    status: str,
+    advance_current: bool = False,
+) -> TodoState:
+    state = parse_task_todo_payload(current_payload)
+    normalized_key = str(key or "").strip()
+    normalized_status = str(status or "pending").strip().lower() or "pending"
+    updated_items: list[TodoItem] = []
+    current_key = state.current_key
+
+    for item in state.items:
+        if item.key != normalized_key:
+            updated_items.append(item)
+            continue
+        updated_items.append(
+            TodoItem(
+                key=item.key,
+                title=item.title,
+                kind=item.kind,
+                status=normalized_status,
+            )
+        )
+        if current_key == item.key and not advance_current:
+            current_key = item.key
+
+    if advance_current:
+        next_item = next(
+            (
+                item
+                for item in updated_items
+                if item.key != normalized_key and item.status in _ACTIVE_TODO_STATUSES
+            ),
+            None,
+        )
+        current_key = next_item.key if next_item is not None else None
+    elif current_key is None:
+        next_item = next((item for item in updated_items if item.status in _ACTIVE_TODO_STATUSES), None)
+        current_key = next_item.key if next_item is not None else None
+
+    return TodoState(items=tuple(updated_items), current_key=current_key)
+
+
 def _has_todo_identity(item: Any) -> bool:
     return isinstance(item, dict) and bool(str(item.get("id") or item.get("key") or "").strip())
 
