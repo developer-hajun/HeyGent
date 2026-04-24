@@ -4,6 +4,7 @@ from app.contracts.task.step_status import StepStatus
 from app.core.utils.ids import new_id
 from app.tools.contracts import TaskExecutor
 from app.domain.orchestration.contracts import build_orchestration_detail
+from app.domain.orchestration.runtime_planning.task_plan import TaskPlanStep, build_task_plan, build_task_plan_todo_state
 from app.domain.orchestration.runtime_planning.todo_state import TodoItem, build_initial_todo_state, build_task_todo_payload, build_todo_detail_patch
 from app.domain.tasks.detail import build_default_step_detail, build_planning_detail, build_semantic_step_detail, merge_step_detail
 from app.domain.tasks.models import StepRun, TaskRun
@@ -13,9 +14,14 @@ class Planner:
     """TaskRun / StepRun 의 semantic 골격을 만든다."""
 
     def materialize_task(self, *, owner_key: str, input_payload: dict, executor: TaskExecutor) -> TaskRun:
-        initial_todo_state = build_initial_todo_state(
-            step_title=executor.spec.step_title,
-            operation_templates=executor.spec.operation_templates,
+        task_plan = build_task_plan(input_payload=input_payload, default_task_title=executor.spec.task_title)
+        initial_todo_state = (
+            build_task_plan_todo_state(task_plan)
+            if task_plan is not None
+            else build_initial_todo_state(
+                step_title=executor.spec.step_title,
+                operation_templates=executor.spec.operation_templates,
+            )
         )
         return TaskRun(
             task_run_id=new_id("task"),
@@ -24,12 +30,20 @@ class Planner:
             entry_executor_key=executor.spec.entry_executor_key,
             owner_key=owner_key,
             status="PENDING",
-            title=executor.spec.task_title,
+            title=task_plan.title if task_plan is not None and task_plan.title else executor.spec.task_title,
             input_payload=input_payload,
             todo_state=build_task_todo_payload(initial_todo_state),
         )
 
     def materialize_step(self, *, task: TaskRun, executor: TaskExecutor, input_payload: dict, step_order: int) -> StepRun:
+        task_plan = build_task_plan(input_payload=input_payload, default_task_title=executor.spec.task_title)
+        current_step_title = task_plan.current_step.title if task_plan is not None else executor.spec.step_title
+        current_semantic_key = (
+            task_plan.current_step.semantic_key if task_plan is not None else self._executor_semantic_key(executor)
+        )
+        current_semantic_goal = (
+            task_plan.current_step.goal if task_plan is not None else executor.spec.semantic_goal or executor.spec.step_title
+        )
         step = StepRun(
             step_run_id=new_id("step"),
             task_run_id=task.task_run_id,
@@ -37,7 +51,7 @@ class Planner:
             step_type=executor.spec.step_type,
             executor_key=executor.spec.executor_key,
             status="PENDING",
-            title=executor.spec.step_title,
+            title=current_step_title,
             input_payload=input_payload,
             detail_json=build_default_step_detail(),
         )
@@ -47,21 +61,21 @@ class Planner:
                 intent_type=task.intent_type or executor.spec.intent_type,
                 entry_executor_key=task.entry_executor_key or executor.spec.entry_executor_key,
                 executor_key=executor.spec.executor_key,
-                semantic_step=executor.spec.step_title,
+                semantic_step=current_step_title,
             ),
         )
         step.detail_json = merge_step_detail(
             step.detail_json,
             build_semantic_step_detail(
                 step_run_id=step.step_run_id,
-                semantic_key=self._executor_semantic_key(executor),
-                semantic_step=executor.spec.step_title,
-                semantic_goal=executor.spec.semantic_goal or executor.spec.step_title,
+                semantic_key=current_semantic_key,
+                semantic_step=current_step_title,
+                semantic_goal=current_semantic_goal,
                 lifecycle="pending",
             ),
         )
         initial_todo_state = build_initial_todo_state(
-            step_title=executor.spec.step_title,
+            step_title=current_step_title,
             operation_templates=executor.spec.operation_templates,
         )
         step.detail_json = merge_step_detail(step.detail_json, build_todo_detail_patch(initial_todo_state))
@@ -144,6 +158,57 @@ class Planner:
                 semantic_step=step.title or executor.spec.step_title,
                 semantic_goal=executor.spec.semantic_goal or step.title or executor.spec.step_title,
                 lifecycle="resuming",
+            ),
+        )
+        return step
+
+    def materialize_handoff_step(
+        self,
+        *,
+        task: TaskRun,
+        step: StepRun,
+        executor: TaskExecutor,
+        plan_step: TaskPlanStep,
+        input_payload: dict,
+    ) -> StepRun:
+        """다음 workflow 단계로 넘어갈 때 projected step 을 실행 anchor 로 승격한다."""
+
+        step.step_type = executor.spec.step_type
+        step.executor_key = executor.spec.executor_key
+        step.title = plan_step.title
+        step.input_payload = {
+            **step.input_payload,
+            **input_payload,
+            "todo_key": plan_step.key,
+            "todo_title": plan_step.title,
+        }
+        step.summary_message = plan_step.title
+        step.detail_json = merge_step_detail(
+            build_default_step_detail(),
+            build_orchestration_detail(
+                intent_type=task.intent_type or executor.spec.intent_type,
+                entry_executor_key=task.entry_executor_key or executor.spec.entry_executor_key,
+                executor_key=executor.spec.executor_key,
+                semantic_step=plan_step.title,
+            ),
+        )
+        step.detail_json = merge_step_detail(
+            step.detail_json,
+            build_semantic_step_detail(
+                step_run_id=step.step_run_id,
+                semantic_key=plan_step.semantic_key,
+                semantic_step=plan_step.title,
+                semantic_goal=plan_step.goal,
+                lifecycle="pending",
+            ),
+        )
+        step.detail_json = merge_step_detail(
+            step.detail_json,
+            build_todo_detail_patch(
+                build_initial_todo_state(
+                    step_title=plan_step.title,
+                    operation_templates=executor.spec.operation_templates,
+                )
             ),
         )
         return step
