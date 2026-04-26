@@ -152,7 +152,21 @@ def test_openai_api_provider_respond_preserves_native_tool_call(monkeypatch):
     monkeypatch.setattr("app.domain.providers.model.openai_api.httpx.post", fake_post)
 
     response = provider.respond(
-        messages=[{"role": "user", "content": "할 일을 정리해줘"}],
+        messages=[
+            {"role": "user", "content": "할 일을 정리해줘"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_previous",
+                        "name": "todo",
+                        "arguments": '{"todos":[]}',
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_previous", "content": '{"todos":[]}'},
+        ],
         tools=[
             {
                 "type": "function",
@@ -170,7 +184,11 @@ def test_openai_api_provider_respond_preserves_native_tool_call(monkeypatch):
 
     assert captured["url"] == "https://api.openai.test/v1/responses"
     assert captured["json"]["model"] == "gpt-agent"
-    assert captured["json"]["input"] == [{"role": "user", "content": "할 일을 정리해줘"}]
+    assert captured["json"]["input"] == [
+        {"role": "user", "content": "할 일을 정리해줘"},
+        {"type": "function_call", "call_id": "call_previous", "name": "todo", "arguments": '{"todos":[]}'},
+        {"type": "function_call_output", "call_id": "call_previous", "output": '{"todos":[]}'},
+    ]
     assert captured["json"]["tools"][0]["name"] == "todo"
     assert captured["json"]["tools"][0]["strict"] is True
     assert captured["json"]["tool_choice"] == "auto"

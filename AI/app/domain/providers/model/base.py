@@ -129,7 +129,10 @@ def coerce_assistant_tool_call(tool_call: AssistantToolCall | dict[str, Any]) ->
 def messages_to_responses_input(messages: list[AgentMessage | ToolResultMessage | dict[str, Any]]) -> list[dict[str, Any]]:
     """내부 transcript를 provider 요청용 message item 목록으로 변환한다."""
 
-    return [_message_to_responses_item(coerce_agent_message(message)) for message in messages]
+    items: list[dict[str, Any]] = []
+    for message in messages:
+        items.extend(_message_to_responses_items(coerce_agent_message(message)))
+    return items
 
 
 def tools_to_responses_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
@@ -248,25 +251,33 @@ def extract_responses_reasoning(response_json: dict[str, Any]) -> Any:
     return reasoning_items or None
 
 
-def _message_to_responses_item(message: AgentMessage) -> dict[str, Any]:
-    """내부 메시지 하나를 provider request item 하나로 변환한다."""
+def _message_to_responses_items(message: AgentMessage) -> list[dict[str, Any]]:
+    """내부 메시지 하나를 provider request item 하나 이상으로 변환한다.
+
+    Responses API는 assistant의 이전 tool call을 message.tool_calls 필드로 받지 않고
+    function_call item으로 replay(이전 호출을 입력에 다시 넣는 것)해야 한다.
+    """
 
     if message.role == "tool":
-        return {
-            "type": "function_call_output",
-            "call_id": message.tool_call_id,
-            "output": _content_to_text(message.content),
-        }
+        return [
+            {
+                "type": "function_call_output",
+                "call_id": message.tool_call_id,
+                "output": _content_to_text(message.content),
+            }
+        ]
 
-    item: dict[str, Any] = {
-        "role": message.role,
-        "content": _message_content_to_responses_content(message),
-    }
-    if message.name:
-        item["name"] = message.name
-    if message.tool_calls:
-        item["tool_calls"] = [_tool_call_to_openai_dict(tool_call) for tool_call in message.tool_calls]
-    return item
+    items: list[dict[str, Any]] = []
+    if message.content not in {None, ""} or not message.tool_calls:
+        item: dict[str, Any] = {
+            "role": message.role,
+            "content": _message_content_to_responses_content(message),
+        }
+        if message.name:
+            item["name"] = message.name
+        items.append(item)
+    items.extend(_tool_call_to_responses_item(tool_call) for tool_call in message.tool_calls)
+    return items
 
 
 def _message_content_to_responses_content(message: AgentMessage) -> str | list[dict[str, Any]]:
@@ -278,14 +289,12 @@ def _message_content_to_responses_content(message: AgentMessage) -> str | list[d
     return str(content)
 
 
-def _tool_call_to_openai_dict(tool_call: AssistantToolCall) -> dict[str, Any]:
+def _tool_call_to_responses_item(tool_call: AssistantToolCall) -> dict[str, Any]:
     return {
-        "id": tool_call.id,
-        "type": "function",
-        "function": {
-            "name": tool_call.name,
-            "arguments": tool_call.arguments_json or json.dumps(tool_call.arguments, ensure_ascii=False),
-        },
+        "type": "function_call",
+        "call_id": tool_call.id,
+        "name": tool_call.name,
+        "arguments": tool_call.arguments_json or json.dumps(tool_call.arguments, ensure_ascii=False),
     }
 
 

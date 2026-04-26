@@ -23,23 +23,26 @@ def _tool_call(call_id: str, name: str, arguments: dict) -> AssistantToolCall:
     return AssistantToolCall(id=call_id, name=name, arguments=arguments)
 
 
-def _patch_respond(monkeypatch, responses: list[AgentModelResponse]) -> None:
+def _patch_respond(monkeypatch, responses: list[AgentModelResponse]) -> list[dict]:
     iterator = iter(responses)
+    calls: list[dict] = []
 
     def fake_respond(self, messages, tools, model, tool_choice=None):
+        calls.append({"messages": messages, "tools": tools, "model": model, "tool_choice": tool_choice})
         return next(iterator)
 
     monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond", fake_respond)
     monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.respond", fake_respond)
+    return calls
 
 
 def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, monkeypatch):
-    _patch_respond(
+    provider_calls = _patch_respond(
         monkeypatch,
         [
             _response(
                 tool_calls=[
-                    _tool_call("call_skills", "skills.list", {}),
+                    _tool_call("call_skills", "skills_list", {}),
                     _tool_call(
                         "call_todo",
                         "todo",
@@ -50,7 +53,7 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
                             ]
                         },
                     ),
-                    _tool_call("call_terminal", "terminal.run", {"argv": [sys.executable, "-c", "print('TOOL_OK')"]}),
+                    _tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('TOOL_OK')"]}),
                 ]
             ),
             _response(text="NATIVE_LOOP_DONE"),
@@ -74,6 +77,10 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert body["result_payload"]["text"] == "NATIVE_LOOP_DONE"
     assert [item["name"] for item in body["result_payload"]["tool_results"]] == ["skills.list", "todo", "terminal.run"]
     assert body["todo_state"]["currentKey"] == "ship"
+    exposed_tool_names = [tool["function"]["name"] for tool in provider_calls[0]["tools"]]
+    assert "skills_list" in exposed_tool_names
+    assert "terminal_run" in exposed_tool_names
+    assert all("." not in name for name in exposed_tool_names)
 
     steps = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps").json()
     assert len([step for step in steps if not step["input_payload"].get("todo_key")]) == 1
@@ -93,7 +100,7 @@ def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch
     _patch_respond(
         monkeypatch,
         [
-            _response(tool_calls=[_tool_call("call_terminal", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT_OK')"]})]),
+            _response(tool_calls=[_tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT_OK')"]})]),
             _response(text="APPROVED_DONE"),
         ],
     )
@@ -115,6 +122,7 @@ def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch
     created = create_response.json()
     assert created["status"] == "WAITING"
     assert created["wait_payload"]["pending_tool_call_id"] == "call_terminal"
+    assert created["wait_payload"]["pending_tool_name"] == "terminal.run"
     assert created["current_step_run_id"]
 
     events = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/events").json()

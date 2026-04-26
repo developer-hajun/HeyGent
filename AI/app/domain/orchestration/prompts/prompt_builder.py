@@ -66,6 +66,18 @@ class PromptBuilder:
             sections.append(
                 "승인 재개 입력:\n" + json.dumps(resume_payload, ensure_ascii=False, indent=2)
             )
+        if input_payload.get("approval_required"):
+            approval_reason = str(input_payload.get("approval_reason") or "사용자 승인이 필요합니다").strip()
+            sections.append(
+                "\n".join(
+                    [
+                        "이번 실행은 approval_required=true 입니다.",
+                        "승인이 필요한 작업이라도 필요한 도구 호출 자체는 먼저 native tool call로 반환하세요.",
+                        "runtime은 실제 도구 실행 직전에 WAITING으로 내려가고, 승인 후 같은 tool_call_id로 결과를 이어붙입니다.",
+                        f"승인 사유: {approval_reason}",
+                    ]
+                )
+            )
         if not input_payload.get("prompt") and tool_results:
             sections.append("위 결과를 바탕으로 현재 상태를 짧고 명확하게 요약하세요.")
         sections.append(

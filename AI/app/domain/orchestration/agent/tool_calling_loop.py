@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from app.contracts.task.step_status import StepStatus
@@ -64,11 +65,13 @@ class ToolCallingLoopExecutor:
         all_tool_results: list[dict[str, Any]] = []
         operations: list[dict[str, Any]] = []
         max_iterations = self._max_iterations(task_input)
-        model = self._optional_text(task_input.get("model")) or "default"
+        model = self._optional_text(task_input.get("model")) or self._provider_default_model()
         transcript_session_id = self._ensure_transcript_session(task=task, task_input=task_input, model=model)
+        provider_tools, provider_tool_name_map = self._provider_tool_schemas(available_tools)
+        prompt_tools = self._provider_prompt_tools(available_tools, provider_tool_name_map)
         prompt = self.prompt_builder.build_agent_loop_prompt(
             input_payload=task_input,
-            available_tools=available_tools,
+            available_tools=prompt_tools,
             tool_results=[],
             task_todo_state=current_todo_state,
             resume_payload=resume_payload,
@@ -117,7 +120,7 @@ class ToolCallingLoopExecutor:
         for turn_index in range(1, max_iterations + 1):
             generated = self.provider.respond(
                 messages=messages,
-                tools=self._tool_schemas(available_tools),
+                tools=provider_tools,
                 model=model,
                 tool_choice=None,
             )
@@ -157,10 +160,11 @@ class ToolCallingLoopExecutor:
                 # native tool call은 이미 모델이 구체적인 도구명과 인자를 정한 뒤 도착하므로,
                 # 승인이 필요한 경우 실제 실행 직전에 첫 호출 정보를 wait payload에 고정한다.
                 first_call = generated.tool_calls[0]
+                first_tool_name = self._runtime_tool_name(first_call.name, provider_tool_name_map)
                 outcome = self._build_waiting_outcome(
                     tool_results=all_tool_results,
                     operations=operations,
-                    approval_reason=str(task_input.get("approval_reason") or f"{first_call.name} 실행 전 승인이 필요합니다"),
+                    approval_reason=str(task_input.get("approval_reason") or f"{first_tool_name} 실행 전 승인이 필요합니다"),
                     llm_call_count=llm_call_count,
                     model_name=self._model_name(generated, task_input),
                     todo_state=current_todo_state,
@@ -168,7 +172,7 @@ class ToolCallingLoopExecutor:
                 )
                 pending = {
                     "pending_tool_call_id": first_call.id,
-                    "pending_tool_name": first_call.name,
+                    "pending_tool_name": first_tool_name,
                     "pending_tool_arguments": first_call.arguments,
                     "transcript_session_id": transcript_session_id,
                     "approval_policy_result": {"required": True},
@@ -179,14 +183,15 @@ class ToolCallingLoopExecutor:
                 return outcome
 
             for tool_call in generated.tool_calls:
+                runtime_tool_name = self._runtime_tool_name(tool_call.name, provider_tool_name_map)
                 result = self._run_native_tool_call(
-                    name=tool_call.name,
+                    name=runtime_tool_name,
                     args=tool_call.arguments,
                     requested_toolsets=requested_toolsets,
                 )
                 tool_result = {
                     "tool_call_id": tool_call.id,
-                    "name": tool_call.name,
+                    "name": runtime_tool_name,
                     "args": tool_call.arguments,
                     "result": result,
                 }
@@ -196,7 +201,7 @@ class ToolCallingLoopExecutor:
                     content=self._tool_result_content(result),
                 )
                 messages.append(tool_message)
-                self._append_transcript_message(transcript_session_id, tool_message, tool_name=tool_call.name)
+                self._append_transcript_message(transcript_session_id, tool_message, tool_name=runtime_tool_name)
                 # tool_call_id는 모델이 보낸 호출 id와 정확히 맞아야 다음 provider 호출에서
                 # "이 도구 결과가 어떤 호출의 응답인지"를 복원할 수 있다.
                 operations.append(
@@ -204,9 +209,9 @@ class ToolCallingLoopExecutor:
                         "key": self._next_operation_key(
                             operation_counters,
                             namespace="tool",
-                            base_key=tool_call.name,
+                            base_key=runtime_tool_name,
                         ),
-                        "title": tool_call.name,
+                        "title": runtime_tool_name,
                         "kind": "tool",
                         "status": "failed" if isinstance(result, dict) and result.get("ok") is False else "completed",
                         "summary": self._tool_summary(result),
@@ -227,16 +232,67 @@ class ToolCallingLoopExecutor:
             operation_counters=operation_counters,
         )
 
-    @staticmethod
-    def _tool_schemas(available_tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """catalog의 도구 정의를 provider가 받을 function schema 목록으로 좁힌다."""
+    @classmethod
+    def _provider_tool_schemas(cls, available_tools: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        """provider가 허용하는 tool name으로 변환하고 runtime 이름으로 되돌릴 map을 만든다.
+
+        일부 provider의 function name은 점(.)을 허용하지 않으므로, `terminal.run` 같은 runtime tool은
+        provider 요청에서만 `terminal_run`으로 바꾼다. 내부 실행과 결과 표시는 원래 이름을 유지한다.
+        """
 
         schemas: list[dict[str, Any]] = []
+        name_map: dict[str, str] = {}
+        used_names: set[str] = set()
         for tool in available_tools:
             schema = tool.get("schema")
             if isinstance(schema, dict):
-                schemas.append({"type": "function", "function": schema})
-        return schemas
+                function_schema = dict(schema)
+                runtime_name = str(function_schema.get("name") or "").strip()
+                provider_name = cls._unique_provider_tool_name(runtime_name, used_names)
+                used_names.add(provider_name)
+                if provider_name != runtime_name:
+                    description = str(function_schema.get("description") or "").strip()
+                    suffix = f"Runtime tool name: {runtime_name}."
+                    function_schema["description"] = f"{description}\n{suffix}" if description else suffix
+                function_schema["name"] = provider_name
+                name_map[provider_name] = runtime_name or provider_name
+                schemas.append({"type": "function", "function": function_schema})
+        return schemas, name_map
+
+    @classmethod
+    def _unique_provider_tool_name(cls, runtime_name: str, used_names: set[str]) -> str:
+        base_name = cls._safe_provider_tool_name(runtime_name)
+        if base_name not in used_names:
+            return base_name
+        next_index = 2
+        while f"{base_name}_{next_index}" in used_names:
+            next_index += 1
+        return f"{base_name}_{next_index}"
+
+    @staticmethod
+    def _safe_provider_tool_name(runtime_name: str) -> str:
+        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", str(runtime_name or "").strip())
+        safe_name = re.sub(r"_+", "_", safe_name).strip("_")
+        return safe_name or "tool"
+
+    @staticmethod
+    def _runtime_tool_name(provider_tool_name: str, provider_tool_name_map: dict[str, str]) -> str:
+        return provider_tool_name_map.get(provider_tool_name, provider_tool_name)
+
+    @staticmethod
+    def _provider_prompt_tools(available_tools: list[dict[str, Any]], provider_tool_name_map: dict[str, str]) -> list[dict[str, Any]]:
+        runtime_to_provider_name = {runtime_name: provider_name for provider_name, runtime_name in provider_tool_name_map.items()}
+        prompt_tools: list[dict[str, Any]] = []
+        for tool in available_tools:
+            item = dict(tool)
+            runtime_name = str(item.get("name") or "").strip()
+            provider_name = runtime_to_provider_name.get(runtime_name, runtime_name)
+            if provider_name != runtime_name:
+                summary = str(item.get("summary") or "").strip()
+                item["summary"] = f"{summary} runtime name: {runtime_name}".strip()
+            item["name"] = provider_name
+            prompt_tools.append(item)
+        return prompt_tools
 
     def _ensure_transcript_session(self, *, task, task_input: dict[str, Any], model: str) -> str | None:
         """기존 SessionStore가 있으면 agent.loop transcript(모델 왕복 기록)를 같은 세션에 묶는다."""
@@ -506,6 +562,11 @@ class ToolCallingLoopExecutor:
             return None
         stripped = value.strip()
         return stripped or None
+
+    def _provider_default_model(self) -> str:
+        settings = getattr(self.provider, "settings", None)
+        model = getattr(settings, "openai_response_model", None)
+        return str(model or "gpt-5.4").strip() or "gpt-5.4"
 
     @staticmethod
     def _model_name(generated, task_input: dict[str, Any]) -> str | None:

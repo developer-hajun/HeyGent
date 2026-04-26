@@ -183,7 +183,7 @@ class LocalToolRuntime:
     def _run_terminal_command(args: dict[str, Any]) -> dict[str, Any]:
         argv = list(args.get("argv") or []) or None
         command = args.get("command")
-        cwd = args.get("cwd")
+        cwd = str(args.get("cwd") or "").strip() or None
         timeout_seconds = float(args.get("timeout_seconds") or 15.0)
 
         if argv:

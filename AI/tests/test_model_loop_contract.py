@@ -19,3 +19,25 @@ def test_prompt_builder_includes_native_tool_call_and_termination_guidance():
     assert "이미 충분한 정보가 있으면 더 이상 도구를 부르지 말고 일반 답변으로 종료하세요." in prompt
     assert "직전에 같은 도구를 같은 인자로 실행했다면 반복하지 말고 답변 종료를 우선하세요." in prompt
     assert "계획이 필요하면 todo 도구로 현재 단계 목록을 갱신하세요." in prompt
+
+
+def test_prompt_builder_explains_approval_tool_call_boundary():
+    prompt_builder = PromptBuilder(SkillPromptBuilder(SkillRegistry()))
+
+    prompt = prompt_builder.build_agent_loop_prompt(
+        input_payload={
+            "prompt": "터미널 확인이 필요해.",
+            "approval_required": True,
+            "approval_reason": "터미널 실행 전 확인",
+        },
+        available_tools=[{"name": "terminal_run", "summary": "터미널 실행", "toolset": "terminal"}],
+        tool_results=[],
+        task_todo_state=None,
+        resume_payload=None,
+        turn_index=1,
+        max_iterations=4,
+    )
+
+    assert "approval_required=true" in prompt
+    assert "도구 호출 자체는 먼저 native tool call로 반환하세요" in prompt
+    assert "같은 tool_call_id" in prompt
