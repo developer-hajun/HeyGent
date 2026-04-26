@@ -11,11 +11,19 @@ from urllib.parse import urlencode
 
 import httpx
 
-from app.contracts.provider.provider_response import ProviderAuthResponse, ProviderConnectionResponse, ProviderGenerateResponse, ProviderHealthResponse
+from app.contracts.provider.provider_response import ProviderAuthResponse, ProviderConnectionResponse, ProviderHealthResponse
 from app.core.config import Settings
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
-from app.domain.providers.model.base import BaseProvider
+from app.domain.providers.model.base import (
+    AgentMessage,
+    AgentModelResponse,
+    BaseProvider,
+    ToolResultMessage,
+    build_agent_model_response,
+    messages_to_responses_input,
+    tools_to_responses_tools,
+)
 
 
 OPENAI_CODEX_JWT_CLAIM_PATH = "https://api.openai.com/auth"
@@ -296,40 +304,36 @@ class OpenAIOAuthProvider(BaseProvider):
             },
         )
 
-    def generate(self, prompt: str, **kwargs) -> ProviderGenerateResponse:
-        preview = prompt.strip()[:120]
+    def respond(
+        self,
+        messages: list[AgentMessage | ToolResultMessage | dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str,
+        tool_choice: dict[str, Any] | str | None = None,
+    ) -> AgentModelResponse:
+        requested_model = str(model or self.settings.openai_response_model).strip() or self.settings.openai_response_model
         health = self.health()
         token_record = self._get_token_record()
 
         if token_record is None or not health.connected:
-            return ProviderGenerateResponse(
-                provider_name=self.name,
-                output_text=f"[stub:{self.name}] {preview}",
-                usage={"prompt_tokens": max(1, len(preview.split()))},
-                metadata={
-                    "mode": "stub",
-                    "auth_type": self.auth_type,
-                    "configured": health.configured,
-                    "connected": health.connected,
-                    "missing_env": health.missing_env,
-                    **kwargs,
-                },
-            )
+            return self._stub_agent_response(messages=messages, model=requested_model, health=health)
 
-        response_json = self._call_responses_api(prompt=prompt, token_record=token_record)
-        output_text = self._extract_output_text(response_json)
-        usage = response_json.get("usage") if isinstance(response_json.get("usage"), dict) else {}
-        return ProviderGenerateResponse(
+        response_json = self._call_agent_responses_api(
+            messages=messages,
+            tools=tools,
+            model=requested_model,
+            tool_choice=tool_choice,
+            token_record=token_record,
+        )
+        return build_agent_model_response(
             provider_name=self.name,
-            output_text=output_text,
-            usage=usage,
+            requested_model=requested_model,
+            response_json=response_json,
             metadata={
                 "mode": "live",
                 "auth_type": self.auth_type,
                 "connected": True,
-                "response_id": response_json.get("id"),
-                "model": response_json.get("model", self.settings.openai_response_model),
-                **kwargs,
+                "tool_choice": tool_choice,
             },
         )
 
@@ -507,31 +511,25 @@ class OpenAIOAuthProvider(BaseProvider):
             "raw_payload": raw_payload,
         }
 
-    def _call_responses_api(self, *, prompt: str, token_record: dict[str, Any]) -> dict[str, Any]:
+    def _call_agent_responses_api(
+        self,
+        *,
+        messages: list[AgentMessage | ToolResultMessage | dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str,
+        tool_choice: dict[str, Any] | str | None,
+        token_record: dict[str, Any],
+    ) -> dict[str, Any]:
         account_id = (token_record.get("raw_payload") or {}).get("account_id") or self._extract_account_id(token_record["access_token"])
         if not account_id:
-            raise RuntimeError("저장된 token 에 account_id 가 없어 Codex 호출을 진행할 수 없습니다")
+            raise RuntimeError("저장된 token 에 account_id 가 없어 모델 호출을 진행할 수 없습니다")
 
-        request_body = {
-            "model": self.settings.openai_response_model,
-            "store": False,
-            "stream": True,
-            "instructions": "You are a helpful assistant. Answer the user's request briefly and clearly.",
-            "input": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": prompt,
-                        }
-                    ],
-                }
-            ],
-            "text": {"verbosity": "medium"},
-            "include": ["reasoning.encrypted_content"],
-        }
-
+        request_body = self._build_agent_responses_request_body(
+            messages=messages,
+            tools=tools,
+            model=model,
+            tool_choice=tool_choice,
+        )
         output_chunks: list[str] = []
         final_response: dict[str, Any] | None = None
         with httpx.stream(
@@ -579,10 +577,11 @@ class OpenAIOAuthProvider(BaseProvider):
                         final_response = completed
                 elif event_type == "response.failed":
                     message = ((event.get("response") or {}).get("error") or {}).get("message")
-                    raise RuntimeError(str(message or "Codex response failed"))
+                    raise RuntimeError(str(message or "provider response failed"))
 
         result = final_response or {}
-        result["output_text"] = "".join(output_chunks).strip()
+        if output_chunks and not isinstance(result.get("output_text"), str):
+            result["output_text"] = "".join(output_chunks).strip()
         return result
 
     def _resolve_codex_responses_url(self) -> str:
@@ -593,28 +592,66 @@ class OpenAIOAuthProvider(BaseProvider):
             return f"{base_url}/responses"
         return f"{base_url}/codex/responses"
 
+    def _build_agent_responses_request_body(
+        self,
+        *,
+        messages: list[AgentMessage | ToolResultMessage | dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str,
+        tool_choice: dict[str, Any] | str | None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "model": model,
+            "store": False,
+            "stream": True,
+            "input": messages_to_responses_input(messages),
+            "include": ["reasoning.encrypted_content"],
+        }
+        normalized_tools = tools_to_responses_tools(tools)
+        if normalized_tools:
+            body["tools"] = normalized_tools
+        if tool_choice is not None:
+            body["tool_choice"] = tool_choice
+        return body
+
+    def _stub_agent_response(
+        self,
+        *,
+        messages: list[AgentMessage | ToolResultMessage | dict[str, Any]],
+        model: str,
+        health: ProviderHealthResponse,
+    ) -> AgentModelResponse:
+        preview = self._message_preview(messages)
+        output_text = f"[stub:{self.name}] {preview}"
+        message = AgentMessage(role="assistant", content=output_text)
+        return AgentModelResponse(
+            provider_name=self.name,
+            model=model,
+            message=message,
+            output_text=output_text,
+            finish_reason="stop",
+            raw_response={"mode": "stub"},
+            metadata={
+                "mode": "stub",
+                "auth_type": self.auth_type,
+                "configured": health.configured,
+                "connected": health.connected,
+                "missing_env": health.missing_env,
+            },
+        )
+
+    @staticmethod
+    def _message_preview(messages: list[AgentMessage | ToolResultMessage | dict[str, Any]]) -> str:
+        for message in reversed(messages):
+            content = message.content if isinstance(message, AgentMessage) else message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()[:120]
+        return ""
+
     def _get_token_record(self) -> dict[str, Any] | None:
         if self.repository is None:
             return None
         return self.repository.get_provider_token(self.name)
-
-    @staticmethod
-    def _extract_output_text(response_json: dict[str, Any]) -> str:
-        if isinstance(response_json.get("output_text"), str) and response_json["output_text"].strip():
-            return response_json["output_text"]
-
-        collected: list[str] = []
-        for item in response_json.get("output", []):
-            if not isinstance(item, dict):
-                continue
-            for content in item.get("content", []):
-                if not isinstance(content, dict):
-                    continue
-                if content.get("type") in {"output_text", "text"} and content.get("text"):
-                    collected.append(str(content["text"]))
-        if collected:
-            return "\n".join(collected)
-        return json.dumps(response_json, ensure_ascii=False)
 
     @staticmethod
     def _calculate_expires_at(expires_in: Any) -> str | None:

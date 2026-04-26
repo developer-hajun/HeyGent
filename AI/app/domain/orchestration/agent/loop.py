@@ -57,13 +57,44 @@ class TaskEngine:
         self.outcome_inspector = OutcomeInspector()
         self.step_executor = StepExecutor()
 
-    async def run(self, *, task: TaskRun, step: StepRun, executor) -> TaskRun:
-        task.current_step_run_id = step.step_run_id
+    async def run(self, *, task: TaskRun, executor, step: StepRun | None = None) -> TaskRun:
         self.repository.create_task(task)
-        self.repository.create_step(step)
         await self._emit("task.created", task)
+        if step is None:
+            return await self._execute_initial(task=task, executor=executor, resume_payload=None)
+
+        task.current_step_run_id = step.step_run_id
+        self.repository.create_step(step)
         await self._emit("step.created", task, step)
         return await self._execute(task=task, step=step, executor=executor, resume_payload=None)
+
+    async def _execute_initial(self, *, task: TaskRun, executor, resume_payload: dict | None) -> TaskRun:
+        ensure_task_transition(task.status, TaskStatus.RUNNING)
+        task.status = TaskStatus.RUNNING
+        task.started_at = task.started_at or utc_now()
+        task.wait_payload = {}
+        task.current_step_run_id = None
+        self.repository.update_task(task)
+        await self._emit("task.started", task)
+
+        outcome = normalize_executor_outcome(
+            self.step_executor.execute(handler=executor, task=task, step=None, resume_payload=resume_payload)
+        )
+        step = self.planner.materialize_observed_step(
+            task=task,
+            executor=executor,
+            input_payload=task.input_payload,
+            step_order=1,
+            outcome=outcome,
+        )
+        step.status = StepStatus.RUNNING
+        step.started_at = step.started_at or task.started_at or utc_now()
+        task.current_step_run_id = step.step_run_id
+        self.repository.update_task(task)
+        self.repository.create_step(step)
+        await self._emit("step.created", task, step)
+        await self._emit("step.started", task, step)
+        return await self._apply_outcome(task=task, step=step, executor=executor, outcome=outcome)
 
     async def resume(self, *, task: TaskRun, executor, approval_id: str, payload: dict) -> TaskRun:
         approval = self.approval_service.resolve(approval_id, payload)
@@ -509,24 +540,16 @@ class TaskEngine:
                 "previousResult": task.result_payload,
             },
         }
-        if (next_step.entry_executor_key or "") == "model.generate":
-            merged["prompt"] = "\n\n".join(
-                part
-                for part in [
-                    f"현재 단계: {next_step.title}",
-                    f"목표: {next_step.goal}",
-                    f"이전 단계: {step.title}",
-                    f"이전 단계 인계 요약: {previous_handoff_summary}" if previous_handoff_summary else None,
-                    f"이전 결과 요약: {previous_text}" if previous_text and previous_text != previous_handoff_summary else None,
-                    f"원래 사용자 요청: {previous_prompt}" if previous_prompt else None,
-                ]
-                if part
-            )
-        elif (next_step.entry_executor_key or "") == "notion.page.create":
-            merged.setdefault("title", next_step.title)
-            if preferred_previous_text and not str(merged.get("content") or "").strip():
-                merged["content"] = preferred_previous_text
-        elif (next_step.entry_executor_key or "") == "notion.database.append":
-            if preferred_previous_text and not dict(merged.get("fields") or {}):
-                merged["fields"] = {"Summary": preferred_previous_text}
+        merged["prompt"] = "\n\n".join(
+            part
+            for part in [
+                f"현재 단계: {next_step.title}",
+                f"목표: {next_step.goal}",
+                f"이전 단계: {step.title}",
+                f"이전 단계 인계 요약: {previous_handoff_summary}" if previous_handoff_summary else None,
+                f"이전 결과 요약: {previous_text}" if previous_text and previous_text != previous_handoff_summary else None,
+                f"원래 사용자 요청: {previous_prompt}" if previous_prompt else None,
+            ]
+            if part
+        )
         return merged

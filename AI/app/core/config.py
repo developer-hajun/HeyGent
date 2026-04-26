@@ -37,7 +37,6 @@ class Settings:
     openai_rest_api_base_url: str = "https://api.openai.com/v1"
     openai_response_model: str = "gpt-5.4"
     openai_embedding_model: str = "text-embedding-3-small"
-    notion_api_base_url: str = "https://api.notion.com/v1"
 
     def resolved_api_base_url(self) -> str:
         """CLI 와 외부 클라이언트가 공통으로 사용할 기본 API 주소를 계산한다."""
@@ -138,5 +137,4 @@ def get_settings() -> Settings:
         openai_rest_api_base_url=_read_env("HEYGENT_OPENAI_REST_API_BASE_URL", "https://api.openai.com/v1", dotenv_values),
         openai_response_model=_read_env("HEYGENT_OPENAI_RESPONSE_MODEL", "gpt-5.4", dotenv_values),
         openai_embedding_model=_read_env("HEYGENT_OPENAI_EMBEDDING_MODEL", "text-embedding-3-small", dotenv_values),
-        notion_api_base_url=_read_env("HEYGENT_NOTION_API_BASE_URL", "https://api.notion.com/v1", dotenv_values),
     )

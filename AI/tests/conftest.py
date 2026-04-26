@@ -28,9 +28,9 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 def task_run() -> TaskRun:
     return TaskRun(
         task_run_id="task_test",
-        task_type="model.generate",
-        intent_type="model.generate",
-        entry_executor_key="model.generate",
+        task_type="agent.loop",
+        intent_type="agent.loop",
+        entry_executor_key="agent.loop",
         owner_key="tester",
         status="PENDING",
         title="모델 생성 요청",
@@ -44,8 +44,8 @@ def step_run() -> StepRun:
         step_run_id="step_test",
         task_run_id="task_test",
         step_order=1,
-        step_type="model.generate.execute",
-        executor_key="model.generate",
+        step_type="agent.loop.execute",
+        executor_key="agent.loop",
         status="PENDING",
         title="모델 응답 생성",
         input_payload={"prompt": "hello"},

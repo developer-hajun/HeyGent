@@ -1,45 +1,30 @@
 from __future__ import annotations
 
 from app.tools.contracts import TaskExecutor
-from app.tools.model.generate import ModelGenerateExecutor
-from app.tools.integrations.notion import NotionDatabaseAppendExecutor, NotionPageCreateExecutor
+from app.tools.model.agent_loop import AgentLoopExecutor
 from app.tools.registry.tool_entry import ToolEntry
-from app.tools.toolsets import list_toolsets as _list_toolsets
-from app.tools.toolsets import resolve_executor_keys
+
+
+AGENT_LOOP_EXECUTOR_KEY = "agent.loop"
 
 
 class ToolRegistry:
-    """Resolve task intents into executable tool handlers."""
+    """agent.loop 단일 진입점을 실행 handler 로 해석한다."""
 
     def __init__(
         self,
         *,
         provider_registry,
-        notion_client,
-        notion_mapper,
         prompt_builder,
         tool_runtime,
         tool_catalog,
+        session_store=None,
         enabled_toolsets: tuple[str, ...] | None = None,
     ) -> None:
         default_provider = provider_registry.preferred_model_provider()
         entries = [
-            ToolEntry("model.generate", "model", ModelGenerateExecutor(default_provider, prompt_builder, tool_runtime, tool_catalog)),
-            ToolEntry(
-                "notion.page.create",
-                "notion",
-                NotionPageCreateExecutor(notion_client, notion_mapper, default_provider, prompt_builder),
-            ),
-            ToolEntry(
-                "notion.database.append",
-                "notion",
-                NotionDatabaseAppendExecutor(notion_client, notion_mapper, default_provider, prompt_builder),
-            ),
+            ToolEntry(AGENT_LOOP_EXECUTOR_KEY, "core", AgentLoopExecutor(default_provider, prompt_builder, tool_runtime, tool_catalog, session_store=session_store)),
         ]
-
-        allowed_executor_keys = resolve_executor_keys(enabled_toolsets)
-        if allowed_executor_keys is not None:
-            entries = [entry for entry in entries if entry.executor.spec.executor_key in allowed_executor_keys]
 
         self._entries_by_key = {entry.name: entry for entry in entries}
         self._default_entry_by_intent = {
@@ -52,14 +37,13 @@ class ToolRegistry:
         intent_type: str | None = None,
         entry_executor_key: str | None = None,
     ) -> TaskExecutor:
-        if entry_executor_key:
-            return self.get(entry_executor_key)
+        if entry_executor_key and entry_executor_key != AGENT_LOOP_EXECUTOR_KEY:
+            raise ValueError(f"legacy executor routing has been removed: {entry_executor_key}")
 
-        canonical_intent = str(intent_type or "model.generate")
-        try:
-            return self.get(self._default_entry_by_intent[canonical_intent])
-        except KeyError as error:
-            raise KeyError(canonical_intent) from error
+        canonical_intent = str(intent_type or AGENT_LOOP_EXECUTOR_KEY)
+        if canonical_intent != AGENT_LOOP_EXECUTOR_KEY:
+            raise ValueError(f"legacy intent routing has been removed: {canonical_intent}")
+        return self.get(self._default_entry_by_intent[AGENT_LOOP_EXECUTOR_KEY])
 
     def get(self, executor_key: str) -> TaskExecutor:
         try:
@@ -74,7 +58,7 @@ class ToolRegistry:
         return sorted(self._entries_by_key)
 
     def list_toolsets(self) -> list[str]:
-        return _list_toolsets()
+        return ["core"]
 
     def list_entries(self) -> list[ToolEntry]:
         return [self._entries_by_key[key] for key in sorted(self._entries_by_key)]

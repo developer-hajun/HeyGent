@@ -21,7 +21,7 @@ class StepRun:
     # step 목록을 원래 실행 순서대로 복원하려고 필요하다.
     step_order: int
     # 단계의 내부 타입명.
-    # 예: approval.wait, model.generate 같은 실행 의미를 코드와 UI가 같이 이해할 수 있게 한다.
+    # 예: approval.wait, agent.loop 같은 실행 의미를 코드와 UI가 같이 이해할 수 있게 한다.
     step_type: str
     # 현재 step 상태.
     # TaskRun 전체 상태와 별개로 "어느 단계가 멈췄는지/실패했는지" 파악하려고 저장한다.

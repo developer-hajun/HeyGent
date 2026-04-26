@@ -67,7 +67,7 @@ def test_executor_step_boundary_follows_steprun_anchor_rules():
 
     changed_decision = decide_executor_step_boundary(
         current_detail={"semanticDetail": {"semanticKey": "response.compose"}},
-        next_semantic_key="notion.page.publish",
+        next_semantic_key="agent.publish",
     )
     assert changed_decision.action == "create_new_step"
 

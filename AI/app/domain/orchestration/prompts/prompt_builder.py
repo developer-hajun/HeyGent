@@ -29,14 +29,6 @@ class PromptBuilder:
         )
         return "\n\n".join(parts)
 
-    def build_notion_page_summary_prompt(self, *, input_payload: dict) -> str:
-        title = str(input_payload.get("title", "Untitled")).strip() or "Untitled"
-        return self._merge_skill_context(base_prompt=f"Notion page created: {title}", input_payload=input_payload)
-
-    def build_notion_database_summary_prompt(self, *, input_payload: dict) -> str:
-        database_id = str(input_payload.get("database_id", "local-database")).strip() or "local-database"
-        return self._merge_skill_context(base_prompt=f"Append notion database item: {database_id}", input_payload=input_payload)
-
     def build_runtime_prompt(self, *, task=None, step=None, input_payload: dict | None = None) -> str:
         payload = input_payload or {}
         parts = compress_prompt_sections(
@@ -80,17 +72,14 @@ class PromptBuilder:
             "\n".join(
                 [
                     f"현재는 tool-calling loop {turn_index}/{max_iterations} 턴입니다.",
-                    "추가 정보나 로컬 실행이 실제로 필요할 때만 tool_calls 를 사용하세요.",
-                    "이미 충분한 정보가 있으면 더 이상 도구를 부르지 말고 final 로 종료하세요.",
-                    "직전에 같은 tool_calls 를 같은 인자로 실행했다면 반복하지 말고 final 을 우선하세요.",
+                    "추가 정보나 로컬 실행이 실제로 필요할 때만 제공된 도구 호출 기능을 사용하세요.",
+                    "도구 호출은 본문 JSON으로 쓰지 말고 모델의 tool call 응답으로 반환하세요.",
+                    "이미 충분한 정보가 있으면 더 이상 도구를 부르지 말고 일반 답변으로 종료하세요.",
+                    "직전에 같은 도구를 같은 인자로 실행했다면 반복하지 말고 답변 종료를 우선하세요.",
                     "delegate 는 하위 작업으로 분리했을 때 더 명확한 경우에만 사용하세요.",
                     "승인이 없으면 진행하면 안 되는 경우에만 approval 을 요청하세요.",
-                    "가능하면 JSON 객체 하나만 응답하고 action 필드를 포함하세요.",
-                    'tool 예시: {"action":"tool_calls","tool_calls":[{"name":"skills.list","args":{}}],"action_summary":"필요한 skill 후보를 먼저 확인한다."}',
-                    'approval 예시: {"action":"approval","approval_required":true,"approval_reason":"운영 반영 전 승인 필요","action_summary":"사용자 확인 없이는 진행하면 안 된다."}',
-                    'delegate 예시: {"action":"delegate","delegate_prompt":"...","delegate_skill_hints":["..."],"action_summary":"하위 작업으로 위임하는 편이 더 적절하다."}',
-                    'final 예시: {"action":"final","final":"...","action_summary":"추가 도구 없이 답변을 마무리할 수 있다.","handoff_summary":"다음 단계에 넘길 핵심 요약"}',
-                    "semantic_hint 는 선택 사항이며 label/goal 만 포함한 soft hint 로 사용하세요.",
+                    "계획이 필요하면 todo 도구로 현재 단계 목록을 갱신하세요.",
+                    "최종 답변에는 사용자가 바로 이해할 수 있는 결과와 다음에 이어갈 내용을 자연어로 정리하세요.",
                 ]
             )
         )

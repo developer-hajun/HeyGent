@@ -56,7 +56,7 @@ class FakeRemoteClient:
 def _make_test_access_token() -> str:
     header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).decode().rstrip("=")
     payload = base64.urlsafe_b64encode(
-        json.dumps({"exp": 4102444800, "scp": ["model.generate"], "https://api.openai.com/auth": {"chatgpt_account_id": "acct_test"}}).encode()
+        json.dumps({"exp": 4102444800, "scp": ["agent.loop"], "https://api.openai.com/auth": {"chatgpt_account_id": "acct_test"}}).encode()
     ).decode().rstrip("=")
     return f"{header}.{payload}.sig"
 
@@ -314,15 +314,15 @@ def test_tasks_browser_navigation_works_without_extra_prompt(monkeypatch):
                         "items": [
                             {
                                 "task_run_id": "task_1",
-                                "task_type": "model.generate",
-                                "intent_type": "model.generate",
-                                "entry_executor_key": "model.generate",
+                                "task_type": "agent.loop",
+                                "intent_type": "agent.loop",
+                                "entry_executor_key": "agent.loop",
                                 "status": "COMPLETED",
                                 "title": "모델 생성 요청",
                                 "input_summary": "헤르메스 알아?",
                                 "step_count": 1,
                                 "updated_at": "2026-04-22T00:00:00",
-                                "current_step": {"step_run_id": "step_1", "step_type": "model.generate.execute", "status": "COMPLETED", "title": "모델 응답 생성", "summary_message": "모델 응답 생성 완료"},
+                                "current_step": {"step_run_id": "step_1", "step_type": "agent.loop.execute", "status": "COMPLETED", "title": "agent loop 실행", "summary_message": "agent loop 실행 완료"},
                             }
                         ],
                         "page": 1,
@@ -340,14 +340,14 @@ def test_tasks_browser_navigation_works_without_extra_prompt(monkeypatch):
                             "step_run_id": "step_1",
                             "task_run_id": "task_1",
                             "step_order": 1,
-                            "step_type": "model.generate.execute",
+                            "step_type": "agent.loop.execute",
                             "status": "COMPLETED",
-                            "title": "모델 응답 생성",
+                            "title": "agent loop 실행",
                             "input_payload": {"prompt": "헤르메스 알아?"},
                             "output_payload": {"text": "응, 알아."},
                             "wait_payload": {},
                             "detail_json": {"agentDetail": {"called": False}, "toolDetail": {"toolNames": []}, "llmDetail": {"model": "gpt-5.4", "callCount": 1}},
-                            "summary_message": "모델 응답 생성 완료",
+                            "summary_message": "agent loop 실행 완료",
                             "updated_at": "2026-04-22T00:00:00",
                         }
                     ]
@@ -359,11 +359,11 @@ def test_tasks_browser_navigation_works_without_extra_prompt(monkeypatch):
             return FakeResponse(
                 {
                     "task_run_id": "task_1",
-                    "task_type": "model.generate",
-                    "intent_type": "model.generate",
-                    "entry_executor_key": "model.generate",
+                    "task_type": "agent.loop",
+                    "intent_type": "agent.loop",
+                    "entry_executor_key": "agent.loop",
                     "status": "COMPLETED",
-                    "title": "모델 생성 요청",
+                    "title": "agent loop 요청",
                     "input_payload": {"prompt": "헤르메스 알아?"},
                     "updated_at": "2026-04-22T00:00:00",
                 }
@@ -379,8 +379,8 @@ def test_tasks_browser_navigation_works_without_extra_prompt(monkeypatch):
         output_func=outputs.append,
     )
 
-    assert any("Tasks > 모델 생성 요청" in output for output in outputs)
-    assert any("Tasks > 모델 생성 요청 > 모델 응답 생성" in output for output in outputs)
+    assert any("Tasks > agent loop 요청" in output for output in outputs)
+    assert any("Tasks > agent loop 요청 > agent loop 실행" in output for output in outputs)
     assert outputs[-1] == "작업 브라우저를 닫을게."
 
 
@@ -391,7 +391,7 @@ def test_tasks_browser_preview_changes_with_selected_row(monkeypatch):
             "items": [
                 {
                     "task_run_id": "task_1",
-                    "task_type": "model.generate",
+                    "task_type": "agent.loop",
                     "status": "COMPLETED",
                     "title": "첫 번째 작업",
                     "input_summary": "첫 번째 입력",
@@ -400,7 +400,7 @@ def test_tasks_browser_preview_changes_with_selected_row(monkeypatch):
                 },
                 {
                     "task_run_id": "task_2",
-                    "task_type": "model.generate",
+                    "task_type": "agent.loop",
                     "status": "RUNNING",
                     "title": "두 번째 작업",
                     "input_summary": "두 번째 입력",
@@ -446,8 +446,8 @@ def test_tasks_browser_down_from_last_task_moves_to_footer():
     state = TASK_BROWSER_UI.TaskBrowserState(
         list_payload={
             "items": [
-                {"task_run_id": "task_1", "task_type": "model.generate", "status": "COMPLETED", "title": "작업 1", "step_count": 1},
-                {"task_run_id": "task_2", "task_type": "model.generate", "status": "COMPLETED", "title": "작업 2", "step_count": 1},
+                {"task_run_id": "task_1", "task_type": "agent.loop", "status": "COMPLETED", "title": "작업 1", "step_count": 1},
+                {"task_run_id": "task_2", "task_type": "agent.loop", "status": "COMPLETED", "title": "작업 2", "step_count": 1},
             ]
         },
         selected_index=1,
@@ -533,7 +533,7 @@ def test_tasks_browser_list_viewport_follows_selected_row(monkeypatch):
         items.append(
             {
                 "task_run_id": f"task_{index}",
-                "task_type": "model.generate",
+                "task_type": "agent.loop",
                 "status": "COMPLETED",
                 "title": f"작업 {index}",
                 "input_summary": f"입력 {index}",
@@ -689,7 +689,7 @@ def test_cli_create_task_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    exit_code = main(["--mode", "local", "create-task", "--type", "model.generate", "--prompt", "cli"])
+    exit_code = main(["--mode", "local", "create-task", "--type", "agent.loop", "--prompt", "cli"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
@@ -701,11 +701,11 @@ def test_cli_create_task_prompt_shortcut(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-prompt.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    exit_code = main(["--mode", "local", "create-task", "--type", "model.generate", "--prompt", "한 줄 요약해줘"])
+    exit_code = main(["--mode", "local", "create-task", "--type", "agent.loop", "--prompt", "한 줄 요약해줘"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
-    assert '"intent_type": "model.generate"' in captured
+    assert '"intent_type": "agent.loop"' in captured
     assert '"status": "COMPLETED"' in captured
 
 
@@ -831,9 +831,9 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
             FakeResponse(
                 {
                     "task_run_id": "task_test",
-                    "task_type": "model.generate",
-                    "intent_type": "model.generate",
-                    "entry_executor_key": "model.generate",
+                    "task_type": "agent.loop",
+                    "intent_type": "agent.loop",
+                    "entry_executor_key": "agent.loop",
                     "status": "COMPLETED",
                     "input_payload": {"prompt": "테스트"},
                     "result_payload": {"provider_name": "openai_oauth", "text": "연결 확인 완료", "metadata": {"mode": "live"}},
@@ -981,9 +981,9 @@ def test_cli_shell_interrupt(monkeypatch, tmp_path, capsys):
         return FakeResponse(
             {
                 "task_run_id": "task_interrupt",
-                "task_type": "model.generate",
-                "intent_type": "model.generate",
-                "entry_executor_key": "model.generate",
+                "task_type": "agent.loop",
+                "intent_type": "agent.loop",
+                "entry_executor_key": "agent.loop",
                 "status": "COMPLETED",
                 "input_payload": {"prompt": prompt},
                 "result_payload": {"provider_name": "openai_oauth", "text": "늦게 도착한 응답", "metadata": {"mode": "live", "model": "gpt-5.4"}},

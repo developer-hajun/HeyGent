@@ -4,6 +4,7 @@ import json
 
 from app.core.config import Settings
 from app.domain.providers.model import OpenAIOAuthProvider
+from app.domain.providers.model.openai_api import OpenAIAPIProvider
 from app.domain.providers.registry import ProviderRegistry
 from app.storage.sqlite import SQLiteTaskRepository
 
@@ -48,26 +49,26 @@ class DummyStreamResponse:
 def _make_test_access_token() -> str:
     header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).decode().rstrip("=")
     payload = base64.urlsafe_b64encode(
-        json.dumps({"exp": 4102444800, "scp": ["model.generate"], "https://api.openai.com/auth": {"chatgpt_account_id": "acct_test"}}).encode()
+        json.dumps({"exp": 4102444800, "scp": ["agent.loop"], "https://api.openai.com/auth": {"chatgpt_account_id": "acct_test"}}).encode()
     ).decode().rstrip("=")
     return f"{header}.{payload}.sig"
 
 
-def test_openai_provider_health_and_stub_generate(tmp_path):
+def test_openai_provider_health_and_stub_respond(tmp_path):
     repository = SQLiteTaskRepository(tmp_path / "provider.db")
     provider = OpenAIOAuthProvider(Settings(), repository)
 
     health = provider.health()
-    generated = provider.generate("hello backbone")
+    response = provider.respond(messages=[{"role": "user", "content": "hello backbone"}], tools=[], model="gpt-test")
 
     assert health.provider_name == "openai_oauth"
     assert health.healthy is True
     assert health.configured is True
     assert health.connected is False
-    assert generated.output_text.startswith("[stub:openai_oauth]")
+    assert response.output_text.startswith("[stub:openai_oauth]")
 
 
-def test_openai_provider_imports_local_codex_auth_and_generates_live(monkeypatch, tmp_path):
+def test_openai_provider_imports_local_codex_auth_and_responds_live(monkeypatch, tmp_path):
     repository = SQLiteTaskRepository(tmp_path / "provider-codex.db")
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(
@@ -103,16 +104,150 @@ def test_openai_provider_imports_local_codex_auth_and_generates_live(monkeypatch
 
     monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.stream", fake_stream)
     auth = provider.start_auth(force_oauth=False)
-    generated = provider.generate("연결 확인")
+    response = provider.respond(messages=[{"role": "user", "content": "연결 확인"}], tools=[], model="gpt-test")
 
     assert auth.status == "connected"
     assert provider.health().configured is True
     assert provider.health().connected is True
-    assert generated.output_text == "로컬 로그인 연결 응답"
-    assert generated.metadata["mode"] == "live"
+    assert response.output_text == "로컬 로그인 연결 응답"
+    assert response.metadata["mode"] == "live"
 
 
-def test_openai_provider_completes_auth_and_generates_live(monkeypatch, tmp_path):
+def test_openai_api_provider_respond_preserves_native_tool_call(monkeypatch):
+    settings = Settings(
+        openai_api_key="sk-test",
+        openai_rest_api_base_url="https://api.openai.test/v1",
+        openai_response_model="gpt-fallback",
+    )
+    provider = OpenAIAPIProvider(settings)
+    captured: dict = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None, data=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        return DummyHTTPResponse(
+            {
+                "id": "resp_tool",
+                "model": "gpt-agent",
+                "status": "completed",
+                "metadata": {"trace": "abc"},
+                "output": [
+                    {
+                        "type": "reasoning",
+                        "summary": [{"text": "도구가 필요함"}],
+                        "encrypted_content": "reasoning-token",
+                    },
+                    {
+                        "type": "function_call",
+                        "call_id": "call_todo_1",
+                        "name": "todo",
+                        "arguments": '{"todos":[{"content":"정리","status":"pending"}]}',
+                    },
+                ],
+                "usage": {"input_tokens": 12, "output_tokens": 4},
+            }
+        )
+
+    monkeypatch.setattr("app.domain.providers.model.openai_api.httpx.post", fake_post)
+
+    response = provider.respond(
+        messages=[{"role": "user", "content": "할 일을 정리해줘"}],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "todo",
+                    "description": "todo list 관리",
+                    "parameters": {"type": "object", "properties": {"todos": {"type": "array"}}},
+                    "strict": True,
+                },
+            }
+        ],
+        model="gpt-agent",
+        tool_choice="auto",
+    )
+
+    assert captured["url"] == "https://api.openai.test/v1/responses"
+    assert captured["json"]["model"] == "gpt-agent"
+    assert captured["json"]["input"] == [{"role": "user", "content": "할 일을 정리해줘"}]
+    assert captured["json"]["tools"][0]["name"] == "todo"
+    assert captured["json"]["tools"][0]["strict"] is True
+    assert captured["json"]["tool_choice"] == "auto"
+    assert response.finish_reason == "tool_calls"
+    assert response.tool_calls[0].id == "call_todo_1"
+    assert response.tool_calls[0].name == "todo"
+    assert response.tool_calls[0].arguments["todos"][0]["content"] == "정리"
+    assert response.reasoning[0]["encrypted_content"] == "reasoning-token"
+    assert response.raw_response["id"] == "resp_tool"
+    assert response.metadata["response_id"] == "resp_tool"
+    assert response.metadata["raw_metadata"] == {"trace": "abc"}
+
+
+def test_openai_oauth_provider_respond_streams_agent_contract(monkeypatch, tmp_path):
+    repository = SQLiteTaskRepository(tmp_path / "provider-respond.db")
+    auth_path = tmp_path / "auth.json"
+    auth_path.write_text(
+        json.dumps(
+            {
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "access_token": _make_test_access_token(),
+                    "refresh_token": "refresh-token",
+                    "account_id": "acct_test",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(
+        openai_auth_file=auth_path,
+        openai_api_base_url="https://chatgpt.test/backend-api",
+        openai_response_model="gpt-test",
+    )
+    provider = OpenAIOAuthProvider(settings, repository)
+    captured: dict = {}
+
+    def fake_stream(method, url, headers=None, json=None, timeout=None):
+        captured["method"] = method
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        return DummyStreamResponse(
+            [
+                'data: {"type":"response.completed","response":{"id":"resp_oauth_tool","model":"gpt-test","status":"completed","output":[{"type":"function_call","call_id":"call_1","name":"todo","arguments":"{\\"todos\\":[]}"}],"usage":{"input_tokens":5,"output_tokens":2}}}',
+            ],
+            url=url,
+        )
+
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.stream", fake_stream)
+
+    auth = provider.start_auth(force_oauth=False)
+    response = provider.respond(
+        messages=[
+            {"role": "user", "content": "todo를 읽어줘"},
+            {"role": "tool", "tool_call_id": "call_previous", "content": '{"todos":[]}'},
+        ],
+        tools=[{"type": "function", "name": "todo", "description": "todo list 관리", "parameters": {"type": "object"}}],
+        model="gpt-test",
+    )
+
+    assert auth.status == "connected"
+    assert captured["method"] == "POST"
+    assert captured["url"] == f"{settings.openai_api_base_url}/codex/responses"
+    assert captured["json"]["stream"] is True
+    assert captured["json"]["input"][1] == {
+        "type": "function_call_output",
+        "call_id": "call_previous",
+        "output": '{"todos":[]}',
+    }
+    assert response.finish_reason == "tool_calls"
+    assert response.tool_calls[0].id == "call_1"
+    assert response.tool_calls[0].name == "todo"
+    assert response.raw_response["id"] == "resp_oauth_tool"
+
+
+def test_openai_provider_completes_auth_and_responds_live(monkeypatch, tmp_path):
     repository = SQLiteTaskRepository(tmp_path / "provider-live.db")
     settings = Settings(
         openai_oauth_client_id="client-id",
@@ -153,12 +288,12 @@ def test_openai_provider_completes_auth_and_generates_live(monkeypatch, tmp_path
     monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.post", fake_post)
     monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.stream", fake_stream)
     connected = provider.complete_auth(code="code-123", state=auth.state)
-    generated = provider.generate("연결 확인")
+    response = provider.respond(messages=[{"role": "user", "content": "연결 확인"}], tools=[], model="gpt-test")
 
     assert connected.connected is True
     assert provider.health().connected is True
-    assert generated.output_text == "실제 연결 응답"
-    assert generated.metadata["mode"] == "live"
+    assert response.output_text == "실제 연결 응답"
+    assert response.metadata["mode"] == "live"
 
 
 def test_openai_provider_refresh_and_disconnect(monkeypatch, tmp_path):
@@ -177,7 +312,7 @@ def test_openai_provider_refresh_and_disconnect(monkeypatch, tmp_path):
             "access_token": "old-token",
             "refresh_token": "refresh-token",
             "token_type": "Bearer",
-            "scope_text": "model.generate",
+            "scope_text": "agent.loop",
             "expires_at": None,
             "raw_payload": {"ok": True},
         },

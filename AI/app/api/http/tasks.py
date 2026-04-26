@@ -36,9 +36,7 @@ _RECENT_TERMINAL_TASK_STATUSES = [status.value for status in (TaskStatus.COMPLET
 _ACTIVE_STEP_STATUSES = {status.value for status in (StepStatus.PENDING, StepStatus.RUNNING, StepStatus.WAITING, StepStatus.BLOCKED)}
 _RECENT_ACTIVE_TTL_SECONDS = 300
 _TASK_TITLE_FALLBACKS = {
-    "model.generate": "모델 응답 생성",
-    "notion.page.create": "Notion 페이지 생성",
-    "notion.database.append": "Notion 데이터 추가",
+    "agent.loop": "agent loop 실행",
 }
 
 
@@ -390,6 +388,8 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=f"unknown intent or executor: {error.args[0]}") from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     return TaskRunResponse.model_validate(task, from_attributes=True)
 
 

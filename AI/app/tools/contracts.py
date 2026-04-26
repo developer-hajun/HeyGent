@@ -47,6 +47,6 @@ class TaskExecutor(Protocol):
         self,
         *,
         task: TaskRun,
-        step: StepRun,
+        step: StepRun | None,
         resume_payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...

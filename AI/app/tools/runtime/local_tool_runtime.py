@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from typing import Any
 
@@ -14,18 +15,19 @@ class LocalToolRuntime:
     def __init__(self, *, skill_registry, session_store) -> None:
         self.skill_registry = skill_registry
         self.session_store = session_store
+        self._todo_items: list[dict[str, str]] = []
         self._tool_entries = build_runtime_tool_entries(
             {
                 "skills.list": self._list_skills,
                 "skills.read": self._read_skill,
                 "session.record": self._record_session_message,
                 "session.search": self._search_sessions,
-                "todo.write": self._write_todos,
+                "todo": self._todo,
                 "terminal.run": self._run_terminal_command,
             }
         )
 
-    def list_tool_definitions(self, *, enabled_toolsets: tuple[str, ...] | None = None) -> list[dict[str, str]]:
+    def list_tool_definitions(self, *, enabled_toolsets: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
         definitions = list_runtime_tool_definitions(
             {name: entry.handler for name, entry in self._tool_entries.items()}
         )
@@ -34,12 +36,17 @@ class LocalToolRuntime:
             return definitions
         return [item for item in definitions if item["name"] in allowed_tool_names]
 
-    def run_calls(self, calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def run_calls(
+        self,
+        calls: list[dict[str, Any]],
+        *,
+        enabled_toolsets: tuple[str, ...] | None = None,
+    ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for call in calls:
             name = str(call.get("name") or "").strip()
             args = dict(call.get("args") or {})
-            result = self.run_call(name=name, args=args)
+            result = self.run_call(name=name, args=args, enabled_toolsets=enabled_toolsets)
             results.append(
                 {
                     "name": name,
@@ -49,7 +56,48 @@ class LocalToolRuntime:
             )
         return results
 
-    def run_call(self, *, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    def run_call(
+        self,
+        *,
+        name: str,
+        args: dict[str, Any],
+        enabled_toolsets: tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
+        normalized_name = str(name or "").strip()
+        allowed_tool_names = resolve_runtime_tool_names(enabled_toolsets)
+        if allowed_tool_names is not None and normalized_name not in allowed_tool_names:
+            return self._tool_error(
+                code="tool_unavailable",
+                message=f"unknown or disabled runtime tool: {normalized_name}",
+                tool_name=normalized_name,
+            )
+
+        entry = self._tool_entries.get(normalized_name)
+        if entry is None:
+            return self._tool_error(
+                code="tool_unavailable",
+                message=f"unknown or disabled runtime tool: {normalized_name}",
+                tool_name=normalized_name,
+            )
+
+        validation_error = self._validate_args(entry.definition.schema, args)
+        if validation_error:
+            return self._tool_error(
+                code="invalid_tool_arguments",
+                message=validation_error,
+                tool_name=normalized_name,
+            )
+
+        try:
+            return entry.handler(dict(args))
+        except Exception as error:
+            return self._tool_error(
+                code="tool_execution_failed",
+                message=f"{type(error).__name__}: {error}",
+                tool_name=normalized_name,
+            )
+
+    def require_call(self, *, name: str, args: dict[str, Any]) -> dict[str, Any]:
         entry = self._tool_entries.get(name)
         if entry is None:
             raise KeyError(name)
@@ -106,28 +154,30 @@ class LocalToolRuntime:
             "items": results,
         }
 
-    @staticmethod
-    def _write_todos(args: dict[str, Any]) -> dict[str, object]:
-        todos = list(args.get("todos") or [])
-        normalized = [
-            {
-                "id": str(item.get("id") or item.get("key") or f"todo-{index + 1}"),
-                "key": str(item.get("id") or item.get("key") or f"todo-{index + 1}"),
-                "content": str(item.get("content") or item.get("title") or ""),
-                "title": str(item.get("content") or item.get("title") or ""),
-                "kind": str(item.get("kind") or "todo"),
-                "status": str(item.get("status") or "pending").lower(),
-            }
-            for index, item in enumerate(todos)
-        ]
-        current_id = next((item["id"] for item in normalized if item["status"] in {"pending", "in_progress"}), None)
+    def _todo(self, args: dict[str, Any]) -> dict[str, object]:
+        if "todos" in args:
+            self._todo_items = self._write_todos(list(args.get("todos") or []), merge=bool(args.get("merge", False)))
         return {
-            "count": len(normalized),
-            "items": normalized,
-            "current_id": current_id,
-            "current_key": current_id,
-            "merge": bool(args.get("merge", False)),
+            "todos": [dict(item) for item in self._todo_items],
+            "summary": self._todo_summary(self._todo_items),
         }
+
+    def _write_todos(self, todos: list[Any], *, merge: bool) -> list[dict[str, str]]:
+        normalized = [
+            self._normalize_todo_item(item, index=index)
+            for index, item in enumerate(todos)
+            if isinstance(item, dict)
+        ]
+        if not merge:
+            return self._dedupe_todos(normalized)
+
+        existing = {item["id"]: dict(item) for item in self._todo_items}
+        order = [item["id"] for item in self._todo_items]
+        for item in normalized:
+            if item["id"] not in existing:
+                order.append(item["id"])
+            existing[item["id"]] = item
+        return [existing[item_id] for item_id in order if item_id in existing]
 
     @staticmethod
     def _run_terminal_command(args: dict[str, Any]) -> dict[str, Any]:
@@ -166,3 +216,119 @@ class LocalToolRuntime:
             "stdout": completed.stdout,
             "stderr": completed.stderr,
         }
+
+    @staticmethod
+    def _normalize_todo_item(item: dict[str, Any], *, index: int) -> dict[str, str]:
+        item_id = str(item.get("id") or item.get("key") or f"todo-{index + 1}").strip() or f"todo-{index + 1}"
+        content = str(item.get("content") or item.get("title") or item_id).strip() or item_id
+        status = str(item.get("status") or "pending").strip().lower() or "pending"
+        if status == "canceled":
+            status = "cancelled"
+        if status not in {"pending", "in_progress", "completed", "cancelled"}:
+            status = "pending"
+        return {
+            "id": item_id,
+            "content": content,
+            "status": status,
+        }
+
+    @staticmethod
+    def _dedupe_todos(items: list[dict[str, str]]) -> list[dict[str, str]]:
+        last_index_by_id = {item["id"]: index for index, item in enumerate(items)}
+        return [items[index] for index in sorted(last_index_by_id.values())]
+
+    @staticmethod
+    def _todo_summary(items: list[dict[str, str]]) -> dict[str, int]:
+        return {
+            "total": len(items),
+            "pending": sum(1 for item in items if item["status"] == "pending"),
+            "in_progress": sum(1 for item in items if item["status"] == "in_progress"),
+            "completed": sum(1 for item in items if item["status"] == "completed"),
+            "cancelled": sum(1 for item in items if item["status"] == "cancelled"),
+        }
+
+    @staticmethod
+    def _tool_error(*, code: str, message: str, tool_name: str) -> dict[str, Any]:
+        payload = {
+            "error": {
+                "code": code,
+                "message": message,
+                "tool_name": tool_name,
+            }
+        }
+        return {
+            "ok": False,
+            **payload,
+            "content": json.dumps(payload, ensure_ascii=False),
+        }
+
+    @classmethod
+    def _validate_args(cls, schema: dict[str, Any], args: dict[str, Any]) -> str | None:
+        parameters = schema.get("parameters") if isinstance(schema, dict) else {}
+        if not isinstance(parameters, dict):
+            return None
+        if parameters.get("type") == "object" and not isinstance(args, dict):
+            return "tool arguments must be an object"
+
+        properties = parameters.get("properties") if isinstance(parameters.get("properties"), dict) else {}
+        required = parameters.get("required") if isinstance(parameters.get("required"), list) else []
+        for key in required:
+            if key not in args:
+                return f"missing required argument: {key}"
+
+        for key, value in args.items():
+            property_schema = properties.get(key)
+            if not isinstance(property_schema, dict):
+                continue
+            error = cls._validate_value(value, property_schema, path=key)
+            if error:
+                return error
+        return None
+
+    @classmethod
+    def _validate_value(cls, value: Any, schema: dict[str, Any], *, path: str) -> str | None:
+        expected_type = schema.get("type")
+        if isinstance(expected_type, list):
+            errors = [cls._validate_value(value, {**schema, "type": item}, path=path) for item in expected_type]
+            return None if any(error is None for error in errors) else errors[0]
+
+        if expected_type == "array":
+            if not isinstance(value, list):
+                return f"{path} must be an array"
+            item_schema = schema.get("items")
+            if isinstance(item_schema, dict):
+                for index, item in enumerate(value):
+                    error = cls._validate_value(item, item_schema, path=f"{path}.{index}")
+                    if error:
+                        return error
+            return None
+
+        if expected_type == "object":
+            if not isinstance(value, dict):
+                return f"{path} must be an object"
+            properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+            required = schema.get("required") if isinstance(schema.get("required"), list) else []
+            for key in required:
+                if key not in value:
+                    return f"missing required argument: {path}.{key}"
+            for key, nested_value in value.items():
+                nested_schema = properties.get(key)
+                if isinstance(nested_schema, dict):
+                    error = cls._validate_value(nested_value, nested_schema, path=f"{path}.{key}")
+                    if error:
+                        return error
+            return None
+
+        if expected_type == "string" and not isinstance(value, str):
+            return f"{path} must be a string"
+        if expected_type == "boolean" and not isinstance(value, bool):
+            return f"{path} must be a boolean"
+        if expected_type == "integer" and (not isinstance(value, int) or isinstance(value, bool)):
+            return f"{path} must be an integer"
+        if expected_type == "number" and (not isinstance(value, (int, float)) or isinstance(value, bool)):
+            return f"{path} must be a number"
+
+        allowed_values = schema.get("enum")
+        if isinstance(allowed_values, list) and value not in allowed_values:
+            return f"{path} must be one of: {', '.join(str(item) for item in allowed_values)}"
+        return None

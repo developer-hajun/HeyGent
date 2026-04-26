@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from app.tools.runtime.catalog import RuntimeToolDefinition, list_registered_runtime_tool_definitions
 
@@ -20,6 +20,8 @@ def discover_runtime_tool_definitions() -> list[RuntimeToolDefinition]:
 def build_runtime_tool_entries(handler_by_name: dict[str, Callable]) -> dict[str, RuntimeToolEntry]:
     entries: dict[str, RuntimeToolEntry] = {}
     for definition in discover_runtime_tool_definitions():
+        if not definition.enabled:
+            continue
         handler = handler_by_name.get(definition.name)
         if handler is None:
             continue
@@ -27,7 +29,7 @@ def build_runtime_tool_entries(handler_by_name: dict[str, Callable]) -> dict[str
     return entries
 
 
-def list_runtime_tool_definitions(handler_by_name: dict[str, Callable]) -> list[dict[str, str]]:
+def list_runtime_tool_definitions(handler_by_name: dict[str, Callable]) -> list[dict[str, Any]]:
     entries = build_runtime_tool_entries(handler_by_name)
     return [
         {
@@ -35,9 +37,20 @@ def list_runtime_tool_definitions(handler_by_name: dict[str, Callable]) -> list[
             "toolset": entry.definition.toolset,
             "summary": entry.definition.summary,
             "module": entry.definition.module,
+            "schema": entry.definition.schema,
+            "result_format": entry.definition.result_format,
         }
         for _, entry in sorted(entries.items())
     ]
+
+
+def list_runtime_tool_schemas(handler_by_name: dict[str, Callable]) -> list[dict[str, Any]]:
+    entries = build_runtime_tool_entries(handler_by_name)
+    return [
+        {"type": "function", "function": entry.definition.schema}
+        for _, entry in sorted(entries.items())
+    ]
+
 
 def _discover_runtime_tool_modules() -> None:
     from app.tools.planning import todo_tool  # noqa: F401

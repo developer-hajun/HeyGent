@@ -5,8 +5,8 @@ from fastapi.responses import HTMLResponse
 import httpx
 
 from app.api.deps.provider_context import ProviderContext, get_provider_context
-from app.contracts.provider.provider_request import ProviderAuthRequest, ProviderCallbackRequest, ProviderGenerateRequest
-from app.contracts.provider.provider_response import ProviderAuthResponse, ProviderConnectionResponse, ProviderGenerateResponse, ProviderHealthResponse
+from app.contracts.provider.provider_request import ProviderAuthRequest, ProviderCallbackRequest
+from app.contracts.provider.provider_response import ProviderAuthResponse, ProviderConnectionResponse, ProviderHealthResponse
 
 router = APIRouter(prefix="/providers", tags=["providers"])
 
@@ -147,20 +147,3 @@ def complete_provider_auth_from_browser(
             f"<html><body style='font-family:sans-serif;padding:24px;'><h1>OAuth 연결 실패</h1><p>토큰 서버 통신 중 오류가 발생했습니다.</p><pre>{error}</pre></body></html>",
             status_code=502,
         )
-
-
-@router.post("/generate", response_model=ProviderGenerateResponse)
-def generate_with_provider(
-    payload: ProviderGenerateRequest,
-    context: ProviderContext = Depends(get_provider_context),
-) -> ProviderGenerateResponse:
-    try:
-        provider = context.registry.get(payload.provider_name)
-    except KeyError as error:
-        raise HTTPException(status_code=404, detail=f"unknown provider: {error.args[0]}") from error
-    try:
-        return provider.generate(payload.prompt, **payload.metadata)
-    except httpx.HTTPStatusError as error:
-        raise HTTPException(status_code=502, detail=f"provider generate failed: {error.response.text}") from error
-    except httpx.HTTPError as error:
-        raise HTTPException(status_code=502, detail=f"provider generate request failed: {error}") from error

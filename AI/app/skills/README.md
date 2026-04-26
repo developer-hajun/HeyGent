@@ -4,4 +4,4 @@
 
 - 각 skill 은 하위 디렉터리에 `SKILL.md`를 둔다.
 - loader 는 `domain/orchestration/prompts/skill_prompt.py`에서 이 디렉터리를 읽는다.
-- Hermes 레포의 skill 자산을 이후 그대로 이 구조에 옮길 수 있다.
+- 외부 skill 자산을 이후 이 구조에 옮길 수 있다.

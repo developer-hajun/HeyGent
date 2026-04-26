@@ -22,7 +22,7 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "planning": RuntimeToolsetDefinition(
         description="Todo and planning tools.",
-        tools=("todo.write",),
+        tools=("todo",),
     ),
     "terminal": RuntimeToolsetDefinition(
         description="Local terminal execution tools.",
