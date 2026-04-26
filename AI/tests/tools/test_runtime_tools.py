@@ -4,7 +4,9 @@ from app.domain.orchestration.runtime_planning.todo_state import (
     apply_tool_results_to_todo_state,
     build_task_todo_payload,
 )
+from app.tools.file import file_tools
 from app.tools.runtime.local_tool_runtime import LocalToolRuntime
+from app.tools.runtime.toolsets import resolve_runtime_tool_names
 
 
 class DummySessionStore:
@@ -31,6 +33,32 @@ def test_runtime_exposes_terminal_argument_schema():
     assert "command" in properties
     assert "argv" in properties
     assert "Provide at least one" in terminal_schema["description"]
+
+
+def test_runtime_exposes_file_tool_definitions_from_file_tool_module():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    definitions = runtime.list_tool_definitions(enabled_toolsets=("file",))
+
+    assert [definition["name"] for definition in definitions] == [
+        "patch",
+        "read_file",
+        "search_files",
+        "write_file",
+    ]
+    schema_by_name = {definition["name"]: definition["schema"] for definition in definitions}
+    assert schema_by_name["read_file"]["parameters"]["properties"]["path"]["type"] == "string"
+    assert schema_by_name["write_file"]["parameters"]["properties"]["content"]["type"] == "string"
+    assert schema_by_name["search_files"]["parameters"]["properties"]["query"]["type"] == "string"
+
+
+def test_file_toolset_is_available_for_coding_and_local_core_but_not_safe():
+    file_tool_names = {"read_file", "write_file", "patch", "search_files"}
+
+    assert file_tool_names <= resolve_runtime_tool_names(("file",))
+    assert file_tool_names <= resolve_runtime_tool_names(("coding",))
+    assert file_tool_names <= resolve_runtime_tool_names(("local-core",))
+    assert file_tool_names.isdisjoint(resolve_runtime_tool_names(("safe",)))
 
 
 def test_todo_writes_and_reads_full_json_ready_result():
@@ -117,6 +145,45 @@ def test_runtime_rejects_invalid_arguments_as_tool_result():
     assert result["ok"] is False
     assert result["error"]["code"] == "invalid_tool_arguments"
     assert "todos.0.content" in result["error"]["message"]
+
+
+def test_file_runtime_calls_file_module_handler(monkeypatch):
+    def fake_read_file_handler(args):
+        return {"ok": True, "path": args["path"], "content": "runtime file content"}
+
+    monkeypatch.setattr(file_tools, "read_file_handler", fake_read_file_handler, raising=False)
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    result = runtime.run_call(
+        name="read_file",
+        args={"path": "README.md"},
+        enabled_toolsets=("file",),
+    )
+
+    assert result == {"ok": True, "path": "README.md", "content": "runtime file content"}
+
+
+def test_file_runtime_blocks_write_when_only_safe_toolset_enabled(monkeypatch):
+    called = False
+
+    def fake_write_file_handler(args):
+        nonlocal called
+        called = True
+        return {"ok": True}
+
+    monkeypatch.setattr(file_tools, "write_file_handler", fake_write_file_handler, raising=False)
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    result = runtime.run_call(
+        name="write_file",
+        args={"path": "README.md", "content": "blocked"},
+        enabled_toolsets=("safe",),
+    )
+
+    assert called is False
+    assert result["ok"] is False
+    assert result["error"]["code"] == "tool_unavailable"
+    assert result["error"]["tool_name"] == "write_file"
 
 
 def test_terminal_runtime_treats_empty_cwd_as_current_directory():

@@ -24,6 +24,10 @@ class LocalToolRuntime:
                 "session.search": self._search_sessions,
                 "todo": self._todo,
                 "terminal.run": self._run_terminal_command,
+                "read_file": self._read_file,
+                "write_file": self._write_file,
+                "patch": self._patch_file,
+                "search_files": self._search_files,
             }
         )
 
@@ -161,6 +165,33 @@ class LocalToolRuntime:
             "todos": [dict(item) for item in self._todo_items],
             "summary": self._todo_summary(self._todo_items),
         }
+
+    @staticmethod
+    def _read_file(args: dict[str, Any]) -> dict[str, Any]:
+        return LocalToolRuntime._run_file_tool_handler("read_file_handler", args)
+
+    @staticmethod
+    def _write_file(args: dict[str, Any]) -> dict[str, Any]:
+        return LocalToolRuntime._run_file_tool_handler("write_file_handler", args)
+
+    @staticmethod
+    def _patch_file(args: dict[str, Any]) -> dict[str, Any]:
+        return LocalToolRuntime._run_file_tool_handler("patch_handler", args)
+
+    @staticmethod
+    def _search_files(args: dict[str, Any]) -> dict[str, Any]:
+        return LocalToolRuntime._run_file_tool_handler("search_files_handler", args)
+
+    @staticmethod
+    def _run_file_tool_handler(handler_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        from app.tools.file import file_tools
+
+        # 파일 도구 구현은 별도 모듈 소유라 실행 시점에만 함수 존재를 확인한다.
+        handler = getattr(file_tools, handler_name)
+        result = handler(dict(args))
+        if isinstance(result, dict):
+            return result
+        return {"ok": True, "result": result}
 
     def _write_todos(self, todos: list[Any], *, merge: bool) -> list[dict[str, str]]:
         normalized = [
