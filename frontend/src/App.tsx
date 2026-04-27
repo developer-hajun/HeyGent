@@ -4,24 +4,26 @@ import { TopNavBar } from '@/components/layout/TopNavBar'
 import { RightPanel } from '@/components/layout/RightPanel'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
+import { NewChatPage } from '@/pages/NewChatPage'
 
 export default function App() {
   return (
     <BrowserRouter>
       <RightPanel />
 
-      <div className="bg-background flex size-full flex-col">
+      <div className="bg-background flex h-screen w-full flex-col overflow-hidden">
         <TopNavBar />
 
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex min-h-0 flex-1 overflow-hidden">
           <LeftSidebar />
 
           <Routes>
             <Route path="/" element={<DashboardPage />} />
+            <Route path="/new-chat" element={<NewChatPage />} />
             <Route path="/agent-status" element={<AgentStatusPage />} />
             <Route path="/session/:sessionId" element={<Navigate to="/agent-status" replace />} />
 
-            <Route path="/chat" element={<Navigate to="/" replace />} />
+            <Route path="/chat" element={<Navigate to="/new-chat" replace />} />
             <Route path="/agents" element={<Navigate to="/agent-status" replace />} />
             <Route path="/reminders" element={<Navigate to="/" replace />} />
             <Route path="/wellness" element={<Navigate to="/" replace />} />

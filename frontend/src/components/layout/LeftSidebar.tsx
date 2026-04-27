@@ -6,7 +6,6 @@ import {
   Loader2,
   MessageSquare,
   Clock,
-  ListTodo,
   GripVertical,
   Plus,
   User,
@@ -17,32 +16,13 @@ import {
   Edit3,
 } from 'lucide-react'
 import { useState } from 'react'
-import { motion } from 'motion/react'
 import { sessions } from '@/data/sessions'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { useUIStore } from '@/store/useUIStore'
 import { useSessionStore } from '@/store/useSessionStore'
 
-interface Task {
-  id: string
-  title: string
-  status: 'running' | 'completed'
-  time: string
-  agent: string
-}
-
-const ongoingTasks: Task[] = [
-  { id: 'T-1', title: 'PR #245 보안 분석', agent: '코드 리뷰', status: 'running', time: '2분 전' },
-  {
-    id: 'T-2',
-    title: '식사 추천 생성 중',
-    agent: '식단 & 웰니스',
-    status: 'running',
-    time: '1분 전',
-  },
-  { id: 'T-3', title: '일일 알림 설정', agent: '스케줄러', status: 'running', time: '5분 전' },
-]
+const runningSessionIds = new Set(['S-1', 'S-3'])
 
 export function LeftSidebar() {
   const {
@@ -55,13 +35,16 @@ export function LeftSidebar() {
   } = useUIStore()
   const { selectedSessionId, setSelectedSessionId } = useSessionStore()
   const [profileOpen, setProfileOpen] = useState(false)
-  const [tasksPopoverOpen, setTasksPopoverOpen] = useState(false)
   const [sessionsPopoverOpen, setSessionsPopoverOpen] = useState(false)
   const isResizing = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
   const navigate = useNavigate()
   const location = useLocation()
+
+  const handleNewChat = () => {
+    navigate('/new-chat')
+  }
 
   const startResize = useCallback(
     (e: React.MouseEvent) => {
@@ -100,7 +83,7 @@ export function LeftSidebar() {
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       <div
-        className="bg-sidebar border-sidebar-border relative flex flex-shrink-0 flex-col border-r transition-[width] duration-200 ease-in-out"
+        className="bg-sidebar border-sidebar-border relative flex flex-shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200 ease-in-out"
         style={{ width: collapsed ? 52 : width }}
       >
         {/* ── Collapsed Rail ── */}
@@ -117,49 +100,14 @@ export function LeftSidebar() {
 
             <div className="bg-sidebar-border my-1 h-px w-6" />
 
-            {/* Ongoing tasks icon */}
-            <Popover open={tasksPopoverOpen} onOpenChange={setTasksPopoverOpen}>
-              <PopoverTrigger asChild>
-                <div className="group relative">
-                  <button
-                    title="실행 중인 작업"
-                    className="hover:bg-sidebar-accent text-primary flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
-                  >
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  </button>
-                  <span
-                    className="bg-primary absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full text-white"
-                    style={{ fontSize: '9px' }}
-                  >
-                    {ongoingTasks.length}
-                  </span>
-                </div>
-              </PopoverTrigger>
-              <PopoverContent side="right" align="start" className="w-72 rounded-2xl p-3">
-                <div className="mb-2">
-                  <h3 className="text-foreground mb-1 text-sm font-semibold">실행 중인 작업</h3>
-                  <p className="text-muted-foreground text-xs">
-                    현재 진행 중인 {ongoingTasks.length}개의 작업
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  {ongoingTasks.map((task) => (
-                    <div
-                      key={task.id}
-                      className="bg-primary/5 border-primary/15 hover:bg-primary/8 cursor-pointer rounded-lg border p-3 transition-colors"
-                    >
-                      <p className="text-foreground mb-1 text-sm font-medium">{task.title}</p>
-                      <div className="flex items-center justify-between">
-                        <span className="text-primary text-xs font-medium">{task.agent}</span>
-                        <span className="text-muted-foreground text-xs">{task.time}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
-
-            <div className="bg-sidebar-border my-1 h-px w-6" />
+            {/* New Chat button */}
+            <button
+              onClick={handleNewChat}
+              title="새 채팅"
+              className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
 
             {/* Sessions icon */}
             <Popover open={sessionsPopoverOpen} onOpenChange={setSessionsPopoverOpen}>
@@ -194,11 +142,20 @@ export function LeftSidebar() {
                             : 'hover:bg-muted border border-transparent'
                         }`}
                       >
-                        <p
-                          className={`mb-1 truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
-                        >
-                          {session.title}
-                        </p>
+                        <div className="mb-1 flex items-center justify-between gap-1">
+                          <p
+                            className={`truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
+                          >
+                            {session.title}
+                          </p>
+                          {runningSessionIds.has(session.id) && (
+                            <Loader2
+                              className="text-primary shrink-0 animate-spin"
+                              style={{ width: '16px', height: '16px' }}
+                              strokeWidth={2.5}
+                            />
+                          )}
+                        </div>
                         <p className="text-muted-foreground truncate text-xs">{session.preview}</p>
                         <div className="mt-1 flex items-center gap-1">
                           <Clock className="text-muted-foreground h-3 w-3" />
@@ -242,16 +199,10 @@ export function LeftSidebar() {
             {/* Header */}
             <div className="border-sidebar-border flex h-12 flex-shrink-0 items-center justify-between border-b px-4">
               <div className="flex items-center gap-2">
-                <ListTodo className="text-muted-foreground h-4 w-4" />
-                <span className="text-foreground text-sm font-semibold">활동</span>
+                <MessageSquare className="text-muted-foreground h-4 w-4" />
+                <span className="text-foreground text-sm font-semibold">대화 세션</span>
               </div>
               <div className="flex items-center gap-1">
-                <button
-                  title="새 채팅"
-                  className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-7 w-7 items-center justify-center rounded-md transition-colors"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
                 <button
                   onClick={() => setSidebarCollapsed(true)}
                   className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-7 w-7 items-center justify-center rounded-md transition-colors"
@@ -261,53 +212,23 @@ export function LeftSidebar() {
               </div>
             </div>
 
-            <div className="flex-1 space-y-6 overflow-x-hidden overflow-y-auto px-3 py-3">
-              {/* ── Ongoing Tasks ── */}
-              <section>
-                <div className="mb-3 flex items-center gap-2 px-2">
-                  <div className="bg-primary/10 flex h-7 w-7 items-center justify-center rounded-lg">
-                    <Loader2 className="text-primary h-3.5 w-3.5 animate-spin" />
-                  </div>
-                  <span className="text-foreground text-xs font-semibold">실행 중인 작업</span>
-                  <span className="bg-primary/10 text-primary ml-auto rounded-full px-2 py-0.5 text-xs font-medium">
-                    {ongoingTasks.length}
-                  </span>
-                </div>
-                <div className="space-y-2">
-                  {ongoingTasks.map((task) => (
-                    <motion.div
-                      key={task.id}
-                      initial={{ opacity: 0, x: -6 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      className="bg-primary/5 border-primary/15 hover:bg-primary/8 group cursor-pointer rounded-xl border p-3 transition-colors"
-                    >
-                      <p className="text-foreground mb-1 truncate text-sm font-medium">
-                        {task.title}
-                      </p>
-                      <div className="flex items-center justify-between">
-                        <span className="text-primary text-xs font-medium">{task.agent}</span>
-                        <span className="text-muted-foreground text-xs">{task.time}</span>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-              </section>
-
-              {/* Divider */}
-              <div className="bg-sidebar-border h-px" />
-
+            <div className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-3">
               {/* ── Sessions ── */}
               <section>
-                <div className="mb-3 flex items-center gap-2 px-2">
-                  <div className="bg-muted flex h-7 w-7 items-center justify-center rounded-lg">
-                    <MessageSquare className="text-muted-foreground h-3.5 w-3.5" />
-                  </div>
-                  <span className="text-foreground text-xs font-semibold">대화 세션</span>
-                </div>
                 <div className="space-y-1">
+                  {/* New Chat button */}
+                  <button
+                    onClick={handleNewChat}
+                    className="hover:bg-sidebar-accent border-sidebar-border flex w-full items-center gap-2 rounded-lg border border-dashed p-2.5 transition-colors"
+                  >
+                    <Plus className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+                    <span className="text-muted-foreground text-sm">새 채팅 시작</span>
+                  </button>
+
                   {sessions.map((session) => {
                     const isActive =
                       location.pathname === '/agent-status' && selectedSessionId === session.id
+                    const isRunning = runningSessionIds.has(session.id)
                     return (
                       <div
                         key={session.id}
@@ -315,22 +236,33 @@ export function LeftSidebar() {
                           setSelectedSessionId(session.id)
                           navigate('/agent-status')
                         }}
-                        className={`cursor-pointer rounded-lg p-2.5 transition-colors ${
+                        className={`flex cursor-pointer items-center gap-2 rounded-lg p-2.5 transition-colors ${
                           isActive
                             ? 'bg-primary/8 border-primary/15 border'
                             : 'hover:bg-sidebar-accent border border-transparent'
                         }`}
                       >
-                        <p
-                          className={`mb-1 truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
-                        >
-                          {session.title}
-                        </p>
-                        <p className="text-muted-foreground truncate text-xs">{session.preview}</p>
-                        <div className="mt-1.5 flex items-center gap-1">
-                          <Clock className="text-muted-foreground h-3 w-3" />
-                          <span className="text-muted-foreground text-xs">{session.time}</span>
+                        <div className="min-w-0 flex-1">
+                          <p
+                            className={`mb-0.5 truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
+                          >
+                            {session.title}
+                          </p>
+                          <p className="text-muted-foreground truncate text-xs">
+                            {session.preview}
+                          </p>
+                          <div className="mt-1.5 flex items-center gap-1">
+                            <Clock className="text-muted-foreground h-3 w-3" />
+                            <span className="text-muted-foreground text-xs">{session.time}</span>
+                          </div>
                         </div>
+                        {isRunning && (
+                          <Loader2
+                            className="text-primary shrink-0 animate-spin"
+                            style={{ width: '18px', height: '18px' }}
+                            strokeWidth={2.5}
+                          />
+                        )}
                       </div>
                     )
                   })}

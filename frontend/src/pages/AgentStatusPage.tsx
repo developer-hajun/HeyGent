@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   Bot,
   Zap,
-  Radio,
   Send,
   Sparkles,
   MessageSquare,
@@ -184,7 +183,7 @@ function ChatMessage({ msg }: { msg: Message }) {
 }
 
 export function AgentStatusPage() {
-  const { selectedSessionId, setSelectedSessionId } = useSessionStore()
+  const { selectedSessionId } = useSessionStore()
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [chatOpen, setChatOpen] = useState(false)
 
@@ -395,42 +394,6 @@ export function AgentStatusPage() {
             </motion.button>
           )
         })}
-
-        {/* Top-left: label + session selector */}
-        <div className="absolute top-5 left-5 z-10 flex flex-col gap-2">
-          <div className="flex items-center gap-2">
-            <div className="border-border flex items-center gap-1.5 rounded-lg border bg-white/90 px-3 py-1.5 shadow-sm backdrop-blur-sm">
-              <Radio className="text-primary h-3.5 w-3.5 animate-pulse" />
-              <span className="text-foreground text-xs font-semibold">에이전트 네트워크 맵</span>
-            </div>
-            <div className="border-border rounded-lg border bg-white/90 px-2.5 py-1.5 shadow-sm backdrop-blur-sm">
-              <span className="text-muted-foreground text-xs">실시간 시각화</span>
-            </div>
-          </div>
-
-          {/* Session selector tabs */}
-          <div className="flex items-center gap-1.5">
-            {activeSessions.map((session) => {
-              const meta = agentMeta[session.agentKey]
-              const SessionIcon = meta.icon
-              const isActive = currentSessionId === session.id
-              return (
-                <button
-                  key={session.id}
-                  onClick={() => setSelectedSessionId(session.id)}
-                  className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium shadow-sm backdrop-blur-sm transition-all ${
-                    isActive
-                      ? 'border-primary/30 text-foreground bg-white shadow-md'
-                      : 'border-border text-muted-foreground bg-white/80 hover:bg-white'
-                  }`}
-                >
-                  <SessionIcon style={{ color: meta.color, width: '11px', height: '11px' }} />
-                  <span className="whitespace-nowrap">{session.title}</span>
-                </button>
-              )
-            })}
-          </div>
-        </div>
 
         {/* Bottom legend */}
         <div className="absolute bottom-5 left-5 z-10 flex items-center gap-2">
