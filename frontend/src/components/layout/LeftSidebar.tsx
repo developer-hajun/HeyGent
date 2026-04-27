@@ -317,6 +317,7 @@ export function LeftSidebar() {
 function ProfileMenu({ onSettingsClick }: { onSettingsClick: () => void }) {
   const [view, setView] = useState<'menu' | 'profile'>('menu')
   const [nickname, setNickname] = useState('김민수')
+  const navigate = useNavigate()
 
   if (view === 'profile') {
     return (
@@ -349,7 +350,10 @@ function ProfileMenu({ onSettingsClick }: { onSettingsClick: () => void }) {
           </div>
 
           {/* Logout Button */}
-          <button className="flex w-full items-center gap-3 rounded-xl bg-red-50 px-3 py-2.5 text-red-600 transition-colors hover:bg-red-100">
+          <button
+            onClick={() => navigate('/login')}
+            className="flex w-full items-center gap-3 rounded-xl bg-red-50 px-3 py-2.5 text-red-600 transition-colors hover:bg-red-100"
+          >
             <LogOut className="h-4 w-4 flex-shrink-0" />
             <span className="text-sm font-medium">로그아웃</span>
           </button>
