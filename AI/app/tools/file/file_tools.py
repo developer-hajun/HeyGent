@@ -17,17 +17,18 @@ MAX_SEARCH_FILE_BYTES = 1_000_000
 MAX_READ_LINES = 2_000
 MAX_SEARCH_LIMIT = 500
 SKIPPED_DIRS = {".git", ".hg", ".svn", "__pycache__", ".pytest_cache", ".venv", "node_modules"}
-SECRET_DIR_NAMES = {".aws", ".ssh"}
-SECRET_FILE_NAMES = {
-    ".env",
-    ".netrc",
-    "id_dsa",
-    "id_ecdsa",
-    "id_ed25519",
-    "id_rsa",
-}
-SECRET_ENV_PREFIX = ".env."
-SECRET_ENV_EXAMPLES = {".env.example", ".env.sample", ".env.template"}
+SECRET_KEY_PATTERN = re.compile(
+    r"(?i)\b("
+    r"[A-Z0-9_.-]*(?:"
+    r"database[_-]?url|db[_-]?url|redis[_-]?url|mongo[_-]?url|connection[_-]?string|dsn|"
+    r"auth|credential|client[_-]?secret|webhook[_-]?secret|cookie|session|jwt|bearer|"
+    r"api[_-]?key|key|token|password|passwd|secret|access[_-]?key|private[_-]?key"
+    r")[A-Z0-9_.-]*"
+    r"\s*[:=]\s*)"
+    r"(?:(['\"])([^\r\n]*?)\2|([^\s#]+))"
+)
+LONG_TOKEN_PATTERN = re.compile(r"(?<![A-Za-z0-9_./+=-])(?=[A-Za-z0-9_./+=-]{32,})(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_./+=-]+")
+PRIVATE_KEY_MARKER_PATTERN = re.compile(r"-----BEGIN [^-]*PRIVATE KEY-----|-----END [^-]*PRIVATE KEY-----")
 
 
 READ_FILE_SCHEMA = {
@@ -167,11 +168,11 @@ def file_tool_definitions() -> list[dict[str, object]]:
 
 
 def read_file(args: dict[str, Any]) -> dict[str, Any]:
-    target = _resolve_workspace_path(args.get("path"), workspace_root=args.get("workspace_root"))
+    target = _resolve_read_workspace_path(args.get("path"), workspace_root=args.get("workspace_root"))
     if target.is_dir():
         raise IsADirectoryError(_display_path(target, _workspace_root(args.get("workspace_root"))))
     content = _read_text_file(target, max_bytes=MAX_READ_BYTES)
-    lines = content.splitlines()
+    lines = _redact_secret_content(content).splitlines()
     offset = _coerce_int(args.get("offset"), default=1, minimum=1)
     limit = _coerce_int(args.get("limit"), default=500, minimum=1, maximum=MAX_READ_LINES)
     start_index = offset - 1
@@ -232,7 +233,7 @@ def search_files(args: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("pattern is required")
 
     root = _workspace_root(args.get("workspace_root"))
-    search_root = _resolve_workspace_path(args.get("path") or ".", workspace_root=root)
+    search_root = _resolve_read_workspace_path(args.get("path") or ".", workspace_root=root)
     if not search_root.exists():
         raise FileNotFoundError(_display_path(search_root, root))
 
@@ -285,6 +286,10 @@ def _workspace_root(value: Any = None) -> Path:
 
 
 def _resolve_workspace_path(value: Any, *, workspace_root: Any = None) -> Path:
+    return _resolve_read_workspace_path(value, workspace_root=workspace_root)
+
+
+def _resolve_read_workspace_path(value: Any, *, workspace_root: Any = None) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("path is required")
     root = _workspace_root(workspace_root)
@@ -294,8 +299,6 @@ def _resolve_workspace_path(value: Any, *, workspace_root: Any = None) -> Path:
     # workspace guard: 모델이 절대 경로나 ..를 넘겨도 루트 밖 파일에는 접근하지 않는다.
     if not _is_relative_to(resolved, root):
         raise PermissionError("path must stay inside the workspace")
-    if _is_secret_path(resolved, root):
-        raise PermissionError("secret paths are not accessible through file tools")
     return resolved
 
 
@@ -372,7 +375,7 @@ def _patch_replace(args: dict[str, Any]) -> dict[str, Any]:
         "mode": "replace",
         "path": rel_path,
         "replacements": count if replace_all else 1,
-        "diff": _build_diff(original, updated, rel_path),
+        "diff": _redact_secret_content(_build_diff(original, updated, rel_path)),
         "files_modified": [rel_path],
     }
 
@@ -700,8 +703,8 @@ def _operation_diff(operation: _PatchOperation) -> str:
     if operation.kind == "move":
         source_diff = _build_diff(operation.original or "", "", operation.source_rel_path or operation.rel_path)
         destination_diff = _build_diff("", operation.updated or "", operation.rel_path)
-        return source_diff + destination_diff
-    return _build_diff(operation.original or "", operation.updated or "", operation.rel_path)
+        return _redact_secret_content(source_diff + destination_diff)
+    return _redact_secret_content(_build_diff(operation.original or "", operation.updated or "", operation.rel_path))
 
 
 def _search_file_names(*, root: Path, search_root: Path, pattern: str, offset: int, limit: int) -> dict[str, Any]:
@@ -753,12 +756,16 @@ def _search_file_content(*, root: Path, search_root: Path, args: dict[str, Any],
             line_number = line_index + 1
             counts[rel_path] = counts.get(rel_path, 0) + 1
             files_with_matches.add(rel_path)
-            match_item: dict[str, Any] = {"path": rel_path, "line": line_number, "content": line}
+            match_item: dict[str, Any] = {
+                "path": rel_path,
+                "line": line_number,
+                "content": _redact_secret_content(line),
+            }
             if context:
                 before = file_lines[max(0, line_index - context) : line_index]
                 after = file_lines[line_index + 1 : line_index + 1 + context]
-                match_item["context_before"] = before
-                match_item["context_after"] = after
+                match_item["context_before"] = [_redact_secret_content(item) for item in before]
+                match_item["context_after"] = [_redact_secret_content(item) for item in after]
             matches.append(match_item)
 
     if output_mode == "files_only":
@@ -803,8 +810,6 @@ def _search_file_content(*, root: Path, search_root: Path, args: dict[str, Any],
 
 def _iter_files(path: Path, *, root: Path | None = None) -> list[Path]:
     if path.is_file():
-        if root is not None and _is_secret_path(path.resolve(strict=False), root):
-            return []
         return [path]
     if not path.is_dir():
         raise NotADirectoryError(str(path))
@@ -816,31 +821,26 @@ def _iter_files(path: Path, *, root: Path | None = None) -> list[Path]:
             name
             for name in dirs
             if name not in SKIPPED_DIRS
-            and not (root is not None and _is_secret_path((walk_root / name).resolve(strict=False), root))
         ]
         for name in names:
             file_path = walk_root / name
-            if root is not None and _is_secret_path(file_path.resolve(strict=False), root):
-                continue
             files.append(file_path)
     return files
 
 
-def _is_secret_path(path: Path, root: Path) -> bool:
-    """파일 도구가 흔한 인증 파일과 비밀 디렉터리를 읽거나 검색하지 못하게 한다."""
+def _redact_secret_content(content: str) -> str:
+    """읽기 결과가 모델 컨텍스트에 들어가기 전에 흔한 secret 값을 마스킹한다."""
 
-    try:
-        relative = path.relative_to(root)
-    except ValueError:
-        return False
+    def redact_key_value(match: re.Match[str]) -> str:
+        prefix = match.group(1)
+        quote = match.group(2)
+        if quote:
+            return f"{prefix}{quote}[REDACTED]{quote}"
+        return f"{prefix}[REDACTED]"
 
-    for part in relative.parts:
-        lowered = part.lower()
-        if lowered in SECRET_DIR_NAMES or lowered in SECRET_FILE_NAMES:
-            return True
-        if lowered.startswith(SECRET_ENV_PREFIX) and lowered not in SECRET_ENV_EXAMPLES:
-            return True
-    return False
+    redacted = SECRET_KEY_PATTERN.sub(redact_key_value, content)
+    redacted = PRIVATE_KEY_MARKER_PATTERN.sub("[REDACTED PRIVATE KEY]", redacted)
+    return LONG_TOKEN_PATTERN.sub("[REDACTED]", redacted)
 
 
 def _build_diff(original: str, updated: str, rel_path: str) -> str:

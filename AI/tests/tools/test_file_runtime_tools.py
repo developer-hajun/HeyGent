@@ -66,16 +66,60 @@ def test_write_file_blocks_directory_and_path_escape(tmp_path: Path):
         write_file(_args(tmp_path, path="../outside.txt", content="blocked"))
 
 
-def test_file_tools_block_secret_paths_for_read_and_write(tmp_path: Path):
+def test_file_tools_redact_secret_path_reads_and_allow_writes(tmp_path: Path):
+    (tmp_path / ".env").write_text(
+        'SECRET=value\nDATABASE_URL=postgres://user:pass@host/db\nPASSWORD="my secret value"\n',
+        encoding="utf-8",
+    )
+
+    result = read_file(_args(tmp_path, path=".env"))
+
+    assert result["path"] == ".env"
+    assert "SECRET=[REDACTED]" in result["content"]
+    assert "DATABASE_URL=[REDACTED]" in result["content"]
+    assert 'PASSWORD="[REDACTED]"' in result["content"]
+    assert "value" not in result["content"]
+    assert "postgres://user:pass@host/db" not in result["content"]
+    assert "my secret value" not in result["content"]
+
+    write_result = write_file(_args(tmp_path, path=".env", content="SECRET=changed\n"))
+
+    assert write_result["path"] == ".env"
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == "SECRET=changed\n"
+
+
+def test_patch_allows_secret_path_edits_and_redacts_diff(tmp_path: Path):
     (tmp_path / ".env").write_text("SECRET=value\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("plain\n", encoding="utf-8")
 
-    with pytest.raises(PermissionError):
-        read_file(_args(tmp_path, path=".env"))
+    update_patch = """*** Begin Patch
+*** Update File: .env
+@@
+-SECRET=value
++SECRET=changed
+*** End Patch"""
+    result = patch(_args(tmp_path, mode="patch", patch=update_patch))
 
-    with pytest.raises(PermissionError):
-        write_file(_args(tmp_path, path=".env", content="SECRET=changed\n"))
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == "SECRET=changed\n"
+    assert "SECRET=[REDACTED]" in result["diff"]
+    assert "value" not in result["diff"]
+    assert "changed" not in result["diff"]
 
-    assert (tmp_path / ".env").read_text(encoding="utf-8") == "SECRET=value\n"
+    replace_result = patch(_args(tmp_path, mode="replace", path=".env", old_string="changed", new_string="final"))
+
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == "SECRET=final\n"
+    assert "SECRET=[REDACTED]" in replace_result["diff"]
+    assert "changed" not in replace_result["diff"]
+    assert "final" not in replace_result["diff"]
+
+    move_patch = """*** Begin Patch
+*** Move File: .env -> .env.local
+*** End Patch"""
+    move_result = patch(_args(tmp_path, mode="patch", patch=move_patch))
+
+    assert move_result["files_moved"] == [{"from": ".env", "to": ".env.local"}]
+    assert not (tmp_path / ".env").exists()
+    assert (tmp_path / ".env.local").read_text(encoding="utf-8") == "SECRET=final\n"
 
 
 def test_patch_replace_requires_unique_match_and_updates_file(tmp_path: Path):
@@ -263,3 +307,26 @@ def test_search_files_blocks_path_escape_and_skips_binary(tmp_path: Path):
     assert result["matches"][0]["path"] == "text.txt"
     with pytest.raises(PermissionError):
         search_files(_args(tmp_path, path="../", pattern="needle", target="content"))
+
+
+def test_search_files_redacts_secret_path_content_results(tmp_path: Path):
+    (tmp_path / ".env").write_text(
+        'SECRET=value\nAPI_TOKEN=abc123456789abcdef123456789abcdef\n'
+        'DATABASE_URL=postgres://user:pass@host/db\nPASSWORD="my secret value"\n',
+        encoding="utf-8",
+    )
+
+    result = search_files(_args(tmp_path, path=".", pattern="SECRET|API_TOKEN|DATABASE_URL|PASSWORD", target="content"))
+
+    assert result["total_count"] == 4
+    assert result["matches"] == [
+        {"path": ".env", "line": 1, "content": "SECRET=[REDACTED]"},
+        {"path": ".env", "line": 2, "content": "API_TOKEN=[REDACTED]"},
+        {"path": ".env", "line": 3, "content": "DATABASE_URL=[REDACTED]"},
+        {"path": ".env", "line": 4, "content": 'PASSWORD="[REDACTED]"'},
+    ]
+    serialized = str(result)
+    assert "value" not in serialized
+    assert "abc123456789abcdef123456789abcdef" not in serialized
+    assert "postgres://user:pass@host/db" not in serialized
+    assert "my secret value" not in serialized
