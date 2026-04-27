@@ -41,6 +41,10 @@ public class UserMemory {
     private Long userId;
 
     @Enumerated(EnumType.STRING)
+    @Column(length = 30)
+    private MemoryStoreType storeType;
+
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)
     private MemoryType memoryType;
 
@@ -76,6 +80,8 @@ public class UserMemory {
 
     @Column(length = 100)
     private String sourceTaskRunId;
+
+    private LocalDateTime expiresAt;
 
     private LocalDateTime lastAccessedAt;
 

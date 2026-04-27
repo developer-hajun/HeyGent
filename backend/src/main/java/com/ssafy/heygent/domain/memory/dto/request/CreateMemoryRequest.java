@@ -1,8 +1,10 @@
 package com.ssafy.heygent.domain.memory.dto.request;
 
+import java.time.LocalDateTime;
 import java.util.Map;
 
 import com.ssafy.heygent.domain.memory.entity.MemoryScopeType;
+import com.ssafy.heygent.domain.memory.entity.MemoryStoreType;
 import com.ssafy.heygent.domain.memory.entity.MemoryType;
 
 import jakarta.validation.constraints.DecimalMax;
@@ -17,6 +19,8 @@ public class CreateMemoryRequest {
 
     @NotNull(message = "기억 타입은 필수입니다.")
     private MemoryType memoryType;
+
+    private MemoryStoreType storeType;
 
     private MemoryScopeType scopeType;
 
@@ -44,4 +48,6 @@ public class CreateMemoryRequest {
 
     @Size(max = 100, message = "TaskRun ID는 100자 이하여야 합니다.")
     private String sourceTaskRunId;
+
+    private LocalDateTime expiresAt;
 }

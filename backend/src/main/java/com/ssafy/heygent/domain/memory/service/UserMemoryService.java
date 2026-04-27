@@ -18,6 +18,7 @@ import com.ssafy.heygent.domain.memory.dto.response.UserMemoryResponse;
 import com.ssafy.heygent.domain.memory.embedding.MemoryEmbeddingService;
 import com.ssafy.heygent.domain.memory.entity.MemoryScopeType;
 import com.ssafy.heygent.domain.memory.entity.MemoryStatus;
+import com.ssafy.heygent.domain.memory.entity.MemoryStoreType;
 import com.ssafy.heygent.domain.memory.entity.MemoryType;
 import com.ssafy.heygent.domain.memory.entity.UserMemory;
 import com.ssafy.heygent.domain.memory.repository.UserMemoryRepository;
@@ -41,22 +42,31 @@ public class UserMemoryService {
     private final UserMemoryRepository userMemoryRepository;
     private final UserMemoryVectorRepository userMemoryVectorRepository;
     private final MemoryEmbeddingService memoryEmbeddingService;
+    private final MemorySafetyValidator memorySafetyValidator;
 
     @Transactional
     public UserMemoryResponse create(Long userId, CreateMemoryRequest request) {
+        validateMemoryType(request.getMemoryType());
         validateMemoryScore(request.getImportance(), request.getConfidence());
         String normalizedContent = request.getContent().trim();
-        MemoryScopeType scopeType = resolveScopeType(request.getScopeType());
+        Map<String, Object> metadata = normalizeMetadata(request.getMetadata(), request.getSourceSessionKey());
+        memorySafetyValidator.validate(normalizedContent, request.getSummary(), metadata);
+        MemoryStoreType storeType = resolveStoreType(request.getStoreType(), request.getMemoryType());
+        MemoryScopeType scopeType = resolveScopeType(request.getScopeType(), storeType);
+        validateStoreType(storeType, request.getMemoryType());
+        validateSessionScope(scopeType, request.getExpiresAt());
 
-        return userMemoryRepository.findFirstByUserIdAndMemoryTypeAndScopeTypeAndContentAndStatus(
+        return userMemoryRepository.findDuplicateActiveMemory(
                 userId,
+                storeType,
                 request.getMemoryType(),
                 scopeType,
                 normalizedContent,
                 MemoryStatus.ACTIVE
             )
+            .filter(memory -> isNotExpired(memory, LocalDateTime.now()))
             .map(UserMemoryResponse::from)
-            .orElseGet(() -> saveMemory(userId, request, scopeType, normalizedContent));
+            .orElseGet(() -> saveMemory(userId, request, storeType, scopeType, metadata, normalizedContent));
     }
 
     @Transactional
@@ -70,22 +80,26 @@ public class UserMemoryService {
     private UserMemoryResponse saveMemory(
         Long userId,
         CreateMemoryRequest request,
+        MemoryStoreType storeType,
         MemoryScopeType scopeType,
+        Map<String, Object> metadata,
         String normalizedContent
     ) {
 
         UserMemory memory = UserMemory.builder()
             .userId(userId)
+            .storeType(storeType)
             .memoryType(request.getMemoryType())
             .scopeType(scopeType)
             .content(normalizedContent)
             .summary(trimToNull(request.getSummary()))
-            .metadata(normalizeMetadata(request.getMetadata()))
+            .metadata(metadata)
             .importance(request.getImportance())
             .confidence(request.getConfidence())
             .status(MemoryStatus.ACTIVE)
             .sourceSessionKey(trimToNull(request.getSourceSessionKey()))
             .sourceTaskRunId(trimToNull(request.getSourceTaskRunId()))
+            .expiresAt(request.getExpiresAt())
             .build();
 
         UserMemory savedMemory = userMemoryRepository.save(memory);
@@ -97,11 +111,13 @@ public class UserMemoryService {
     }
 
     public List<UserMemoryResponse> getMyMemories(Long userId) {
+        LocalDateTime now = LocalDateTime.now();
         return userMemoryRepository.findByUserIdAndStatusOrderByImportanceDescCreatedAtDesc(
                 userId,
                 MemoryStatus.ACTIVE
             )
             .stream()
+            .filter(memory -> isNotExpired(memory, now))
             .map(UserMemoryResponse::from)
             .toList();
     }
@@ -111,6 +127,7 @@ public class UserMemoryService {
         Long userId,
         Integer limit,
         String query,
+        MemoryStoreType storeType,
         MemoryType memoryType,
         MemoryScopeType scopeType,
         String workspaceKey,
@@ -126,6 +143,7 @@ public class UserMemoryService {
                 userId,
                 normalizedLimit,
                 query,
+                storeType,
                 memoryType,
                 scopeType,
                 workspaceKey,
@@ -137,6 +155,7 @@ public class UserMemoryService {
             memories = recallByFilters(
                 userId,
                 normalizedLimit,
+                storeType,
                 memoryType,
                 scopeType,
                 workspaceKey,
@@ -158,6 +177,7 @@ public class UserMemoryService {
         Long userId,
         int limit,
         String query,
+        MemoryStoreType storeType,
         MemoryType memoryType,
         MemoryScopeType scopeType,
         String workspaceKey,
@@ -169,6 +189,7 @@ public class UserMemoryService {
         List<Long> memoryIds = userMemoryVectorRepository.searchIds(
             userId,
             queryEmbedding,
+            storeType,
             memoryType,
             scopeType,
             workspaceKey,
@@ -185,6 +206,7 @@ public class UserMemoryService {
                 userId,
                 limit,
                 queryEmbedding,
+                storeType,
                 memoryType,
                 scopeType,
                 workspaceKey,
@@ -208,6 +230,7 @@ public class UserMemoryService {
         Long userId,
         int limit,
         List<Double> queryEmbedding,
+        MemoryStoreType storeType,
         MemoryType memoryType,
         MemoryScopeType scopeType,
         String workspaceKey,
@@ -215,7 +238,7 @@ public class UserMemoryService {
         String resourceId,
         List<String> tags
     ) {
-        List<ScoredMemory> scoredMemories = findRecallCandidates(userId, memoryType, scopeType).stream()
+        List<ScoredMemory> scoredMemories = findRecallCandidates(userId, storeType, memoryType, scopeType).stream()
             .filter(memory -> matchesMetadata(memory, workspaceKey, sessionKey, resourceId, tags))
             .filter(memory -> StringUtils.hasText(memory.getEmbeddingText()))
             .map(memory -> new ScoredMemory(
@@ -234,6 +257,7 @@ public class UserMemoryService {
             return recallByFilters(
                 userId,
                 limit,
+                storeType,
                 memoryType,
                 scopeType,
                 workspaceKey,
@@ -251,6 +275,7 @@ public class UserMemoryService {
     private List<UserMemory> recallByFilters(
         Long userId,
         int limit,
+        MemoryStoreType storeType,
         MemoryType memoryType,
         MemoryScopeType scopeType,
         String workspaceKey,
@@ -258,7 +283,7 @@ public class UserMemoryService {
         String resourceId,
         List<String> tags
     ) {
-        return findRecallCandidates(userId, memoryType, scopeType).stream()
+        return findRecallCandidates(userId, storeType, memoryType, scopeType).stream()
             .filter(memory -> matchesMetadata(memory, workspaceKey, sessionKey, resourceId, tags))
             .limit(limit)
             .toList();
@@ -266,6 +291,7 @@ public class UserMemoryService {
 
     private List<UserMemory> findRecallCandidates(
         Long userId,
+        MemoryStoreType storeType,
         MemoryType memoryType,
         MemoryScopeType scopeType
     ) {
@@ -274,8 +300,11 @@ public class UserMemoryService {
             MemoryStatus.ACTIVE,
             MIN_CONFIDENCE_TO_STORE,
             MIN_IMPORTANCE_TO_STORE,
+            LocalDateTime.now(),
+            storeType,
             memoryType,
             scopeType,
+            MemoryScopeType.SESSION,
             PageRequest.of(0, RECALL_FALLBACK_CANDIDATE_SIZE)
         );
     }
@@ -305,6 +334,43 @@ public class UserMemoryService {
         return importance >= MIN_IMPORTANCE_TO_STORE && confidence >= MIN_CONFIDENCE_TO_STORE;
     }
 
+    private void validateMemoryType(MemoryType memoryType) {
+        if (memoryType == MemoryType.PROJECT_CONTEXT) {
+            throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
+        }
+    }
+
+    private MemoryStoreType resolveStoreType(MemoryStoreType storeType, MemoryType memoryType) {
+        if (storeType != null) {
+            return storeType;
+        }
+        if (memoryType == MemoryType.PROFILE || memoryType == MemoryType.PREFERENCE) {
+            return MemoryStoreType.USER_PROFILE;
+        }
+        return MemoryStoreType.AGENT_MEMORY;
+    }
+
+    private void validateStoreType(MemoryStoreType storeType, MemoryType memoryType) {
+        if (storeType == MemoryStoreType.USER_PROFILE
+            && memoryType != MemoryType.PROFILE
+            && memoryType != MemoryType.PREFERENCE) {
+            throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
+        }
+        if (storeType == MemoryStoreType.AGENT_MEMORY
+            && (memoryType == MemoryType.PROFILE || memoryType == MemoryType.PREFERENCE)) {
+            throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
+        }
+    }
+
+    private void validateSessionScope(MemoryScopeType scopeType, LocalDateTime expiresAt) {
+        if (scopeType != MemoryScopeType.SESSION) {
+            return;
+        }
+        if (expiresAt == null || !expiresAt.isAfter(LocalDateTime.now())) {
+            throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
+        }
+    }
+
     private int normalizeRecallLimit(Integer limit) {
         if (limit == null) {
             return DEFAULT_RECALL_LIMIT;
@@ -315,18 +381,25 @@ public class UserMemoryService {
         return Math.min(limit, MAX_RECALL_LIMIT);
     }
 
-    private MemoryScopeType resolveScopeType(MemoryScopeType scopeType) {
+    private MemoryScopeType resolveScopeType(MemoryScopeType scopeType, MemoryStoreType storeType) {
         if (scopeType == null) {
             return MemoryScopeType.GLOBAL;
         }
         return scopeType;
     }
 
-    private Map<String, Object> normalizeMetadata(Map<String, Object> metadata) {
-        if (metadata == null || metadata.isEmpty()) {
+    private Map<String, Object> normalizeMetadata(Map<String, Object> metadata, String sourceSessionKey) {
+        Map<String, Object> normalizedMetadata = new LinkedHashMap<>();
+        if (metadata != null && !metadata.isEmpty()) {
+            normalizedMetadata.putAll(metadata);
+        }
+        if (StringUtils.hasText(sourceSessionKey) && !normalizedMetadata.containsKey("sessionKey")) {
+            normalizedMetadata.put("sessionKey", sourceSessionKey.trim());
+        }
+        if (normalizedMetadata.isEmpty()) {
             return Map.of();
         }
-        return metadata;
+        return normalizedMetadata;
     }
 
     private boolean matchesMetadata(
@@ -382,9 +455,14 @@ public class UserMemoryService {
         return normalizedTags.stream().anyMatch(normalizedStoredTags::contains);
     }
 
+    private boolean isNotExpired(UserMemory memory, LocalDateTime now) {
+        return memory.getExpiresAt() == null || memory.getExpiresAt().isAfter(now);
+    }
+
     private String buildEmbeddingText(UserMemory memory) {
         return String.join(
             "\n",
+            memory.getStoreType().name(),
             memory.getMemoryType().name(),
             memory.getScopeType().name(),
             nullToEmpty(memory.getSummary()),

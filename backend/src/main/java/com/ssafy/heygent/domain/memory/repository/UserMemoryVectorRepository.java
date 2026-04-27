@@ -14,6 +14,7 @@ import org.springframework.util.StringUtils;
 import com.ssafy.heygent.domain.memory.embedding.MemoryEmbeddingService;
 import com.ssafy.heygent.domain.memory.entity.MemoryScopeType;
 import com.ssafy.heygent.domain.memory.entity.MemoryStatus;
+import com.ssafy.heygent.domain.memory.entity.MemoryStoreType;
 import com.ssafy.heygent.domain.memory.entity.MemoryType;
 
 import jakarta.annotation.PostConstruct;
@@ -110,6 +111,7 @@ public class UserMemoryVectorRepository {
     public List<Long> searchIds(
         Long userId,
         List<Double> queryEmbedding,
+        MemoryStoreType storeType,
         MemoryType memoryType,
         MemoryScopeType scopeType,
         String workspaceKey,
@@ -133,6 +135,7 @@ public class UserMemoryVectorRepository {
                 AND confidence >= ?
                 AND importance >= ?
                 AND embedding IS NOT NULL
+                AND (expires_at IS NULL OR expires_at > now())
             """);
 
         params.add(userId);
@@ -140,8 +143,10 @@ public class UserMemoryVectorRepository {
         params.add(minConfidence);
         params.add(minImportance);
 
+        appendEnumFilter(sql, params, "store_type", storeType);
         appendEnumFilter(sql, params, "memory_type", memoryType);
         appendEnumFilter(sql, params, "scope_type", scopeType);
+        appendDefaultSessionExclusion(sql, scopeType);
         appendMetadataFilter(sql, params, "workspaceKey", workspaceKey);
         appendMetadataFilter(sql, params, "sessionKey", sessionKey);
         appendMetadataFilter(sql, params, "resourceId", resourceId);
@@ -181,6 +186,13 @@ public class UserMemoryVectorRepository {
         }
         sql.append(" AND ").append(column).append(" = ?");
         params.add(value.name());
+    }
+
+    private void appendDefaultSessionExclusion(StringBuilder sql, MemoryScopeType scopeType) {
+        if (scopeType != null) {
+            return;
+        }
+        sql.append(" AND (scope_type IS NULL OR scope_type <> 'SESSION')");
     }
 
     private void appendMetadataFilter(StringBuilder sql, List<Object> params, String key, String value) {

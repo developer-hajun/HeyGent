@@ -16,6 +16,7 @@ import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryCandidatesRequest
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryRequest;
 import com.ssafy.heygent.domain.memory.dto.response.UserMemoryResponse;
 import com.ssafy.heygent.domain.memory.entity.MemoryScopeType;
+import com.ssafy.heygent.domain.memory.entity.MemoryStoreType;
 import com.ssafy.heygent.domain.memory.entity.MemoryType;
 import com.ssafy.heygent.domain.memory.service.UserMemoryService;
 import com.ssafy.heygent.global.config.security.CustomUserPrincipal;
@@ -66,6 +67,7 @@ public class UserMemoryController {
         @AuthenticationPrincipal CustomUserPrincipal user,
         @RequestParam(required = false) Integer limit,
         @RequestParam(required = false) String query,
+        @RequestParam(required = false) MemoryStoreType storeType,
         @RequestParam(required = false) MemoryType memoryType,
         @RequestParam(required = false) MemoryScopeType scopeType,
         @RequestParam(required = false) String workspaceKey,
@@ -77,6 +79,7 @@ public class UserMemoryController {
             resolveUserId(user),
             limit,
             query,
+            storeType,
             memoryType,
             scopeType,
             workspaceKey,

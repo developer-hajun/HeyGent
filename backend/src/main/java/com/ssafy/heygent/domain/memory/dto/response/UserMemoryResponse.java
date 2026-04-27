@@ -5,6 +5,7 @@ import java.util.Map;
 
 import com.ssafy.heygent.domain.memory.entity.MemoryScopeType;
 import com.ssafy.heygent.domain.memory.entity.MemoryStatus;
+import com.ssafy.heygent.domain.memory.entity.MemoryStoreType;
 import com.ssafy.heygent.domain.memory.entity.MemoryType;
 import com.ssafy.heygent.domain.memory.entity.UserMemory;
 
@@ -16,6 +17,7 @@ import lombok.Getter;
 public class UserMemoryResponse {
 
     private Long id;
+    private MemoryStoreType storeType;
     private MemoryType memoryType;
     private MemoryScopeType scopeType;
     private String content;
@@ -26,6 +28,7 @@ public class UserMemoryResponse {
     private MemoryStatus status;
     private String sourceSessionKey;
     private String sourceTaskRunId;
+    private LocalDateTime expiresAt;
     private LocalDateTime lastAccessedAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -33,6 +36,7 @@ public class UserMemoryResponse {
     public static UserMemoryResponse from(UserMemory memory) {
         return UserMemoryResponse.builder()
             .id(memory.getId())
+            .storeType(memory.getStoreType())
             .memoryType(memory.getMemoryType())
             .scopeType(memory.getScopeType())
             .content(memory.getContent())
@@ -43,6 +47,7 @@ public class UserMemoryResponse {
             .status(memory.getStatus())
             .sourceSessionKey(memory.getSourceSessionKey())
             .sourceTaskRunId(memory.getSourceTaskRunId())
+            .expiresAt(memory.getExpiresAt())
             .lastAccessedAt(memory.getLastAccessedAt())
             .createdAt(memory.getCreatedAt())
             .updatedAt(memory.getUpdatedAt())
