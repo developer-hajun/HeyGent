@@ -1,0 +1,34 @@
+# Build artifacts
+.gradle
+build
+out
+
+# IDE
+.idea
+*.iml
+*.ipr
+*.iws
+.vscode
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Secrets / local config (런타임에 env_file로 주입되니 이미지에는 포함 X)
+.env
+.env.*
+src/main/resources/application-local.yaml
+
+# Docker (자기 자신은 컨텍스트에 안 넣어도 됨)
+Dockerfile
+.dockerignore
+compose.yaml
+docker-compose.yaml
+
+# Misc
+HELP.md
+README.md
+AGENTS.md
+notes
+tmp
