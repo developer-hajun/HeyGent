@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.RestController;
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryCandidatesRequest;
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryRequest;
 import com.ssafy.heygent.domain.memory.dto.response.UserMemoryResponse;
+import com.ssafy.heygent.domain.memory.entity.MemoryScopeType;
+import com.ssafy.heygent.domain.memory.entity.MemoryType;
 import com.ssafy.heygent.domain.memory.service.UserMemoryService;
 import com.ssafy.heygent.global.config.security.CustomUserPrincipal;
 import com.ssafy.heygent.global.exception.ApiResponse;
@@ -62,9 +64,26 @@ public class UserMemoryController {
     @GetMapping("/recall")
     public ApiResponse<List<UserMemoryResponse>> recallMemories(
         @AuthenticationPrincipal CustomUserPrincipal user,
-        @RequestParam(required = false) Integer limit
+        @RequestParam(required = false) Integer limit,
+        @RequestParam(required = false) String query,
+        @RequestParam(required = false) MemoryType memoryType,
+        @RequestParam(required = false) MemoryScopeType scopeType,
+        @RequestParam(required = false) String workspaceKey,
+        @RequestParam(required = false) String sessionKey,
+        @RequestParam(required = false) String resourceId,
+        @RequestParam(required = false) List<String> tags
     ) {
-        return ApiResponse.success(userMemoryService.recall(resolveUserId(user), limit));
+        return ApiResponse.success(userMemoryService.recall(
+            resolveUserId(user),
+            limit,
+            query,
+            memoryType,
+            scopeType,
+            workspaceKey,
+            sessionKey,
+            resourceId,
+            tags
+        ));
     }
 
     @Operation(summary = "장기기억 삭제", description = "로그인된 사용자의 장기기억을 논리 삭제합니다.")

@@ -1,7 +1,9 @@
 package com.ssafy.heygent.domain.memory.dto.response;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
+import com.ssafy.heygent.domain.memory.entity.MemoryScopeType;
 import com.ssafy.heygent.domain.memory.entity.MemoryStatus;
 import com.ssafy.heygent.domain.memory.entity.MemoryType;
 import com.ssafy.heygent.domain.memory.entity.UserMemory;
@@ -15,8 +17,10 @@ public class UserMemoryResponse {
 
     private Long id;
     private MemoryType memoryType;
+    private MemoryScopeType scopeType;
     private String content;
     private String summary;
+    private Map<String, Object> metadata;
     private Double importance;
     private Double confidence;
     private MemoryStatus status;
@@ -30,8 +34,10 @@ public class UserMemoryResponse {
         return UserMemoryResponse.builder()
             .id(memory.getId())
             .memoryType(memory.getMemoryType())
+            .scopeType(memory.getScopeType())
             .content(memory.getContent())
             .summary(memory.getSummary())
+            .metadata(memory.getMetadata())
             .importance(memory.getImportance())
             .confidence(memory.getConfidence())
             .status(memory.getStatus())

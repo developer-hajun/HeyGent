@@ -1,5 +1,8 @@
 package com.ssafy.heygent.domain.memory.dto.request;
 
+import java.util.Map;
+
+import com.ssafy.heygent.domain.memory.entity.MemoryScopeType;
 import com.ssafy.heygent.domain.memory.entity.MemoryType;
 
 import jakarta.validation.constraints.DecimalMax;
@@ -15,12 +18,16 @@ public class CreateMemoryRequest {
     @NotNull(message = "기억 타입은 필수입니다.")
     private MemoryType memoryType;
 
+    private MemoryScopeType scopeType;
+
     @NotBlank(message = "기억 내용은 필수입니다.")
     @Size(max = 2000, message = "기억 내용은 2000자 이하여야 합니다.")
     private String content;
 
     @Size(max = 500, message = "기억 요약은 500자 이하여야 합니다.")
     private String summary;
+
+    private Map<String, Object> metadata;
 
     @NotNull(message = "중요도는 필수입니다.")
     @DecimalMin(value = "0.0", message = "중요도는 0.0 이상이어야 합니다.")
