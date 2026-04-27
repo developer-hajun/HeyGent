@@ -66,6 +66,18 @@ def test_write_file_blocks_directory_and_path_escape(tmp_path: Path):
         write_file(_args(tmp_path, path="../outside.txt", content="blocked"))
 
 
+def test_file_tools_block_secret_paths_for_read_and_write(tmp_path: Path):
+    (tmp_path / ".env").write_text("SECRET=value\n", encoding="utf-8")
+
+    with pytest.raises(PermissionError):
+        read_file(_args(tmp_path, path=".env"))
+
+    with pytest.raises(PermissionError):
+        write_file(_args(tmp_path, path=".env", content="SECRET=changed\n"))
+
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == "SECRET=value\n"
+
+
 def test_patch_replace_requires_unique_match_and_updates_file(tmp_path: Path):
     target = tmp_path / "app.py"
     target.write_text("name = 'old'\nprint(name)\n", encoding="utf-8")
@@ -142,7 +154,7 @@ def test_patch_mode_passes_runtime_validation(tmp_path: Path):
 -old
 +new
 *** End Patch"""
-    runtime = LocalToolRuntime(skill_registry=object(), session_store=_DummySessionStore())
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=_DummySessionStore(), workspace_root=tmp_path)
 
     result = runtime.run_call(
         name="patch",

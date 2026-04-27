@@ -142,6 +142,129 @@ def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch
     assert resumed["result_payload"]["tool_results"][0]["tool_call_id"] == "call_terminal"
 
 
+def test_taskruns_resume_rejects_missing_approval_id_for_waiting_task(client, monkeypatch):
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(tool_calls=[_tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
+            _response(text="SHOULD_NOT_RESUME"),
+        ],
+    )
+
+    create_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "approval-missing-user",
+            "input_payload": {"prompt": "승인 대기", "approval_required": True},
+        },
+    )
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["status"] == "WAITING"
+
+    resume_response = client.post(
+        f"/api/v1/taskRuns/{created['task_run_id']}/resume",
+        json={"payload": {"approved": True}},
+    )
+
+    assert resume_response.status_code == 409
+    assert "approval id is required" in resume_response.json()["detail"]
+    assert client.get(f"/api/v1/taskRuns/{created['task_run_id']}").json()["status"] == "WAITING"
+
+
+def test_taskruns_resume_rejects_approval_id_from_other_waiting_task(client, monkeypatch):
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(tool_calls=[_tool_call("call_task_a", "terminal_run", {"argv": [sys.executable, "-c", "print('A')"]})]),
+            _response(tool_calls=[_tool_call("call_task_b", "terminal_run", {"argv": [sys.executable, "-c", "print('B')"]})]),
+            _response(text="SHOULD_NOT_RESUME"),
+        ],
+    )
+
+    task_a_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "approval-a",
+            "input_payload": {"prompt": "A 작업", "approval_required": True},
+        },
+    )
+    task_b_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "approval-b",
+            "input_payload": {"prompt": "B 작업", "approval_required": True},
+        },
+    )
+    assert task_a_response.status_code == 200
+    assert task_b_response.status_code == 200
+    task_a = task_a_response.json()
+    task_b = task_b_response.json()
+
+    task_b_events = client.get(f"/api/v1/taskRuns/{task_b['task_run_id']}/events").json()
+    task_b_approval_id = next(event["payload"]["approval_id"] for event in task_b_events if event["event_type"] == "approval.requested")
+
+    resume_response = client.post(
+        f"/api/v1/taskRuns/{task_a['task_run_id']}/resume",
+        json={"approval_id": task_b_approval_id, "payload": {"approved": True}},
+    )
+
+    assert resume_response.status_code == 409
+    assert "does not match open approval" in resume_response.json()["detail"]
+    assert client.get(f"/api/v1/taskRuns/{task_a['task_run_id']}").json()["status"] == "WAITING"
+
+
+def test_taskruns_cancel_records_pending_tool_result_without_resuming_loop(client, monkeypatch):
+    provider_calls = _patch_respond(
+        monkeypatch,
+        [
+            _response(tool_calls=[_tool_call("call_cancel", "terminal_run", {"argv": [sys.executable, "-c", "print('CANCEL')"]})]),
+        ],
+    )
+
+    create_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "cancel-user",
+            "session_key": "sess_cancel_pending",
+            "input_payload": {
+                "prompt": "취소될 도구 실행",
+                "approval_required": True,
+                "approval_reason": "터미널 실행 전 승인 필요",
+            },
+        },
+    )
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["status"] == "WAITING"
+
+    cancel_response = client.post(f"/api/v1/taskRuns/{created['task_run_id']}/cancel")
+
+    assert cancel_response.status_code == 200
+    canceled = cancel_response.json()
+    assert canceled["status"] == "CANCELED"
+    assert len(provider_calls) == 1
+
+    steps = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/steps").json()
+    step = next(item for item in steps if item["step_run_id"] == created["current_step_run_id"])
+    tool_results = step["output_payload"]["tool_results"]
+    assert tool_results[0]["tool_call_id"] == "call_cancel"
+    assert tool_results[0]["name"] == "terminal.run"
+    assert tool_results[0]["result"]["ok"] is False
+    assert tool_results[0]["result"]["error"]["code"] == "tool_canceled"
+
+    transcript_session = client.app.state.session_store.get_latest_session_by_key("sess_cancel_pending")
+    transcript = client.app.state.session_store.list_messages(transcript_session["id"])
+    tool_messages = [message for message in transcript if message["role"] == "tool"]
+    assert len(tool_messages) == 1
+    assert tool_messages[0]["tool_call_id"] == "call_cancel"
+    assert tool_messages[0]["tool_name"] == "terminal.run"
+
+
 def test_taskruns_resume_and_cancel_reject_non_waiting_task(client):
     create_response = client.post(
         "/api/v1/taskRuns",
@@ -252,6 +375,15 @@ def test_taskruns_active_supports_session_filter_and_recent_terminal(client, mon
     active_body = active_response.json()
     assert active_body["total_count"] == 1
     assert active_body["items"][0]["task_run_id"] == waiting_task["task_run_id"]
+    assert active_body["items"][0]["pendingApproval"]["approval_id"]
+    assert active_body["items"][0]["pendingApproval"]["step_run_id"] == waiting_task["current_step_run_id"]
+    assert active_body["items"][0]["pendingApproval"]["status"] == "PENDING"
+    assert active_body["items"][0]["pendingApproval"]["reason"]
+    assert active_body["items"][0]["pendingApproval"]["tool_call_id"] == "call_terminal"
+    assert active_body["items"][0]["pendingApproval"]["tool_name"] == "terminal.run"
+    assert active_body["items"][0]["pendingApproval"]["requested_at"]
+    assert active_body["items"][0]["pendingApproval"]["can_approve"] is True
+    assert active_body["items"][0]["pendingApproval"]["can_reject"] is True
 
     completed_at = datetime.fromisoformat(completed_task["updated_at"])
     monkeypatch.setattr("app.api.http.tasks.utc_now", lambda: completed_at + timedelta(seconds=301))

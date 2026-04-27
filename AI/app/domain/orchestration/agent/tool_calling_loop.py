@@ -7,6 +7,7 @@ from typing import Any
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.core.utils.ids import new_id
+from app.domain.orchestration.agent.tool_guard import ToolGuard, ToolGuardDecision, ToolGuardResult
 from app.domain.providers.model.base import AgentMessage, ToolResultMessage
 from app.domain.orchestration.runtime_planning.todo_state import (
     apply_tool_results_to_todo_state,
@@ -19,12 +20,13 @@ from app.domain.orchestration.runtime_planning.todo_state import (
 class ToolCallingLoopExecutor:
     """현재 provider 위에서 native tool call(모델이 구조화된 도구 호출을 직접 반환하는 방식) loop를 실행한다."""
 
-    def __init__(self, provider, prompt_builder, tool_runtime, tool_catalog, session_store=None) -> None:
+    def __init__(self, provider, prompt_builder, tool_runtime, tool_catalog, session_store=None, tool_guard=None) -> None:
         self.provider = provider
         self.prompt_builder = prompt_builder
         self.tool_runtime = tool_runtime
         self.tool_catalog = tool_catalog
         self.session_store = session_store
+        self.tool_guard = tool_guard or ToolGuard()
 
     def execute(self, *, task, step, resume_payload=None) -> dict[str, Any]:
         task_input = dict(task.input_payload or {})
@@ -80,35 +82,20 @@ class ToolCallingLoopExecutor:
         )
         messages = self._load_transcript_messages(transcript_session_id)
         if resume_payload is not None:
-            resumed_tool_result = self._run_pending_tool_after_approval(
+            # resume은 WAITING 상태였던 StepRun(사용자에게 보이는 의미 단계의 실행 anchor)을 이어서 처리한다.
+            resumed_tool_result = self._resolve_pending_tool_after_resume(
                 step=step,
                 resume_payload=resume_payload,
                 requested_toolsets=requested_toolsets,
             )
             if resumed_tool_result is not None:
-                all_tool_results.append(resumed_tool_result)
-                tool_message = ToolResultMessage(
-                    tool_call_id=str(resumed_tool_result["tool_call_id"]),
-                    content=self._tool_result_content(resumed_tool_result["result"]),
-                )
-                messages.append(tool_message)
-                self._append_transcript_message(
-                    transcript_session_id,
-                    tool_message,
-                    tool_name=str(resumed_tool_result["name"]),
-                )
-                operations.append(
-                    {
-                        "key": self._next_operation_key(
-                            operation_counters,
-                            namespace="tool",
-                            base_key=str(resumed_tool_result["name"]),
-                        ),
-                        "title": str(resumed_tool_result["name"]),
-                        "kind": "tool",
-                        "status": "failed" if isinstance(resumed_tool_result["result"], dict) and resumed_tool_result["result"].get("ok") is False else "completed",
-                        "summary": self._tool_summary(resumed_tool_result["result"]),
-                    }
+                self._append_tool_result_observation(
+                    tool_result=resumed_tool_result,
+                    all_tool_results=all_tool_results,
+                    messages=messages,
+                    transcript_session_id=transcript_session_id,
+                    operations=operations,
+                    operation_counters=operation_counters,
                 )
                 current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
         user_message = AgentMessage(role="user", content=prompt)
@@ -156,66 +143,59 @@ class ToolCallingLoopExecutor:
                     operation_counters=operation_counters,
                 )
 
-            if task_input.get("approval_required") and resume_payload is None:
-                # native tool call은 이미 모델이 구체적인 도구명과 인자를 정한 뒤 도착하므로,
-                # 승인이 필요한 경우 실제 실행 직전에 첫 호출 정보를 wait payload에 고정한다.
-                first_call = generated.tool_calls[0]
-                first_tool_name = self._runtime_tool_name(first_call.name, provider_tool_name_map)
-                outcome = self._build_waiting_outcome(
-                    tool_results=all_tool_results,
-                    operations=operations,
-                    approval_reason=str(task_input.get("approval_reason") or f"{first_tool_name} 실행 전 승인이 필요합니다"),
-                    llm_call_count=llm_call_count,
-                    model_name=self._model_name(generated, task_input),
-                    todo_state=current_todo_state,
-                    operation_counters=operation_counters,
-                )
-                pending = {
-                    "pending_tool_call_id": first_call.id,
-                    "pending_tool_name": first_tool_name,
-                    "pending_tool_arguments": first_call.arguments,
-                    "transcript_session_id": transcript_session_id,
-                    "approval_policy_result": {"required": True},
-                    "resume_decision": "pending",
-                }
-                outcome["wait_payload"] = {**outcome.get("wait_payload", {}), **pending}
-                outcome["approval_payload"] = {**outcome.get("approval_payload", {}), **pending}
-                return outcome
-
             for tool_call in generated.tool_calls:
                 runtime_tool_name = self._runtime_tool_name(tool_call.name, provider_tool_name_map)
-                result = self._run_native_tool_call(
-                    name=runtime_tool_name,
-                    args=tool_call.arguments,
-                    requested_toolsets=requested_toolsets,
+                guard_result = self.tool_guard.evaluate(
+                    task_input=task_input,
+                    tool_call_id=tool_call.id,
+                    tool_name=runtime_tool_name,
+                    arguments=tool_call.arguments,
                 )
+                decision = self._guard_decision(guard_result)
+                if decision == ToolGuardDecision.NEEDS_APPROVAL:
+                    # 승인 대기는 실행 직전 tool action snapshot만 저장하고 StepRun/TaskRun을 WAITING으로 돌려준다.
+                    outcome = self._build_waiting_outcome(
+                        tool_results=all_tool_results,
+                        operations=operations,
+                        approval_reason=guard_result.reason or f"{runtime_tool_name} 실행 전 승인이 필요합니다",
+                        llm_call_count=llm_call_count,
+                        model_name=self._model_name(generated, task_input),
+                        todo_state=current_todo_state,
+                        operation_counters=operation_counters,
+                    )
+                    pending = {
+                        "pending_tool_call_id": tool_call.id,
+                        "pending_tool_name": runtime_tool_name,
+                        "pending_tool_arguments": tool_call.arguments,
+                        "transcript_session_id": transcript_session_id,
+                        "approval_policy_result": self._guard_payload(guard_result),
+                        "resume_decision": "pending",
+                    }
+                    outcome["wait_payload"] = {**outcome.get("wait_payload", {}), **pending}
+                    outcome["approval_payload"] = {**outcome.get("approval_payload", {}), **pending}
+                    return outcome
+
+                if decision == ToolGuardDecision.BLOCK:
+                    result = self._blocked_tool_result(guard_result)
+                else:
+                    result = self._run_native_tool_call(
+                        name=runtime_tool_name,
+                        args=tool_call.arguments,
+                        requested_toolsets=requested_toolsets,
+                    )
                 tool_result = {
                     "tool_call_id": tool_call.id,
                     "name": runtime_tool_name,
                     "args": tool_call.arguments,
                     "result": result,
                 }
-                all_tool_results.append(tool_result)
-                tool_message = ToolResultMessage(
-                    tool_call_id=tool_call.id,
-                    content=self._tool_result_content(result),
-                )
-                messages.append(tool_message)
-                self._append_transcript_message(transcript_session_id, tool_message, tool_name=runtime_tool_name)
-                # tool_call_id는 모델이 보낸 호출 id와 정확히 맞아야 다음 provider 호출에서
-                # "이 도구 결과가 어떤 호출의 응답인지"를 복원할 수 있다.
-                operations.append(
-                    {
-                        "key": self._next_operation_key(
-                            operation_counters,
-                            namespace="tool",
-                            base_key=runtime_tool_name,
-                        ),
-                        "title": runtime_tool_name,
-                        "kind": "tool",
-                        "status": "failed" if isinstance(result, dict) and result.get("ok") is False else "completed",
-                        "summary": self._tool_summary(result),
-                    }
+                self._append_tool_result_observation(
+                    tool_result=tool_result,
+                    all_tool_results=all_tool_results,
+                    messages=messages,
+                    transcript_session_id=transcript_session_id,
+                    operations=operations,
+                    operation_counters=operation_counters,
                 )
             current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
 
@@ -384,20 +364,20 @@ class ToolCallingLoopExecutor:
             enabled_toolsets=requested_toolsets,
         )
 
-    def _run_pending_tool_after_approval(
+    def _resolve_pending_tool_after_resume(
         self,
         *,
         step,
         resume_payload: dict[str, Any],
         requested_toolsets: tuple[str, ...] | None,
     ) -> dict[str, Any] | None:
-        """승인으로 재개하면 저장해 둔 pending tool call을 먼저 실행한다.
+        """승인 재개 응답에 따라 저장해 둔 pending tool call의 결과를 먼저 만든다.
 
         이렇게 해야 승인 전 assistant가 만든 tool_call_id(도구 호출 식별자)에 정확히 대응하는
         ToolResultMessage를 transcript에 붙이고, 같은 도구를 모델에게 다시 고르게 만들지 않는다.
         """
 
-        if not bool(resume_payload.get("approved", False)) or step is None:
+        if step is None:
             return None
         pending_payload = dict(getattr(step, "wait_payload", None) or {})
         call_id = str(pending_payload.get("pending_tool_call_id") or "").strip()
@@ -405,16 +385,92 @@ class ToolCallingLoopExecutor:
         args = pending_payload.get("pending_tool_arguments")
         if not call_id or not tool_name or not isinstance(args, dict):
             return None
-        result = self._run_native_tool_call(
-            name=tool_name,
-            args=args,
-            requested_toolsets=requested_toolsets,
-        )
+        if bool(resume_payload.get("approved", False)):
+            result = self._run_native_tool_call(
+                name=tool_name,
+                args=args,
+                requested_toolsets=requested_toolsets,
+            )
+        else:
+            # 거절된 approval도 원래 tool_call_id에 대한 tool result를 남겨 provider replay 불변식을 맞춘다.
+            reason = str(resume_payload.get("reason") or resume_payload.get("message") or "사용자가 도구 실행을 거절했습니다")
+            guard_payload = dict(pending_payload.get("approval_policy_result") or {})
+            result = self._blocked_tool_result(
+                ToolGuardResult(
+                    decision=ToolGuardDecision.BLOCK,
+                    reason=reason,
+                    payload={**guard_payload, "resume_decision": "rejected"},
+                )
+            )
         return {
             "tool_call_id": call_id,
             "name": tool_name,
             "args": args,
             "result": result,
+        }
+
+    def _append_tool_result_observation(
+        self,
+        *,
+        tool_result: dict[str, Any],
+        all_tool_results: list[dict[str, Any]],
+        messages: list[AgentMessage | ToolResultMessage],
+        transcript_session_id: str | None,
+        operations: list[dict[str, Any]],
+        operation_counters: dict[str, int],
+    ) -> None:
+        all_tool_results.append(tool_result)
+        tool_name = str(tool_result["name"])
+        result = tool_result["result"]
+        tool_message = ToolResultMessage(
+            tool_call_id=str(tool_result["tool_call_id"]),
+            content=self._tool_result_content(result),
+        )
+        messages.append(tool_message)
+        self._append_transcript_message(transcript_session_id, tool_message, tool_name=tool_name)
+        # tool_call_id는 assistant가 보낸 호출 id와 정확히 맞아야 replay 시 결과를 대응시킬 수 있다.
+        operations.append(
+            {
+                "key": self._next_operation_key(
+                    operation_counters,
+                    namespace="tool",
+                    base_key=tool_name,
+                ),
+                "title": tool_name,
+                "kind": "tool",
+                "status": "failed" if isinstance(result, dict) and result.get("ok") is False else "completed",
+                "summary": self._tool_summary(result),
+            }
+        )
+
+    @staticmethod
+    def _guard_decision(guard_result: ToolGuardResult) -> ToolGuardDecision:
+        decision = guard_result.decision
+        if isinstance(decision, ToolGuardDecision):
+            return decision
+        return ToolGuardDecision(str(decision))
+
+    @staticmethod
+    def _guard_payload(guard_result: ToolGuardResult) -> dict[str, Any]:
+        if hasattr(guard_result, "to_payload"):
+            return guard_result.to_payload()
+        return {
+            **dict(getattr(guard_result, "payload", {}) or {}),
+            "decision": str(getattr(guard_result, "decision", "")),
+            "reason": getattr(guard_result, "reason", None),
+        }
+
+    def _blocked_tool_result(self, guard_result: ToolGuardResult) -> dict[str, Any]:
+        guard_payload = self._guard_payload(guard_result)
+        reason = str(guard_payload.get("reason") or "tool call blocked")
+        return {
+            "ok": False,
+            "content": f"Tool call blocked: {reason}",
+            "error": {
+                "code": "tool_blocked",
+                "message": reason,
+            },
+            "guard": guard_payload,
         }
 
     @staticmethod
@@ -500,6 +556,8 @@ class ToolCallingLoopExecutor:
         todo_state: dict[str, Any],
         operation_counters: dict[str, int],
     ) -> dict[str, Any]:
+        """approval 대기 상태를 TaskRun/StepRun 저장 형식으로 만든다."""
+
         tool_names = [str(item["name"]) for item in tool_results]
         return {
             "task_status": TaskStatus.WAITING,

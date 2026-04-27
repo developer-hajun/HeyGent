@@ -3,10 +3,24 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class PendingApprovalResponse(BaseModel):
+    approval_id: str
+    step_run_id: str | None = None
+    status: str
+    reason: str | None = None
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+    requested_at: str | None = None
+    can_approve: bool = False
+    can_reject: bool = False
 
 
 class StepRunResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     step_run_id: str
     task_run_id: str
     step_order: int
@@ -22,8 +36,8 @@ class StepRunResponse(BaseModel):
     input_payload: dict[str, Any] = Field(default_factory=dict)
     output_payload: dict[str, Any] = Field(default_factory=dict)
     wait_payload: dict[str, Any] = Field(default_factory=dict)
-    # 시각화 기준은 StepRun 이고, semantic/operation/tool 정보도 현재는
-    # detail_json 안에서 같이 해석한다. 정규화된 view 모델은 필요가 생기면 나중에 추가한다.
+    pending_approval: PendingApprovalResponse | None = Field(default=None, alias="pendingApproval")
+    # approval 은 UI가 wait/detail payload를 직접 해석하지 않도록 별도 view로도 노출한다.
     detail_json: dict[str, Any] = Field(default_factory=dict)
     summary_message: str | None = None
     error_message: str | None = None
@@ -34,6 +48,8 @@ class StepRunResponse(BaseModel):
 
 
 class TaskRunResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     task_run_id: str
     task_type: str
     intent_type: str | None = None
@@ -46,6 +62,7 @@ class TaskRunResponse(BaseModel):
     result_payload: dict[str, Any] = Field(default_factory=dict)
     todo_state: dict[str, Any] = Field(default_factory=dict)
     wait_payload: dict[str, Any] = Field(default_factory=dict)
+    pending_approval: PendingApprovalResponse | None = Field(default=None, alias="pendingApproval")
     error_message: str | None = None
     progress_summary: str | None = None
     revision: int
@@ -135,12 +152,15 @@ class TaskRunFlowEdgeResponse(BaseModel):
 
 
 class TaskRunFlowResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     task_run_id: str
     status: str
     title: str | None = None
     current_step_run_id: str | None = None
     entry_executor_key: str | None = None
     summary: str | None = None
+    pending_approval: PendingApprovalResponse | None = Field(default=None, alias="pendingApproval")
     nodes: list[TaskRunFlowNodeResponse] = Field(default_factory=list)
     edges: list[TaskRunFlowEdgeResponse] = Field(default_factory=list)
 
@@ -153,6 +173,8 @@ class ActiveTaskRunCurrentStepResponse(BaseModel):
 
 
 class ActiveTaskRunListItemResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     task_run_id: str
     source: str
     session_key: str | None = None
@@ -162,6 +184,7 @@ class ActiveTaskRunListItemResponse(BaseModel):
     current_step: ActiveTaskRunCurrentStepResponse | None = None
     updated_at: datetime | None = None
     wait_reason: str | None = None
+    pending_approval: PendingApprovalResponse | None = Field(default=None, alias="pendingApproval")
 
 
 class ActiveTaskRunListResponse(BaseModel):

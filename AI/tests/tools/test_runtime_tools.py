@@ -1,4 +1,5 @@
 import json
+import sys
 
 from app.domain.orchestration.runtime_planning.todo_state import (
     apply_tool_results_to_todo_state,
@@ -193,3 +194,61 @@ def test_terminal_runtime_treats_empty_cwd_as_current_directory():
 
     assert result["returncode"] == 0
     assert "RUNTIME_OK" in result["stdout"]
+
+
+def test_runtime_file_tool_ignores_model_supplied_workspace_root(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    (outside / "secret.txt").write_text("outside-secret", encoding="utf-8")
+    monkeypatch.chdir(workspace)
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    result = runtime.run_call(
+        name="read_file",
+        args={"workspace_root": str(outside), "path": str(outside / "secret.txt")},
+        enabled_toolsets=("file",),
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "tool_execution_failed"
+    assert "PermissionError" in result["error"]["message"]
+    assert "outside-secret" not in json.dumps(result, ensure_ascii=False)
+
+
+def test_terminal_runtime_caps_large_stdout():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    result = runtime.run_call(
+        name="terminal.run",
+        args={"argv": [sys.executable, "-c", "print('x' * 20000)"]},
+        enabled_toolsets=("terminal",),
+    )
+
+    assert result["returncode"] == 0
+    assert result["stdout_truncated"] is True
+    assert "[truncated" in result["stdout"]
+    assert len(result["stdout"]) < 20000
+
+
+def test_terminal_runtime_blocks_dangerous_shell_command_before_execution(tmp_path):
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    blocked_commands = [
+        "git reset --hard",
+        "rm -rf .",
+        "Remove-Item . -Force -Recurse",
+        "Remove-Item . -Recurse -Force",
+    ]
+
+    for command in blocked_commands:
+        result = runtime.run_call(
+            name="terminal.run",
+            args={"command": command, "cwd": str(tmp_path)},
+            enabled_toolsets=("terminal",),
+        )
+
+        assert result["ok"] is False
+        assert result["error"]["code"] == "blocked_command"
+        assert result["returncode"] is None

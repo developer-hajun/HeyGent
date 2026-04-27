@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.core.time import utc_now
@@ -133,6 +135,12 @@ class TaskEngine:
         if step.status != StepStatus.WAITING:
             raise ValueError("current step is not waiting")
 
+        wait_payload = dict(step.wait_payload or {})
+        executor = None
+        executor_key = step.executor_key or task.entry_executor_key
+        if executor_key:
+            executor = self.tool_registry.get(executor_key)
+
         approval = self.repository.get_open_approval(task.task_run_id)
         if approval is None:
             raise ValueError("no open approval")
@@ -146,6 +154,7 @@ class TaskEngine:
             approval_id=canceled_approval["approval_id"],
             request_payload=canceled_approval.get("request_payload"),
         )
+        self._record_pending_tool_cancellation(step=step, wait_payload=wait_payload, executor=executor)
 
         task.status = TaskStatus.CANCELED
         task.wait_payload = {}
@@ -174,9 +183,8 @@ class TaskEngine:
         self.repository.update_task(task)
         self.repository.update_step(step)
 
-        executor_key = step.executor_key or task.entry_executor_key
-        if executor_key:
-            await self._sync_todo_steps(task=task, executor=self.tool_registry.get(executor_key))
+        if executor is not None:
+            await self._sync_todo_steps(task=task, executor=executor)
 
         await self._emit(
             "approval.canceled",
@@ -187,6 +195,63 @@ class TaskEngine:
         await self._emit("step.canceled", task, step)
         await self._emit("task.canceled", task, step)
         return task
+
+    def _record_pending_tool_cancellation(self, *, step: StepRun, wait_payload: dict, executor) -> None:
+        tool_result = self._build_canceled_pending_tool_result(wait_payload)
+        if tool_result is None:
+            return
+
+        output_payload = dict(step.output_payload or {})
+        tool_results = list(output_payload.get("tool_results") or [])
+        if not any(str(item.get("tool_call_id") or "") == tool_result["tool_call_id"] for item in tool_results if isinstance(item, dict)):
+            tool_results.append(tool_result)
+        output_payload["tool_results"] = tool_results
+        step.output_payload = output_payload
+
+        session_store = self._session_store_from_executor(executor)
+        transcript_session_id = str(wait_payload.get("transcript_session_id") or "").strip()
+        if session_store is None or not transcript_session_id or session_store.get_session(transcript_session_id) is None:
+            return
+
+        result = tool_result["result"]
+        content = result.get("content") if isinstance(result, dict) else None
+        session_store.append_message(
+            session_id=transcript_session_id,
+            role="tool",
+            content=str(content or json.dumps(result, ensure_ascii=False)),
+            tool_name=tool_result["name"],
+            tool_call_id=tool_result["tool_call_id"],
+        )
+
+    @staticmethod
+    def _build_canceled_pending_tool_result(wait_payload: dict) -> dict | None:
+        call_id = str(wait_payload.get("pending_tool_call_id") or "").strip()
+        tool_name = str(wait_payload.get("pending_tool_name") or "").strip()
+        args = wait_payload.get("pending_tool_arguments")
+        if not call_id or not tool_name or not isinstance(args, dict):
+            return None
+
+        message = "task canceled before pending tool execution"
+        return {
+            "tool_call_id": call_id,
+            "name": tool_name,
+            "args": args,
+            "result": {
+                "ok": False,
+                "content": f"Tool call canceled: {message}",
+                "error": {
+                    "code": "tool_canceled",
+                    "message": message,
+                    "tool_name": tool_name,
+                },
+                "canceled": True,
+            },
+        }
+
+    @staticmethod
+    def _session_store_from_executor(executor):
+        loop_executor = getattr(executor, "loop_executor", None)
+        return getattr(loop_executor, "session_store", None)
 
     async def _execute(self, *, task: TaskRun, step: StepRun, executor, resume_payload: dict | None) -> TaskRun:
         ensure_task_transition(task.status, TaskStatus.RUNNING)

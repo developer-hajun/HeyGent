@@ -17,6 +17,17 @@ MAX_SEARCH_FILE_BYTES = 1_000_000
 MAX_READ_LINES = 2_000
 MAX_SEARCH_LIMIT = 500
 SKIPPED_DIRS = {".git", ".hg", ".svn", "__pycache__", ".pytest_cache", ".venv", "node_modules"}
+SECRET_DIR_NAMES = {".aws", ".ssh"}
+SECRET_FILE_NAMES = {
+    ".env",
+    ".netrc",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "id_rsa",
+}
+SECRET_ENV_PREFIX = ".env."
+SECRET_ENV_EXAMPLES = {".env.example", ".env.sample", ".env.template"}
 
 
 READ_FILE_SCHEMA = {
@@ -280,8 +291,11 @@ def _resolve_workspace_path(value: Any, *, workspace_root: Any = None) -> Path:
     raw_path = Path(value).expanduser()
     candidate = raw_path if raw_path.is_absolute() else root / raw_path
     resolved = candidate.resolve(strict=False)
+    # workspace guard: 모델이 절대 경로나 ..를 넘겨도 루트 밖 파일에는 접근하지 않는다.
     if not _is_relative_to(resolved, root):
         raise PermissionError("path must stay inside the workspace")
+    if _is_secret_path(resolved, root):
+        raise PermissionError("secret paths are not accessible through file tools")
     return resolved
 
 
@@ -693,7 +707,7 @@ def _operation_diff(operation: _PatchOperation) -> str:
 def _search_file_names(*, root: Path, search_root: Path, pattern: str, offset: int, limit: int) -> dict[str, Any]:
     files = [
         _display_path(path, root)
-        for path in _iter_files(search_root)
+        for path in _iter_files(search_root, root=root)
         if fnmatch.fnmatch(_display_path(path, root), pattern) or fnmatch.fnmatch(path.name, pattern)
     ]
     files.sort()
@@ -722,7 +736,7 @@ def _search_file_content(*, root: Path, search_root: Path, args: dict[str, Any],
     counts: dict[str, int] = {}
     files_with_matches: set[str] = set()
 
-    for path in _iter_files(search_root):
+    for path in _iter_files(search_root, root=root):
         rel_path = _display_path(path, root)
         if isinstance(file_glob, str) and file_glob and not (
             fnmatch.fnmatch(path.name, file_glob) or fnmatch.fnmatch(rel_path, file_glob)
@@ -787,18 +801,46 @@ def _search_file_content(*, root: Path, search_root: Path, args: dict[str, Any],
     }
 
 
-def _iter_files(path: Path) -> list[Path]:
+def _iter_files(path: Path, *, root: Path | None = None) -> list[Path]:
     if path.is_file():
+        if root is not None and _is_secret_path(path.resolve(strict=False), root):
+            return []
         return [path]
     if not path.is_dir():
         raise NotADirectoryError(str(path))
 
     files: list[Path] = []
-    for root, dirs, names in os.walk(path):
-        dirs[:] = [name for name in dirs if name not in SKIPPED_DIRS]
+    for current_root, dirs, names in os.walk(path):
+        walk_root = Path(current_root)
+        dirs[:] = [
+            name
+            for name in dirs
+            if name not in SKIPPED_DIRS
+            and not (root is not None and _is_secret_path((walk_root / name).resolve(strict=False), root))
+        ]
         for name in names:
-            files.append(Path(root) / name)
+            file_path = walk_root / name
+            if root is not None and _is_secret_path(file_path.resolve(strict=False), root):
+                continue
+            files.append(file_path)
     return files
+
+
+def _is_secret_path(path: Path, root: Path) -> bool:
+    """파일 도구가 흔한 인증 파일과 비밀 디렉터리를 읽거나 검색하지 못하게 한다."""
+
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return False
+
+    for part in relative.parts:
+        lowered = part.lower()
+        if lowered in SECRET_DIR_NAMES or lowered in SECRET_FILE_NAMES:
+            return True
+        if lowered.startswith(SECRET_ENV_PREFIX) and lowered not in SECRET_ENV_EXAMPLES:
+            return True
+    return False
 
 
 def _build_diff(original: str, updated: str, rel_path: str) -> str:

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
+from pathlib import Path
 from typing import Any
 
 from app.core.utils.ids import new_id
@@ -9,12 +12,28 @@ from app.tools.runtime.registry import build_runtime_tool_entries, list_runtime_
 from app.tools.runtime.toolsets import resolve_runtime_tool_names
 
 
-class LocalToolRuntime:
-    """현재 백본에서 실제로 실행 가능한 로컬 tool dispatcher 다."""
+FILE_TOOL_NAMES = {"read_file", "write_file", "patch", "search_files"}
+MAX_TERMINAL_STREAM_CHARS = 12_000
+MAX_TOOL_RESULT_STRING_CHARS = 20_000
+MAX_TOOL_RESULT_TRUNCATED_FIELDS = 20
 
-    def __init__(self, *, skill_registry, session_store) -> None:
+
+class LocalToolRuntime:
+    """현재 백본에서 실제로 실행 가능한 로컬 runtime tool dispatcher 다.
+
+    runtime tool은 agent.loop 안에서 LLM이 호출할 수 있는 실제 기능이다.
+    """
+
+    def __init__(
+        self,
+        *,
+        skill_registry,
+        session_store,
+        workspace_root: str | os.PathLike[str] | None = None,
+    ) -> None:
         self.skill_registry = skill_registry
         self.session_store = session_store
+        self.workspace_root = self._resolve_workspace_root(workspace_root)
         self._todo_items: list[dict[str, str]] = []
         self._tool_entries = build_runtime_tool_entries(
             {
@@ -92,14 +111,16 @@ class LocalToolRuntime:
                 tool_name=normalized_name,
             )
 
+        trusted_args = self._bind_trusted_runtime_args(tool_name=normalized_name, args=args)
         try:
-            return entry.handler(dict(args))
+            result = entry.handler(trusted_args)
         except Exception as error:
             return self._tool_error(
                 code="tool_execution_failed",
                 message=f"{type(error).__name__}: {error}",
                 tool_name=normalized_name,
             )
+        return self._cap_tool_result(result)
 
     def require_call(self, *, name: str, args: dict[str, Any]) -> dict[str, Any]:
         entry = self._tool_entries.get(name)
@@ -166,21 +187,17 @@ class LocalToolRuntime:
             "summary": self._todo_summary(self._todo_items),
         }
 
-    @staticmethod
-    def _read_file(args: dict[str, Any]) -> dict[str, Any]:
-        return LocalToolRuntime._run_file_tool_handler("read_file_handler", args)
+    def _read_file(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_file_tool_handler("read_file_handler", args)
 
-    @staticmethod
-    def _write_file(args: dict[str, Any]) -> dict[str, Any]:
-        return LocalToolRuntime._run_file_tool_handler("write_file_handler", args)
+    def _write_file(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_file_tool_handler("write_file_handler", args)
 
-    @staticmethod
-    def _patch_file(args: dict[str, Any]) -> dict[str, Any]:
-        return LocalToolRuntime._run_file_tool_handler("patch_handler", args)
+    def _patch_file(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_file_tool_handler("patch_handler", args)
 
-    @staticmethod
-    def _search_files(args: dict[str, Any]) -> dict[str, Any]:
-        return LocalToolRuntime._run_file_tool_handler("search_files_handler", args)
+    def _search_files(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_file_tool_handler("search_files_handler", args)
 
     @staticmethod
     def _run_file_tool_handler(handler_name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -210,11 +227,14 @@ class LocalToolRuntime:
             existing[item["id"]] = item
         return [existing[item_id] for item_id in order if item_id in existing]
 
-    @staticmethod
-    def _run_terminal_command(args: dict[str, Any]) -> dict[str, Any]:
+    def _run_terminal_command(self, args: dict[str, Any]) -> dict[str, Any]:
         argv = list(args.get("argv") or []) or None
         command = args.get("command")
-        cwd = str(args.get("cwd") or "").strip() or None
+        blocked = self._blocked_terminal_command(command=command, argv=argv)
+        if blocked is not None:
+            return blocked
+
+        cwd = self._resolve_terminal_cwd(args.get("cwd"))
         timeout_seconds = float(args.get("timeout_seconds") or 15.0)
 
         if argv:
@@ -241,12 +261,144 @@ class LocalToolRuntime:
         else:
             raise ValueError("command or argv is required")
 
+        stdout, stdout_truncated = self._truncate_terminal_stream("stdout", completed.stdout)
+        stderr, stderr_truncated = self._truncate_terminal_stream("stderr", completed.stderr)
         return {
             "command": executed,
             "returncode": completed.returncode,
-            "stdout": completed.stdout,
-            "stderr": completed.stderr,
+            "stdout": stdout,
+            "stderr": stderr,
+            "stdout_truncated": stdout_truncated,
+            "stderr_truncated": stderr_truncated,
         }
+
+    def _bind_trusted_runtime_args(self, *, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        trusted_args = dict(args)
+        if tool_name in FILE_TOOL_NAMES:
+            # 모델이 workspace_root를 넓혀도 서버가 바인딩한 루트만 사용한다.
+            trusted_args["workspace_root"] = str(self.workspace_root)
+        return trusted_args
+
+    def _resolve_terminal_cwd(self, value: Any) -> str:
+        raw_value = str(value or "").strip()
+        candidate = Path(raw_value).expanduser() if raw_value else self.workspace_root
+        resolved = candidate if candidate.is_absolute() else self.workspace_root / candidate
+        resolved = resolved.resolve(strict=False)
+        # terminal.run도 workspace guard를 적용해 작업 디렉터리가 루트 밖으로 나가지 않게 한다.
+        if not self._is_relative_to(resolved, self.workspace_root):
+            raise PermissionError("terminal cwd must stay inside the workspace")
+        return str(resolved)
+
+    def _blocked_terminal_command(self, *, command: Any, argv: list[Any] | None) -> dict[str, Any] | None:
+        command_text = self._terminal_command_text(command=command, argv=argv)
+        if not command_text:
+            return None
+
+        normalized = re.sub(r"\s+", " ", command_text).strip().lower()
+        blocked_patterns = (
+            r"\bgit\s+reset\s+--hard\b",
+            r"\bgit\s+clean\s+-[a-z]*[fd][a-z]*\b",
+            r"\brm\s+-[a-z]*r[a-z]*f[a-z]*\s+(/|\\|[a-z]:\\|\*|\.)(\s|$)",
+            r"\bdel\s+/(s|q)\b",
+            r"\brmdir\s+/(s|q)\b",
+            r"\bremove-item\b\s+\.\s+.*-force\b.*-recurse\b",
+            r"\bremove-item\b\s+\.\s+.*-recurse\b.*-force\b",
+            r"\bmkfs(\.| )",
+            r"\bformat\s+[a-z]:",
+        )
+        if not any(re.search(pattern, normalized) for pattern in blocked_patterns):
+            return None
+
+        executed = list(argv) if argv else [str(command)]
+        payload = {
+            "error": {
+                "code": "blocked_command",
+                "message": "dangerous terminal command blocked before execution",
+                "tool_name": "terminal.run",
+            }
+        }
+        return {
+            "ok": False,
+            **payload,
+            "command": executed,
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+            "content": json.dumps(payload, ensure_ascii=False),
+        }
+
+    @staticmethod
+    def _terminal_command_text(*, command: Any, argv: list[Any] | None) -> str:
+        if argv:
+            return " ".join(str(item) for item in argv)
+        if isinstance(command, str):
+            return command
+        return ""
+
+    @staticmethod
+    def _truncate_terminal_stream(field_name: str, value: str) -> tuple[str, bool]:
+        if len(value) <= MAX_TERMINAL_STREAM_CHARS:
+            return value, False
+        marker = f"\n[truncated: {field_name} exceeded {MAX_TERMINAL_STREAM_CHARS} chars]\n"
+        keep = max(0, MAX_TERMINAL_STREAM_CHARS - len(marker))
+        return value[:keep] + marker, True
+
+    @classmethod
+    def _cap_tool_result(cls, result: dict[str, Any]) -> dict[str, Any]:
+        """도구 결과가 transcript와 API 응답을 과도하게 키우지 않도록 문자열 필드를 제한한다."""
+
+        if not isinstance(result, dict):
+            return result
+
+        truncated_fields: list[str] = []
+        capped = cls._cap_result_value(result, path="", truncated_fields=truncated_fields)
+        if not truncated_fields or not isinstance(capped, dict):
+            return capped
+        capped["result_truncated"] = True
+        capped["truncated_fields"] = truncated_fields[:MAX_TOOL_RESULT_TRUNCATED_FIELDS]
+        return capped
+
+    @classmethod
+    def _cap_result_value(cls, value: Any, *, path: str, truncated_fields: list[str]) -> Any:
+        if isinstance(value, str):
+            if len(value) <= MAX_TOOL_RESULT_STRING_CHARS:
+                return value
+            marker = f"\n[truncated: result field exceeded {MAX_TOOL_RESULT_STRING_CHARS} chars]\n"
+            keep = max(0, MAX_TOOL_RESULT_STRING_CHARS - len(marker))
+            truncated_fields.append(path or "$")
+            return value[:keep] + marker
+        if isinstance(value, list):
+            return [
+                cls._cap_result_value(
+                    item,
+                    path=f"{path}.{index}" if path else str(index),
+                    truncated_fields=truncated_fields,
+                )
+                for index, item in enumerate(value)
+            ]
+        if isinstance(value, dict):
+            return {
+                key: cls._cap_result_value(
+                    item,
+                    path=f"{path}.{key}" if path else str(key),
+                    truncated_fields=truncated_fields,
+                )
+                for key, item in value.items()
+            }
+        return value
+
+    @staticmethod
+    def _resolve_workspace_root(value: str | os.PathLike[str] | None = None) -> Path:
+        raw_root = value or os.environ.get("HEYGENT_WORKSPACE_ROOT") or os.environ.get("TERMINAL_CWD") or os.getcwd()
+        return Path(str(raw_root)).expanduser().resolve()
+
+    @staticmethod
+    def _is_relative_to(path: Path, root: Path) -> bool:
+        try:
+            path.relative_to(root)
+        except ValueError:
+            return False
+        return True
 
     @staticmethod
     def _normalize_todo_item(item: dict[str, Any], *, index: int) -> dict[str, str]:
