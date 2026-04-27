@@ -81,7 +81,35 @@ public class UserMemory {
     @Column(length = 100)
     private String sourceTaskRunId;
 
+    @Column(length = 100)
+    private String sourceMessageId;
+
+    @Column(columnDefinition = "TEXT")
+    private String evidence;
+
+    @Column(length = 500)
+    private String updateReason;
+
+    private Long supersededByMemoryId;
+
+    private LocalDateTime validFrom;
+
+    private LocalDateTime validUntil;
+
+    private LocalDateTime invalidatedAt;
+
     private LocalDateTime expiresAt;
+
+    @Builder.Default
+    private Long accessCount = 0L;
+
+    @Builder.Default
+    private Long usedCount = 0L;
+
+    private LocalDateTime lastUsedAt;
+
+    @Builder.Default
+    private Double usefulnessScore = 0.0;
 
     private LocalDateTime lastAccessedAt;
 
@@ -98,5 +126,32 @@ public class UserMemory {
 
     public void markAccessed(LocalDateTime accessedAt) {
         this.lastAccessedAt = accessedAt;
+        this.accessCount = safeCount(this.accessCount) + 1;
+    }
+
+    public void markUsed(LocalDateTime usedAt, Double usefulnessScore) {
+        long previousUsedCount = safeCount(this.usedCount);
+        this.lastUsedAt = usedAt;
+        this.usedCount = previousUsedCount + 1;
+
+        if (usefulnessScore != null) {
+            double previousScore = this.usefulnessScore == null ? 0.0 : this.usefulnessScore;
+            this.usefulnessScore = ((previousScore * previousUsedCount) + usefulnessScore) / this.usedCount;
+        }
+    }
+
+    public void invalidate(Long supersededByMemoryId, String updateReason, LocalDateTime invalidatedAt) {
+        this.status = MemoryStatus.INACTIVE;
+        this.supersededByMemoryId = supersededByMemoryId;
+        this.updateReason = updateReason;
+        this.invalidatedAt = invalidatedAt;
+        this.validUntil = invalidatedAt;
+    }
+
+    private long safeCount(Long value) {
+        if (value == null) {
+            return 0L;
+        }
+        return value;
     }
 }

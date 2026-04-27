@@ -135,6 +135,8 @@ public class UserMemoryVectorRepository {
                 AND confidence >= ?
                 AND importance >= ?
                 AND embedding IS NOT NULL
+                AND (valid_from IS NULL OR valid_from <= now())
+                AND (valid_until IS NULL OR valid_until > now())
                 AND (expires_at IS NULL OR expires_at > now())
             """);
 

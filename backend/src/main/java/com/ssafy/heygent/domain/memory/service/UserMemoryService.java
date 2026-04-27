@@ -14,8 +14,10 @@ import org.springframework.util.StringUtils;
 
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryCandidatesRequest;
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryRequest;
+import com.ssafy.heygent.domain.memory.dto.request.MarkMemoryUsedRequest;
 import com.ssafy.heygent.domain.memory.dto.response.UserMemoryResponse;
 import com.ssafy.heygent.domain.memory.embedding.MemoryEmbeddingService;
+import com.ssafy.heygent.domain.memory.entity.MemoryOperationType;
 import com.ssafy.heygent.domain.memory.entity.MemoryScopeType;
 import com.ssafy.heygent.domain.memory.entity.MemoryStatus;
 import com.ssafy.heygent.domain.memory.entity.MemoryStoreType;
@@ -46,15 +48,25 @@ public class UserMemoryService {
 
     @Transactional
     public UserMemoryResponse create(Long userId, CreateMemoryRequest request) {
+        MemoryOperationType operationType = resolveOperationType(request.getOperationType());
         validateMemoryType(request.getMemoryType());
         validateMemoryScore(request.getImportance(), request.getConfidence());
         String normalizedContent = request.getContent().trim();
         Map<String, Object> metadata = normalizeMetadata(request.getMetadata(), request.getSourceSessionKey());
         memorySafetyValidator.validate(normalizedContent, request.getSummary(), metadata);
+        memorySafetyValidator.validate(request.getEvidence(), request.getUpdateReason(), Map.of());
         MemoryStoreType storeType = resolveStoreType(request.getStoreType(), request.getMemoryType());
         MemoryScopeType scopeType = resolveScopeType(request.getScopeType(), storeType);
         validateStoreType(storeType, request.getMemoryType());
         validateSessionScope(scopeType, request.getExpiresAt());
+        validateValidityRange(request.getValidFrom(), request.getValidUntil());
+
+        if (operationType == MemoryOperationType.INVALIDATE) {
+            return invalidateTargetMemory(userId, request);
+        }
+        if (operationType == MemoryOperationType.UPDATE || operationType == MemoryOperationType.MERGE) {
+            return replaceTargetMemory(userId, request, storeType, scopeType, metadata, normalizedContent);
+        }
 
         return userMemoryRepository.findDuplicateActiveMemory(
                 userId,
@@ -99,6 +111,11 @@ public class UserMemoryService {
             .status(MemoryStatus.ACTIVE)
             .sourceSessionKey(trimToNull(request.getSourceSessionKey()))
             .sourceTaskRunId(trimToNull(request.getSourceTaskRunId()))
+            .sourceMessageId(trimToNull(request.getSourceMessageId()))
+            .evidence(trimToNull(request.getEvidence()))
+            .updateReason(trimToNull(request.getUpdateReason()))
+            .validFrom(resolveValidFrom(request.getValidFrom()))
+            .validUntil(request.getValidUntil())
             .expiresAt(request.getExpiresAt())
             .build();
 
@@ -324,6 +341,60 @@ public class UserMemoryService {
         memory.delete();
     }
 
+    @Transactional
+    public UserMemoryResponse markUsed(Long userId, Long memoryId, MarkMemoryUsedRequest request) {
+        UserMemory memory = findOwnedMemory(userId, memoryId);
+        if (memory.getStatus() != MemoryStatus.ACTIVE || !isNotExpired(memory, LocalDateTime.now())) {
+            throw new CustomException(ErrorCode.RESOURCE_NOT_FOUND);
+        }
+
+        memory.markUsed(LocalDateTime.now(), request.getUsefulnessScore());
+        return UserMemoryResponse.from(memory);
+    }
+
+    private UserMemoryResponse replaceTargetMemory(
+        Long userId,
+        CreateMemoryRequest request,
+        MemoryStoreType storeType,
+        MemoryScopeType scopeType,
+        Map<String, Object> metadata,
+        String normalizedContent
+    ) {
+        UserMemory targetMemory = findOwnedMemory(userId, request.getTargetMemoryId());
+        validateTargetCanChange(targetMemory);
+
+        UserMemoryResponse savedResponse = saveMemory(userId, request, storeType, scopeType, metadata, normalizedContent);
+        targetMemory.invalidate(savedResponse.getId(), trimToNull(request.getUpdateReason()), LocalDateTime.now());
+        return savedResponse;
+    }
+
+    private UserMemoryResponse invalidateTargetMemory(Long userId, CreateMemoryRequest request) {
+        UserMemory targetMemory = findOwnedMemory(userId, request.getTargetMemoryId());
+        validateTargetCanChange(targetMemory);
+        targetMemory.invalidate(null, trimToNull(request.getUpdateReason()), LocalDateTime.now());
+        return UserMemoryResponse.from(targetMemory);
+    }
+
+    private UserMemory findOwnedMemory(Long userId, Long memoryId) {
+        if (memoryId == null) {
+            throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
+        }
+
+        UserMemory memory = userMemoryRepository.findById(memoryId)
+            .orElseThrow(() -> new CustomException(ErrorCode.RESOURCE_NOT_FOUND));
+
+        if (!memory.getUserId().equals(userId)) {
+            throw new CustomException(ErrorCode.ACCESS_DENIED);
+        }
+        return memory;
+    }
+
+    private void validateTargetCanChange(UserMemory memory) {
+        if (memory.getStatus() == MemoryStatus.DELETED || memory.getStatus() == MemoryStatus.INACTIVE) {
+            throw new CustomException(ErrorCode.RESOURCE_NOT_FOUND);
+        }
+    }
+
     private void validateMemoryScore(Double importance, Double confidence) {
         if (!isStorableScore(importance, confidence)) {
             throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
@@ -332,6 +403,13 @@ public class UserMemoryService {
 
     private boolean isStorableScore(Double importance, Double confidence) {
         return importance >= MIN_IMPORTANCE_TO_STORE && confidence >= MIN_CONFIDENCE_TO_STORE;
+    }
+
+    private MemoryOperationType resolveOperationType(MemoryOperationType operationType) {
+        if (operationType == null) {
+            return MemoryOperationType.ADD;
+        }
+        return operationType;
     }
 
     private void validateMemoryType(MemoryType memoryType) {
@@ -367,6 +445,15 @@ public class UserMemoryService {
             return;
         }
         if (expiresAt == null || !expiresAt.isAfter(LocalDateTime.now())) {
+            throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
+        }
+    }
+
+    private void validateValidityRange(LocalDateTime validFrom, LocalDateTime validUntil) {
+        if (validFrom == null || validUntil == null) {
+            return;
+        }
+        if (!validUntil.isAfter(validFrom)) {
             throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
         }
     }
@@ -456,7 +543,13 @@ public class UserMemoryService {
     }
 
     private boolean isNotExpired(UserMemory memory, LocalDateTime now) {
-        return memory.getExpiresAt() == null || memory.getExpiresAt().isAfter(now);
+        return isCurrentlyValid(memory, now) && (memory.getExpiresAt() == null || memory.getExpiresAt().isAfter(now));
+    }
+
+    private boolean isCurrentlyValid(UserMemory memory, LocalDateTime now) {
+        boolean started = memory.getValidFrom() == null || !memory.getValidFrom().isAfter(now);
+        boolean notEnded = memory.getValidUntil() == null || memory.getValidUntil().isAfter(now);
+        return started && notEnded;
     }
 
     private String buildEmbeddingText(UserMemory memory) {
@@ -467,8 +560,16 @@ public class UserMemoryService {
             memory.getScopeType().name(),
             nullToEmpty(memory.getSummary()),
             memory.getContent(),
+            nullToEmpty(memory.getEvidence()),
             memory.getMetadata() == null ? "" : memory.getMetadata().toString()
         );
+    }
+
+    private LocalDateTime resolveValidFrom(LocalDateTime validFrom) {
+        if (validFrom == null) {
+            return LocalDateTime.now();
+        }
+        return validFrom;
     }
 
     private List<Double> parseEmbedding(String embeddingText) {

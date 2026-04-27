@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryCandidatesRequest;
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryRequest;
+import com.ssafy.heygent.domain.memory.dto.request.MarkMemoryUsedRequest;
 import com.ssafy.heygent.domain.memory.dto.response.UserMemoryResponse;
 import com.ssafy.heygent.domain.memory.entity.MemoryScopeType;
 import com.ssafy.heygent.domain.memory.entity.MemoryStoreType;
@@ -97,6 +98,16 @@ public class UserMemoryController {
     ) {
         userMemoryService.delete(resolveUserId(user), memoryId);
         return ApiResponse.success();
+    }
+
+    @Operation(summary = "장기기억 사용 피드백", description = "AI 응답에 실제 사용된 장기기억을 기록합니다.")
+    @PostMapping("/{memoryId}/used")
+    public ApiResponse<UserMemoryResponse> markMemoryUsed(
+        @AuthenticationPrincipal CustomUserPrincipal user,
+        @PathVariable Long memoryId,
+        @Valid @RequestBody MarkMemoryUsedRequest request
+    ) {
+        return ApiResponse.success(userMemoryService.markUsed(resolveUserId(user), memoryId, request));
     }
 
     private Long resolveUserId(CustomUserPrincipal user) {
