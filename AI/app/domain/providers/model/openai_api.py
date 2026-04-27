@@ -1,13 +1,19 @@
 from __future__ import annotations
-
-import json
 from typing import Any
 
 import httpx
 
-from app.contracts.provider.provider_response import ProviderAuthResponse, ProviderConnectionResponse, ProviderGenerateResponse, ProviderHealthResponse
+from app.contracts.provider.provider_response import ProviderAuthResponse, ProviderConnectionResponse, ProviderHealthResponse
 from app.core.config import Settings
-from app.domain.providers.model.base import BaseProvider
+from app.domain.providers.model.base import (
+    AgentMessage,
+    AgentModelResponse,
+    BaseProvider,
+    ToolResultMessage,
+    build_agent_model_response,
+    messages_to_responses_input,
+    tools_to_responses_tools,
+)
 
 
 class OpenAIAPIProvider(BaseProvider):
@@ -87,67 +93,92 @@ class OpenAIAPIProvider(BaseProvider):
             detail="API key provider 는 .env 또는 환경 변수에서 관리됩니다. 연결 해제는 HEYGENT_OPENAI_API_KEY 제거로 처리합니다",
         )
 
-    def generate(self, prompt: str, **kwargs) -> ProviderGenerateResponse:
+    def respond(
+        self,
+        messages: list[AgentMessage | ToolResultMessage | dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str,
+        tool_choice: dict[str, Any] | str | None = None,
+    ) -> AgentModelResponse:
+        requested_model = str(model or self.settings.openai_response_model).strip() or self.settings.openai_response_model
         if not self.settings.openai_api_key:
-            return ProviderGenerateResponse(
-                provider_name=self.name,
-                output_text=f"[stub:{self.name}] {prompt.strip()[:120]}",
-                usage={"prompt_tokens": max(1, len(prompt.split()))},
-                metadata={
-                    "mode": "stub",
-                    "auth_type": self.auth_type,
-                    "connected": False,
-                    **kwargs,
-                },
-            )
+            return self._stub_agent_response(messages=messages, model=requested_model)
 
-        model = str(kwargs.get("model") or self.settings.openai_response_model).strip() or self.settings.openai_response_model
+        request_body = self._build_responses_request_body(
+            messages=messages,
+            tools=tools,
+            model=requested_model,
+            tool_choice=tool_choice,
+        )
         response = httpx.post(
             f"{self.settings.openai_rest_api_base_url.rstrip('/')}/responses",
             headers={
                 "Authorization": f"Bearer {self.settings.openai_api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": model,
-                "store": False,
-                "input": prompt,
-                "text": {"verbosity": str(kwargs.get("verbosity") or "medium")},
-            },
+            json=request_body,
             timeout=60.0,
         )
         response.raise_for_status()
-        body = response.json()
-        return ProviderGenerateResponse(
+        return build_agent_model_response(
             provider_name=self.name,
-            output_text=self._extract_output_text(body),
-            usage=body.get("usage") if isinstance(body.get("usage"), dict) else {},
+            requested_model=requested_model,
+            response_json=response.json(),
             metadata={
                 "mode": "live",
                 "auth_type": self.auth_type,
                 "connected": True,
-                "response_id": body.get("id"),
-                "model": body.get("model", model),
-                **kwargs,
+                "tool_choice": tool_choice,
+            },
+        )
+
+    def _build_responses_request_body(
+        self,
+        *,
+        messages: list[AgentMessage | ToolResultMessage | dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str,
+        tool_choice: dict[str, Any] | str | None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "model": model,
+            "store": False,
+            "input": messages_to_responses_input(messages),
+        }
+        normalized_tools = tools_to_responses_tools(tools)
+        if normalized_tools:
+            body["tools"] = normalized_tools
+        if tool_choice is not None:
+            body["tool_choice"] = tool_choice
+        return body
+
+    def _stub_agent_response(
+        self,
+        *,
+        messages: list[AgentMessage | ToolResultMessage | dict[str, Any]],
+        model: str,
+    ) -> AgentModelResponse:
+        preview = self._message_preview(messages)
+        output_text = f"[stub:{self.name}] {preview}"
+        message = AgentMessage(role="assistant", content=output_text)
+        return AgentModelResponse(
+            provider_name=self.name,
+            model=model,
+            message=message,
+            output_text=output_text,
+            finish_reason="stop",
+            raw_response={"mode": "stub"},
+            metadata={
+                "mode": "stub",
+                "auth_type": self.auth_type,
+                "connected": False,
             },
         )
 
     @staticmethod
-    def _extract_output_text(response_json: dict[str, Any]) -> str:
-        direct = response_json.get("output_text")
-        if isinstance(direct, str) and direct.strip():
-            return direct
-
-        collected: list[str] = []
-        for item in response_json.get("output", []):
-            if not isinstance(item, dict):
-                continue
-            for content in item.get("content", []):
-                if not isinstance(content, dict):
-                    continue
-                text = content.get("text")
-                if content.get("type") in {"output_text", "text"} and isinstance(text, str) and text:
-                    collected.append(text)
-        if collected:
-            return "\n".join(collected)
-        return json.dumps(response_json, ensure_ascii=False)
+    def _message_preview(messages: list[AgentMessage | ToolResultMessage | dict[str, Any]]) -> str:
+        for message in reversed(messages):
+            content = message.content if isinstance(message, AgentMessage) else message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()[:120]
+        return ""

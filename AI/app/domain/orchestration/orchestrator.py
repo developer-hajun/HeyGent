@@ -26,7 +26,11 @@ class Orchestrator:
         approval = self.repository.get_open_approval(task_run_id)
         if approval is None:
             raise ValueError("no open approval")
-        resolved_approval_id = approval_id or approval["approval_id"]
+        resolved_approval_id = str(approval_id or "").strip()
+        if not resolved_approval_id:
+            raise ValueError("approval id is required")
+        if resolved_approval_id != approval["approval_id"]:
+            raise ValueError("approval id does not match open approval")
         task.current_step_run_id = approval["step_run_id"]
         return await self.loop_runner.resume(task=task, approval_id=resolved_approval_id, payload=payload)
 

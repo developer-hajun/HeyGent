@@ -7,7 +7,7 @@ from app.tools.contracts import TaskExecutor
 
 @dataclass(frozen=True, slots=True)
 class ToolEntry:
-    """Tool registry entry aligned with Hermes-style tool metadata."""
+    """agent.loop registry entry 에 필요한 실행 metadata 다."""
 
     name: str
     toolset: str

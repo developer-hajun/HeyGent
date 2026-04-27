@@ -12,17 +12,9 @@ class ToolsetDefinition:
 
 
 TOOLSETS: dict[str, ToolsetDefinition] = {
-    "model": ToolsetDefinition(
-        description="LLM-backed response generation executor.",
-        tools=("model.generate",),
-    ),
-    "notion": ToolsetDefinition(
-        description="Notion page/database execution capabilities.",
-        tools=("notion.page.create", "notion.database.append"),
-    ),
     "core": ToolsetDefinition(
-        description="Union of the minimal runtime toolsets exposed by the current agent.",
-        includes=("model", "notion"),
+        description="Canonical agent loop executor.",
+        tools=("agent.loop",),
     ),
 }
 

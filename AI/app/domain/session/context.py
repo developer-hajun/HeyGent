@@ -7,7 +7,7 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class SessionSource:
-    """Hermes gateway/session.py 구조를 현재 백본에 맞게 단순화한 세션 출처 모델."""
+    """외부 연결에서 들어온 세션 출처를 단순화한 모델이다."""
 
     platform: str
     channel_id: str
@@ -74,7 +74,7 @@ class SessionSource:
 
 @dataclass(slots=True)
 class SessionContext:
-    """Hermes SessionContext 개념을 현재 백본에 맞게 유지한 대화 세션 문맥."""
+    """프롬프트에 넣을 대화 세션 문맥이다."""
 
     source: SessionSource
     connected_platforms: list[str] = field(default_factory=list)
@@ -99,7 +99,7 @@ class SessionContext:
 
 
 def build_session_context_prompt(context: SessionContext) -> str:
-    """Hermes build_session_context_prompt 를 축약 적용한 프롬프트 문맥."""
+    """세션 정보를 모델이 읽을 수 있는 프롬프트 문맥으로 바꾼다."""
 
     lines = [
         "## Current Session Context",
@@ -151,7 +151,7 @@ def build_session_key(
     group_sessions_per_user: bool = True,
     thread_sessions_per_user: bool = False,
 ) -> str:
-    """Hermes build_session_key 규칙을 현재 구조에 맞게 유지한다."""
+    """같은 대화를 다시 찾기 위한 안정적인 session key를 만든다."""
 
     platform = source.platform
     if source.channel_type == "dm":

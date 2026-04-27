@@ -40,7 +40,7 @@ class TaskRun:
     # 작업이 끝난 뒤 최종 결과를 담는 payload.
     # API 응답, 후속 처리, 디버깅에서 최종 산출물을 재사용할 수 있게 한다.
     result_payload: dict[str, Any] = field(default_factory=dict)
-    # Hermes식 todo/task list 의 canonical 상태.
+    # agent 내부 todo/task list 의 canonical 상태.
     # step detail 안쪽 planning patch 와 별도로, task 단위에서 다음 작업 목록을 유지한다.
     todo_state: dict[str, Any] = field(default_factory=dict)
     # 사용자 승인 등으로 멈춘 이유와 재개에 필요한 문맥.

@@ -1,251 +1,607 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
-from app.domain.orchestration.agent.response_parser import AgentResponseParser
+from app.core.utils.ids import new_id
+from app.domain.orchestration.agent.tool_guard import ToolGuard, ToolGuardDecision, ToolGuardResult
+from app.domain.providers.model.base import AgentMessage, ToolResultMessage
 from app.domain.orchestration.runtime_planning.todo_state import (
     apply_tool_results_to_todo_state,
     build_task_todo_payload,
     build_todo_detail_patch,
     parse_task_todo_payload,
 )
-from app.domain.tasks.detail import build_model_decision_detail
 
 
 class ToolCallingLoopExecutor:
-    """Run a lightweight Hermes-style tool loop over the current provider."""
+    """현재 provider 위에서 native tool call(모델이 구조화된 도구 호출을 직접 반환하는 방식) loop를 실행한다."""
 
-    def __init__(self, provider, prompt_builder, tool_runtime, tool_catalog) -> None:
+    def __init__(self, provider, prompt_builder, tool_runtime, tool_catalog, session_store=None, tool_guard=None) -> None:
         self.provider = provider
         self.prompt_builder = prompt_builder
         self.tool_runtime = tool_runtime
         self.tool_catalog = tool_catalog
-        self.response_parser = AgentResponseParser()
+        self.session_store = session_store
+        self.tool_guard = tool_guard or ToolGuard()
 
     def execute(self, *, task, step, resume_payload=None) -> dict[str, Any]:
         task_input = dict(task.input_payload or {})
+        # 요청 payload의 workspace_root는 API 호출자가 선택한 이번 실행 root로 바인딩한다.
+        request_tool_runtime = self._bind_request_tool_runtime(task_input.get("workspace_root"))
         requested_toolsets = self._requested_toolsets(task_input)
         available_tools = self.tool_catalog.list_available_tools(requested_toolsets=requested_toolsets)
-        available_tool_names = {tool["name"] for tool in available_tools}
         operation_counters: dict[str, int] = {}
-
-        pending_tool_calls = self._normalize_calls(task_input.get("tool_calls"))
-        all_tool_results: list[dict[str, Any]] = []
-        operations: list[dict[str, Any]] = []
-        last_executed_tool_batch_signature: tuple[str, ...] | None = None
-        last_prompt = ""
-        generated = None
-        llm_call_count = 0
         current_todo_state = dict(task.todo_state or {})
 
-        if resume_payload is not None and not bool(resume_payload.get("approved", False)):
-            if pending_tool_calls:
-                batch_result = self._execute_tool_calls(
-                    pending_tool_calls,
-                    available_tool_names,
+        return self._execute_native(
+            task=task,
+            step=step,
+            task_input=task_input,
+            available_tools=available_tools,
+            requested_toolsets=requested_toolsets,
+            tool_runtime=request_tool_runtime,
+            resume_payload=resume_payload,
+            operation_counters=operation_counters,
+            current_todo_state=current_todo_state,
+        )
+
+    def _execute_native(
+        self,
+        *,
+        task,
+        step,
+        task_input: dict[str, Any],
+        available_tools: list[dict[str, Any]],
+        requested_toolsets: tuple[str, ...] | None,
+        tool_runtime,
+        resume_payload: dict[str, Any] | None,
+        operation_counters: dict[str, int],
+        current_todo_state: dict[str, Any],
+    ) -> dict[str, Any]:
+        """모델 응답과 runtime tool 실행을 번갈아 수행한다.
+
+        모델이 tool_calls 없이 최종 텍스트를 반환하면 loop를 종료하고, tool_calls가 있으면
+        같은 대화 이력에 ToolResultMessage를 붙여 다음 모델 호출에서 이어서 판단하게 한다.
+        """
+
+        all_tool_results: list[dict[str, Any]] = []
+        operations: list[dict[str, Any]] = []
+        max_iterations = self._max_iterations(task_input)
+        model = self._optional_text(task_input.get("model")) or self._provider_default_model()
+        transcript_session_id = self._ensure_transcript_session(task=task, task_input=task_input, model=model)
+        provider_tools, provider_tool_name_map = self._provider_tool_schemas(available_tools)
+        prompt_tools = self._provider_prompt_tools(available_tools, provider_tool_name_map)
+        prompt = self.prompt_builder.build_agent_loop_prompt(
+            input_payload=task_input,
+            available_tools=prompt_tools,
+            tool_results=[],
+            task_todo_state=current_todo_state,
+            resume_payload=resume_payload,
+            turn_index=1,
+            max_iterations=max_iterations,
+        )
+        messages = self._load_transcript_messages(transcript_session_id)
+        guard_task_input = self._task_input_for_guard(task_input=task_input, step=step, resume_payload=resume_payload)
+        if resume_payload is not None:
+            # resume은 WAITING 상태였던 StepRun(사용자에게 보이는 의미 단계의 실행 anchor)을 이어서 처리한다.
+            resumed_tool_result = self._resolve_pending_tool_after_resume(
+                step=step,
+                resume_payload=resume_payload,
+                requested_toolsets=requested_toolsets,
+                tool_runtime=tool_runtime,
+            )
+            if resumed_tool_result is not None:
+                self._append_tool_result_observation(
+                    tool_result=resumed_tool_result,
+                    all_tool_results=all_tool_results,
+                    messages=messages,
+                    transcript_session_id=transcript_session_id,
+                    operations=operations,
                     operation_counters=operation_counters,
                 )
-                all_tool_results.extend(batch_result["tool_results"])
-                operations.extend(batch_result["operations"])
-                current_todo_state = self._next_todo_state(current_todo_state, batch_result["tool_results"])
-            return self._build_canceled_outcome(
-                tool_results=all_tool_results,
-                operations=operations,
-                resume_payload=resume_payload,
-                todo_state=current_todo_state,
-                operation_counters=operation_counters,
-            )
-
-        max_iterations = self._max_iterations(task_input)
-        final_text: str | None = None
-        delegate_prompt = self._optional_text(task_input.get("delegate_prompt"))
-        delegate_skill_hints = self._string_list(
-            task_input.get("delegate_skill_hints") or task_input.get("skill_hints")
-        )
-        delegate_summary_prompt = self._optional_text(task_input.get("delegate_summary_prompt"))
+                messages = self._order_tool_results_for_replay(messages)
+                current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
+        user_message = AgentMessage(role="user", content=prompt)
+        messages.append(user_message)
+        self._append_transcript_message(transcript_session_id, user_message)
+        generated = None
+        llm_call_count = 0
 
         for turn_index in range(1, max_iterations + 1):
-            if pending_tool_calls:
-                try:
-                    batch_result = self._execute_tool_calls(
-                        pending_tool_calls,
-                        available_tool_names,
-                        operation_counters=operation_counters,
-                    )
-                except KeyError as error:
-                    return self._build_failed_outcome(
-                        error_message=str(error.args[0]),
-                        tool_results=all_tool_results,
-                        operations=operations,
-                        llm_call_count=llm_call_count,
-                        model_name=self._model_name(generated, task_input),
-                        todo_state=current_todo_state,
-                        operation_counters=operation_counters,
-                        directive=None,
-                    )
-                all_tool_results.extend(batch_result["tool_results"])
-                operations.extend(batch_result["operations"])
-                current_todo_state = self._next_todo_state(current_todo_state, batch_result["tool_results"])
-                last_executed_tool_batch_signature = self._tool_call_signature(pending_tool_calls)
-                pending_tool_calls = []
-
-            if task_input.get("approval_required") and resume_payload is None and turn_index == 1:
-                approval_reason = str(task_input.get("approval_reason") or "사용자 확인이 필요합니다")
-                return self._build_waiting_outcome(
-                    tool_results=all_tool_results,
-                    operations=operations,
-                    approval_reason=approval_reason,
-                    llm_call_count=llm_call_count,
-                    model_name=self._model_name(generated, task_input),
-                    todo_state=current_todo_state,
-                    operation_counters=operation_counters,
-                    directive=None,
-                )
-
-            last_prompt = self.prompt_builder.build_agent_loop_prompt(
-                input_payload=task_input,
-                available_tools=available_tools,
-                tool_results=all_tool_results,
-                task_todo_state=current_todo_state,
-                resume_payload=resume_payload,
-                turn_index=turn_index,
-                max_iterations=max_iterations,
-            )
-            generated = self.provider.generate(
-                last_prompt,
-                purpose="task_loop",
-                model=task_input.get("model"),
+            generated = self.provider.respond(
+                messages=messages,
+                tools=provider_tools,
+                model=model,
+                tool_choice=None,
             )
             llm_call_count += 1
-
-            directive = self.response_parser.parse(generated.output_text)
-
+            messages.append(generated.message)
+            self._append_transcript_message(transcript_session_id, generated.message, finish_reason=generated.finish_reason)
             operations.append(
                 {
                     "key": self._next_operation_key(
                         operation_counters,
                         namespace="llm",
-                        base_key="generate",
+                        base_key="respond",
                     ),
                     "title": f"모델 응답 생성 {turn_index}",
                     "kind": "llm",
                     "status": "completed",
-                    "summary": directive.action_summary or generated.output_text[:80],
+                    "summary": generated.output_text[:80] or f"tool_calls={len(generated.tool_calls)}",
                 }
             )
-            if directive.approval_required and resume_payload is None:
-                approval_reason = directive.approval_reason or "사용자 확인이 필요합니다"
-                return self._build_waiting_outcome(
-                    tool_results=all_tool_results,
-                    operations=operations,
-                    approval_reason=approval_reason,
-                    llm_call_count=llm_call_count,
-                    model_name=self._model_name(generated, task_input),
-                    todo_state=current_todo_state,
-                    operation_counters=operation_counters,
-                    directive=directive,
-                )
 
-            if directive.delegate_prompt:
-                delegate_prompt = directive.delegate_prompt
-            if directive.delegate_skill_hints:
-                delegate_skill_hints = directive.delegate_skill_hints
-            if directive.delegate_summary_prompt:
-                delegate_summary_prompt = directive.delegate_summary_prompt
-
-            tool_call_guard = self._guard_tool_calls(
-                directive=directive,
-                turn_index=turn_index,
-                max_iterations=max_iterations,
-                last_executed_tool_batch_signature=last_executed_tool_batch_signature,
-            )
-            if tool_call_guard == "prefer_final":
-                final_text = directive.final_text or generated.output_text
-                break
-            if isinstance(tool_call_guard, str):
-                return self._build_failed_outcome(
-                    error_message=tool_call_guard,
+            if not generated.tool_calls:
+                final_text = generated.output_text
+                return self._build_completed_outcome(
+                    task_input=task_input,
+                    prompt=prompt,
+                    generated=generated,
+                    final_text=final_text,
                     tool_results=all_tool_results,
                     operations=operations,
                     llm_call_count=llm_call_count,
-                    model_name=self._model_name(generated, task_input),
+                    resume_payload=resume_payload,
                     todo_state=current_todo_state,
                     operation_counters=operation_counters,
-                    directive=directive,
                 )
 
-            if directive.tool_calls:
-                pending_tool_calls = directive.tool_calls
-                continue
+            for tool_call_index, tool_call in enumerate(generated.tool_calls):
+                runtime_tool_name = self._runtime_tool_name(tool_call.name, provider_tool_name_map)
+                guard_result = self.tool_guard.evaluate(
+                    task_input=guard_task_input,
+                    tool_call_id=tool_call.id,
+                    tool_name=runtime_tool_name,
+                    arguments=tool_call.arguments,
+                )
+                decision = self._guard_decision(guard_result)
+                if decision == ToolGuardDecision.NEEDS_APPROVAL:
+                    pending = {
+                        "pending_tool_call_id": tool_call.id,
+                        "pending_tool_name": runtime_tool_name,
+                        "pending_tool_arguments": tool_call.arguments,
+                        "transcript_session_id": transcript_session_id,
+                        "approval_policy_result": self._guard_payload(guard_result),
+                        "resume_decision": "pending",
+                    }
+                    for sibling_call in generated.tool_calls[tool_call_index + 1 :]:
+                        sibling_runtime_name = self._runtime_tool_name(sibling_call.name, provider_tool_name_map)
+                        sibling_result = {
+                            "tool_call_id": sibling_call.id,
+                            "name": sibling_runtime_name,
+                            "args": sibling_call.arguments,
+                            "result": self._deferred_tool_result(
+                                pending_tool_call_id=tool_call.id,
+                                pending_tool_name=runtime_tool_name,
+                                deferred_tool_name=sibling_runtime_name,
+                            ),
+                        }
+                        # approval 대기 때문에 이번 turn에서 실행하지 않은 sibling tool_call도
+                        # tool result를 남겨 resume/replay 때 provider 입력 불변식이 깨지지 않게 한다.
+                        self._append_tool_result_observation(
+                            tool_result=sibling_result,
+                            all_tool_results=all_tool_results,
+                            messages=messages,
+                            transcript_session_id=transcript_session_id,
+                            operations=operations,
+                            operation_counters=operation_counters,
+                        )
+                    current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
+                    # 승인 대기는 실행 직전 tool action snapshot만 저장하고 StepRun/TaskRun을 WAITING으로 돌려준다.
+                    outcome = self._build_waiting_outcome(
+                        tool_results=all_tool_results,
+                        operations=operations,
+                        approval_reason=guard_result.reason or f"{runtime_tool_name} 실행 전 승인이 필요합니다",
+                        llm_call_count=llm_call_count,
+                        model_name=self._model_name(generated, task_input),
+                        todo_state=current_todo_state,
+                        operation_counters=operation_counters,
+                    )
+                    outcome["wait_payload"] = {**outcome.get("wait_payload", {}), **pending}
+                    outcome["approval_payload"] = {**outcome.get("approval_payload", {}), **pending}
+                    return outcome
 
-            final_text = directive.final_text or generated.output_text
-            break
-
-        if final_text is None and pending_tool_calls:
-            return self._build_failed_outcome(
-                error_message="tool-calling loop reached max iterations before producing a final response",
-                tool_results=all_tool_results,
-                operations=operations,
-                llm_call_count=llm_call_count,
-                model_name=self._model_name(generated, task_input),
-                todo_state=current_todo_state,
-                operation_counters=operation_counters,
-                directive=None,
-            )
-
-        if final_text is None:
-            final_text = generated.output_text if generated is not None else ""
+                if decision == ToolGuardDecision.BLOCK:
+                    # BLOCK도 전체 실패가 아니라 막힌 tool result로 transcript에 남겨 LLM이 다음 행동을 정한다.
+                    result = self._blocked_tool_result(guard_result)
+                else:
+                    result = self._run_native_tool_call(
+                        name=runtime_tool_name,
+                        args=tool_call.arguments,
+                        requested_toolsets=requested_toolsets,
+                        tool_runtime=tool_runtime,
+                    )
+                tool_result = {
+                    "tool_call_id": tool_call.id,
+                    "name": runtime_tool_name,
+                    "args": tool_call.arguments,
+                    "result": result,
+                }
+                self._append_tool_result_observation(
+                    tool_result=tool_result,
+                    all_tool_results=all_tool_results,
+                    messages=messages,
+                    transcript_session_id=transcript_session_id,
+                    operations=operations,
+                    operation_counters=operation_counters,
+                )
+            current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
 
         return self._build_completed_outcome(
             task_input=task_input,
-            prompt=last_prompt,
+            prompt=prompt,
             generated=generated,
-            final_text=final_text,
+            final_text=generated.output_text if generated is not None else "작업 반복 한도에 도달했습니다.",
             tool_results=all_tool_results,
             operations=operations,
             llm_call_count=llm_call_count,
-            delegate_prompt=delegate_prompt,
-            delegate_skill_hints=delegate_skill_hints,
-            delegate_summary_prompt=delegate_summary_prompt,
             resume_payload=resume_payload,
             todo_state=current_todo_state,
             operation_counters=operation_counters,
-            directive=directive if generated is not None else None,
         )
 
-    def _execute_tool_calls(
+    @classmethod
+    def _provider_tool_schemas(cls, available_tools: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        """provider가 허용하는 tool name으로 변환하고 runtime 이름으로 되돌릴 map을 만든다.
+
+        일부 provider의 function name은 점(.)을 허용하지 않으므로, `terminal.run` 같은 runtime tool은
+        provider 요청에서만 `terminal_run`으로 바꾼다. 내부 실행과 결과 표시는 원래 이름을 유지한다.
+        """
+
+        schemas: list[dict[str, Any]] = []
+        name_map: dict[str, str] = {}
+        used_names: set[str] = set()
+        for tool in available_tools:
+            schema = tool.get("schema")
+            if isinstance(schema, dict):
+                function_schema = dict(schema)
+                runtime_name = str(function_schema.get("name") or "").strip()
+                provider_name = cls._unique_provider_tool_name(runtime_name, used_names)
+                used_names.add(provider_name)
+                if provider_name != runtime_name:
+                    description = str(function_schema.get("description") or "").strip()
+                    suffix = f"Runtime tool name: {runtime_name}."
+                    function_schema["description"] = f"{description}\n{suffix}" if description else suffix
+                function_schema["name"] = provider_name
+                name_map[provider_name] = runtime_name or provider_name
+                schemas.append({"type": "function", "function": function_schema})
+        return schemas, name_map
+
+    @classmethod
+    def _unique_provider_tool_name(cls, runtime_name: str, used_names: set[str]) -> str:
+        base_name = cls._safe_provider_tool_name(runtime_name)
+        if base_name not in used_names:
+            return base_name
+        next_index = 2
+        while f"{base_name}_{next_index}" in used_names:
+            next_index += 1
+        return f"{base_name}_{next_index}"
+
+    @staticmethod
+    def _safe_provider_tool_name(runtime_name: str) -> str:
+        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", str(runtime_name or "").strip())
+        safe_name = re.sub(r"_+", "_", safe_name).strip("_")
+        return safe_name or "tool"
+
+    @staticmethod
+    def _runtime_tool_name(provider_tool_name: str, provider_tool_name_map: dict[str, str]) -> str:
+        return provider_tool_name_map.get(provider_tool_name, provider_tool_name)
+
+    @staticmethod
+    def _provider_prompt_tools(available_tools: list[dict[str, Any]], provider_tool_name_map: dict[str, str]) -> list[dict[str, Any]]:
+        runtime_to_provider_name = {runtime_name: provider_name for provider_name, runtime_name in provider_tool_name_map.items()}
+        prompt_tools: list[dict[str, Any]] = []
+        for tool in available_tools:
+            item = dict(tool)
+            runtime_name = str(item.get("name") or "").strip()
+            provider_name = runtime_to_provider_name.get(runtime_name, runtime_name)
+            if provider_name != runtime_name:
+                summary = str(item.get("summary") or "").strip()
+                item["summary"] = f"{summary} runtime name: {runtime_name}".strip()
+            item["name"] = provider_name
+            prompt_tools.append(item)
+        return prompt_tools
+
+    def _ensure_transcript_session(self, *, task, task_input: dict[str, Any], model: str) -> str | None:
+        """기존 SessionStore가 있으면 agent.loop transcript(모델 왕복 기록)를 같은 세션에 묶는다."""
+
+        if self.session_store is None:
+            return None
+        session_key = str(getattr(task, "session_key", "") or getattr(task, "task_run_id", "")).strip()
+        if not session_key:
+            return None
+        latest = self.session_store.get_latest_session_by_key(session_key)
+        if latest is not None:
+            return str(latest["id"])
+        session_id = new_id("session")
+        self.session_store.create_session(
+            session_id=session_id,
+            session_key=session_key,
+            source="agent.loop",
+            user_id=getattr(task, "owner_key", None),
+            model=model,
+            title=str(getattr(task, "title", "") or task_input.get("prompt") or session_key)[:120],
+            metadata={"task_run_id": getattr(task, "task_run_id", None)},
+        )
+        return session_id
+
+    def _load_transcript_messages(self, session_id: str | None) -> list[AgentMessage | ToolResultMessage]:
+        """저장된 transcript를 provider 재호출 입력으로 복원한다.
+
+        resume/replay에서는 이전 assistant tool_calls와 tool result(tool 실행 결과를 모델에게 다시 넘기는 메시지)를
+        같은 순서로 되살려야 provider가 대화 불변식을 유지할 수 있다.
+        """
+
+        if self.session_store is None or not session_id:
+            return []
+
+        messages: list[AgentMessage | ToolResultMessage] = []
+        for row in self.session_store.list_messages(session_id):
+            role = str(row.get("role") or "")
+            if role == "tool":
+                tool_call_id = str(row.get("tool_call_id") or "")
+                if tool_call_id:
+                    messages.append(ToolResultMessage(tool_call_id=tool_call_id, content=str(row.get("content") or "")))
+                continue
+            if role in {"system", "developer", "user", "assistant"}:
+                messages.append(
+                    AgentMessage(
+                        role=role,
+                        content=row.get("content"),
+                        tool_calls=list(row.get("tool_calls") or []),
+                        metadata=dict(row.get("metadata") or {}),
+                    )
+                )
+        return self._order_tool_results_for_replay(messages)
+
+    @staticmethod
+    def _order_tool_results_for_replay(messages: list[AgentMessage | ToolResultMessage]) -> list[AgentMessage | ToolResultMessage]:
+        """assistant tool_calls 뒤의 tool result 순서를 provider replay 규칙에 맞춘다.
+
+        approval 대기 중에는 pending tool result가 resume 이후에 저장될 수 있다. DB 저장 시각은 늦더라도
+        provider 입력은 assistant가 만든 tool_call 순서대로 재배치해야 function_call과 output 대응이 안정적이다.
+        """
+
+        ordered: list[AgentMessage | ToolResultMessage] = []
+        index = 0
+        while index < len(messages):
+            message = messages[index]
+            ordered.append(message)
+            index += 1
+            if not isinstance(message, AgentMessage) or message.role != "assistant" or not message.tool_calls:
+                continue
+
+            tool_messages: list[ToolResultMessage] = []
+            while index < len(messages) and isinstance(messages[index], ToolResultMessage):
+                tool_messages.append(messages[index])
+                index += 1
+            by_call_id = {tool_message.tool_call_id: tool_message for tool_message in tool_messages}
+            emitted_ids: set[str] = set()
+            for tool_call in message.tool_calls:
+                tool_message = by_call_id.get(tool_call.id)
+                if tool_message is not None:
+                    ordered.append(tool_message)
+                    emitted_ids.add(tool_message.tool_call_id)
+            ordered.extend(tool_message for tool_message in tool_messages if tool_message.tool_call_id not in emitted_ids)
+        return ordered
+
+    def _append_transcript_message(
         self,
-        calls: list[dict[str, Any]],
-        available_tool_names: set[str],
+        session_id: str | None,
+        message: AgentMessage | ToolResultMessage,
         *,
-        operation_counters: dict[str, int],
+        tool_name: str | None = None,
+        finish_reason: str | None = None,
+    ) -> None:
+        if self.session_store is None or not session_id:
+            return
+
+        tool_calls = [tool_call.model_dump(mode="json") for tool_call in message.tool_calls]
+        self.session_store.append_message(
+            session_id=session_id,
+            role=message.role,
+            content=self._message_content_text(message.content),
+            tool_name=tool_name,
+            tool_call_id=message.tool_call_id,
+            tool_calls=tool_calls,
+            finish_reason=finish_reason,
+            metadata=message.metadata,
+        )
+
+    @staticmethod
+    def _message_content_text(content: str | list[dict[str, Any]] | None) -> str | None:
+        if content is None or isinstance(content, str):
+            return content
+        return json.dumps(content, ensure_ascii=False)
+
+    def _run_native_tool_call(
+        self,
+        *,
+        name: str,
+        args: dict[str, Any],
+        requested_toolsets: tuple[str, ...] | None,
+        tool_runtime,
     ) -> dict[str, Any]:
-        tool_results: list[dict[str, Any]] = []
-        operations: list[dict[str, Any]] = []
-        for call in calls:
-            name = str(call.get("name") or "").strip()
-            args = dict(call.get("args") or {})
-            if name not in available_tool_names:
-                raise KeyError(f"unknown or disabled runtime tool: {name}")
-            result = self.tool_runtime.run_call(name=name, args=args)
-            tool_results.append({"name": name, "args": args, "result": result})
-            operations.append(
-                {
-                    "key": self._next_operation_key(
-                        operation_counters,
-                        namespace="tool",
-                        base_key=name,
-                    ),
-                    "title": name,
-                    "kind": "tool",
-                    "status": "completed",
-                    "summary": self._tool_summary(result),
-                }
+        """이미 정규화된 native tool call 이름과 인자를 local runtime으로 넘긴다."""
+
+        return tool_runtime.run_call(
+            name=name,
+            args=args,
+            enabled_toolsets=requested_toolsets,
+        )
+
+    def _bind_request_tool_runtime(self, workspace_root: Any):
+        binder = getattr(self.tool_runtime, "bind_workspace_root", None)
+        if callable(binder):
+            return binder(workspace_root)
+        return self.tool_runtime
+
+    @staticmethod
+    def _task_input_for_guard(*, task_input: dict[str, Any], step, resume_payload: dict[str, Any] | None) -> dict[str, Any]:
+        guard_input = dict(task_input)
+        if not bool((resume_payload or {}).get("approved", False)) or step is None:
+            return guard_input
+
+        pending_payload = dict(getattr(step, "wait_payload", None) or {})
+        approval_policy = dict(pending_payload.get("approval_policy_result") or {})
+        if approval_policy.get("source") != "legacy_input_payload":
+            return guard_input
+
+        # 승인된 resume 문맥은 같은 TaskRun(사용자 요청 전체 실행)의 전역 approval_required 재차단만 피하게 한다.
+        # tool별 위험 정책은 별도 guard 판단으로 계속 적용될 수 있도록 원본 입력은 보존하고 내부 marker만 덧붙인다.
+        guard_input["_approved_resume_context"] = {
+            "approved": True,
+            "source": approval_policy.get("source"),
+            "pending_tool_call_id": pending_payload.get("pending_tool_call_id"),
+            "pending_tool_name": pending_payload.get("pending_tool_name"),
+        }
+        return guard_input
+
+    def _resolve_pending_tool_after_resume(
+        self,
+        *,
+        step,
+        resume_payload: dict[str, Any],
+        requested_toolsets: tuple[str, ...] | None,
+        tool_runtime,
+    ) -> dict[str, Any] | None:
+        """승인 재개 응답에 따라 저장해 둔 pending tool call의 결과를 먼저 만든다.
+
+        이렇게 해야 승인 전 assistant가 만든 tool_call_id(도구 호출 식별자)에 정확히 대응하는
+        ToolResultMessage를 transcript에 붙이고, 같은 도구를 모델에게 다시 고르게 만들지 않는다.
+        """
+
+        if step is None:
+            return None
+        pending_payload = dict(getattr(step, "wait_payload", None) or {})
+        call_id = str(pending_payload.get("pending_tool_call_id") or "").strip()
+        tool_name = str(pending_payload.get("pending_tool_name") or "").strip()
+        args = pending_payload.get("pending_tool_arguments")
+        if not call_id or not tool_name or not isinstance(args, dict):
+            return None
+        if bool(resume_payload.get("approved", False)):
+            result = self._run_native_tool_call(
+                name=tool_name,
+                args=args,
+                requested_toolsets=requested_toolsets,
+                tool_runtime=tool_runtime,
             )
-        return {"tool_results": tool_results, "operations": operations}
+        else:
+            # 거절된 approval도 원래 tool_call_id에 대한 tool result를 남겨 provider replay 불변식을 맞춘다.
+            reason = str(resume_payload.get("reason") or resume_payload.get("message") or "사용자가 도구 실행을 거절했습니다")
+            guard_payload = dict(pending_payload.get("approval_policy_result") or {})
+            result = self._blocked_tool_result(
+                ToolGuardResult(
+                    decision=ToolGuardDecision.BLOCK,
+                    reason=reason,
+                    payload={**guard_payload, "resume_decision": "rejected"},
+                )
+            )
+        return {
+            "tool_call_id": call_id,
+            "name": tool_name,
+            "args": args,
+            "result": result,
+        }
+
+    def _append_tool_result_observation(
+        self,
+        *,
+        tool_result: dict[str, Any],
+        all_tool_results: list[dict[str, Any]],
+        messages: list[AgentMessage | ToolResultMessage],
+        transcript_session_id: str | None,
+        operations: list[dict[str, Any]],
+        operation_counters: dict[str, int],
+    ) -> None:
+        all_tool_results.append(tool_result)
+        tool_name = str(tool_result["name"])
+        result = tool_result["result"]
+        tool_message = ToolResultMessage(
+            tool_call_id=str(tool_result["tool_call_id"]),
+            content=self._tool_result_content(result),
+        )
+        messages.append(tool_message)
+        self._append_transcript_message(transcript_session_id, tool_message, tool_name=tool_name)
+        # tool_call_id는 assistant가 보낸 호출 id와 정확히 맞아야 replay 시 결과를 대응시킬 수 있다.
+        operations.append(
+            {
+                "key": self._next_operation_key(
+                    operation_counters,
+                    namespace="tool",
+                    base_key=tool_name,
+                ),
+                "title": tool_name,
+                "kind": "tool",
+                "status": self._tool_operation_status(result),
+                "summary": self._tool_summary(result),
+            }
+        )
+
+    @staticmethod
+    def _guard_decision(guard_result: ToolGuardResult) -> ToolGuardDecision:
+        decision = guard_result.decision
+        if isinstance(decision, ToolGuardDecision):
+            return decision
+        return ToolGuardDecision(str(decision))
+
+    @staticmethod
+    def _guard_payload(guard_result: ToolGuardResult) -> dict[str, Any]:
+        if hasattr(guard_result, "to_payload"):
+            return guard_result.to_payload()
+        return {
+            **dict(getattr(guard_result, "payload", {}) or {}),
+            "decision": str(getattr(guard_result, "decision", "")),
+            "reason": getattr(guard_result, "reason", None),
+        }
+
+    def _blocked_tool_result(self, guard_result: ToolGuardResult) -> dict[str, Any]:
+        guard_payload = self._guard_payload(guard_result)
+        reason = str(guard_payload.get("reason") or "tool call blocked")
+        return {
+            "ok": False,
+            "content": f"Tool call blocked: {reason}",
+            "error": {
+                "code": "tool_blocked",
+                "message": reason,
+            },
+            "guard": guard_payload,
+        }
+
+    @staticmethod
+    def _deferred_tool_result(
+        *,
+        pending_tool_call_id: str,
+        pending_tool_name: str,
+        deferred_tool_name: str,
+    ) -> dict[str, Any]:
+        message = (
+            f"{pending_tool_name} 승인이 대기 중이라 {deferred_tool_name} 호출은 이번 turn에서 실행하지 않았습니다. "
+            "승인 이후에도 필요하면 모델이 다시 요청해야 합니다."
+        )
+        return {
+            "ok": False,
+            "content": message,
+            "error": {
+                "code": "tool_deferred_by_approval",
+                "message": message,
+            },
+            "guard": {
+                "decision": "DEFERRED_BY_APPROVAL",
+                "pending_tool_call_id": pending_tool_call_id,
+                "pending_tool_name": pending_tool_name,
+            },
+        }
+
+    @staticmethod
+    def _tool_result_content(result: dict[str, Any]) -> str:
+        if isinstance(result, dict) and isinstance(result.get("content"), str):
+            return str(result["content"])
+        return json.dumps(result, ensure_ascii=False)
 
     def _build_completed_outcome(
         self,
@@ -257,29 +613,23 @@ class ToolCallingLoopExecutor:
         tool_results: list[dict[str, Any]],
         operations: list[dict[str, Any]],
         llm_call_count: int,
-        delegate_prompt: str | None,
-        delegate_skill_hints: list[str],
-        delegate_summary_prompt: str | None,
         resume_payload: dict[str, Any] | None,
         todo_state: dict[str, Any],
         operation_counters: dict[str, int],
-        directive,
     ) -> dict[str, Any]:
+        """agent.loop 실행 결과를 TaskRun/StepRun 저장 형식에 맞춰 모은다."""
+
         provider_name = generated.provider_name if generated is not None else self.provider.name
         metadata = dict(generated.metadata or {}) if generated is not None else {}
         usage = dict(generated.usage or {}) if generated is not None else {}
         model_name = self._model_name(generated, task_input)
         tool_names = [str(item["name"]) for item in tool_results]
-        action_summary = directive.action_summary if directive is not None else None
-        handoff_summary = directive.handoff_summary if directive is not None else None
         result_payload = {
             "provider_name": provider_name,
             "text": final_text,
             "metadata": metadata,
             "tool_results": tool_results,
         }
-        if handoff_summary:
-            result_payload["handoff_summary"] = handoff_summary
         output_payload = {
             "prompt": prompt,
             "text": final_text,
@@ -287,16 +637,14 @@ class ToolCallingLoopExecutor:
             "tool_results": tool_results,
             "approval_response": resume_payload or {},
         }
-        if handoff_summary:
-            output_payload["handoff_summary"] = handoff_summary
         detail_json = self._build_detail_json(
             tool_names=tool_names,
             llm_call_count=llm_call_count,
             model_name=model_name,
-            delegated=bool(delegate_prompt),
             todo_state=todo_state,
-            directive=directive,
         )
+        observed_steps = self._observed_semantic_steps(tool_results)
+        step_summary = self._observed_step_summary(observed_steps)
         if resume_payload is not None:
             operations.append(
                 {
@@ -318,23 +666,10 @@ class ToolCallingLoopExecutor:
             "output_payload": output_payload,
             "detail_json": detail_json,
             "todo_state": todo_state,
-            "summary_message": action_summary or "tool-calling loop completed",
+            "observed_steps": observed_steps,
+            "summary_message": step_summary or final_text[:120] or "agent loop completed",
             "operations": operations,
         }
-        if delegate_prompt:
-            result_payload["delegation_requested"] = True
-            output_payload["delegation_requested"] = True
-            outcome["child_session"] = {
-                "intent_type": "model.generate",
-                "entry_executor_key": "model.generate",
-                "input_payload": {
-                    "prompt": delegate_prompt,
-                    "skill_hints": delegate_skill_hints,
-                    "model": task_input.get("model"),
-                },
-                "summary_prompt": delegate_summary_prompt or handoff_summary or action_summary or "child model task completed",
-                "metadata": {"source": "model.generate"},
-            }
         return outcome
 
     def _build_waiting_outcome(
@@ -347,10 +682,12 @@ class ToolCallingLoopExecutor:
         model_name: str | None,
         todo_state: dict[str, Any],
         operation_counters: dict[str, int],
-        directive,
     ) -> dict[str, Any]:
+        """approval 대기 상태를 TaskRun/StepRun 저장 형식으로 만든다."""
+
         tool_names = [str(item["name"]) for item in tool_results]
-        action_summary = directive.action_summary if directive is not None else None
+        observed_steps = self._observed_semantic_steps(tool_results)
+        step_summary = self._observed_step_summary(observed_steps)
         return {
             "task_status": TaskStatus.WAITING,
             "step_status": StepStatus.WAITING,
@@ -365,12 +702,11 @@ class ToolCallingLoopExecutor:
                 tool_names=tool_names,
                 llm_call_count=llm_call_count,
                 model_name=model_name,
-                delegated=False,
                 todo_state=todo_state,
-                directive=directive,
             ),
             "todo_state": todo_state,
-            "summary_message": action_summary or "approval required",
+            "observed_steps": observed_steps,
+            "summary_message": step_summary or "approval required",
             "approval_payload": {
                 "reason": approval_reason,
                 "tool_results": tool_results,
@@ -390,113 +726,6 @@ class ToolCallingLoopExecutor:
                 },
             ],
         }
-
-    def _build_canceled_outcome(
-        self,
-        *,
-        tool_results: list[dict[str, Any]],
-        operations: list[dict[str, Any]],
-        resume_payload: dict[str, Any],
-        todo_state: dict[str, Any],
-        operation_counters: dict[str, int],
-        directive=None,
-    ) -> dict[str, Any]:
-        tool_names = [str(item["name"]) for item in tool_results]
-        action_summary = directive.action_summary if directive is not None else None
-        return {
-            "task_status": TaskStatus.CANCELED,
-            "step_status": StepStatus.CANCELED,
-            "output_payload": {
-                "tool_results": tool_results,
-                "approval_response": resume_payload,
-            },
-            "detail_json": self._build_detail_json(
-                tool_names=tool_names,
-                llm_call_count=0,
-                model_name=None,
-                delegated=False,
-                todo_state=todo_state,
-                directive=directive,
-            ),
-            "todo_state": todo_state,
-            "summary_message": action_summary or "approval rejected",
-            "operations": [
-                *operations,
-                {
-                    "key": self._next_operation_key(
-                        operation_counters,
-                        namespace="approval",
-                        base_key="reject",
-                    ),
-                    "title": "사용자 승인 거절",
-                    "kind": "approval",
-                    "status": "completed",
-                    "summary": json.dumps(resume_payload, ensure_ascii=False),
-                },
-            ],
-        }
-
-    def _build_failed_outcome(
-        self,
-        *,
-        error_message: str,
-        tool_results: list[dict[str, Any]],
-        operations: list[dict[str, Any]],
-        llm_call_count: int,
-        model_name: str | None,
-        todo_state: dict[str, Any],
-        operation_counters: dict[str, int],
-        directive,
-    ) -> dict[str, Any]:
-        tool_names = [str(item["name"]) for item in tool_results]
-        action_summary = directive.action_summary if directive is not None else None
-        return {
-            "task_status": TaskStatus.FAILED,
-            "step_status": StepStatus.FAILED,
-            "output_payload": {
-                "tool_results": tool_results,
-            },
-            "detail_json": self._build_detail_json(
-                tool_names=tool_names,
-                llm_call_count=llm_call_count,
-                model_name=model_name,
-                delegated=False,
-                todo_state=todo_state,
-                directive=directive,
-            ),
-            "todo_state": todo_state,
-            "summary_message": action_summary or "tool-calling loop failed",
-            "error_message": error_message,
-            "operations": [
-                *operations,
-                {
-                    "key": self._next_operation_key(
-                        operation_counters,
-                        namespace="agent",
-                        base_key="loop",
-                    ),
-                    "title": "Tool-calling loop",
-                    "kind": "agent",
-                    "status": "failed",
-                    "summary": error_message,
-                },
-            ],
-        }
-
-    @staticmethod
-    def _normalize_calls(raw_calls: Any) -> list[dict[str, Any]]:
-        if not isinstance(raw_calls, list):
-            return []
-        normalized: list[dict[str, Any]] = []
-        for raw_call in raw_calls:
-            if not isinstance(raw_call, dict):
-                continue
-            name = str(raw_call.get("name") or "").strip()
-            if not name:
-                continue
-            args = raw_call.get("args")
-            normalized.append({"name": name, "args": dict(args) if isinstance(args, dict) else {}})
-        return normalized
 
     @staticmethod
     def _requested_toolsets(task_input: dict[str, Any]) -> tuple[str, ...] | None:
@@ -522,15 +751,17 @@ class ToolCallingLoopExecutor:
         stripped = value.strip()
         return stripped or None
 
-    @staticmethod
-    def _string_list(value: Any) -> list[str]:
-        if not isinstance(value, list):
-            return []
-        return [str(item).strip() for item in value if str(item).strip()]
+    def _provider_default_model(self) -> str:
+        settings = getattr(self.provider, "settings", None)
+        model = getattr(settings, "openai_response_model", None)
+        return str(model or "gpt-5.4").strip() or "gpt-5.4"
 
     @staticmethod
     def _model_name(generated, task_input: dict[str, Any]) -> str | None:
         if generated is not None:
+            model_attr = getattr(generated, "model", None)
+            if isinstance(model_attr, str) and model_attr.strip():
+                return model_attr.strip()
             metadata = generated.metadata or {}
             for key in ("model", "resolved_model"):
                 value = metadata.get(key)
@@ -541,21 +772,75 @@ class ToolCallingLoopExecutor:
             return model.strip()
         return None
 
+    @classmethod
+    def _observed_semantic_steps(cls, tool_results: list[dict[str, Any]]) -> list[dict[str, str]]:
+        observed: list[dict[str, str]] = []
+        for tool_result in tool_results:
+            if str(tool_result.get("name") or "") != "step":
+                continue
+            result = tool_result.get("result")
+            if not isinstance(result, dict) or result.get("ok") is False:
+                continue
+            raw_steps = result.get("steps")
+            if not isinstance(raw_steps, list):
+                continue
+            observed = [
+                normalized
+                for index, item in enumerate(raw_steps[:12])
+                if isinstance(item, dict)
+                for normalized in [cls._normalize_observed_step(item, index=index)]
+                if normalized is not None
+            ]
+        return observed
+
+    @staticmethod
+    def _normalize_observed_step(item: dict[str, Any], *, index: int) -> dict[str, str] | None:
+        title = str(item.get("title") or item.get("summary") or "").strip()
+        if not title:
+            return None
+        step_id = str(item.get("id") or f"step-{index + 1}").strip() or f"step-{index + 1}"
+        summary = str(item.get("summary") or title).strip()
+        goal = str(item.get("goal") or summary or title).strip()
+        status = str(item.get("status") or "pending").strip().lower()
+        if status not in {"pending", "in_progress", "completed", "cancelled"}:
+            status = "pending"
+        return {
+            "id": step_id,
+            "title": title,
+            "summary": summary or title,
+            "goal": goal or summary or title,
+            "status": status,
+        }
+
+    @staticmethod
+    def _observed_step_summary(observed_steps: list[dict[str, str]]) -> str | None:
+        if not observed_steps:
+            return None
+        active = next(
+            (
+                step
+                for step in observed_steps
+                if step.get("status") in {"in_progress", "pending"}
+            ),
+            observed_steps[-1],
+        )
+        return active.get("summary") or active.get("title")
+
     @staticmethod
     def _build_detail_json(
         *,
         tool_names: list[str],
         llm_call_count: int,
         model_name: str | None,
-        delegated: bool,
         todo_state: dict[str, Any],
-        directive,
     ) -> dict[str, Any]:
+        """UI detail_json에는 실제 호출된 도구와 현재 todo projection을 함께 담는다."""
+
         unique_tool_names = list(dict.fromkeys(tool_names))
         detail_json = {
             "agentDetail": {
-                "called": delegated,
-                "agentId": "pending" if delegated else None,
+                "called": False,
+                "agentId": None,
                 "childTaskRunId": None,
             },
             "toolDetail": {
@@ -571,21 +856,26 @@ class ToolCallingLoopExecutor:
             **detail_json,
             **build_todo_detail_patch(parse_task_todo_payload(todo_state)),
         }
-        if directive is not None:
-            detail_json = {
-                **detail_json,
-                **build_model_decision_detail(
-                    action=directive.action,
-                    action_summary=directive.action_summary,
-                    handoff_summary=directive.handoff_summary,
-                    semantic_hint=directive.semantic_hint,
-                ),
-            }
         return detail_json
 
     @staticmethod
     def _next_todo_state(current_todo_state: dict[str, Any], tool_results: list[dict[str, Any]]) -> dict[str, Any]:
-        return build_task_todo_payload(apply_tool_results_to_todo_state(current_todo_state, tool_results))
+        """도구 실행 결과 중 todo 결과를 기준으로 agent.loop의 todo projection을 다시 계산한다."""
+
+        observed_results = [
+            result
+            for result in tool_results
+            if not (isinstance(result.get("result"), dict) and result["result"].get("ok") is False)
+        ]
+        return build_task_todo_payload(apply_tool_results_to_todo_state(current_todo_state, observed_results))
+
+    @staticmethod
+    def _tool_operation_status(result: Any) -> str:
+        if isinstance(result, dict) and result.get("error", {}).get("code") == "tool_deferred_by_approval":
+            return "waiting"
+        if isinstance(result, dict) and result.get("ok") is False:
+            return "failed"
+        return "completed"
 
     @staticmethod
     def _tool_summary(result: dict) -> str:
@@ -606,38 +896,3 @@ class ToolCallingLoopExecutor:
         next_index = operation_counters.get(counter_key, 0) + 1
         operation_counters[counter_key] = next_index
         return f"{namespace}.{sanitized_base_key}.{next_index}"
-
-    @staticmethod
-    def _tool_call_signature(calls: list[dict[str, Any]]) -> tuple[str, ...]:
-        signature: list[str] = []
-        for call in calls:
-            name = str(call.get("name") or "").strip()
-            args = dict(call.get("args") or {})
-            if not name:
-                continue
-            signature.append(f"{name}:{json.dumps(args, ensure_ascii=False, sort_keys=True)}")
-        return tuple(signature)
-
-    def _guard_tool_calls(
-        self,
-        *,
-        directive,
-        turn_index: int,
-        max_iterations: int,
-        last_executed_tool_batch_signature: tuple[str, ...] | None,
-    ) -> str | None:
-        if not directive.tool_calls:
-            return None
-
-        current_signature = self._tool_call_signature(directive.tool_calls)
-        if current_signature and current_signature == (last_executed_tool_batch_signature or ()):
-            if directive.final_text:
-                return "prefer_final"
-            return "repeated tool_calls batch requested immediately after the same calls"
-
-        if turn_index >= max_iterations:
-            if directive.final_text:
-                return "prefer_final"
-            return "model requested additional tool_calls at the iteration limit"
-
-        return None

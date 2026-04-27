@@ -54,7 +54,7 @@ CLI 상태 확인:
 
 ```powershell
 .\.venv\Scripts\python.exe -m app.cli --mode local health
-.\.venv\Scripts\python.exe -m app.cli --mode local create-task --type model.generate --prompt "안녕하세요"
+.\.venv\Scripts\python.exe -m app.cli --mode local create-task --type agent.loop --prompt "안녕하세요"
 ```
 
 테스트:

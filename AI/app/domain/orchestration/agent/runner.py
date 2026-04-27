@@ -38,19 +38,7 @@ class AgentLoopRunner:
             input_payload=request.input_payload,
             executor=executor,
         )
-        boundary = decide_executor_step_boundary(
-            current_detail=None,
-            next_semantic_key=executor.spec.semantic_key or executor.spec.step_type,
-        )
-        if boundary.action != "create_new_step":
-            raise ValueError(f"unexpected start boundary decision: {boundary.reason}")
-        step = self.planner.materialize_step(
-            task=task,
-            executor=executor,
-            input_payload=request.input_payload,
-            step_order=1,
-        )
-        return await self.task_engine.run(task=task, step=step, executor=executor)
+        return await self.task_engine.run(task=task, executor=executor)
 
     async def resume(self, *, task: TaskRun, approval_id: str, payload: dict) -> TaskRun:
         open_approval = self.repository.get_open_approval(task.task_run_id)

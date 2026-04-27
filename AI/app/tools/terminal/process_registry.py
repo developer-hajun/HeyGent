@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 class ProcessRegistry:
-    """Minimal process registry placeholder aligned to Hermes terminal tooling."""
+    """장기 실행 프로세스를 추적하기 위한 최소 registry 자리다."""
 
     def __init__(self) -> None:
         self._processes: dict[str, dict] = {}

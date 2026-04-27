@@ -6,7 +6,6 @@ from app.contracts.task.task_status import TaskStatus
 from app.domain.orchestration.policies import (
     InvalidTransitionError,
     decide_executor_step_boundary,
-    decide_todo_projection_boundary,
     ensure_step_transition,
     ensure_task_transition,
     semantic_lifecycle_for_status,
@@ -67,7 +66,7 @@ def test_executor_step_boundary_follows_steprun_anchor_rules():
 
     changed_decision = decide_executor_step_boundary(
         current_detail={"semanticDetail": {"semanticKey": "response.compose"}},
-        next_semantic_key="notion.page.publish",
+        next_semantic_key="agent.publish",
     )
     assert changed_decision.action == "create_new_step"
 
@@ -77,11 +76,6 @@ def test_executor_step_boundary_follows_steprun_anchor_rules():
         is_resume=True,
     )
     assert resume_decision.action == "reuse_for_resume"
-
-
-def test_todo_projection_boundary_reuses_existing_step():
-    assert decide_todo_projection_boundary(existing_step_run_id=None).action == "create_new_step"
-    assert decide_todo_projection_boundary(existing_step_run_id="step_todo").action == "reuse_existing_step"
 
 
 def test_resume_target_requires_waiting_task_and_matching_approval_step():

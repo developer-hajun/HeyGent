@@ -45,24 +45,20 @@ TASK_BROWSER_FILTERS: list[tuple[str, str]] = [
 TASK_FILTER_CODES = {code for code, _ in TASK_BROWSER_FILTERS}
 
 TASK_TITLE_FALLBACKS = {
-    "model.generate": "모델 응답 생성",
-    "notion.page.create": "Notion 페이지 생성",
-    "notion.database.append": "Notion 데이터 추가",
+    "agent.loop": "agent loop 실행",
 }
 STEP_TITLE_FALLBACKS = {
-    "model.generate.execute": "모델 응답 생성 단계",
+    "agent.loop.execute": "agent loop 실행 단계",
     "echo.execute": "입력 메시지 반영",
     "delegate.child": "Child Echo 위임",
     "approval.wait": "사용자 승인 대기",
 }
 SUMMARY_FALLBACKS = {
-    "model generate executor completed": "모델 응답 생성 완료",
+    "agent loop completed": "agent loop 완료",
     "echo executor completed": "입력 메시지 반영 완료",
     "child delegation completed": "Child 세션 위임 완료",
     "approval required": "사용자 승인이 필요함",
     "approval completed": "사용자 승인 완료",
-    "notion page create executor completed": "Notion 페이지 생성 완료",
-    "notion database append executor completed": "Notion 데이터 추가 완료",
 }
 _ACTIVE_STEP_STATUSES = {"PENDING", "RUNNING", "WAITING", "BLOCKED"}
 

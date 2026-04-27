@@ -333,15 +333,22 @@ class SQLiteTaskRepository:
         return record
 
     def resolve_approval_request(self, approval_id: str, payload: dict) -> dict[str, Any] | None:
+        """아직 PENDING인 approval만 완료 처리한다."""
+
         resolved_at = utc_now().isoformat()
         with self._connect() as connection:
-            row = connection.execute("SELECT * FROM approval_requests WHERE approval_id=?", (approval_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM approval_requests WHERE approval_id=? AND status='PENDING'",
+                (approval_id,),
+            ).fetchone()
             if row is None:
                 return None
-            connection.execute(
-                "UPDATE approval_requests SET status=?, response_payload=?, resolved_at=? WHERE approval_id=?",
+            result = connection.execute(
+                "UPDATE approval_requests SET status=?, response_payload=?, resolved_at=? WHERE approval_id=? AND status='PENDING'",
                 ("RESOLVED", json.dumps(payload), resolved_at, approval_id),
             )
+            if result.rowcount == 0:
+                return None
         return {
             "approval_id": approval_id,
             "task_run_id": row["task_run_id"],
@@ -354,15 +361,22 @@ class SQLiteTaskRepository:
         }
 
     def cancel_approval_request(self, approval_id: str) -> dict[str, Any] | None:
+        """아직 PENDING인 approval만 취소 처리해 중복 resume/cancel을 막는다."""
+
         resolved_at = utc_now().isoformat()
         with self._connect() as connection:
-            row = connection.execute("SELECT * FROM approval_requests WHERE approval_id=?", (approval_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM approval_requests WHERE approval_id=? AND status='PENDING'",
+                (approval_id,),
+            ).fetchone()
             if row is None:
                 return None
-            connection.execute(
-                "UPDATE approval_requests SET status=?, response_payload=?, resolved_at=? WHERE approval_id=?",
+            result = connection.execute(
+                "UPDATE approval_requests SET status=?, response_payload=?, resolved_at=? WHERE approval_id=? AND status='PENDING'",
                 ("CANCELED", json.dumps({"canceled": True}), resolved_at, approval_id),
             )
+            if result.rowcount == 0:
+                return None
         return {
             "approval_id": approval_id,
             "task_run_id": row["task_run_id"],

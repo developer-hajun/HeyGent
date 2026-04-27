@@ -21,6 +21,7 @@ def normalize_executor_outcome(outcome: dict) -> dict:
         "detail_json": dict(outcome.get("detail_json") or {}),
         "todo_state": dict(outcome.get("todo_state") or {}),
         "summary_message": outcome.get("summary_message"),
+        "observed_steps": list(outcome.get("observed_steps") or []),
         "error_message": outcome.get("error_message"),
         "child_session": outcome.get("child_session"),
         "operations": list(outcome.get("operations") or []),

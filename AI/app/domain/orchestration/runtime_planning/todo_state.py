@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -133,12 +134,13 @@ def parse_task_todo_payload(payload: dict[str, Any] | None) -> TodoState:
 def apply_tool_results_to_todo_state(current_payload: dict[str, Any] | None, tool_results: list[dict[str, Any]]) -> TodoState:
     updated_payload = current_payload or {}
     for result in tool_results:
-        if str(result.get("name") or "").strip() != "todo.write":
+        if str(result.get("name") or "").strip() != "todo":
             continue
-        tool_payload = result.get("result")
+        tool_payload = _parse_tool_payload(result.get("result"))
         if not isinstance(tool_payload, dict):
             continue
-        state = parse_task_todo_payload({"items": list(tool_payload.get("items") or [])})
+        raw_items = list(tool_payload.get("todos") or tool_payload.get("items") or [])
+        state = parse_task_todo_payload({"items": raw_items})
         updated_payload = build_task_todo_payload(state)
     return parse_task_todo_payload(updated_payload)
 
@@ -204,6 +206,18 @@ def cancel_incomplete_task_todo_items(current_payload: dict[str, Any] | None) ->
 
 def _has_todo_identity(item: Any) -> bool:
     return isinstance(item, dict) and bool(str(item.get("id") or item.get("key") or "").strip())
+
+
+def _parse_tool_payload(payload: Any) -> dict[str, Any] | None:
+    if isinstance(payload, dict):
+        return payload
+    if isinstance(payload, str):
+        try:
+            decoded = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+        return decoded if isinstance(decoded, dict) else None
+    return None
 
 
 def _normalize_todo_item(item: dict[str, Any]) -> TodoItem:

@@ -24,7 +24,7 @@ class DummyHTTPResponse:
 def _make_test_access_token() -> str:
     header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).decode().rstrip("=")
     payload = base64.urlsafe_b64encode(
-        json.dumps({"exp": 4102444800, "scp": ["model.generate"], "https://api.openai.com/auth": {"chatgpt_account_id": "acct_test"}}).encode()
+        json.dumps({"exp": 4102444800, "scp": ["agent.loop"], "https://api.openai.com/auth": {"chatgpt_account_id": "acct_test"}}).encode()
     ).decode().rstrip("=")
     return f"{header}.{payload}.sig"
 
@@ -168,13 +168,3 @@ def test_provider_disconnect_clears_connection(monkeypatch, tmp_path):
     assert disconnect_response.status_code == 200
     assert disconnect_response.json()["status"] == "disconnected"
     assert provider_response.json()["connected"] is False
-
-
-def test_provider_generate(client):
-    response = client.post(
-        "/api/v1/providers/generate",
-        json={"provider_name": "openai_oauth", "prompt": "summarize this", "metadata": {"temperature": 0}},
-    )
-
-    assert response.status_code == 200
-    assert response.json()["output_text"].startswith("[stub:openai_oauth]")

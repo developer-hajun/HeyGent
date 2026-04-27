@@ -59,8 +59,7 @@ def _build_examples() -> str:
         "  python -m app.cli provider-refresh --provider openai_oauth\n"
         "  python -m app.cli provider-disconnect --provider openai_oauth\n"
         "  python -m app.cli list-providers\n"
-        "  python -m app.cli create-task --type model.generate --prompt \"안녕하세요\"\n"
-        "  python -m app.cli create-task --type notion.page.create --payload '{\"title\":\"백로그\",\"content\":\"정리\"}'\n"
+        "  python -m app.cli create-task --type agent.loop --prompt \"안녕하세요\"\n"
         "  python -m app.cli tasks --status WAITING\n"
         "  python -m app.cli resume-task --task-id task_xxx --payload '{\"approved\": true}'"
     )
@@ -139,7 +138,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     onboard_parser.add_argument("--no-wait", action="store_true", help="callback 완료까지 기다리지 않고 URL 만 출력합니다")
     onboard_parser.add_argument("--wait-seconds", type=float, default=120.0, help="연결 완료를 기다릴 최대 시간(초)")
     onboard_parser.add_argument("--poll-interval", type=float, default=2.0, help="연결 상태를 다시 확인할 간격(초)")
-    onboard_parser.add_argument("--no-run-check", action="store_true", help="연결 완료 후 model.generate 테스트를 건너뜁니다")
+    onboard_parser.add_argument("--no-run-check", action="store_true", help="연결 완료 후 agent.loop 테스트를 건너뜁니다")
     onboard_parser.add_argument("--check-prompt", default=DEFAULT_MODEL_CHECK_PROMPT, help="연결 후 테스트 작업에 넣을 prompt")
     command_parsers["onboard-openai"] = onboard_parser
 
@@ -166,7 +165,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     )
     create_parser.add_argument("--type", required=True, dest="intent_type", help="실행할 intent type")
     create_parser.add_argument("--payload", dest="payload", default=None, help="JSON 문자열 또는 JSON 파일 경로")
-    create_parser.add_argument("--prompt", default=None, help="model.generate 용 prompt 바로 입력")
+    create_parser.add_argument("--prompt", default=None, help="agent.loop 용 prompt 바로 입력")
     create_parser.add_argument("--owner-key", default="cli-user", help="작업 소유자 키, 기본값은 cli-user")
     command_parsers["create-task"] = create_parser
 
@@ -603,7 +602,7 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
         if task_response.is_success:
             print("\n온보딩 완료. 이제 바로 사용할 수 있어.")
             print("- 상태 확인: py -3.11 -m app.cli status")
-            print("- 빠른 테스트: py -3.11 -m app.cli create-task --type model.generate --prompt \"안녕하세요\"")
+            print("- 빠른 테스트: py -3.11 -m app.cli create-task --type agent.loop --prompt \"안녕하세요\"")
             return 0
         print("\n연결은 완료됐지만 테스트 작업은 실패했어. 응답을 보고 확인해 줘.")
         return 1

@@ -12,6 +12,7 @@ from app.contracts.task.task_response import (
     ActiveTaskRunCurrentStepResponse,
     ActiveTaskRunListItemResponse,
     ActiveTaskRunListResponse,
+    PendingApprovalResponse,
     StepRunResponse,
     StepRunSummaryResponse,
     TaskEventResponse,
@@ -36,9 +37,7 @@ _RECENT_TERMINAL_TASK_STATUSES = [status.value for status in (TaskStatus.COMPLET
 _ACTIVE_STEP_STATUSES = {status.value for status in (StepStatus.PENDING, StepStatus.RUNNING, StepStatus.WAITING, StepStatus.BLOCKED)}
 _RECENT_ACTIVE_TTL_SECONDS = 300
 _TASK_TITLE_FALLBACKS = {
-    "model.generate": "모델 응답 생성",
-    "notion.page.create": "Notion 페이지 생성",
-    "notion.database.append": "Notion 데이터 추가",
+    "agent.loop": "agent loop 실행",
 }
 
 
@@ -138,7 +137,13 @@ def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse
     )
 
 
-def _build_active_task_item(task, steps: list[StepRun], *, source: str) -> ActiveTaskRunListItemResponse:
+def _build_active_task_item(
+    task,
+    steps: list[StepRun],
+    *,
+    source: str,
+    pending_approval: PendingApprovalResponse | None = None,
+) -> ActiveTaskRunListItemResponse:
     current_step = _select_current_step(task, steps)
     current_step_response = None
     if current_step is not None:
@@ -159,7 +164,46 @@ def _build_active_task_item(task, steps: list[StepRun], *, source: str) -> Activ
         current_step=current_step_response,
         updated_at=task.updated_at,
         wait_reason=(task.wait_payload or {}).get("reason"),
+        pending_approval=pending_approval,
     )
+
+
+def _build_pending_approval_response(approval: dict | None) -> PendingApprovalResponse | None:
+    """저장소의 approval row를 UI/API가 쓰는 pending approval 응답으로 정규화한다."""
+
+    if approval is None or approval.get("status") != "PENDING":
+        return None
+    request_payload = approval.get("request_payload") or {}
+    reason = request_payload.get("reason") or request_payload.get("approvalReason")
+    tool_call_id = (
+        request_payload.get("pending_tool_call_id")
+        or request_payload.get("tool_call_id")
+        or request_payload.get("toolCallId")
+    )
+    tool_name = (
+        request_payload.get("pending_tool_name")
+        or request_payload.get("tool_name")
+        or request_payload.get("toolName")
+    )
+    return PendingApprovalResponse(
+        approval_id=approval["approval_id"],
+        step_run_id=approval.get("step_run_id"),
+        status=approval["status"],
+        reason=reason,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        requested_at=approval.get("created_at"),
+        can_approve=True,
+        can_reject=True,
+    )
+
+
+def _build_task_response(task, context: TaskContext) -> TaskRunResponse:
+    """TaskRun 응답에는 현재 열려 있는 approval 정보를 함께 붙인다."""
+
+    response = TaskRunResponse.model_validate(task, from_attributes=True)
+    response.pending_approval = _build_pending_approval_response(context.repository.get_open_approval(task.task_run_id))
+    return response
 
 
 def _recent_task_reference_time(task):
@@ -244,7 +288,12 @@ def _build_flow_nodes(task, steps: list[StepRun], *, activity_by_step: dict[str,
     return nodes
 
 
-def _build_step_response(task, step: StepRun) -> StepRunResponse:
+def _build_step_response(
+    task,
+    step: StepRun,
+    *,
+    pending_approval: PendingApprovalResponse | None = None,
+) -> StepRunResponse:
     semantic_detail = (step.detail_json or {}).get("semanticDetail") or {}
     agent_detail = (step.detail_json or {}).get("agentDetail") or {}
     semantic = None
@@ -280,6 +329,7 @@ def _build_step_response(task, step: StepRun) -> StepRunResponse:
         input_payload=step.input_payload,
         output_payload=step.output_payload,
         wait_payload=step.wait_payload,
+        pending_approval=pending_approval,
         detail_json=step.detail_json,
         summary_message=step.summary_message,
         error_message=step.error_message,
@@ -358,7 +408,13 @@ def list_active_tasks(
     items_by_task_run_id: dict[str, ActiveTaskRunListItemResponse] = {}
     for task in active_tasks:
         steps = context.repository.list_steps(task.task_run_id)
-        items_by_task_run_id[task.task_run_id] = _build_active_task_item(task, steps, source="active")
+        pending_approval = _build_pending_approval_response(context.repository.get_open_approval(task.task_run_id))
+        items_by_task_run_id[task.task_run_id] = _build_active_task_item(
+            task,
+            steps,
+            source="active",
+            pending_approval=pending_approval,
+        )
 
     for task in recent_candidates:
         if not _is_recent_terminal_task(task, now=now, ttl_seconds=_RECENT_ACTIVE_TTL_SECONDS):
@@ -390,7 +446,9 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail=f"unknown intent or executor: {error.args[0]}") from error
-    return TaskRunResponse.model_validate(task, from_attributes=True)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return _build_task_response(task, context)
 
 
 @router.get("/{task_run_id}/flow", response_model=TaskRunFlowResponse)
@@ -409,6 +467,7 @@ def get_task_flow(task_run_id: str, context: TaskContext = Depends(get_task_cont
         current_step_run_id=task.current_step_run_id,
         entry_executor_key=task.entry_executor_key,
         summary=task.progress_summary,
+        pending_approval=_build_pending_approval_response(context.repository.get_open_approval(task.task_run_id)),
         nodes=_build_flow_nodes(task, steps, activity_by_step=activity_by_step),
         edges=_build_flow_edges(steps),
     )
@@ -419,7 +478,7 @@ def get_task(task_run_id: str, context: TaskContext = Depends(get_task_context))
     task = context.repository.get_task(task_run_id)
     if task is None:
         raise HTTPException(status_code=404, detail="task not found")
-    return TaskRunResponse.model_validate(task, from_attributes=True)
+    return _build_task_response(task, context)
 
 
 @router.get("/{task_run_id}/steps", response_model=list[StepRunResponse])
@@ -428,7 +487,15 @@ def list_steps(task_run_id: str, context: TaskContext = Depends(get_task_context
     if task is None:
         raise HTTPException(status_code=404, detail="task not found")
     steps = context.repository.list_steps(task_run_id)
-    return [_build_step_response(task, step) for step in steps]
+    pending_approval = _build_pending_approval_response(context.repository.get_open_approval(task_run_id))
+    return [
+        _build_step_response(
+            task,
+            step,
+            pending_approval=pending_approval if pending_approval and pending_approval.step_run_id == step.step_run_id else None,
+        )
+        for step in steps
+    ]
 
 
 @router.get("/{task_run_id}/events", response_model=list[TaskEventResponse])
@@ -449,7 +516,7 @@ async def resume_task(request: Request, task_run_id: str, payload: ResumeTaskReq
         raise HTTPException(status_code=404, detail="task not found") from None
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return TaskRunResponse.model_validate(task, from_attributes=True)
+    return _build_task_response(task, context)
 
 
 @router.post("/{task_run_id}/cancel", response_model=TaskRunResponse)
@@ -460,4 +527,4 @@ async def cancel_task(request: Request, task_run_id: str, context: TaskContext =
         raise HTTPException(status_code=404, detail="task not found") from None
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return TaskRunResponse.model_validate(task, from_attributes=True)
+    return _build_task_response(task, context)

@@ -22,11 +22,19 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "planning": RuntimeToolsetDefinition(
         description="Todo and planning tools.",
-        tools=("todo.write",),
+        tools=("step", "todo"),
     ),
     "terminal": RuntimeToolsetDefinition(
         description="Local terminal execution tools.",
         tools=("terminal.run",),
+    ),
+    "file": RuntimeToolsetDefinition(
+        description="Local file read, write, patch, and search tools.",
+        tools=("read_file", "write_file", "patch", "search_files"),
+    ),
+    "coding": RuntimeToolsetDefinition(
+        description="Local coding tools that can inspect and edit files.",
+        includes=("file", "terminal"),
     ),
     "safe": RuntimeToolsetDefinition(
         description="Safe runtime tools without terminal execution.",
@@ -34,7 +42,7 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "local-core": RuntimeToolsetDefinition(
         description="Current minimal local runtime tool bundle.",
-        includes=("skills", "session", "planning", "terminal"),
+        includes=("skills", "session", "planning", "terminal", "file"),
     ),
 }
 

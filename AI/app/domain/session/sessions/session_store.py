@@ -70,7 +70,7 @@ END;
 
 
 class SessionStore:
-    """Hermes SessionDB 를 현재 백본의 세션 축으로 축약 이식한 SQLite 저장소."""
+    """agent.loop transcript와 세션 검색에 쓰는 SQLite 저장소다."""
 
     _WRITE_MAX_RETRIES = 12
     _WRITE_RETRY_MIN_S = 0.020

@@ -45,12 +45,3 @@ class ProviderConnectionResponse(ContractModel):
     scopes: list[str] = Field(default_factory=list)
     expires_at: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class ProviderGenerateResponse(ContractModel):
-    """Provider 생성 응답 스키마다."""
-
-    provider_name: str
-    output_text: str
-    usage: dict[str, Any] = Field(default_factory=dict)
-    metadata: dict[str, Any] = Field(default_factory=dict)

@@ -10,7 +10,6 @@ from app.core.logger import configure_logging
 from app.domain.gateway import EventBroadcaster, SessionRegistry, SessionService, WebSocketManager
 from app.domain.gateway.routing.topic_router import TopicRouter
 from app.domain.session import SessionStore
-from app.tools.integrations.notion import NotionClient, NotionMapper
 from app.tools.registry import ToolRegistry
 from app.tools.runtime import LocalToolRuntime
 from app.domain.orchestration.delegation import ChildSessionLauncher
@@ -52,25 +51,21 @@ async def lifespan(app: FastAPI):
     session_store = SessionStore(settings.db_path.with_name("session_state.db"))
     # recall_service = RecallService(session_store)
     # memory_store = MemoryStore()
-    notion_client = NotionClient(settings.notion_api_base_url)
-    notion_mapper = NotionMapper()
     skill_registry = SkillRegistry()
     skill_loader = SkillLoader()
     skill_registry.register_many(skill_loader.load_builtin())
     skill_prompt_builder = SkillPromptBuilder(skill_registry)
     prompt_builder = PromptBuilder(skill_prompt_builder)
     tool_runtime = LocalToolRuntime(skill_registry=skill_registry, session_store=session_store)
-    tool_catalog = ToolCatalog(tool_runtime, default_toolsets=("skills", "session", "planning", "terminal"))
+    tool_catalog = ToolCatalog(tool_runtime, default_toolsets=("skills", "session", "planning", "terminal", "file"))
     child_session_launcher = ChildSessionLauncher()
     planner = Planner()
     tool_registry = ToolRegistry(
         provider_registry=provider_registry,
-        notion_client=notion_client,
-        notion_mapper=notion_mapper,
         prompt_builder=prompt_builder,
         tool_runtime=tool_runtime,
         tool_catalog=tool_catalog,
-        enabled_toolsets=("core",),
+        session_store=session_store,
     )
     task_engine = TaskEngine(repository, broadcaster, approval_service, child_session_launcher, planner, tool_registry)
     loop_runner = AgentLoopRunner(
@@ -92,8 +87,6 @@ async def lifespan(app: FastAPI):
     # app.state.recall_service = recall_service
     # app.state.memory_store = memory_store
     app.state.skill_registry = skill_registry
-    app.state.notion_client = notion_client
-    app.state.notion_mapper = notion_mapper
     app.state.prompt_builder = prompt_builder
     app.state.prompt_manager = prompt_builder
     app.state.tool_registry = tool_registry
