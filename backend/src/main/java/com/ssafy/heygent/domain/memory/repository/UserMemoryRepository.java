@@ -36,6 +36,8 @@ public interface UserMemoryRepository extends JpaRepository<UserMemory, Long> {
             AND memory.status = :status
             AND memory.confidence >= :confidence
             AND memory.importance >= :importance
+            AND (memory.validFrom IS NULL OR memory.validFrom <= :now)
+            AND (memory.validUntil IS NULL OR memory.validUntil > :now)
             AND (memory.expiresAt IS NULL OR memory.expiresAt > :now)
             AND (:storeType IS NULL OR memory.storeType = :storeType)
             AND (:memoryType IS NULL OR memory.memoryType = :memoryType)
