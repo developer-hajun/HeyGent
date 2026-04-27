@@ -4,7 +4,9 @@ public enum MemoryType {
 
     PREFERENCE,
     PROFILE,
+    CONTEXT,
     PROJECT_CONTEXT,
     INSTRUCTION,
+    PROCEDURE,
     FACT
 }

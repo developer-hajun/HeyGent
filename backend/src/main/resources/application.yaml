@@ -16,3 +16,12 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
     show-sql: true
+
+memory:
+  embedding:
+    enabled: ${MEMORY_EMBEDDING_ENABLED:true}
+    base-url: ${MEMORY_EMBEDDING_BASE_URL:https://api.openai.com/v1}
+    api-key: ${MEMORY_EMBEDDING_API_KEY:}
+    model: ${MEMORY_EMBEDDING_MODEL:text-embedding-3-small}
+    dimensions: ${MEMORY_EMBEDDING_DIMENSIONS:1536}
+    timeout-seconds: ${MEMORY_EMBEDDING_TIMEOUT_SECONDS:10}

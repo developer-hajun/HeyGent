@@ -1,7 +1,10 @@
 package com.ssafy.heygent.domain.memory.entity;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
@@ -38,14 +41,29 @@ public class UserMemory {
     private Long userId;
 
     @Enumerated(EnumType.STRING)
+    @Column(length = 30)
+    private MemoryStoreType storeType;
+
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)
     private MemoryType memoryType;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 30)
+    private MemoryScopeType scopeType;
 
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
     @Column(length = 500)
     private String summary;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private Map<String, Object> metadata;
+
+    @Column(columnDefinition = "TEXT")
+    private String embeddingText;
 
     @Column(nullable = false)
     private Double importance;
@@ -62,6 +80,8 @@ public class UserMemory {
 
     @Column(length = 100)
     private String sourceTaskRunId;
+
+    private LocalDateTime expiresAt;
 
     private LocalDateTime lastAccessedAt;
 
