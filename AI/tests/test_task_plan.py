@@ -90,6 +90,9 @@ def test_planner_uses_explicit_task_plan_for_current_step_and_remaining_todos():
     assert [item["id"] for item in task.todo_state["items"]] == ["write_docs", "share_summary"]
     assert task.todo_state["currentKey"] == "write_docs"
     assert step.title == "작업 커밋 분석"
+    assert step.input_payload["plan_step_key"] == "analyze"
+    assert step.input_payload["plan_step_title"] == "작업 커밋 분석"
+    assert "todo_key" not in step.input_payload
     assert step.detail_json["semanticDetail"]["semanticKey"] == "plan.analyze"
     assert step.detail_json["semanticDetail"]["goal"] == "현재 변경 상태를 정리한다."
 

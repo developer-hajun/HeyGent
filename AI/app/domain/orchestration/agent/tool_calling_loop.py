@@ -643,6 +643,8 @@ class ToolCallingLoopExecutor:
             model_name=model_name,
             todo_state=todo_state,
         )
+        observed_steps = self._observed_semantic_steps(tool_results)
+        step_summary = self._observed_step_summary(observed_steps)
         if resume_payload is not None:
             operations.append(
                 {
@@ -664,7 +666,8 @@ class ToolCallingLoopExecutor:
             "output_payload": output_payload,
             "detail_json": detail_json,
             "todo_state": todo_state,
-            "summary_message": final_text[:120] or "agent loop completed",
+            "observed_steps": observed_steps,
+            "summary_message": step_summary or final_text[:120] or "agent loop completed",
             "operations": operations,
         }
         return outcome
@@ -683,6 +686,8 @@ class ToolCallingLoopExecutor:
         """approval 대기 상태를 TaskRun/StepRun 저장 형식으로 만든다."""
 
         tool_names = [str(item["name"]) for item in tool_results]
+        observed_steps = self._observed_semantic_steps(tool_results)
+        step_summary = self._observed_step_summary(observed_steps)
         return {
             "task_status": TaskStatus.WAITING,
             "step_status": StepStatus.WAITING,
@@ -700,7 +705,8 @@ class ToolCallingLoopExecutor:
                 todo_state=todo_state,
             ),
             "todo_state": todo_state,
-            "summary_message": "approval required",
+            "observed_steps": observed_steps,
+            "summary_message": step_summary or "approval required",
             "approval_payload": {
                 "reason": approval_reason,
                 "tool_results": tool_results,
@@ -765,6 +771,60 @@ class ToolCallingLoopExecutor:
         if isinstance(model, str) and model.strip():
             return model.strip()
         return None
+
+    @classmethod
+    def _observed_semantic_steps(cls, tool_results: list[dict[str, Any]]) -> list[dict[str, str]]:
+        observed: list[dict[str, str]] = []
+        for tool_result in tool_results:
+            if str(tool_result.get("name") or "") != "step":
+                continue
+            result = tool_result.get("result")
+            if not isinstance(result, dict) or result.get("ok") is False:
+                continue
+            raw_steps = result.get("steps")
+            if not isinstance(raw_steps, list):
+                continue
+            observed = [
+                normalized
+                for index, item in enumerate(raw_steps[:12])
+                if isinstance(item, dict)
+                for normalized in [cls._normalize_observed_step(item, index=index)]
+                if normalized is not None
+            ]
+        return observed
+
+    @staticmethod
+    def _normalize_observed_step(item: dict[str, Any], *, index: int) -> dict[str, str] | None:
+        title = str(item.get("title") or item.get("summary") or "").strip()
+        if not title:
+            return None
+        step_id = str(item.get("id") or f"step-{index + 1}").strip() or f"step-{index + 1}"
+        summary = str(item.get("summary") or title).strip()
+        goal = str(item.get("goal") or summary or title).strip()
+        status = str(item.get("status") or "pending").strip().lower()
+        if status not in {"pending", "in_progress", "completed", "cancelled"}:
+            status = "pending"
+        return {
+            "id": step_id,
+            "title": title,
+            "summary": summary or title,
+            "goal": goal or summary or title,
+            "status": status,
+        }
+
+    @staticmethod
+    def _observed_step_summary(observed_steps: list[dict[str, str]]) -> str | None:
+        if not observed_steps:
+            return None
+        active = next(
+            (
+                step
+                for step in observed_steps
+                if step.get("status") in {"in_progress", "pending"}
+            ),
+            observed_steps[-1],
+        )
+        return active.get("summary") or active.get("title")
 
     @staticmethod
     def _build_detail_json(

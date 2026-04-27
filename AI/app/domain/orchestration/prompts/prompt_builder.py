@@ -7,6 +7,7 @@ from app.domain.orchestration.prompts.gateway_context_prompt import build_gatewa
 from app.domain.orchestration.prompts.project_context_prompt import build_project_context_prompt
 from app.domain.orchestration.prompts.skill_prompt import SkillPromptBuilder
 from app.domain.orchestration.prompts.step_context_prompt import build_step_context_prompt
+from app.domain.orchestration.prompts.step_run_boundary_prompt import build_step_run_boundary_prompt
 from app.domain.orchestration.prompts.step_run_prompt import build_step_run_prompt
 from app.domain.orchestration.prompts.task_context_prompt import build_task_context_prompt
 
@@ -60,6 +61,7 @@ class PromptBuilder:
             sections.append(
                 "현재까지 실행된 로컬 도구 결과:\n" + json.dumps(tool_results, ensure_ascii=False, indent=2)
             )
+        sections.append(build_step_run_boundary_prompt())
         if task_todo_state and list(task_todo_state.get("items") or []):
             sections.append(self._build_task_todo_prompt(task_todo_state))
         if resume_payload:
@@ -90,8 +92,8 @@ class PromptBuilder:
                     "직전에 같은 도구를 같은 인자로 실행했다면 반복하지 말고 답변 종료를 우선하세요.",
                     "delegate 는 하위 작업으로 분리했을 때 더 명확한 경우에만 사용하세요.",
                     "승인이 없으면 진행하면 안 되는 경우에만 approval 을 요청하세요.",
-                    "계획이 필요하면 todo 도구로 현재 단계 목록을 갱신하세요.",
-                    "최종 답변에는 사용자가 바로 이해할 수 있는 결과와 다음에 이어갈 내용을 자연어로 정리하세요.",
+                    "사용자에게 보일 큰 작업 단계는 step 도구로 선언하고, 세부 체크리스트는 todo 도구로 갱신하세요.",
+                    "최종 답변은 내부 상태 문구처럼 쓰지 말고, 사용자가 바로 이해할 수 있는 결과와 다음에 이어갈 내용을 자연어로 작성하세요.",
                 ]
             )
         )

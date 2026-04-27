@@ -34,6 +34,7 @@ class LocalToolRuntime:
         self.skill_registry = skill_registry
         self.session_store = session_store
         self.workspace_root = self._resolve_workspace_root(workspace_root)
+        self._step_items: list[dict[str, str]] = []
         self._todo_items: list[dict[str, str]] = []
         self._tool_entries = build_runtime_tool_entries(
             {
@@ -41,6 +42,7 @@ class LocalToolRuntime:
                 "skills.read": self._read_skill,
                 "session.record": self._record_session_message,
                 "session.search": self._search_sessions,
+                "step": self._step,
                 "todo": self._todo,
                 "terminal.run": self._run_terminal_command,
                 "read_file": self._read_file,
@@ -68,6 +70,7 @@ class LocalToolRuntime:
             session_store=self.session_store,
             workspace_root=workspace_root,
         )
+        bound._step_items = [dict(item) for item in self._step_items]
         bound._todo_items = [dict(item) for item in self._todo_items]
         return bound
 
@@ -202,6 +205,13 @@ class LocalToolRuntime:
             "summary": self._todo_summary(self._todo_items),
         }
 
+    def _step(self, args: dict[str, Any]) -> dict[str, object]:
+        self._step_items = self._write_steps(list(args.get("steps") or []), merge=bool(args.get("merge", False)))
+        return {
+            "steps": [dict(item) for item in self._step_items],
+            "summary": self._todo_summary(self._step_items),
+        }
+
     def _read_file(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_file_tool_handler("read_file_handler", args)
 
@@ -241,6 +251,37 @@ class LocalToolRuntime:
                 order.append(item["id"])
             existing[item["id"]] = item
         return [existing[item_id] for item_id in order if item_id in existing]
+
+    def _write_steps(self, steps: list[Any], *, merge: bool) -> list[dict[str, str]]:
+        normalized = [
+            self._normalize_step_item(item, index=index)
+            for index, item in enumerate(steps)
+            if isinstance(item, dict)
+        ]
+        if not merge:
+            return self._dedupe_todos(normalized)
+
+        existing = {item["id"]: dict(item) for item in self._step_items}
+        order = [item["id"] for item in self._step_items]
+        for item in normalized:
+            if item["id"] not in existing:
+                order.append(item["id"])
+            existing[item["id"]] = item
+        return [existing[item_id] for item_id in order if item_id in existing]
+
+    @staticmethod
+    def _normalize_step_item(item: dict[str, Any], *, index: int) -> dict[str, str]:
+        normalized = LocalToolRuntime._normalize_todo_item(item, index=index)
+        title = str(item.get("title") or item.get("content") or normalized["content"]).strip()
+        summary = str(item.get("summary") or title).strip()
+        goal = str(item.get("goal") or summary or title).strip()
+        return {
+            "id": normalized["id"],
+            "title": title or normalized["content"],
+            "summary": summary or title or normalized["content"],
+            "goal": goal or summary or title or normalized["content"],
+            "status": normalized["status"],
+        }
 
     def _run_terminal_command(self, args: dict[str, Any]) -> dict[str, Any]:
         argv = list(args.get("argv") or []) or None

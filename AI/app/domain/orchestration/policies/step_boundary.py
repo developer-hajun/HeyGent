@@ -54,17 +54,3 @@ def decide_executor_step_boundary(
         action="reuse_existing_step",
         reason="semantic_key_reused",
     )
-
-
-def decide_todo_projection_boundary(*, existing_step_run_id: str | None) -> StepBoundaryDecision:
-    """todo projection 은 독립 step 카드지만 같은 todo key 에 대해서는 기존 anchor 를 재사용한다."""
-
-    if existing_step_run_id:
-        return StepBoundaryDecision(
-            action="reuse_existing_step",
-            reason="todo_projection_reuses_existing_anchor",
-        )
-    return StepBoundaryDecision(
-        action="create_new_step",
-        reason="todo_projection_requires_new_anchor",
-    )

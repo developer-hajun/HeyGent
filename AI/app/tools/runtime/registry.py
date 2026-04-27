@@ -54,6 +54,7 @@ def list_runtime_tool_schemas(handler_by_name: dict[str, Callable]) -> list[dict
 
 def _discover_runtime_tool_modules() -> None:
     from app.tools.file import file_tools  # noqa: F401
+    from app.tools.planning import step_tool  # noqa: F401
     from app.tools.planning import todo_tool  # noqa: F401
     from app.tools.session import session_search_tool  # noqa: F401
     from app.tools.skills import skills_tool  # noqa: F401

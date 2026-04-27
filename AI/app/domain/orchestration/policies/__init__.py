@@ -3,7 +3,6 @@ from app.domain.orchestration.policies.action_schema import normalize_executor_o
 from app.domain.orchestration.policies.step_boundary import (
     StepBoundaryDecision,
     decide_executor_step_boundary,
-    decide_todo_projection_boundary,
 )
 from app.domain.orchestration.policies.state_machine import (
     InvalidTransitionError,
@@ -24,5 +23,4 @@ __all__ = [
     "normalize_executor_outcome",
     "StepBoundaryDecision",
     "decide_executor_step_boundary",
-    "decide_todo_projection_boundary",
 ]

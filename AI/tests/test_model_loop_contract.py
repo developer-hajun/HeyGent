@@ -18,7 +18,8 @@ def test_prompt_builder_includes_native_tool_call_and_termination_guidance():
     assert "모델의 tool call 응답으로 반환하세요" in prompt
     assert "이미 충분한 정보가 있으면 더 이상 도구를 부르지 말고 일반 답변으로 종료하세요." in prompt
     assert "직전에 같은 도구를 같은 인자로 실행했다면 반복하지 말고 답변 종료를 우선하세요." in prompt
-    assert "계획이 필요하면 todo 도구로 현재 단계 목록을 갱신하세요." in prompt
+    assert "사용자에게 보일 큰 작업 단계는 step 도구로 선언하고, 세부 체크리스트는 todo 도구로 갱신하세요." in prompt
+    assert "단계 이름은 반드시 대상/주제/산출물과 작업 행위를 함께 포함하세요." in prompt
 
 
 def test_prompt_builder_explains_approval_tool_call_boundary():

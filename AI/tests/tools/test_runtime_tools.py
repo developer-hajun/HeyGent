@@ -19,9 +19,15 @@ def test_runtime_exposes_todo_schema_without_legacy_write_name():
 
     definitions = runtime.list_tool_definitions(enabled_toolsets=("planning",))
 
-    assert [definition["name"] for definition in definitions] == ["todo"]
-    assert definitions[0]["schema"]["name"] == "todo"
-    assert "todos" in definitions[0]["schema"]["parameters"]["properties"]
+    schema_by_name = {definition["name"]: definition["schema"] for definition in definitions}
+    assert [definition["name"] for definition in definitions] == ["step", "todo"]
+    assert schema_by_name["todo"]["name"] == "todo"
+    assert "todos" in schema_by_name["todo"]["parameters"]["properties"]
+    assert schema_by_name["step"]["name"] == "step"
+    assert "steps" in schema_by_name["step"]["parameters"]["properties"]
+    title_description = schema_by_name["step"]["parameters"]["properties"]["steps"]["items"]["properties"]["title"]["description"]
+    assert "target/topic/artifact" in title_description
+    assert "기존 자료 파악" in title_description
 
 
 def test_runtime_exposes_terminal_argument_schema():
@@ -89,6 +95,51 @@ def test_todo_writes_and_reads_full_json_ready_result():
         "cancelled": 0,
     }
     json.dumps(written, ensure_ascii=False)
+
+
+def test_step_writes_and_reads_declared_semantic_steps():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    written = runtime.run_call(
+        name="step",
+        args={
+            "steps": [
+                {
+                    "id": "research",
+                    "title": "뉴스 근거 자료 조사",
+                    "summary": "뉴스 근거 자료 조사 중",
+                    "goal": "근거 자료를 정리한다.",
+                    "status": "completed",
+                },
+                {
+                    "id": "draft",
+                    "title": "뉴스 브리핑 문서 초안 작성",
+                    "summary": "뉴스 브리핑 문서 초안 작성 중",
+                    "goal": "조사 결과를 문서화한다.",
+                    "status": "in_progress",
+                },
+            ]
+        },
+    )
+    read = runtime.run_call(name="step", args={"steps": [], "merge": True})
+
+    assert written == read
+    assert written["steps"] == [
+        {
+            "id": "research",
+            "title": "뉴스 근거 자료 조사",
+            "summary": "뉴스 근거 자료 조사 중",
+            "goal": "근거 자료를 정리한다.",
+            "status": "completed",
+        },
+        {
+            "id": "draft",
+            "title": "뉴스 브리핑 문서 초안 작성",
+            "summary": "뉴스 브리핑 문서 초안 작성 중",
+            "goal": "조사 결과를 문서화한다.",
+            "status": "in_progress",
+        },
+    ]
 
 
 def test_todo_projection_accepts_json_string_tool_content():
