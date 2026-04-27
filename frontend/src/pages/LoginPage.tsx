@@ -1,4 +1,13 @@
 import { useNavigate } from 'react-router'
+import { devLogin } from '@/apis/auth'
+import { getMyInfo } from '@/apis/users'
+import { useAuthStore } from '@/store/useAuthStore'
+
+const KAKAO_AUTH_URL =
+  `https://kauth.kakao.com/oauth/authorize` +
+  `?client_id=${import.meta.env.VITE_KAKAO_CLIENT_ID}` +
+  `&redirect_uri=${import.meta.env.VITE_KAKAO_REDIRECT_URI}` +
+  `&response_type=code`
 
 function KakaoIcon() {
   return (
@@ -16,10 +25,26 @@ function KakaoIcon() {
 
 export function LoginPage() {
   const navigate = useNavigate()
+  const { setTokens, setUserInfo } = useAuthStore()
 
   const handleKakaoLogin = () => {
-    // TODO: 카카오 OAuth 연동
-    navigate('/')
+    window.location.href = KAKAO_AUTH_URL
+  }
+
+  const handleDevLogin = async () => {
+    try {
+      const res = await devLogin()
+      setTokens(res.data.accessToken, res.data.refreshToken)
+      try {
+        const userRes = await getMyInfo()
+        setUserInfo(userRes.data)
+      } catch {
+        // 사용자 정보 조회 실패해도 로그인 진행
+      }
+      navigate('/', { replace: true })
+    } catch {
+      // 개발 서버가 없으면 무시
+    }
   }
 
   return (
@@ -68,14 +93,25 @@ export function LoginPage() {
         </div>
 
         {/* Kakao Login Button */}
-        <button
-          onClick={handleKakaoLogin}
-          className="flex w-full items-center justify-center gap-2.5 rounded-xl px-6 py-3.5 text-sm font-semibold transition-all duration-150 hover:opacity-90 active:scale-[0.98]"
-          style={{ backgroundColor: '#FEE500', color: '#191600' }}
-        >
-          <KakaoIcon />
-          <span>카카오 계정으로 로그인</span>
-        </button>
+        <div className="space-y-2">
+          <button
+            onClick={handleKakaoLogin}
+            className="flex w-full items-center justify-center gap-2.5 rounded-xl px-6 py-3.5 text-sm font-semibold transition-all duration-150 hover:opacity-90 active:scale-[0.98]"
+            style={{ backgroundColor: '#FEE500', color: '#191600' }}
+          >
+            <KakaoIcon />
+            <span>카카오 계정으로 로그인</span>
+          </button>
+
+          {import.meta.env.DEV && (
+            <button
+              onClick={handleDevLogin}
+              className="text-muted-foreground hover:text-foreground w-full rounded-xl border border-dashed border-current px-6 py-3 text-xs font-medium transition-colors duration-150"
+            >
+              개발용 테스트 로그인
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Footer */}

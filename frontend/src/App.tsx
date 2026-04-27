@@ -6,12 +6,14 @@ import { DashboardPage } from '@/pages/DashboardPage'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
 import { NewChatPage } from '@/pages/NewChatPage'
 import { LoginPage } from '@/pages/LoginPage'
+import { KakaoCallbackPage } from '@/pages/KakaoCallbackPage'
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/auth/kakao/callback" element={<KakaoCallbackPage />} />
         <Route
           path="*"
           element={
