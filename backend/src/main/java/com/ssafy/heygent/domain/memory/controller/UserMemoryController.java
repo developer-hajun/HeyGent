@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryCandidatesRequest;
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryRequest;
 import com.ssafy.heygent.domain.memory.dto.response.UserMemoryResponse;
 import com.ssafy.heygent.domain.memory.service.UserMemoryService;
@@ -38,6 +39,15 @@ public class UserMemoryController {
         @Valid @RequestBody CreateMemoryRequest request
     ) {
         return ApiResponse.success(userMemoryService.create(resolveUserId(user), request));
+    }
+
+    @Operation(summary = "AI 장기기억 후보 저장", description = "AI가 제안한 장기기억 후보 중 저장 가능한 항목만 저장합니다.")
+    @PostMapping("/candidates")
+    public ApiResponse<List<UserMemoryResponse>> createMemoryCandidates(
+        @AuthenticationPrincipal CustomUserPrincipal user,
+        @Valid @RequestBody CreateMemoryCandidatesRequest request
+    ) {
+        return ApiResponse.success(userMemoryService.createCandidates(resolveUserId(user), request));
     }
 
     @Operation(summary = "내 장기기억 목록 조회", description = "로그인된 사용자의 활성 장기기억 목록을 조회합니다.")

@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryCandidatesRequest;
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryRequest;
 import com.ssafy.heygent.domain.memory.dto.response.UserMemoryResponse;
 import com.ssafy.heygent.domain.memory.entity.MemoryStatus;
@@ -33,11 +34,32 @@ public class UserMemoryService {
     @Transactional
     public UserMemoryResponse create(Long userId, CreateMemoryRequest request) {
         validateMemoryScore(request.getImportance(), request.getConfidence());
+        String normalizedContent = request.getContent().trim();
+
+        return userMemoryRepository.findFirstByUserIdAndMemoryTypeAndContentAndStatus(
+                userId,
+                request.getMemoryType(),
+                normalizedContent,
+                MemoryStatus.ACTIVE
+            )
+            .map(UserMemoryResponse::from)
+            .orElseGet(() -> saveMemory(userId, request, normalizedContent));
+    }
+
+    @Transactional
+    public List<UserMemoryResponse> createCandidates(Long userId, CreateMemoryCandidatesRequest request) {
+        return request.getCandidates().stream()
+            .filter(candidate -> isStorableScore(candidate.getImportance(), candidate.getConfidence()))
+            .map(candidate -> create(userId, candidate))
+            .toList();
+    }
+
+    private UserMemoryResponse saveMemory(Long userId, CreateMemoryRequest request, String normalizedContent) {
 
         UserMemory memory = UserMemory.builder()
             .userId(userId)
             .memoryType(request.getMemoryType())
-            .content(request.getContent().trim())
+            .content(normalizedContent)
             .summary(trimToNull(request.getSummary()))
             .importance(request.getImportance())
             .confidence(request.getConfidence())
@@ -95,9 +117,13 @@ public class UserMemoryService {
     }
 
     private void validateMemoryScore(Double importance, Double confidence) {
-        if (importance < MIN_IMPORTANCE_TO_STORE || confidence < MIN_CONFIDENCE_TO_STORE) {
+        if (!isStorableScore(importance, confidence)) {
             throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
         }
+    }
+
+    private boolean isStorableScore(Double importance, Double confidence) {
+        return importance >= MIN_IMPORTANCE_TO_STORE && confidence >= MIN_CONFIDENCE_TO_STORE;
     }
 
     private int normalizeRecallLimit(Integer limit) {
