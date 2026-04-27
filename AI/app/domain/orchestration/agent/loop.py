@@ -299,6 +299,10 @@ class TaskEngine:
         task.current_step_run_id = step.step_run_id
         task.result_payload = outcome.get("result_payload", task.result_payload)
         task.todo_state = dict(outcome.get("todo_state") or task.todo_state)
+        if task_is_terminal(task_status):
+            # TaskRun(사용자 요청 전체 실행)이 terminal이면 UI/API가 활성 단계로 오해하지 않도록
+            # 아직 끝나지 않은 todo 기반 StepRun(LLM이 판단한 자연어 의미 단계)도 닫힌 projection으로 바꾼다.
+            task.todo_state = build_task_todo_payload(cancel_incomplete_task_todo_items(task.todo_state))
         task.wait_payload = outcome.get("wait_payload", {})
         task.error_message = outcome.get("error_message")
         task.progress_summary = outcome.get("summary_message")

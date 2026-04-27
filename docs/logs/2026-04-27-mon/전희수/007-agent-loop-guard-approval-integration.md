@@ -51,7 +51,7 @@
 
 - approval은 별도 큰 시스템이 아니라 `ToolGuard`가 만든 pending tool action snapshot으로 취급한다.
 - `/cancel`은 loop를 재개하지 않고 TaskRun을 `CANCELED`로 끝내되, pending tool call에 대응하는 canceled tool result를 transcript와 step output에 남긴다.
-- 루트의 미추적 `reference/`와 `.gitignore`는 이번 커밋 대상에서 제외한다.
+- 루트의 미추적 비교 자료 폴더와 `.gitignore`는 이번 커밋 대상에서 제외한다.
 
 ## 다음 단계
 

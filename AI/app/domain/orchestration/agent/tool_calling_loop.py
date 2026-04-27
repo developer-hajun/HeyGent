@@ -30,6 +30,8 @@ class ToolCallingLoopExecutor:
 
     def execute(self, *, task, step, resume_payload=None) -> dict[str, Any]:
         task_input = dict(task.input_payload or {})
+        # 요청 payload의 workspace_root는 API 호출자가 선택한 이번 실행 root로 바인딩한다.
+        request_tool_runtime = self._bind_request_tool_runtime(task_input.get("workspace_root"))
         requested_toolsets = self._requested_toolsets(task_input)
         available_tools = self.tool_catalog.list_available_tools(requested_toolsets=requested_toolsets)
         operation_counters: dict[str, int] = {}
@@ -41,6 +43,7 @@ class ToolCallingLoopExecutor:
             task_input=task_input,
             available_tools=available_tools,
             requested_toolsets=requested_toolsets,
+            tool_runtime=request_tool_runtime,
             resume_payload=resume_payload,
             operation_counters=operation_counters,
             current_todo_state=current_todo_state,
@@ -54,6 +57,7 @@ class ToolCallingLoopExecutor:
         task_input: dict[str, Any],
         available_tools: list[dict[str, Any]],
         requested_toolsets: tuple[str, ...] | None,
+        tool_runtime,
         resume_payload: dict[str, Any] | None,
         operation_counters: dict[str, int],
         current_todo_state: dict[str, Any],
@@ -81,12 +85,14 @@ class ToolCallingLoopExecutor:
             max_iterations=max_iterations,
         )
         messages = self._load_transcript_messages(transcript_session_id)
+        guard_task_input = self._task_input_for_guard(task_input=task_input, step=step, resume_payload=resume_payload)
         if resume_payload is not None:
             # resume은 WAITING 상태였던 StepRun(사용자에게 보이는 의미 단계의 실행 anchor)을 이어서 처리한다.
             resumed_tool_result = self._resolve_pending_tool_after_resume(
                 step=step,
                 resume_payload=resume_payload,
                 requested_toolsets=requested_toolsets,
+                tool_runtime=tool_runtime,
             )
             if resumed_tool_result is not None:
                 self._append_tool_result_observation(
@@ -97,6 +103,7 @@ class ToolCallingLoopExecutor:
                     operations=operations,
                     operation_counters=operation_counters,
                 )
+                messages = self._order_tool_results_for_replay(messages)
                 current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
         user_message = AgentMessage(role="user", content=prompt)
         messages.append(user_message)
@@ -143,16 +150,47 @@ class ToolCallingLoopExecutor:
                     operation_counters=operation_counters,
                 )
 
-            for tool_call in generated.tool_calls:
+            for tool_call_index, tool_call in enumerate(generated.tool_calls):
                 runtime_tool_name = self._runtime_tool_name(tool_call.name, provider_tool_name_map)
                 guard_result = self.tool_guard.evaluate(
-                    task_input=task_input,
+                    task_input=guard_task_input,
                     tool_call_id=tool_call.id,
                     tool_name=runtime_tool_name,
                     arguments=tool_call.arguments,
                 )
                 decision = self._guard_decision(guard_result)
                 if decision == ToolGuardDecision.NEEDS_APPROVAL:
+                    pending = {
+                        "pending_tool_call_id": tool_call.id,
+                        "pending_tool_name": runtime_tool_name,
+                        "pending_tool_arguments": tool_call.arguments,
+                        "transcript_session_id": transcript_session_id,
+                        "approval_policy_result": self._guard_payload(guard_result),
+                        "resume_decision": "pending",
+                    }
+                    for sibling_call in generated.tool_calls[tool_call_index + 1 :]:
+                        sibling_runtime_name = self._runtime_tool_name(sibling_call.name, provider_tool_name_map)
+                        sibling_result = {
+                            "tool_call_id": sibling_call.id,
+                            "name": sibling_runtime_name,
+                            "args": sibling_call.arguments,
+                            "result": self._deferred_tool_result(
+                                pending_tool_call_id=tool_call.id,
+                                pending_tool_name=runtime_tool_name,
+                                deferred_tool_name=sibling_runtime_name,
+                            ),
+                        }
+                        # approval 대기 때문에 이번 turn에서 실행하지 않은 sibling tool_call도
+                        # tool result를 남겨 resume/replay 때 provider 입력 불변식이 깨지지 않게 한다.
+                        self._append_tool_result_observation(
+                            tool_result=sibling_result,
+                            all_tool_results=all_tool_results,
+                            messages=messages,
+                            transcript_session_id=transcript_session_id,
+                            operations=operations,
+                            operation_counters=operation_counters,
+                        )
+                    current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
                     # 승인 대기는 실행 직전 tool action snapshot만 저장하고 StepRun/TaskRun을 WAITING으로 돌려준다.
                     outcome = self._build_waiting_outcome(
                         tool_results=all_tool_results,
@@ -163,25 +201,19 @@ class ToolCallingLoopExecutor:
                         todo_state=current_todo_state,
                         operation_counters=operation_counters,
                     )
-                    pending = {
-                        "pending_tool_call_id": tool_call.id,
-                        "pending_tool_name": runtime_tool_name,
-                        "pending_tool_arguments": tool_call.arguments,
-                        "transcript_session_id": transcript_session_id,
-                        "approval_policy_result": self._guard_payload(guard_result),
-                        "resume_decision": "pending",
-                    }
                     outcome["wait_payload"] = {**outcome.get("wait_payload", {}), **pending}
                     outcome["approval_payload"] = {**outcome.get("approval_payload", {}), **pending}
                     return outcome
 
                 if decision == ToolGuardDecision.BLOCK:
+                    # BLOCK도 전체 실패가 아니라 막힌 tool result로 transcript에 남겨 LLM이 다음 행동을 정한다.
                     result = self._blocked_tool_result(guard_result)
                 else:
                     result = self._run_native_tool_call(
                         name=runtime_tool_name,
                         args=tool_call.arguments,
                         requested_toolsets=requested_toolsets,
+                        tool_runtime=tool_runtime,
                     )
                 tool_result = {
                     "tool_call_id": tool_call.id,
@@ -298,6 +330,12 @@ class ToolCallingLoopExecutor:
         return session_id
 
     def _load_transcript_messages(self, session_id: str | None) -> list[AgentMessage | ToolResultMessage]:
+        """저장된 transcript를 provider 재호출 입력으로 복원한다.
+
+        resume/replay에서는 이전 assistant tool_calls와 tool result(tool 실행 결과를 모델에게 다시 넘기는 메시지)를
+        같은 순서로 되살려야 provider가 대화 불변식을 유지할 수 있다.
+        """
+
         if self.session_store is None or not session_id:
             return []
 
@@ -318,7 +356,38 @@ class ToolCallingLoopExecutor:
                         metadata=dict(row.get("metadata") or {}),
                     )
                 )
-        return messages
+        return self._order_tool_results_for_replay(messages)
+
+    @staticmethod
+    def _order_tool_results_for_replay(messages: list[AgentMessage | ToolResultMessage]) -> list[AgentMessage | ToolResultMessage]:
+        """assistant tool_calls 뒤의 tool result 순서를 provider replay 규칙에 맞춘다.
+
+        approval 대기 중에는 pending tool result가 resume 이후에 저장될 수 있다. DB 저장 시각은 늦더라도
+        provider 입력은 assistant가 만든 tool_call 순서대로 재배치해야 function_call과 output 대응이 안정적이다.
+        """
+
+        ordered: list[AgentMessage | ToolResultMessage] = []
+        index = 0
+        while index < len(messages):
+            message = messages[index]
+            ordered.append(message)
+            index += 1
+            if not isinstance(message, AgentMessage) or message.role != "assistant" or not message.tool_calls:
+                continue
+
+            tool_messages: list[ToolResultMessage] = []
+            while index < len(messages) and isinstance(messages[index], ToolResultMessage):
+                tool_messages.append(messages[index])
+                index += 1
+            by_call_id = {tool_message.tool_call_id: tool_message for tool_message in tool_messages}
+            emitted_ids: set[str] = set()
+            for tool_call in message.tool_calls:
+                tool_message = by_call_id.get(tool_call.id)
+                if tool_message is not None:
+                    ordered.append(tool_message)
+                    emitted_ids.add(tool_message.tool_call_id)
+            ordered.extend(tool_message for tool_message in tool_messages if tool_message.tool_call_id not in emitted_ids)
+        return ordered
 
     def _append_transcript_message(
         self,
@@ -355,14 +424,42 @@ class ToolCallingLoopExecutor:
         name: str,
         args: dict[str, Any],
         requested_toolsets: tuple[str, ...] | None,
+        tool_runtime,
     ) -> dict[str, Any]:
         """이미 정규화된 native tool call 이름과 인자를 local runtime으로 넘긴다."""
 
-        return self.tool_runtime.run_call(
+        return tool_runtime.run_call(
             name=name,
             args=args,
             enabled_toolsets=requested_toolsets,
         )
+
+    def _bind_request_tool_runtime(self, workspace_root: Any):
+        binder = getattr(self.tool_runtime, "bind_workspace_root", None)
+        if callable(binder):
+            return binder(workspace_root)
+        return self.tool_runtime
+
+    @staticmethod
+    def _task_input_for_guard(*, task_input: dict[str, Any], step, resume_payload: dict[str, Any] | None) -> dict[str, Any]:
+        guard_input = dict(task_input)
+        if not bool((resume_payload or {}).get("approved", False)) or step is None:
+            return guard_input
+
+        pending_payload = dict(getattr(step, "wait_payload", None) or {})
+        approval_policy = dict(pending_payload.get("approval_policy_result") or {})
+        if approval_policy.get("source") != "legacy_input_payload":
+            return guard_input
+
+        # 승인된 resume 문맥은 같은 TaskRun(사용자 요청 전체 실행)의 전역 approval_required 재차단만 피하게 한다.
+        # tool별 위험 정책은 별도 guard 판단으로 계속 적용될 수 있도록 원본 입력은 보존하고 내부 marker만 덧붙인다.
+        guard_input["_approved_resume_context"] = {
+            "approved": True,
+            "source": approval_policy.get("source"),
+            "pending_tool_call_id": pending_payload.get("pending_tool_call_id"),
+            "pending_tool_name": pending_payload.get("pending_tool_name"),
+        }
+        return guard_input
 
     def _resolve_pending_tool_after_resume(
         self,
@@ -370,6 +467,7 @@ class ToolCallingLoopExecutor:
         step,
         resume_payload: dict[str, Any],
         requested_toolsets: tuple[str, ...] | None,
+        tool_runtime,
     ) -> dict[str, Any] | None:
         """승인 재개 응답에 따라 저장해 둔 pending tool call의 결과를 먼저 만든다.
 
@@ -390,6 +488,7 @@ class ToolCallingLoopExecutor:
                 name=tool_name,
                 args=args,
                 requested_toolsets=requested_toolsets,
+                tool_runtime=tool_runtime,
             )
         else:
             # 거절된 approval도 원래 tool_call_id에 대한 tool result를 남겨 provider replay 불변식을 맞춘다.
@@ -438,7 +537,7 @@ class ToolCallingLoopExecutor:
                 ),
                 "title": tool_name,
                 "kind": "tool",
-                "status": "failed" if isinstance(result, dict) and result.get("ok") is False else "completed",
+                "status": self._tool_operation_status(result),
                 "summary": self._tool_summary(result),
             }
         )
@@ -471,6 +570,31 @@ class ToolCallingLoopExecutor:
                 "message": reason,
             },
             "guard": guard_payload,
+        }
+
+    @staticmethod
+    def _deferred_tool_result(
+        *,
+        pending_tool_call_id: str,
+        pending_tool_name: str,
+        deferred_tool_name: str,
+    ) -> dict[str, Any]:
+        message = (
+            f"{pending_tool_name} 승인이 대기 중이라 {deferred_tool_name} 호출은 이번 turn에서 실행하지 않았습니다. "
+            "승인 이후에도 필요하면 모델이 다시 요청해야 합니다."
+        )
+        return {
+            "ok": False,
+            "content": message,
+            "error": {
+                "code": "tool_deferred_by_approval",
+                "message": message,
+            },
+            "guard": {
+                "decision": "DEFERRED_BY_APPROVAL",
+                "pending_tool_call_id": pending_tool_call_id,
+                "pending_tool_name": pending_tool_name,
+            },
         }
 
     @staticmethod
@@ -678,7 +802,20 @@ class ToolCallingLoopExecutor:
     def _next_todo_state(current_todo_state: dict[str, Any], tool_results: list[dict[str, Any]]) -> dict[str, Any]:
         """도구 실행 결과 중 todo 결과를 기준으로 agent.loop의 todo projection을 다시 계산한다."""
 
-        return build_task_todo_payload(apply_tool_results_to_todo_state(current_todo_state, tool_results))
+        observed_results = [
+            result
+            for result in tool_results
+            if not (isinstance(result.get("result"), dict) and result["result"].get("ok") is False)
+        ]
+        return build_task_todo_payload(apply_tool_results_to_todo_state(current_todo_state, observed_results))
+
+    @staticmethod
+    def _tool_operation_status(result: Any) -> str:
+        if isinstance(result, dict) and result.get("error", {}).get("code") == "tool_deferred_by_approval":
+            return "waiting"
+        if isinstance(result, dict) and result.get("ok") is False:
+            return "failed"
+        return "completed"
 
     @staticmethod
     def _tool_summary(result: dict) -> str:

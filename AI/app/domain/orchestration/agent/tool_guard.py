@@ -39,7 +39,7 @@ class ToolGuard:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> ToolGuardResult:
-        if task_input.get("approval_required"):
+        if task_input.get("approval_required") and not self._has_approved_global_resume(task_input):
             # approval은 도구 실행 전 사용자 확인이 필요한 상태로, 실제 실행은 resume 이후로 미룬다.
             reason = str(task_input.get("approval_reason") or f"{tool_name} 실행 전 승인이 필요합니다")
             return ToolGuardResult(
@@ -53,3 +53,12 @@ class ToolGuard:
                 },
             )
         return ToolGuardResult(decision=ToolGuardDecision.ALLOW)
+
+    @staticmethod
+    def _has_approved_global_resume(task_input: dict[str, Any]) -> bool:
+        context = task_input.get("_approved_resume_context")
+        if not isinstance(context, dict):
+            return False
+        # 전역 approval_required로 멈춘 TaskRun(사용자 요청 전체 실행)이 승인된 뒤에는
+        # 같은 resume/replay 안의 후속 tool call이 같은 전역 조건으로 다시 WAITING에 빠지지 않게 한다.
+        return bool(context.get("approved")) and context.get("source") == "legacy_input_payload"

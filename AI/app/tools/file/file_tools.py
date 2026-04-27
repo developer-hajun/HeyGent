@@ -655,6 +655,7 @@ def _virtual_read_text(path: Path, state: dict[Path, str | None]) -> str:
 
 
 def _commit_patch_operations(operations: list[_PatchOperation]) -> None:
+    # 여러 파일 patch는 중간 실패 시 앞서 쓴 파일을 되돌릴 수 있도록 먼저 snapshot을 잡는다.
     snapshots = _snapshot_patch_paths(operations)
     try:
         for operation in operations:
@@ -670,6 +671,7 @@ def _commit_patch_operations(operations: list[_PatchOperation]) -> None:
                 operation.source.unlink()
                 operation.path.write_text(operation.updated or "", encoding="utf-8", newline="")
     except Exception:
+        # rollback은 patch 호출 하나가 부분 적용 상태로 남지 않게 하는 최소 안전장치다.
         _restore_patch_snapshots(snapshots)
         raise
 

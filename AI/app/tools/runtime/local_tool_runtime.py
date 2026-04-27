@@ -59,6 +59,18 @@ class LocalToolRuntime:
             return definitions
         return [item for item in definitions if item["name"] in allowed_tool_names]
 
+    def bind_workspace_root(self, workspace_root: str | os.PathLike[str] | None) -> "LocalToolRuntime":
+        if workspace_root is None or str(workspace_root).strip() == "":
+            return self
+
+        bound = self.__class__(
+            skill_registry=self.skill_registry,
+            session_store=self.session_store,
+            workspace_root=workspace_root,
+        )
+        bound._todo_items = [dict(item) for item in self._todo_items]
+        return bound
+
     def run_calls(
         self,
         calls: list[dict[str, Any]],
@@ -103,6 +115,8 @@ class LocalToolRuntime:
                 tool_name=normalized_name,
             )
 
+        # validation 실패도 tool result(tool 실행 결과를 모델에게 다시 넘기는 메시지)로 돌려
+        # LLM이 인자 수정, 우회, 중단 중 다음 행동을 판단하게 한다.
         validation_error = self._validate_args(entry.definition.schema, args)
         if validation_error:
             return self._tool_error(
@@ -115,6 +129,7 @@ class LocalToolRuntime:
         try:
             result = entry.handler(trusted_args)
         except Exception as error:
+            # handler 예외도 raise로 loop를 끊지 않고 관찰 가능한 tool result로 남긴다.
             return self._tool_error(
                 code="tool_execution_failed",
                 message=f"{type(error).__name__}: {error}",

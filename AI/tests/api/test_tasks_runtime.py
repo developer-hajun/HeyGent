@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 import sys
 
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse, AssistantToolCall
@@ -76,7 +77,7 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert body["entry_executor_key"] == "agent.loop"
     assert body["result_payload"]["text"] == "NATIVE_LOOP_DONE"
     assert [item["name"] for item in body["result_payload"]["tool_results"]] == ["skills.list", "todo", "terminal.run"]
-    assert body["todo_state"]["currentKey"] == "ship"
+    assert body["todo_state"]["currentKey"] is None
     exposed_tool_names = [tool["function"]["name"] for tool in provider_calls[0]["tools"]]
     assert "skills_list" in exposed_tool_names
     assert "terminal_run" in exposed_tool_names
@@ -87,7 +88,8 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     projected_steps = [step for step in steps if step["input_payload"].get("todo_key")]
     assert [step["input_payload"]["todo_key"] for step in projected_steps] == ["plan", "ship"]
     assert projected_steps[0]["status"] == "COMPLETED"
-    assert projected_steps[1]["status"] == "PENDING"
+    assert projected_steps[1]["status"] == "CANCELED"
+    assert all(step["status"] in {"COMPLETED", "FAILED", "CANCELED"} for step in steps)
 
     transcript_session = client.app.state.session_store.get_latest_session_by_key("sess_native_loop")
     transcript = client.app.state.session_store.list_messages(transcript_session["id"])
@@ -96,11 +98,77 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert transcript[2]["tool_call_id"] == "call_skills"
 
 
+def test_agent_loop_uses_input_workspace_root_for_file_and_terminal_runtime(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "request-workspace"
+    workspace.mkdir()
+    file_name = f"request-root-{tmp_path.name}.txt"
+    requested_file = workspace / "drafts" / file_name
+    server_cwd_file = Path.cwd() / "drafts" / file_name
+    server_cwd_terminal_marker = Path.cwd() / "terminal-marker.txt"
+    if server_cwd_file.exists():
+        server_cwd_file.unlink()
+    if server_cwd_terminal_marker.exists():
+        server_cwd_terminal_marker.unlink()
+    provider_calls = _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_write",
+                        "write_file",
+                        {
+                            "workspace_root": str(Path.cwd()),
+                            "path": f"drafts/{file_name}",
+                            "content": "request workspace file\n",
+                        },
+                    ),
+                    _tool_call(
+                        "call_terminal",
+                        "terminal_run",
+                        {"argv": [sys.executable, "-c", "import pathlib; pathlib.Path('terminal-marker.txt').write_text('ok')"]},
+                    ),
+                ]
+            ),
+            _response(text="WORKSPACE_ROOT_DONE"),
+        ],
+    )
+
+    response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "workspace-root-user",
+            "input_payload": {
+                "prompt": "요청 workspace에서 파일과 터미널 작업을 실행해줘.",
+                "workspace_root": str(workspace),
+                "enabled_toolsets": ["file", "terminal"],
+            },
+        },
+    )
+    server_cwd_created = server_cwd_file.exists()
+    if server_cwd_created:
+        server_cwd_file.unlink()
+    server_cwd_terminal_created = server_cwd_terminal_marker.exists()
+    if server_cwd_terminal_created:
+        server_cwd_terminal_marker.unlink()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert requested_file.read_text(encoding="utf-8") == "request workspace file\n"
+    assert (workspace / "terminal-marker.txt").read_text(encoding="utf-8") == "ok"
+    assert server_cwd_created is False
+    assert server_cwd_terminal_created is False
+    assert len(provider_calls) == 2
+
+
 def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch):
     _patch_respond(
         monkeypatch,
         [
             _response(tool_calls=[_tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT_OK')"]})]),
+            _response(tool_calls=[_tool_call("call_followup", "terminal_run", {"argv": [sys.executable, "-c", "print('FOLLOWUP_OK')"]})]),
             _response(text="APPROVED_DONE"),
         ],
     )
@@ -139,7 +207,10 @@ def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch
     assert resumed["status"] == "COMPLETED"
     assert resumed["current_step_run_id"] == waiting_step_id
     assert resumed["result_payload"]["text"] == "APPROVED_DONE"
-    assert resumed["result_payload"]["tool_results"][0]["tool_call_id"] == "call_terminal"
+    assert [item["tool_call_id"] for item in resumed["result_payload"]["tool_results"]] == ["call_terminal", "call_followup"]
+
+    resumed_events = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/events").json()
+    assert [event["event_type"] for event in resumed_events].count("approval.requested") == 1
 
 
 def test_taskruns_resume_rejects_missing_approval_id_for_waiting_task(client, monkeypatch):
