@@ -1,0 +1,92 @@
+services:
+  # 인프라
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: heygent-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-heygent}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - heygent-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-heygent}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: heygent-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - heygent-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # 앱
+  backend:
+    build:
+      context: ./backend
+    container_name: heygent-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file: ./backend/.env
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      # 컨테이너끼리는 service 이름(postgres/redis)으로 통신.
+      # backend/.env 의 localhost 값을 컨테이너용으로 덮어쓴다.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-heygent}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # actuator 가 아직 의존성에 없어서 8080 포트가 LISTEN 상태인지로 대신 검사한다.
+    # 운영 단계에서는 actuator 도입 후 /actuator/health 로 옮긴다.
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/8080' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  ai:
+    build:
+      context: ./ai
+    container_name: heygent-ai
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file: ./ai/.env
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: heygent-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    environment:
+      - NODE_ENV=development
+
+volumes:
+  heygent-postgres-data:
+  heygent-redis-data:
