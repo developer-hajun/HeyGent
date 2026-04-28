@@ -13,7 +13,7 @@ RUN npm install
 # 소스 복사. dev 모드에서는 compose volume 마운트로 핫 리로드를 활용한다.
 COPY . .
 
-EXPOSE 3000
+EXPOSE 5173
 
 # Vite dev 서버를 0.0.0.0 바인딩으로 띄워야 컨테이너 외부에서 접속할 수 있다.
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "3000"]
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
