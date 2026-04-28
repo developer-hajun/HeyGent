@@ -59,6 +59,7 @@ public class UserMemoryService {
         MemoryScopeType scopeType = resolveScopeType(request.getScopeType(), storeType);
         validateStoreType(storeType, request.getMemoryType());
         validateSessionScope(scopeType, request.getExpiresAt());
+        validateScopeMetadata(scopeType, metadata);
         validateValidityRange(request.getValidFrom(), request.getValidUntil());
 
         if (operationType == MemoryOperationType.INVALIDATE) {
@@ -445,6 +446,31 @@ public class UserMemoryService {
             return;
         }
         if (expiresAt == null || !expiresAt.isAfter(LocalDateTime.now())) {
+            throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
+        }
+    }
+
+    private void validateScopeMetadata(MemoryScopeType scopeType, Map<String, Object> metadata) {
+        if (scopeType == MemoryScopeType.WORKSPACE) {
+            validateRequiredMetadata(metadata, "workspaceKey");
+            return;
+        }
+        if (scopeType == MemoryScopeType.RESOURCE) {
+            validateRequiredMetadata(metadata, "resourceId");
+            return;
+        }
+        if (scopeType == MemoryScopeType.SESSION) {
+            validateRequiredMetadata(metadata, "sessionKey");
+        }
+    }
+
+    private void validateRequiredMetadata(Map<String, Object> metadata, String key) {
+        if (metadata == null) {
+            throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
+        }
+
+        Object value = metadata.get(key);
+        if (value == null || !StringUtils.hasText(value.toString())) {
             throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
         }
     }
