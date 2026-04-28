@@ -120,6 +120,7 @@ public class UserMemoryVectorRepository {
         List<String> tags,
         double minConfidence,
         double minImportance,
+        double maxDistance,
         int limit
     ) {
         if (!pgvectorAvailable) {
@@ -127,6 +128,7 @@ public class UserMemoryVectorRepository {
         }
 
         List<Object> params = new ArrayList<>();
+        String queryVectorLiteral = toVectorLiteral(queryEmbedding);
         StringBuilder sql = new StringBuilder("""
             SELECT id
             FROM user_memories
@@ -138,12 +140,15 @@ public class UserMemoryVectorRepository {
                 AND (valid_from IS NULL OR valid_from <= now())
                 AND (valid_until IS NULL OR valid_until > now())
                 AND (expires_at IS NULL OR expires_at > now())
+                AND embedding <=> CAST(? AS vector) <= ?
             """);
 
         params.add(userId);
         params.add(MemoryStatus.ACTIVE.name());
         params.add(minConfidence);
         params.add(minImportance);
+        params.add(queryVectorLiteral);
+        params.add(maxDistance);
 
         appendEnumFilter(sql, params, "store_type", storeType);
         appendEnumFilter(sql, params, "memory_type", memoryType);
@@ -158,7 +163,7 @@ public class UserMemoryVectorRepository {
             ORDER BY embedding <=> CAST(? AS vector), importance DESC, confidence DESC
             LIMIT ?
             """);
-        params.add(toVectorLiteral(queryEmbedding));
+        params.add(queryVectorLiteral);
         params.add(limit);
 
         try {
