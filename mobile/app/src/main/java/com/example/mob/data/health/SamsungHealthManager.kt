@@ -94,6 +94,7 @@ class SamsungHealthManager(private val context: Context) {
                 .build()
         ).dataList.firstOrNull()?.value?.toDouble()
 
+
         val snapshot = WatchHealthSnapshot(
             measuredAt = endTime,
             heartRate = heartRate,
