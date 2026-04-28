@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -42,6 +43,7 @@ public class UserMemoryService {
     private static final int RECALL_FALLBACK_CANDIDATE_SIZE = 100;
     private static final double MIN_RECALL_SIMILARITY = 0.35;
     private static final double MAX_RECALL_DISTANCE = 1.0 - MIN_RECALL_SIMILARITY;
+    private static final double SEMANTIC_DUPLICATE_SIMILARITY = 0.92;
 
     private final UserMemoryRepository userMemoryRepository;
     private final UserMemoryVectorRepository userMemoryVectorRepository;
@@ -67,11 +69,20 @@ public class UserMemoryService {
         if (operationType == MemoryOperationType.INVALIDATE) {
             return invalidateTargetMemory(userId, request);
         }
+        List<Double> embedding = memoryEmbeddingService.embed(buildEmbeddingText(
+            storeType,
+            request.getMemoryType(),
+            scopeType,
+            request.getSummary(),
+            normalizedContent,
+            request.getEvidence(),
+            metadata
+        ));
         if (operationType == MemoryOperationType.UPDATE || operationType == MemoryOperationType.MERGE) {
-            return replaceTargetMemory(userId, request, storeType, scopeType, metadata, normalizedContent);
+            return replaceTargetMemory(userId, request, storeType, scopeType, metadata, normalizedContent, embedding);
         }
 
-        return userMemoryRepository.findDuplicateActiveMemory(
+        Optional<UserMemory> duplicateMemory = userMemoryRepository.findDuplicateActiveMemory(
                 userId,
                 storeType,
                 request.getMemoryType(),
@@ -79,9 +90,21 @@ public class UserMemoryService {
                 normalizedContent,
                 MemoryStatus.ACTIVE
             )
-            .filter(memory -> isNotExpired(memory, LocalDateTime.now()))
+            .filter(memory -> isNotExpired(memory, LocalDateTime.now()));
+        if (duplicateMemory.isPresent()) {
+            return UserMemoryResponse.from(duplicateMemory.get());
+        }
+
+        return findSemanticDuplicateMemory(
+                userId,
+                storeType,
+                request.getMemoryType(),
+                scopeType,
+                metadata,
+                embedding
+            )
             .map(UserMemoryResponse::from)
-            .orElseGet(() -> saveMemory(userId, request, storeType, scopeType, metadata, normalizedContent));
+            .orElseGet(() -> saveMemory(userId, request, storeType, scopeType, metadata, normalizedContent, embedding));
     }
 
     @Transactional
@@ -98,7 +121,8 @@ public class UserMemoryService {
         MemoryStoreType storeType,
         MemoryScopeType scopeType,
         Map<String, Object> metadata,
-        String normalizedContent
+        String normalizedContent,
+        List<Double> embedding
     ) {
 
         UserMemory memory = UserMemory.builder()
@@ -123,10 +147,7 @@ public class UserMemoryService {
             .build();
 
         UserMemory savedMemory = userMemoryRepository.save(memory);
-        userMemoryVectorRepository.updateEmbedding(
-            savedMemory.getId(),
-            memoryEmbeddingService.embed(buildEmbeddingText(savedMemory))
-        );
+        userMemoryVectorRepository.updateEmbedding(savedMemory.getId(), embedding);
         return UserMemoryResponse.from(savedMemory);
     }
 
@@ -349,14 +370,66 @@ public class UserMemoryService {
         MemoryStoreType storeType,
         MemoryScopeType scopeType,
         Map<String, Object> metadata,
-        String normalizedContent
+        String normalizedContent,
+        List<Double> embedding
     ) {
         UserMemory targetMemory = findOwnedMemory(userId, request.getTargetMemoryId());
         validateTargetCanChange(targetMemory);
 
-        UserMemoryResponse savedResponse = saveMemory(userId, request, storeType, scopeType, metadata, normalizedContent);
+        UserMemoryResponse savedResponse = saveMemory(
+            userId,
+            request,
+            storeType,
+            scopeType,
+            metadata,
+            normalizedContent,
+            embedding
+        );
         targetMemory.invalidate(savedResponse.getId(), trimToNull(request.getUpdateReason()), LocalDateTime.now());
         return savedResponse;
+    }
+
+    private Optional<UserMemory> findSemanticDuplicateMemory(
+        Long userId,
+        MemoryStoreType storeType,
+        MemoryType memoryType,
+        MemoryScopeType scopeType,
+        Map<String, Object> metadata,
+        List<Double> embedding
+    ) {
+        return findRecallCandidates(userId, storeType, memoryType, scopeType).stream()
+            .filter(memory -> hasSameMemoryBoundary(memory.getMetadata(), metadata))
+            .filter(memory -> StringUtils.hasText(memory.getEmbeddingText()))
+            .map(memory -> new ScoredMemory(
+                memory,
+                cosineSimilarity(embedding, parseEmbedding(memory.getEmbeddingText()))
+            ))
+            .filter(scoredMemory -> scoredMemory.score() >= SEMANTIC_DUPLICATE_SIMILARITY)
+            .sorted(Comparator
+                .comparing(ScoredMemory::score)
+                .thenComparing(scoredMemory -> scoredMemory.memory().getImportance())
+                .reversed()
+            )
+            .map(ScoredMemory::memory)
+            .findFirst();
+    }
+
+    private boolean hasSameMemoryBoundary(Map<String, Object> storedMetadata, Map<String, Object> newMetadata) {
+        return hasSameMetadataValue(storedMetadata, newMetadata, "workspaceKey")
+            && hasSameMetadataValue(storedMetadata, newMetadata, "sessionKey")
+            && hasSameMetadataValue(storedMetadata, newMetadata, "resourceId");
+    }
+
+    private boolean hasSameMetadataValue(Map<String, Object> storedMetadata, Map<String, Object> newMetadata, String key) {
+        Object storedValue = storedMetadata == null ? null : storedMetadata.get(key);
+        Object newValue = newMetadata == null ? null : newMetadata.get(key);
+        if (storedValue == null && newValue == null) {
+            return true;
+        }
+        if (storedValue == null || newValue == null) {
+            return false;
+        }
+        return storedValue.toString().equals(newValue.toString());
     }
 
     private UserMemoryResponse invalidateTargetMemory(Long userId, CreateMemoryRequest request) {
@@ -569,15 +642,35 @@ public class UserMemoryService {
     }
 
     private String buildEmbeddingText(UserMemory memory) {
+        return buildEmbeddingText(
+            memory.getStoreType(),
+            memory.getMemoryType(),
+            memory.getScopeType(),
+            memory.getSummary(),
+            memory.getContent(),
+            memory.getEvidence(),
+            memory.getMetadata()
+        );
+    }
+
+    private String buildEmbeddingText(
+        MemoryStoreType storeType,
+        MemoryType memoryType,
+        MemoryScopeType scopeType,
+        String summary,
+        String content,
+        String evidence,
+        Map<String, Object> metadata
+    ) {
         return String.join(
             "\n",
-            memory.getStoreType().name(),
-            memory.getMemoryType().name(),
-            memory.getScopeType().name(),
-            nullToEmpty(memory.getSummary()),
-            memory.getContent(),
-            nullToEmpty(memory.getEvidence()),
-            memory.getMetadata() == null ? "" : memory.getMetadata().toString()
+            storeType.name(),
+            memoryType.name(),
+            scopeType.name(),
+            nullToEmpty(summary),
+            content,
+            nullToEmpty(evidence),
+            metadata == null ? "" : metadata.toString()
         );
     }
 
