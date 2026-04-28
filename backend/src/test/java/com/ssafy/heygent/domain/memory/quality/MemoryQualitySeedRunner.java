@@ -170,7 +170,7 @@ public class MemoryQualitySeedRunner {
             confidence,
             sourceSessionKey,
             "quality seed evidence " + index,
-            now.minusDays(index % 30),
+            now.minusDays((index % 30) + 1L),
             expiresAt
         );
     }
