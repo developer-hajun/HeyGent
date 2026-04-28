@@ -1,2 +1,16 @@
-*.iml
+# OS
 .DS_Store
+Thumbs.db
+
+# IDE
+*.iml
+.idea/
+
+# Local temp
+tmp/
+reference/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
