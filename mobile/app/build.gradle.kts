@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.jetbrains.kotlin.compose)
+    id("kotlin-parcelize")
 }
 
 android {
@@ -12,8 +13,8 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.mob"
-        minSdk = 24
+        applicationId = "com.heygents.mob"
+        minSdk = 29
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
@@ -58,6 +59,7 @@ dependencies {
     implementation(libs.okhttp.logging)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.lifecycle.viewmodel.ktx)
+    implementation("org.jetbrains.kotlin:kotlin-parcelize-runtime:2.2.10")
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

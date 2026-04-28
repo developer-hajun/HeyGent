@@ -2,206 +2,123 @@ package com.example.mob.data.health
 
 import android.app.Activity
 import android.content.Context
-import com.samsung.android.sdk.healthdata.HealthConnectionErrorResult
-import com.samsung.android.sdk.healthdata.HealthDataResolver
-import com.samsung.android.sdk.healthdata.HealthDataStore
-import com.samsung.android.sdk.healthdata.HealthPermissionManager
-import kotlinx.coroutines.suspendCancellableCoroutine
-import java.time.Instant
+import android.util.Log
+import com.samsung.android.sdk.health.data.HealthDataService
+import com.samsung.android.sdk.health.data.HealthDataStore
+import com.samsung.android.sdk.health.data.permission.AccessType
+import com.samsung.android.sdk.health.data.permission.Permission
+import com.samsung.android.sdk.health.data.request.DataType
+import com.samsung.android.sdk.health.data.request.DataTypes
+import com.samsung.android.sdk.health.data.request.LocalTimeFilter
+import com.samsung.android.sdk.health.data.request.Ordering
 import java.time.LocalDateTime
 import java.time.ZoneId
-import kotlin.coroutines.resume
 
 class SamsungHealthManager(private val context: Context) {
 
     private var store: HealthDataStore? = null
 
-    companion object {
-        const val HEART_RATE_TYPE = "com.samsung.health.heart_rate"
-        const val STEP_COUNT_TYPE = "com.samsung.health.step_count"
-        const val SLEEP_TYPE = "com.samsung.health.sleep"
-        const val SPO2_TYPE = "com.samsung.health.oxygen_saturation"
-        const val STRESS_TYPE = "com.samsung.health.stress"
-        const val EXERCISE_TYPE = "com.samsung.health.exercise"
-    }
-
-    val permissionKeys = setOf(
-        HealthPermissionManager.PermissionKey(HEART_RATE_TYPE, HealthPermissionManager.PermissionType.READ),
-        HealthPermissionManager.PermissionKey(STEP_COUNT_TYPE, HealthPermissionManager.PermissionType.READ),
-        HealthPermissionManager.PermissionKey(SLEEP_TYPE, HealthPermissionManager.PermissionType.READ),
-        HealthPermissionManager.PermissionKey(SPO2_TYPE, HealthPermissionManager.PermissionType.READ),
-        HealthPermissionManager.PermissionKey(STRESS_TYPE, HealthPermissionManager.PermissionType.READ),
-        HealthPermissionManager.PermissionKey(EXERCISE_TYPE, HealthPermissionManager.PermissionType.READ),
+    val permissions = setOf(
+        Permission.of(DataTypes.HEART_RATE, AccessType.READ),
+        Permission.of(DataTypes.STEPS, AccessType.READ),
+        Permission.of(DataTypes.SLEEP, AccessType.READ),
+        Permission.of(DataTypes.BLOOD_OXYGEN, AccessType.READ),
+        Permission.of(DataTypes.EXERCISE, AccessType.READ),
     )
 
-    suspend fun connect(): Boolean = suspendCancellableCoroutine { cont ->
-        val listener = object : HealthDataStore.ConnectionListener {
-            override fun onConnected() {
-                if (cont.isActive) cont.resume(true)
-            }
-            override fun onConnectionFailed(error: HealthConnectionErrorResult) {
-                if (cont.isActive) cont.resume(false)
-            }
-            override fun onDisconnected() {}
-        }
-        store = HealthDataStore(context, listener)
-        store?.connectService()
-        cont.invokeOnCancellation { store?.disconnectService() }
+    suspend fun connect() {
+        Log.d("SamsungHealth", "HealthDataStore 연결 중...")
+        store = HealthDataService.getStore(context)
     }
 
-    fun disconnect() {
-        store?.disconnectService()
-        store = null
-    }
-
-    fun hasAllPermissions(): Boolean {
+    suspend fun hasAllPermissions(): Boolean {
         val currentStore = store ?: return false
-        return HealthPermissionManager(currentStore).isPermissionAcquired(permissionKeys)
+        val granted = currentStore.getGrantedPermissions(permissions)
+        return granted.containsAll(permissions)
     }
 
-    fun requestPermissions(activity: Activity) {
-        val currentStore = store ?: return
-        HealthPermissionManager(currentStore)
-            .requestPermissions(permissionKeys, activity)
-            .setResultListener { /* 결과는 Activity의 onActivityResult에서 처리 */ }
+    suspend fun requestPermissions(activity: Activity): Set<Permission> {
+        val currentStore = store ?: return emptySet()
+        return currentStore.requestPermissions(permissions, activity)
     }
 
     suspend fun readLast24Hours(): WatchHealthSnapshot {
-        val endTime = System.currentTimeMillis()
-        val startTime = endTime - 24 * 60 * 60 * 1000L
-        val resolver = HealthDataResolver(store ?: error("Samsung Health에 연결되지 않음"), null)
+        Log.d("SamsungHealth", "최근 24시간 데이터 읽기 시도 중...")
+        val currentStore = store ?: error("Samsung Health에 연결되지 않음")
+        val endTime = LocalDateTime.now()
+        val startTime = endTime.minusHours(24)
+        val timeFilter = LocalTimeFilter.of(startTime, endTime)
+        val zone = ZoneId.systemDefault()
 
-        val sleep = readSleep(resolver, startTime, endTime)
+        // 심박수 (최신 1건 평균값)
+        val heartRateData = currentStore.readData(
+            DataTypes.HEART_RATE.readDataRequestBuilder
+                .setLocalTimeFilter(timeFilter)
+                .setOrdering(Ordering.DESC)
+                .build()
+        ).dataList
+        val heartRate = heartRateData.firstOrNull()
+            ?.getValue(DataType.HeartRateType.HEART_RATE)?.toInt()
 
-        return WatchHealthSnapshot(
-            measuredAt = LocalDateTime.now(),
-            heartRate = readHeartRate(resolver, startTime, endTime),
-            steps = readSteps(resolver, startTime, endTime),
-            sleepDurationMinutes = sleep?.durationMinutes,
-            sleepStartAt = sleep?.startAt,
-            sleepEndAt = sleep?.endAt,
-            spO2 = readSpO2(resolver, startTime, endTime),
-            stressLevel = readStress(resolver, startTime, endTime),
-            caloriesBurned = readCalories(resolver, startTime, endTime)
+        // 걸음수 합계 (aggregate)
+        val stepsData = currentStore.aggregateData(
+            DataType.StepsType.TOTAL.requestBuilder
+                .setLocalTimeFilter(timeFilter)
+                .build()
+        ).dataList
+        val steps = stepsData.firstOrNull()?.value?.toInt()
+
+        // 수면 (최신 세션)
+        val sleepPoint = currentStore.readData(
+            DataTypes.SLEEP.readDataRequestBuilder
+                .setLocalTimeFilter(timeFilter)
+                .setOrdering(Ordering.DESC)
+                .build()
+        ).dataList.firstOrNull()
+        val sleepDuration = sleepPoint?.getValue(DataType.SleepType.DURATION)
+        val latestSleepSession = sleepPoint?.getValue(DataType.SleepType.SESSIONS)?.lastOrNull()
+
+        // 혈중 산소 포화도
+        val spO2 = currentStore.readData(
+            DataTypes.BLOOD_OXYGEN.readDataRequestBuilder
+                .setLocalTimeFilter(timeFilter)
+                .setOrdering(Ordering.DESC)
+                .build()
+        ).dataList.firstOrNull()
+            ?.getValue(DataType.BloodOxygenType.OXYGEN_SATURATION)?.toDouble()
+
+        // 칼로리 합계 (aggregate)
+        val calories = currentStore.aggregateData(
+            DataType.ExerciseType.TOTAL_CALORIES.requestBuilder
+                .setLocalTimeFilter(timeFilter)
+                .build()
+        ).dataList.firstOrNull()?.value?.toDouble()
+
+        val snapshot = WatchHealthSnapshot(
+            measuredAt = endTime,
+            heartRate = heartRate,
+            steps = steps,
+            sleepDurationMinutes = sleepDuration?.toMinutes()?.toInt(),
+            sleepStartAt = latestSleepSession?.startTime?.let { LocalDateTime.ofInstant(it, zone) },
+            sleepEndAt = latestSleepSession?.endTime?.let { LocalDateTime.ofInstant(it, zone) },
+            spO2 = spO2,
+            stressLevel = null,
+            caloriesBurned = calories
         )
+
+        Log.d("SamsungHealth", """
+            ===== 갤럭시워치 데이터 수집 =====
+            측정시각  : ${snapshot.measuredAt}
+            심박수    : ${snapshot.heartRate ?: "없음"} bpm
+            걸음수    : ${snapshot.steps ?: "없음"} 걸음
+            수면시간  : ${snapshot.sleepDurationMinutes ?: "없음"} 분
+            수면시작  : ${snapshot.sleepStartAt ?: "없음"}
+            수면종료  : ${snapshot.sleepEndAt ?: "없음"}
+            산소포화도: ${snapshot.spO2 ?: "없음"} %
+            칼로리    : ${snapshot.caloriesBurned ?: "없음"} kcal
+            ==================================
+        """.trimIndent())
+
+        return snapshot
     }
-
-    private suspend fun readHeartRate(resolver: HealthDataResolver, startTime: Long, endTime: Long): Int? =
-        suspendCancellableCoroutine { cont ->
-            val request = HealthDataResolver.ReadRequest.Builder()
-                .setDataType(HEART_RATE_TYPE)
-                .setProperties(arrayOf("heart_rate", "start_time"))
-                .setFilter(timeFilter(startTime, endTime))
-                .setSort("start_time", HealthDataResolver.SortOrder.DESC)
-                .build()
-            resolver.read(request).setResultListener { result ->
-                val value = if (result.iterator().hasNext())
-                    result.iterator().next().getFloat("heart_rate").toInt()
-                else null
-                result.close()
-                if (cont.isActive) cont.resume(value)
-            }
-        }
-
-    private suspend fun readSteps(resolver: HealthDataResolver, startTime: Long, endTime: Long): Int? =
-        suspendCancellableCoroutine { cont ->
-            val request = HealthDataResolver.ReadRequest.Builder()
-                .setDataType(STEP_COUNT_TYPE)
-                .setProperties(arrayOf("count"))
-                .setFilter(timeFilter(startTime, endTime))
-                .build()
-            resolver.read(request).setResultListener { result ->
-                var total = 0
-                val iterator = result.iterator()
-                while (iterator.hasNext()) total += iterator.next().getInt("count")
-                result.close()
-                if (cont.isActive) cont.resume(if (total == 0) null else total)
-            }
-        }
-
-    private suspend fun readSleep(resolver: HealthDataResolver, startTime: Long, endTime: Long): SleepInfo? =
-        suspendCancellableCoroutine { cont ->
-            val request = HealthDataResolver.ReadRequest.Builder()
-                .setDataType(SLEEP_TYPE)
-                .setProperties(arrayOf("start_time", "end_time"))
-                .setFilter(timeFilter(startTime, endTime))
-                .setSort("start_time", HealthDataResolver.SortOrder.DESC)
-                .build()
-            resolver.read(request).setResultListener { result ->
-                val info = if (result.iterator().hasNext()) {
-                    val data = result.iterator().next()
-                    val start = data.getLong("start_time")
-                    val end = data.getLong("end_time")
-                    val zone = ZoneId.systemDefault()
-                    SleepInfo(
-                        durationMinutes = ((end - start) / 60_000L).toInt(),
-                        startAt = LocalDateTime.ofInstant(Instant.ofEpochMilli(start), zone),
-                        endAt = LocalDateTime.ofInstant(Instant.ofEpochMilli(end), zone)
-                    )
-                } else null
-                result.close()
-                if (cont.isActive) cont.resume(info)
-            }
-        }
-
-    private suspend fun readSpO2(resolver: HealthDataResolver, startTime: Long, endTime: Long): Double? =
-        suspendCancellableCoroutine { cont ->
-            val request = HealthDataResolver.ReadRequest.Builder()
-                .setDataType(SPO2_TYPE)
-                .setProperties(arrayOf("spo2", "start_time"))
-                .setFilter(timeFilter(startTime, endTime))
-                .setSort("start_time", HealthDataResolver.SortOrder.DESC)
-                .build()
-            resolver.read(request).setResultListener { result ->
-                val value = if (result.iterator().hasNext())
-                    result.iterator().next().getFloat("spo2").toDouble()
-                else null
-                result.close()
-                if (cont.isActive) cont.resume(value)
-            }
-        }
-
-    private suspend fun readStress(resolver: HealthDataResolver, startTime: Long, endTime: Long): Int? =
-        suspendCancellableCoroutine { cont ->
-            val request = HealthDataResolver.ReadRequest.Builder()
-                .setDataType(STRESS_TYPE)
-                .setProperties(arrayOf("stress_score", "start_time"))
-                .setFilter(timeFilter(startTime, endTime))
-                .setSort("start_time", HealthDataResolver.SortOrder.DESC)
-                .build()
-            resolver.read(request).setResultListener { result ->
-                val value = if (result.iterator().hasNext())
-                    result.iterator().next().getInt("stress_score")
-                else null
-                result.close()
-                if (cont.isActive) cont.resume(value)
-            }
-        }
-
-    private suspend fun readCalories(resolver: HealthDataResolver, startTime: Long, endTime: Long): Double? =
-        suspendCancellableCoroutine { cont ->
-            val request = HealthDataResolver.ReadRequest.Builder()
-                .setDataType(EXERCISE_TYPE)
-                .setProperties(arrayOf("calorie"))
-                .setFilter(timeFilter(startTime, endTime))
-                .build()
-            resolver.read(request).setResultListener { result ->
-                var total = 0.0
-                val iterator = result.iterator()
-                while (iterator.hasNext()) total += iterator.next().getDouble("calorie")
-                result.close()
-                if (cont.isActive) cont.resume(if (total == 0.0) null else total)
-            }
-        }
-
-    private fun timeFilter(startTime: Long, endTime: Long) = HealthDataResolver.Filter.and(
-        HealthDataResolver.Filter.greaterThanEquals("start_time", startTime),
-        HealthDataResolver.Filter.lessThan("start_time", endTime)
-    )
-
-    private data class SleepInfo(
-        val durationMinutes: Int,
-        val startAt: LocalDateTime,
-        val endAt: LocalDateTime
-    )
 }
