@@ -64,6 +64,15 @@ private val chatSessions = listOf(
         listOf(ChatMessage(isBot = true, text = "안녕하세요! 리서치를 도와드리겠습니다.", timestamp = "4월\n20일")))
 )
 
+private val newChatSession = ChatListItem(
+    id = 0,
+    title = "새 채팅",
+    preview = "",
+    time = "",
+    inputPlaceholder = "무엇이든 편하게 물어보세요",
+    initialMessages = emptyList()
+)
+
 private val botResponses = listOf(
     "이해했습니다. 바로 도와드리겠습니다.",
     "물론입니다! 요청을 분석하고 답변드리겠습니다.",
@@ -83,7 +92,11 @@ fun ChatScreen(
     agentName: String = "Jarvis",
     bottomPadding: Dp = 0.dp
 ) {
-    val session = chatSessions.find { it.id == activeChatSessionId }
+    val session = when (activeChatSessionId) {
+        null -> null
+        0 -> newChatSession
+        else -> chatSessions.find { it.id == activeChatSessionId }
+    }
 
     if (session == null) {
         ChatListView(
@@ -188,6 +201,7 @@ private fun SingleChatView(
     val listState = rememberLazyListState()
     var showAttachMenu by remember { mutableStateOf(false) }
     var showModelPanel by remember { mutableStateOf(false) }
+    var isVoiceMode by remember { mutableStateOf(false) }
 
     LaunchedEffect(messages.size, isProcessing) {
         val count = messages.size + if (isProcessing) 1 else 0
@@ -272,7 +286,8 @@ private fun SingleChatView(
                         }
                     },
                     onStop = { isProcessing = false },
-                    onPlusClick = { showAttachMenu = !showAttachMenu }
+                    onPlusClick = { showAttachMenu = !showAttachMenu },
+                    onVoiceMode = { isVoiceMode = true }
                 )
 
                 if (bottomPadding > 0.dp) Spacer(modifier = Modifier.height(bottomPadding))
@@ -313,6 +328,10 @@ private fun SingleChatView(
                     }
                 }
             }
+        }
+
+        if (isVoiceMode) {
+            VoiceModeOverlay(onStop = { isVoiceMode = false })
         }
     }
 }

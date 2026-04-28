@@ -98,13 +98,21 @@ private fun MainApp(onLogout: () -> Unit) {
 
     // 앱 세션 동안 유지 (앱 재실행 시 초기화됨)
     var activeChatSessionId by remember { mutableStateOf<Int?>(null) }
+    var agentName by remember { mutableStateOf("Jarvis") }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
             AppDrawer(
                 onClose = { scope.launch { drawerState.close() } },
-                onHistoryItemClick = {
+                agentName = agentName,
+                onNewChat = {
+                    activeChatSessionId = 0
+                    navController.navigate(Screen.Chat.route) { launchSingleTop = true }
+                    scope.launch { drawerState.close() }
+                },
+                onHistoryItemClick = { sessionId ->
+                    activeChatSessionId = sessionId
                     navController.navigate(Screen.Chat.route) { launchSingleTop = true }
                     scope.launch { drawerState.close() }
                 }
@@ -130,6 +138,7 @@ private fun MainApp(onLogout: () -> Unit) {
                         onMenuClick = onMenuClick,
                         activeChatSessionId = activeChatSessionId,
                         onActiveChatSessionChange = { activeChatSessionId = it },
+                        agentName = agentName,
                         bottomPadding = bottomPadding
                     )
                 }
@@ -143,7 +152,9 @@ private fun MainApp(onLogout: () -> Unit) {
                     ProfileScreen(
                         onMenuClick = onMenuClick,
                         bottomPadding = bottomPadding,
-                        onLogout = onLogout
+                        onLogout = onLogout,
+                        agentName = agentName,
+                        onAgentNameChange = { agentName = it }
                     )
                 }
             }

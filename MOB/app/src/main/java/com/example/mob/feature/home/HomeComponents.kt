@@ -154,35 +154,31 @@ fun CalendarSection() {
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
         elevation = CardDefaults.cardElevation(2.dp)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
+        Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
 
-            // 헤더 (축소)
+            // 헤더
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("📅", fontSize = 14.sp)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("달력", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                }
+                Text("달력", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(16.dp))
                         .background(NavyPrimary)
                         .clickable { showRegisterSheet = true }
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
                 ) {
-                    Text("+ 등록", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    Text("+ 등록", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             // 월 내비게이션
             Row(
@@ -192,25 +188,25 @@ fun CalendarSection() {
             ) {
                 IconButton(
                     onClick = { currentMonth = currentMonth.plusMonths(-1) },
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(24.dp)
                 ) {
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "이전 달", tint = TextPrimary)
                 }
                 Text(
                     "${currentMonth.year}년 ${currentMonth.month}월",
-                    fontSize = 14.sp,
+                    fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                     color = TextPrimary
                 )
                 IconButton(
                     onClick = { currentMonth = currentMonth.plusMonths(1) },
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(24.dp)
                 ) {
                     Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "다음 달", tint = TextPrimary)
                 }
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             // 요일 헤더 (월요일 시작)
             Row(modifier = Modifier.fillMaxWidth()) {
@@ -226,7 +222,7 @@ fun CalendarSection() {
                 }
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(2.dp))
 
             // 날짜 그리드
             val firstDay = currentMonth.firstDayOfWeek()
@@ -261,7 +257,7 @@ fun CalendarSection() {
                             // 날짜 숫자
                             Box(
                                 modifier = Modifier
-                                    .size(26.dp)
+                                    .size(24.dp)
                                     .then(
                                         if (isToday) Modifier.clip(CircleShape).background(Color.Black)
                                         else Modifier
@@ -270,7 +266,7 @@ fun CalendarSection() {
                             ) {
                                 Text(
                                     text = day.toString(),
-                                    fontSize = 13.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
                                     color = when {
                                         isToday         -> Color.White
@@ -285,26 +281,27 @@ fun CalendarSection() {
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(top = 2.dp)
-                                    .height(14.dp),
+                                    .height(20.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (!events.isNullOrEmpty()) {
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(1.dp),
+                                        modifier = Modifier.fillMaxSize(),
+                                        horizontalArrangement = Arrangement.spacedBy(2.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Box(
                                             modifier = Modifier
                                                 .weight(1f)
+                                                .fillMaxHeight()
                                                 .clip(RoundedCornerShape(3.dp))
                                                 .background(events.first().color.copy(alpha = 0.18f))
-                                                .padding(horizontal = 2.dp, vertical = 2.dp),
+                                                .padding(horizontal = 2.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Text(
                                                 text = events.first().title,
-                                                fontSize = if (events.size > 1) 6.sp else 7.sp,
+                                                fontSize = 8.sp,
                                                 color = events.first().color,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis,
@@ -314,14 +311,15 @@ fun CalendarSection() {
                                         if (events.size > 1) {
                                             Box(
                                                 modifier = Modifier
+                                                    .fillMaxHeight()
                                                     .clip(RoundedCornerShape(3.dp))
                                                     .background(TextHint.copy(alpha = 0.2f))
-                                                    .padding(horizontal = 2.dp, vertical = 2.dp),
+                                                    .padding(horizontal = 3.dp),
                                                 contentAlignment = Alignment.Center
                                             ) {
                                                 Text(
                                                     text = "+${events.size - 1}",
-                                                    fontSize = 6.sp,
+                                                    fontSize = 7.sp,
                                                     color = TextSecondary
                                                 )
                                             }

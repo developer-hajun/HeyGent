@@ -34,6 +34,8 @@ fun ProfileScreen(
     onMenuClick: () -> Unit,
     bottomPadding: Dp = 0.dp,
     onLogout: () -> Unit = {},
+    agentName: String = "Jarvis",
+    onAgentNameChange: (String) -> Unit = {}
 ) {
     var showSettings by remember { mutableStateOf(false) }
     var agentCallName by remember { mutableStateOf("James Anderson") }
@@ -288,7 +290,11 @@ fun ProfileScreen(
     }
 
     if (showSettings) {
-        SettingSheet(onDismiss = { showSettings = false })
+        SettingSheet(
+            onDismiss = { showSettings = false },
+            agentName = agentName,
+            onAgentNameChange = onAgentNameChange
+        )
     }
 }
 

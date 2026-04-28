@@ -5,6 +5,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -24,7 +25,11 @@ private enum class SettingPage { GENERAL, SKILL, MODEL, PERSONALIZE, API_KEY }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingSheet(onDismiss: () -> Unit) {
+fun SettingSheet(
+    onDismiss: () -> Unit,
+    agentName: String = "Jarvis",
+    onAgentNameChange: (String) -> Unit = {}
+) {
     var currentPage by remember { mutableStateOf<SettingPage?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -42,7 +47,10 @@ fun SettingSheet(onDismiss: () -> Unit) {
         } else {
             SettingSubPage(
                 page = currentPage!!,
-                onDismiss = onDismiss
+                onBack = { currentPage = null },
+                onDismiss = onDismiss,
+                agentName = agentName,
+                onAgentNameChange = onAgentNameChange
             )
         }
     }
@@ -65,7 +73,13 @@ private fun SettingMainPage(
 }
 
 @Composable
-private fun SettingSubPage(page: SettingPage, onDismiss: () -> Unit) {
+private fun SettingSubPage(
+    page: SettingPage,
+    onBack: () -> Unit,
+    onDismiss: () -> Unit,
+    agentName: String,
+    onAgentNameChange: (String) -> Unit
+) {
     val title = when (page) {
         SettingPage.GENERAL -> "일반"
         SettingPage.SKILL -> "스킬 목록"
@@ -79,13 +93,13 @@ private fun SettingSubPage(page: SettingPage, onDismiss: () -> Unit) {
             .padding(bottom = 32.dp)
             .verticalScroll(rememberScrollState())
     ) {
-        SheetHeader(title = title, onClose = onDismiss)
+        SheetHeader(title = title, onClose = onDismiss, onBack = onBack)
         Spacer(modifier = Modifier.height(8.dp))
         when (page) {
             SettingPage.GENERAL -> GeneralContent()
             SettingPage.SKILL -> SkillContent()
             SettingPage.MODEL -> ModelContent()
-            SettingPage.PERSONALIZE -> PersonalizeContent()
+            SettingPage.PERSONALIZE -> PersonalizeContent(agentName = agentName, onAgentNameChange = onAgentNameChange)
             SettingPage.API_KEY -> ApiKeyContent()
         }
     }
@@ -105,7 +119,7 @@ private fun GeneralContent() {
     DropdownSetting(
         label = "언어",
         description = "애플리케이션 표시 언어를 선택합니다",
-        options = listOf("한국어", "English", "日本語"),
+        options = listOf("한국어", "English"),
         defaultValue = "한국어"
     )
     Spacer(modifier = Modifier.height(16.dp))
@@ -196,19 +210,21 @@ private fun ModelContent() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PersonalizeContent() {
-    var voiceName by remember { mutableStateOf("Heygent") }
-    var emojiOn by remember { mutableStateOf(true) }
+private fun PersonalizeContent(agentName: String, onAgentNameChange: (String) -> Unit) {
+    var voiceName by remember { mutableStateOf(agentName) }
 
-    Text("Heygent의 스타일과 말투를 개인화합니다", fontSize = 13.sp, color = TextSecondary)
+    Text("에이전트의 스타일과 말투를 개인화합니다", fontSize = 13.sp, color = TextSecondary)
     Spacer(modifier = Modifier.height(20.dp))
 
-    Text("음성 호출 이름", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
-    Text("음성으로 AI를 호출할 때 사용할 이름을 설정합니다", fontSize = 12.sp, color = TextSecondary)
+    Text("에이전트 이름", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
+    Text("에이전트를 호출할 이름을 설정합니다.", fontSize = 12.sp, color = TextSecondary)
     Spacer(modifier = Modifier.height(8.dp))
     OutlinedTextField(
         value = voiceName,
-        onValueChange = { voiceName = it },
+        onValueChange = {
+            voiceName = it
+            onAgentNameChange(it)
+        },
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
         shape = RoundedCornerShape(8.dp)
@@ -217,7 +233,7 @@ private fun PersonalizeContent() {
 
     DropdownSetting(
         label = "기본 스타일 및 말투",
-        description = "ChatGPT가 응답하는 스타일과 말투를 지정합니다",
+        description = "에이전트가 응답하는 스타일과 말투를 지정합니다",
         options = listOf("기본값", "격식체", "반말", "친근한"),
         defaultValue = "기본값"
     )
@@ -227,13 +243,6 @@ private fun PersonalizeContent() {
         description = "응답 언어를 선택합니다",
         options = listOf("자동 탐지", "한국어", "English"),
         defaultValue = "자동 탐지"
-    )
-    Spacer(modifier = Modifier.height(16.dp))
-    SettingToggleItem(
-        label = "이모지 사용",
-        description = "Heygent는 메뉴와 알림 지식을 위해 이모지를 사용합니다",
-        checked = emojiOn,
-        onCheckedChange = { emojiOn = it }
     )
 }
 
@@ -391,13 +400,23 @@ private fun SettingToggleItem(
 }
 
 @Composable
-private fun SheetHeader(title: String, onClose: () -> Unit) {
+private fun SheetHeader(title: String, onClose: () -> Unit, onBack: (() -> Unit)? = null) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(title, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+        if (onBack != null) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로", tint = TextSecondary)
+            }
+        }
+        Text(
+            title,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = TextPrimary,
+            modifier = Modifier.weight(1f)
+        )
         IconButton(onClick = onClose) {
             Icon(Icons.Default.Close, contentDescription = "닫기", tint = TextSecondary)
         }
