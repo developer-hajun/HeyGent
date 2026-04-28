@@ -124,7 +124,7 @@ def test_render_plain_box_keeps_terminal_width_aligned():
             "› HeyGent AI (v0.1.0)",
             "",
             "model:     gpt-5.4  /model to change",
-            r"directory: ~\Desktop\saffy\Openclaw\S14P31E105\AI",
+            r"directory: ~\Desktop\saffy\Openclaw\S14P31E105\ai",
             "auth:      not connected  /auth to sign in",
         ]
     )

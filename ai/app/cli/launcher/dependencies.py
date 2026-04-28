@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 # 이 파일은 app/cli/launcher/dependencies.py 아래에 있으므로,
-# editable install 과 pyproject.toml 을 찾으려면 AI 프로젝트 루트까지 올라가야 한다.
+# editable install 과 pyproject.toml 을 찾으려면 ai 프로젝트 루트까지 올라가야 한다.
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 

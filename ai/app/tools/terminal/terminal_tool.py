@@ -15,7 +15,7 @@ _TERMINAL_TOOL_DEFINITION = register_runtime_tool_definition(
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "Shell command text to execute, for example: dir AI\\app\\tools",
+                    "description": "Shell command text to execute, for example: dir ai\\app\\tools",
                 },
                 "argv": {
                     "type": "array",
