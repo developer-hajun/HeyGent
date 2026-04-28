@@ -40,6 +40,8 @@ public class UserMemoryService {
     private static final int DEFAULT_RECALL_LIMIT = 5;
     private static final int MAX_RECALL_LIMIT = 20;
     private static final int RECALL_FALLBACK_CANDIDATE_SIZE = 100;
+    private static final double MIN_RECALL_SIMILARITY = 0.35;
+    private static final double MAX_RECALL_DISTANCE = 1.0 - MIN_RECALL_SIMILARITY;
 
     private final UserMemoryRepository userMemoryRepository;
     private final UserMemoryVectorRepository userMemoryVectorRepository;
@@ -216,6 +218,7 @@ public class UserMemoryService {
             tags,
             MIN_CONFIDENCE_TO_STORE,
             MIN_IMPORTANCE_TO_STORE,
+            MAX_RECALL_DISTANCE,
             limit
         );
 
@@ -263,6 +266,7 @@ public class UserMemoryService {
                 memory,
                 cosineSimilarity(queryEmbedding, parseEmbedding(memory.getEmbeddingText()))
             ))
+            .filter(scoredMemory -> scoredMemory.score() >= MIN_RECALL_SIMILARITY)
             .sorted(Comparator
                 .comparing(ScoredMemory::score)
                 .thenComparing(scoredMemory -> scoredMemory.memory().getImportance())
@@ -270,20 +274,6 @@ public class UserMemoryService {
             )
             .limit(limit)
             .toList();
-
-        if (scoredMemories.isEmpty()) {
-            return recallByFilters(
-                userId,
-                limit,
-                storeType,
-                memoryType,
-                scopeType,
-                workspaceKey,
-                sessionKey,
-                resourceId,
-                tags
-            );
-        }
 
         return scoredMemories.stream()
             .map(ScoredMemory::memory)
