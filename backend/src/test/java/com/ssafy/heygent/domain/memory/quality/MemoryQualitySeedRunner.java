@@ -207,7 +207,7 @@ public class MemoryQualitySeedRunner {
     private static String embedding(int index) {
         double first = ((index % 100) + 1) / 100.0;
         double second = 1.0 - first;
-        return "[%f,%f]".formatted(Locale.ROOT, first, second);
+        return String.format(Locale.ROOT, "[%f,%f]", first, second);
     }
 
     private static void deleteSeedMemories(Connection connection) throws SQLException {
