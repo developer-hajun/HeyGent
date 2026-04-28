@@ -33,6 +33,7 @@ public class UserMemoryVectorRepository {
     @PostConstruct
     public void initializeVectorColumn() {
         initializeMemoryTypeConstraint();
+        initializeRecallIndexes();
 
         jdbcTemplate.execute("""
             ALTER TABLE user_memories
@@ -78,6 +79,38 @@ public class UserMemoryVectorRepository {
                 'PROCEDURE',
                 'FACT'
             ))
+            """);
+    }
+
+    private void initializeRecallIndexes() {
+        jdbcTemplate.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_memories_recall_active
+            ON user_memories (
+                user_id,
+                status,
+                scope_type,
+                store_type,
+                memory_type,
+                importance DESC,
+                confidence DESC,
+                updated_at DESC
+            )
+            WHERE status = 'ACTIVE'
+            """);
+        jdbcTemplate.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_memories_my_active
+            ON user_memories (user_id, status, importance DESC, created_at DESC)
+            WHERE status = 'ACTIVE'
+            """);
+        jdbcTemplate.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_memories_duplicate_active
+            ON user_memories (user_id, status, store_type, memory_type, scope_type, content)
+            WHERE status = 'ACTIVE'
+            """);
+        jdbcTemplate.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_memories_metadata
+            ON user_memories
+            USING GIN (metadata)
             """);
     }
 
@@ -206,9 +239,8 @@ public class UserMemoryVectorRepository {
         if (!StringUtils.hasText(value)) {
             return;
         }
-        sql.append(" AND metadata ->> ? = ?");
-        params.add(key);
-        params.add(value.trim());
+        sql.append(" AND metadata @> CAST(? AS jsonb)");
+        params.add(toJsonObject(key, value.trim()));
     }
 
     private void appendTagsFilter(StringBuilder sql, List<Object> params, List<String> tags) {
@@ -225,11 +257,29 @@ public class UserMemoryVectorRepository {
         sql.append(" AND (");
         StringJoiner joiner = new StringJoiner(" OR ");
         normalizedTags.forEach(tag -> {
-            joiner.add("jsonb_exists(metadata -> 'tags', ?)");
-            params.add(tag);
+            joiner.add("metadata @> CAST(? AS jsonb)");
+            params.add(toJsonArrayObject("tags", tag));
         });
         sql.append(joiner);
         sql.append(")");
+    }
+
+    private String toJsonObject(String key, String value) {
+        return """
+            {"%s":"%s"}
+            """.formatted(escapeJson(key), escapeJson(value)).trim();
+    }
+
+    private String toJsonArrayObject(String key, String value) {
+        return """
+            {"%s":["%s"]}
+            """.formatted(escapeJson(key), escapeJson(value)).trim();
+    }
+
+    private String escapeJson(String value) {
+        return value
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"");
     }
 
     private String toVectorLiteral(List<Double> embedding) {

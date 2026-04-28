@@ -137,6 +137,25 @@ java -cp "build/classes/java/test;build/classes/java/main;build/resources/main" 
 
 응답 시간 기준은 로컬 PC와 Docker 상태에 따라 달라질 수 있으므로, 첫 측정에서는 수치를 확정하지 않고 baseline을 기록한다.
 
+## 로컬 baseline
+
+2026-04-28 로컬 Docker PostgreSQL 기준으로 11,000건 seed를 넣고 heavy user 1,000건을 조회했다.
+
+| 항목 | 결과 |
+| --- | --- |
+| 전체 seed 삽입 | 약 1.1초 |
+| seed 총 건수 | 11,000건 |
+| seed 사용자 수 | 101명 |
+| heavy user 기억 수 | 1,000건 |
+| scope별 valid 후보 | GLOBAL 250, RESOURCE 250, SESSION 250, WORKSPACE 250 |
+| 기본 recall 후보 | 750건, SESSION 기본 제외 |
+| 기본 recall limit 5 | 약 0.11ms, `idx_user_memories_my_active` 사용 |
+| workspace metadata 필터 | 약 0.96ms, `idx_user_memories_metadata` 사용 |
+| resource metadata 필터 | 약 0.21ms, `idx_user_memories_metadata` 사용 |
+| 사용자 격리 leak | 0건 |
+
+초기 측정에서는 metadata 조건이 순차 스캔으로 실행됐으므로, `metadata @> jsonb` 조건과 GIN 인덱스를 사용하도록 보강했다.
+
 ## 남은 리스크
 
 - OpenAI embedding API 없이 fallback embedding을 쓰면 semantic 품질 검증은 제한적이다.
