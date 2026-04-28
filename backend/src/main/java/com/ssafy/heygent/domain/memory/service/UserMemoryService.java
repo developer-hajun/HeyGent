@@ -18,6 +18,7 @@ import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryRequest;
 import com.ssafy.heygent.domain.memory.dto.request.MarkMemoryUsedRequest;
 import com.ssafy.heygent.domain.memory.dto.response.UserMemoryResponse;
 import com.ssafy.heygent.domain.memory.embedding.MemoryEmbeddingService;
+import com.ssafy.heygent.domain.memory.entity.MemoryEventType;
 import com.ssafy.heygent.domain.memory.entity.MemoryOperationType;
 import com.ssafy.heygent.domain.memory.entity.MemoryScopeType;
 import com.ssafy.heygent.domain.memory.entity.MemoryStatus;
@@ -49,6 +50,7 @@ public class UserMemoryService {
     private final UserMemoryVectorRepository userMemoryVectorRepository;
     private final MemoryEmbeddingService memoryEmbeddingService;
     private final MemorySafetyValidator memorySafetyValidator;
+    private final UserMemoryEventService userMemoryEventService;
 
     @Transactional
     public UserMemoryResponse create(Long userId, CreateMemoryRequest request) {
@@ -79,7 +81,16 @@ public class UserMemoryService {
             metadata
         ));
         if (operationType == MemoryOperationType.UPDATE || operationType == MemoryOperationType.MERGE) {
-            return replaceTargetMemory(userId, request, storeType, scopeType, metadata, normalizedContent, embedding);
+            return replaceTargetMemory(
+                userId,
+                request,
+                storeType,
+                scopeType,
+                metadata,
+                normalizedContent,
+                embedding,
+                resolveChangeEventType(operationType)
+            );
         }
 
         Optional<UserMemory> duplicateMemory = userMemoryRepository.findDuplicateActiveMemory(
@@ -104,7 +115,16 @@ public class UserMemoryService {
                 embedding
             )
             .map(UserMemoryResponse::from)
-            .orElseGet(() -> saveMemory(userId, request, storeType, scopeType, metadata, normalizedContent, embedding));
+            .orElseGet(() -> saveMemory(
+                userId,
+                request,
+                storeType,
+                scopeType,
+                metadata,
+                normalizedContent,
+                embedding,
+                MemoryEventType.CREATED
+            ));
     }
 
     @Transactional
@@ -122,7 +142,8 @@ public class UserMemoryService {
         MemoryScopeType scopeType,
         Map<String, Object> metadata,
         String normalizedContent,
-        List<Double> embedding
+        List<Double> embedding,
+        MemoryEventType eventType
     ) {
 
         UserMemory memory = UserMemory.builder()
@@ -148,6 +169,7 @@ public class UserMemoryService {
 
         UserMemory savedMemory = userMemoryRepository.save(memory);
         userMemoryVectorRepository.updateEmbedding(savedMemory.getId(), embedding);
+        userMemoryEventService.record(savedMemory, eventType);
         return UserMemoryResponse.from(savedMemory);
     }
 
@@ -207,7 +229,13 @@ public class UserMemoryService {
         }
 
         LocalDateTime accessedAt = LocalDateTime.now();
-        memories.forEach(memory -> memory.markAccessed(accessedAt));
+        memories.forEach(memory -> {
+            memory.markAccessed(accessedAt);
+            userMemoryEventService.record(memory, MemoryEventType.RECALLED, null, Map.of(
+                "queryProvided", StringUtils.hasText(query),
+                "limit", normalizedLimit
+            ));
+        });
 
         return memories.stream()
             .map(UserMemoryResponse::from)
@@ -351,6 +379,7 @@ public class UserMemoryService {
         }
 
         memory.delete();
+        userMemoryEventService.record(memory, MemoryEventType.DELETED);
     }
 
     @Transactional
@@ -361,6 +390,7 @@ public class UserMemoryService {
         }
 
         memory.markUsed(LocalDateTime.now(), request.getUsefulnessScore());
+        userMemoryEventService.record(memory, MemoryEventType.USED, request.getUsefulnessScore(), Map.of());
         return UserMemoryResponse.from(memory);
     }
 
@@ -371,7 +401,8 @@ public class UserMemoryService {
         MemoryScopeType scopeType,
         Map<String, Object> metadata,
         String normalizedContent,
-        List<Double> embedding
+        List<Double> embedding,
+        MemoryEventType eventType
     ) {
         UserMemory targetMemory = findOwnedMemory(userId, request.getTargetMemoryId());
         validateTargetCanChange(targetMemory);
@@ -383,9 +414,14 @@ public class UserMemoryService {
             scopeType,
             metadata,
             normalizedContent,
-            embedding
+            embedding,
+            eventType
         );
         targetMemory.invalidate(savedResponse.getId(), trimToNull(request.getUpdateReason()), LocalDateTime.now());
+        userMemoryEventService.record(targetMemory, MemoryEventType.INVALIDATED, null, Map.of(
+            "supersededByMemoryId", savedResponse.getId(),
+            "operationType", eventType.name()
+        ));
         return savedResponse;
     }
 
@@ -436,6 +472,7 @@ public class UserMemoryService {
         UserMemory targetMemory = findOwnedMemory(userId, request.getTargetMemoryId());
         validateTargetCanChange(targetMemory);
         targetMemory.invalidate(null, trimToNull(request.getUpdateReason()), LocalDateTime.now());
+        userMemoryEventService.record(targetMemory, MemoryEventType.INVALIDATED);
         return UserMemoryResponse.from(targetMemory);
     }
 
@@ -474,6 +511,13 @@ public class UserMemoryService {
             return MemoryOperationType.ADD;
         }
         return operationType;
+    }
+
+    private MemoryEventType resolveChangeEventType(MemoryOperationType operationType) {
+        if (operationType == MemoryOperationType.MERGE) {
+            return MemoryEventType.MERGED;
+        }
+        return MemoryEventType.UPDATED;
     }
 
     private void validateMemoryType(MemoryType memoryType) {
