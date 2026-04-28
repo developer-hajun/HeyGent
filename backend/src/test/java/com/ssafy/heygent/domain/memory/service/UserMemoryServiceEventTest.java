@@ -27,6 +27,7 @@ import com.ssafy.heygent.domain.memory.dto.request.MarkMemoryUsedRequest;
 import com.ssafy.heygent.domain.memory.dto.response.UserMemoryResponse;
 import com.ssafy.heygent.domain.memory.embedding.MemoryEmbeddingService;
 import com.ssafy.heygent.domain.memory.entity.MemoryEventType;
+import com.ssafy.heygent.domain.memory.entity.MemoryOperationType;
 import com.ssafy.heygent.domain.memory.entity.MemoryScopeType;
 import com.ssafy.heygent.domain.memory.entity.MemoryStatus;
 import com.ssafy.heygent.domain.memory.entity.MemoryStoreType;
@@ -143,6 +144,75 @@ class UserMemoryServiceEventTest {
         assertThat(response.getUsedCount()).isEqualTo(1L);
         assertThat(response.getUsefulnessScore()).isEqualTo(0.8);
         verify(userMemoryEventService).record(memory, MemoryEventType.USED, 0.8, Map.of());
+    }
+
+    @Test
+    void updateRecordsUpdatedAndInvalidatedEvents() {
+        CreateMemoryRequest request = createMemoryRequest();
+        ReflectionTestUtils.setField(request, "operationType", MemoryOperationType.UPDATE);
+        ReflectionTestUtils.setField(request, "targetMemoryId", 50L);
+        UserMemory targetMemory = memory(50L);
+
+        when(memoryEmbeddingService.embed(anyString())).thenReturn(List.of(0.1, 0.2));
+        when(userMemoryRepository.findById(50L)).thenReturn(Optional.of(targetMemory));
+        when(userMemoryRepository.save(any(UserMemory.class))).thenAnswer(invocation -> {
+            UserMemory savedMemory = invocation.getArgument(0);
+            ReflectionTestUtils.setField(savedMemory, "id", 51L);
+            return savedMemory;
+        });
+
+        UserMemoryResponse response = userMemoryService.create(USER_ID, request);
+
+        assertThat(response.getId()).isEqualTo(51L);
+        verify(userMemoryEventService).record(any(UserMemory.class), eq(MemoryEventType.UPDATED));
+        verify(userMemoryEventService).record(
+            eq(targetMemory),
+            eq(MemoryEventType.INVALIDATED),
+            isNull(),
+            eq(Map.of("supersededByMemoryId", 51L, "operationType", MemoryEventType.UPDATED.name()))
+        );
+    }
+
+    @Test
+    void mergeRecordsMergedAndInvalidatedEvents() {
+        CreateMemoryRequest request = createMemoryRequest();
+        ReflectionTestUtils.setField(request, "operationType", MemoryOperationType.MERGE);
+        ReflectionTestUtils.setField(request, "targetMemoryId", 60L);
+        UserMemory targetMemory = memory(60L);
+
+        when(memoryEmbeddingService.embed(anyString())).thenReturn(List.of(0.1, 0.2));
+        when(userMemoryRepository.findById(60L)).thenReturn(Optional.of(targetMemory));
+        when(userMemoryRepository.save(any(UserMemory.class))).thenAnswer(invocation -> {
+            UserMemory savedMemory = invocation.getArgument(0);
+            ReflectionTestUtils.setField(savedMemory, "id", 61L);
+            return savedMemory;
+        });
+
+        UserMemoryResponse response = userMemoryService.create(USER_ID, request);
+
+        assertThat(response.getId()).isEqualTo(61L);
+        verify(userMemoryEventService).record(any(UserMemory.class), eq(MemoryEventType.MERGED));
+        verify(userMemoryEventService).record(
+            eq(targetMemory),
+            eq(MemoryEventType.INVALIDATED),
+            isNull(),
+            eq(Map.of("supersededByMemoryId", 61L, "operationType", MemoryEventType.MERGED.name()))
+        );
+    }
+
+    @Test
+    void invalidateRecordsInvalidatedEvent() {
+        CreateMemoryRequest request = createMemoryRequest();
+        ReflectionTestUtils.setField(request, "operationType", MemoryOperationType.INVALIDATE);
+        ReflectionTestUtils.setField(request, "targetMemoryId", 70L);
+        UserMemory targetMemory = memory(70L);
+        when(userMemoryRepository.findById(70L)).thenReturn(Optional.of(targetMemory));
+
+        UserMemoryResponse response = userMemoryService.create(USER_ID, request);
+
+        assertThat(response.getId()).isEqualTo(70L);
+        assertThat(response.getStatus()).isEqualTo(MemoryStatus.INACTIVE);
+        verify(userMemoryEventService).record(targetMemory, MemoryEventType.INVALIDATED);
     }
 
     private CreateMemoryRequest createMemoryRequest() {
