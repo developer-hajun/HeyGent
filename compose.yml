@@ -6,15 +6,14 @@ services:
     restart: unless-stopped
     ports:
       - "5432:5432"
-    env_file: ./backend/.env
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-heygent}
-      POSTGRES_USER: ${SPRING_DATASOURCE_USERNAME}
-      POSTGRES_PASSWORD: ${SPRING_DATASOURCE_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - heygent-postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${SPRING_DATASOURCE_USERNAME} -d ${POSTGRES_DB:-heygent}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-heygent}"]
       interval: 5s
       timeout: 5s
       retries: 10
