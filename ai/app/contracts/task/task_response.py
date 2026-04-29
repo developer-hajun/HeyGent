@@ -26,7 +26,6 @@ class StepRunResponse(BaseModel):
     step_order: int = Field(description="TaskRun 안에서 몇 번째 단계인지 나타내는 순서입니다. 작은 숫자가 먼저 실행됩니다.")
     step_type: str = Field(description="단계 종류입니다. 예: `agent.loop.execute`는 AI 루프 실행 단계입니다.")
     status: str = Field(description="단계 상태입니다. 예: `PENDING`, `RUNNING`, `WAITING`, `COMPLETED`, `FAILED`.")
-    executor_key: str | None = Field(default=None, description="executor(이 단계를 실행한 내부 실행기) 키입니다.")
     title: str | None = Field(default=None, description="화면에 보여 줄 단계 제목입니다.")
     semantic: TaskRunFlowSemanticResponse | None = Field(default=None, description="semantic step(계획상 의미 있는 작업 단계) 설명입니다.")
     is_current: bool = Field(default=False, description="현재 실행 중이거나 화면에서 강조해야 하는 단계이면 `true`입니다.")
@@ -53,7 +52,6 @@ class TaskRunResponse(BaseModel):
     task_run_id: str = Field(description="TaskRun ID(사용자 요청 하나의 실행 묶음 ID)입니다. 상세/flow/events/resume/cancel 호출에 사용합니다.")
     task_type: str = Field(description="실제로 실행된 TaskRun 종류입니다. 보통 `agent.loop`입니다.")
     intent_type: str | None = Field(default=None, description="요청 시 전달한 intent(처리 의도)입니다. Orchestrator가 실행 흐름을 고르는 데 사용합니다.")
-    entry_executor_key: str | None = Field(default=None, description="레거시 executor(내부 실행기) 지정 값입니다. 새 연동에서는 보통 사용하지 않습니다.")
     session_key: str | None = Field(default=None, description="productSessionId의 내부 저장명입니다. 같은 화면/대화방/외부 채널 세션을 묶는 값입니다.")
     current_step_run_id: str | None = Field(default=None, description="현재 실행 중이거나 마지막으로 진행된 StepRun ID입니다.")
     status: str = Field(description="TaskRun 상태입니다. `PENDING`, `RUNNING`, `WAITING`, `BLOCKED`, `COMPLETED`, `FAILED`, `CANCELED` 중 하나입니다.")
@@ -86,7 +84,6 @@ class TaskRunListItemResponse(BaseModel):
     task_run_id: str = Field(description="TaskRun ID(사용자 요청 하나의 실행 묶음 ID)입니다.")
     task_type: str = Field(description="실제로 실행된 TaskRun 종류입니다.")
     intent_type: str | None = Field(default=None, description="요청 의도 값입니다.")
-    entry_executor_key: str | None = Field(default=None, description="레거시 executor 지정 값입니다.")
     session_key: str | None = Field(default=None, description="productSessionId의 내부 저장명입니다.")
     status: str = Field(description="TaskRun 상태입니다.")
     title: str | None = Field(default=None, description="목록에 표시할 작업 제목입니다.")
@@ -136,7 +133,6 @@ class TaskRunFlowNodeResponse(BaseModel):
     title: str | None = Field(default=None, description="그래프에 표시할 단계 제목입니다.")
     status: str = Field(description="노드의 현재 상태입니다.")
     step_type: str = Field(description="노드가 나타내는 단계 종류입니다.")
-    executor_key: str | None = Field(default=None, description="이 노드를 실행한 executor(내부 실행기) 키입니다.")
     semantic: TaskRunFlowSemanticResponse | None = Field(default=None, description="이 노드에 연결된 계획 단계 설명입니다.")
     is_current: bool = Field(description="현재 진행 중인 노드이면 `true`입니다.")
     is_projected: bool = Field(description="실행 전 계획/projection에서 만들어진 노드이면 `true`입니다.")
@@ -160,7 +156,6 @@ class TaskRunFlowResponse(BaseModel):
     status: str = Field(description="TaskRun 현재 상태입니다.")
     title: str | None = Field(default=None, description="flow 화면 상단에 표시할 제목입니다.")
     current_step_run_id: str | None = Field(default=None, description="현재 강조할 StepRun ID입니다.")
-    entry_executor_key: str | None = Field(default=None, description="레거시 executor 지정 값입니다.")
     summary: str | None = Field(default=None, description="TaskRun 전체 진행 요약입니다.")
     pending_approval: PendingApprovalResponse | None = Field(default=None, alias="pendingApproval", description="flow 전체에서 현재 열린 승인 요청입니다.")
     nodes: list[TaskRunFlowNodeResponse] = Field(default_factory=list, description="flow 그래프의 노드 목록입니다. 보통 StepRun 하나가 노드 하나입니다.")
@@ -171,7 +166,6 @@ class ActiveTaskRunCurrentStepResponse(BaseModel):
     step_run_id: str = Field(description="현재 StepRun ID입니다.")
     title: str | None = Field(default=None, description="현재 단계 제목입니다.")
     status: str = Field(description="현재 단계 상태입니다.")
-    executor_key: str | None = Field(default=None, description="현재 단계를 실행하는 executor(내부 실행기) 키입니다.")
 
 
 class ActiveTaskRunListItemResponse(BaseModel):

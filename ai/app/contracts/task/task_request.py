@@ -11,13 +11,17 @@ class CreateTaskRequest(BaseModel):
         json_schema_extra={
             "examples": [
                 {
-                    "summary": "일반 사용자 요청 실행",
+                    "summary": "자료 조사 요청 실행",
                     "value": {
                         "intent_type": "agent.loop",
-                        "productSessionId": "web-chat-20260429-001",
+                        "productSessionId": "swagger-research-test-001",
                         "input_payload": {
-                            "prompt": "사용자 요청처럼 파일을 만들고 테스트까지 진행해줘.",
-                            "model": "gpt-4.1-mini",
+                            "prompt": (
+                                "최근 AI 에이전트 오케스트레이션에서 subagent를 쓰는 이유를 간단히 조사해줘. "
+                                "가능하면 worker/subagent에게 자료 조사를 맡기고, 부모 agent는 결과를 종합해서 "
+                                "핵심 이유 3가지와 주의점 2가지를 한국어로 정리해줘. "
+                                "웹검색을 사용할 수 없으면 그 한계를 먼저 말하고, 알고 있는 범위에서 답해줘."
+                            ),
                         },
                     },
                 }
@@ -30,14 +34,6 @@ class CreateTaskRequest(BaseModel):
         description=(
             "AI가 요청을 처리하는 방식입니다. 일반 사용자 요청은 기본값 `agent.loop`을 그대로 둡니다. "
             "intent(의도)는 Orchestrator(작업 시작/재개를 맡는 내부 실행 관리자)가 어떤 실행 흐름을 고를지 판단하는 값입니다."
-        ),
-    )
-    entry_executor_key: str | None = Field(
-        default=None,
-        json_schema_extra={"deprecated": True},
-        description=(
-            "레거시 입력입니다. 새 요청에서는 보내지 마세요. "
-            "executor(실제 작업을 맡는 내부 실행기)를 예전 방식으로 직접 지정하던 값입니다."
         ),
     )
     input_payload: dict[str, Any] = Field(

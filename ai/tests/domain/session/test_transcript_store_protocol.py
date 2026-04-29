@@ -4,7 +4,7 @@ import inspect
 from typing import get_type_hints
 
 from app.domain.orchestration.agent.loop import TaskEngine
-from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopExecutor
+from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopHandler
 from app.domain.session import SessionStore, TranscriptStore
 from app.domain.session.sessions import TranscriptStore as SessionsTranscriptStore
 from app.storage.postgres import PostgresSessionStore
@@ -71,9 +71,9 @@ def test_transcript_store_is_exported_from_session_packages():
 
 
 def test_runtime_and_agent_loop_depend_on_transcript_store_protocol():
-    loop_hints = get_type_hints(ToolCallingLoopExecutor.__init__)
+    loop_hints = get_type_hints(ToolCallingLoopHandler.__init__)
     runtime_hints = get_type_hints(LocalToolRuntime.__init__)
-    session_store_return = inspect.signature(TaskEngine._session_store_from_executor).return_annotation
+    session_store_return = inspect.signature(TaskEngine._session_store_from_handler).return_annotation
 
     assert "TranscriptStore" in str(loop_hints["session_store"])
     assert "TranscriptStore" in str(runtime_hints["session_store"])

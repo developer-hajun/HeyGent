@@ -153,7 +153,6 @@ def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse
         task_run_id=task.task_run_id,
         task_type=task.task_type,
         intent_type=task.intent_type,
-        entry_executor_key=task.entry_executor_key,
         session_key=task.session_key,
         status=task.status,
         title=_display_task_title(task, input_summary=input_summary),
@@ -180,7 +179,6 @@ def _build_active_task_item(
             step_run_id=current_step.step_run_id,
             title=current_step.title,
             status=current_step.status,
-            executor_key=current_step.executor_key,
         )
     input_summary = _summarize_task_input_payload(task.input_payload)
     return ActiveTaskRunListItemResponse(
@@ -360,7 +358,6 @@ def _build_flow_nodes(task, steps: list[StepRun], *, activity_by_step: dict[str,
                 title=step.title,
                 status=step.status,
                 step_type=step.step_type,
-                executor_key=step.executor_key,
                 semantic=semantic,
                 is_current=step.step_run_id == task.current_step_run_id,
                 is_projected=bool((step.input_payload or {}).get("todo_key")),
@@ -404,7 +401,6 @@ def _build_step_response(
         step_order=step.step_order,
         step_type=step.step_type,
         status=step.status,
-        executor_key=step.executor_key,
         title=step.title,
         semantic=semantic,
         is_current=step.step_run_id == task.current_step_run_id,
@@ -622,7 +618,6 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
                 session_key=payload.session_key,
                 input_payload=payload.input_payload,
                 intent_type=payload.intent_type,
-                entry_executor_key=payload.entry_executor_key,
             )
         )
         if payload.session_key and active_lock_task_id and context.task_projection_store is not None:
@@ -631,7 +626,7 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
     except KeyError as error:
         if payload.session_key and active_lock_task_id and context.task_projection_store is not None:
             context.task_projection_store.release_active_session_lock(payload.session_key, active_lock_task_id, owner_key=owner_key)
-        raise HTTPException(status_code=404, detail=f"unknown intent or executor: {error.args[0]}") from error
+        raise HTTPException(status_code=404, detail=f"unknown intent or handler: {error.args[0]}") from error
     except ValueError as error:
         if payload.session_key and active_lock_task_id and context.task_projection_store is not None:
             context.task_projection_store.release_active_session_lock(payload.session_key, active_lock_task_id, owner_key=owner_key)
@@ -669,7 +664,6 @@ async def get_task_flow(
         status=task.status,
         title=_display_task_title(task, input_summary=input_summary),
         current_step_run_id=task.current_step_run_id,
-        entry_executor_key=task.entry_executor_key,
         summary=task.progress_summary,
         pending_approval=_build_pending_approval_response(context.repository.get_open_approval(task.task_run_id)),
         nodes=_build_flow_nodes(task, steps, activity_by_step=activity_by_step),

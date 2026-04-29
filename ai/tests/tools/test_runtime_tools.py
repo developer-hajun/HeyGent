@@ -97,7 +97,7 @@ def test_delegate_task_runtime_returns_worker_handoff_request():
 
     assert result["ok"] is True
     assert result["child_session"]["intent_type"] == "agent.loop"
-    assert result["child_session"]["entry_executor_key"] == "agent.loop"
+    assert result["child_session"]["entry_handler_key"] == "agent.loop"
     assert result["child_session"]["goal"] == "문서 구현 여부 검증"
     assert result["child_session"]["toolsets"] == ["file", "terminal"]
     assert result["child_session"]["metadata"]["profile_key"] == "worker.default"

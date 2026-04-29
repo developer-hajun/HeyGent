@@ -60,7 +60,7 @@ class SQLiteTaskRepository:
             connection.execute(
                 """
                 INSERT INTO task_runs (
-                    task_run_id, task_type, intent_type, entry_executor_key, current_step_run_id, owner_key, session_key, status, title,
+                    task_run_id, task_type, intent_type, entry_handler_key, current_step_run_id, owner_key, session_key, status, title,
                     input_payload, result_payload, todo_state, wait_payload, error_message,
                     progress_summary, revision, created_at, started_at, updated_at, ended_at
                 )
@@ -70,7 +70,7 @@ class SQLiteTaskRepository:
                     task.task_run_id,
                     task.task_type,
                     task.intent_type,
-                    task.entry_executor_key,
+                    task.entry_handler_key,
                     task.current_step_run_id,
                     task.owner_key,
                     task.session_key,
@@ -98,14 +98,14 @@ class SQLiteTaskRepository:
             connection.execute(
                 """
                 UPDATE task_runs
-                SET status=?, title=?, intent_type=?, entry_executor_key=?, current_step_run_id=?, result_payload=?, todo_state=?, wait_payload=?, error_message=?, progress_summary=?, revision=?, started_at=?, updated_at=?, ended_at=?
+                SET status=?, title=?, intent_type=?, entry_handler_key=?, current_step_run_id=?, result_payload=?, todo_state=?, wait_payload=?, error_message=?, progress_summary=?, revision=?, started_at=?, updated_at=?, ended_at=?
                 WHERE task_run_id=?
                 """,
                 (
                     task.status,
                     task.title or task.task_type,
                     task.intent_type,
-                    task.entry_executor_key,
+                    task.entry_handler_key,
                     task.current_step_run_id,
                     json.dumps(task.result_payload),
                     json.dumps(task.todo_state),
@@ -230,7 +230,7 @@ class SQLiteTaskRepository:
             connection.execute(
                 """
                 INSERT INTO step_runs (
-                    step_run_id, task_run_id, step_order, step_type, executor_key, status, title,
+                    step_run_id, task_run_id, step_order, step_type, handler_key, status, title,
                     input_payload, output_payload, wait_payload, detail_json,
                     summary_message, error_message, created_at, updated_at, started_at, ended_at
                 )
@@ -241,7 +241,7 @@ class SQLiteTaskRepository:
                     step.task_run_id,
                     step.step_order,
                     step.step_type,
-                    step.executor_key,
+                    step.handler_key,
                     step.status,
                     step.title or step.step_type,
                     json.dumps(step.input_payload),
@@ -264,13 +264,13 @@ class SQLiteTaskRepository:
             connection.execute(
                 """
                 UPDATE step_runs
-                SET status=?, title=?, executor_key=?, output_payload=?, wait_payload=?, detail_json=?, summary_message=?, error_message=?, updated_at=?, started_at=?, ended_at=?
+                SET status=?, title=?, handler_key=?, output_payload=?, wait_payload=?, detail_json=?, summary_message=?, error_message=?, updated_at=?, started_at=?, ended_at=?
                 WHERE step_run_id=?
                 """,
                 (
                     step.status,
                     step.title or step.step_type,
-                    step.executor_key,
+                    step.handler_key,
                     json.dumps(step.output_payload),
                     json.dumps(step.wait_payload),
                     json.dumps(step.detail_json),
@@ -534,7 +534,7 @@ class SQLiteTaskRepository:
             task_run_id=row["task_run_id"],
             task_type=row["task_type"],
             intent_type=row["intent_type"],
-            entry_executor_key=row["entry_executor_key"],
+            entry_handler_key=row["entry_handler_key"],
             current_step_run_id=row["current_step_run_id"],
             owner_key=row["owner_key"],
             session_key=row["session_key"],
@@ -559,7 +559,7 @@ class SQLiteTaskRepository:
             task_run_id=row["task_run_id"],
             step_order=row["step_order"],
             step_type=row["step_type"],
-            executor_key=row["executor_key"],
+            handler_key=row["handler_key"],
             status=row["status"],
             title=row["title"],
             input_payload=json.loads(row["input_payload"]),

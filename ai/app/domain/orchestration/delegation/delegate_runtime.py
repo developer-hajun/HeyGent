@@ -40,7 +40,7 @@ class DelegateRuntime:
             parent_task_run_id=task.task_run_id,
             parent_step_run_id=step.step_run_id,
             child_intent_type=str(child_session["intent_type"]),
-            child_entry_executor_key=str(child_session["entry_executor_key"]),
+            child_entry_handler_key=str(child_session["entry_handler_key"]),
             summary_prompt=child_session.get("summary_prompt"),
             metadata={
                 **dict(child_session.get("metadata") or {}),
@@ -221,7 +221,7 @@ class DelegateRuntime:
                 "input_payload": {
                     **contract,
                     "child_intent_type": spec.child_intent_type,
-                    "child_entry_executor_key": spec.child_entry_executor_key,
+                    "child_entry_handler_key": spec.child_entry_handler_key,
                     "summary_prompt": spec.summary_prompt,
                     "metadata": metadata,
                 },

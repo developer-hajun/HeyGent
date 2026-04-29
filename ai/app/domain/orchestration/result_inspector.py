@@ -5,7 +5,7 @@ from app.domain.tasks.detail import build_operation_detail
 
 
 class OutcomeInspector:
-    """executor outcome 에서 StepRun detail 과 summary 를 보강한다."""
+    """handler outcome 에서 StepRun detail 과 summary 를 보강한다."""
 
     def inspect(self, *, step, outcome: dict) -> dict:
         operations = list(outcome.get("operations") or [])

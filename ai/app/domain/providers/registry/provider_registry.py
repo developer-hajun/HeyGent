@@ -28,7 +28,7 @@ class ProviderRegistry:
         return [self._providers[name].health() for name in self.list_names()]
 
     def preferred_model_provider(self) -> BaseProvider:
-        """기본 executor 가 사용할 모델 provider 를 고른다.
+        """기본 handler 가 사용할 모델 provider 를 고른다.
 
         우선순위는 API key 기반 OpenAI, 그다음 OAuth 기반 OpenAI 다.
         둘 다 없으면 등록 순서의 첫 provider 를 사용한다.

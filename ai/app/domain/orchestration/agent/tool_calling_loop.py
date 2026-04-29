@@ -18,7 +18,7 @@ from app.domain.orchestration.runtime_planning.todo_state import (
 )
 
 
-class ToolCallingLoopExecutor:
+class ToolCallingLoopHandler:
     """현재 provider 위에서 native tool call(모델이 구조화된 도구 호출을 직접 반환하는 방식) loop를 실행한다."""
 
     def __init__(

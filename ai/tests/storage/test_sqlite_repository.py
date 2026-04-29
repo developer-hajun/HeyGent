@@ -7,9 +7,9 @@ from app.storage.sqlite import SQLiteTaskRepository
 
 def test_sqlite_repository_persists_task_step_event_approval_and_provider_auth(tmp_path):
     repository = SQLiteTaskRepository(tmp_path / "repo.db")
-    task = TaskRun(task_run_id="task_1", task_type="agent.loop", intent_type="agent.loop", entry_executor_key="agent.loop", owner_key="user", status=TaskStatus.PENDING, title="테스트 태스크")
-    second_task = TaskRun(task_run_id="task_2", task_type="agent.loop", intent_type="agent.loop", entry_executor_key="agent.loop", owner_key="user", status=TaskStatus.COMPLETED, title="완료 태스크")
-    step = StepRun(step_run_id="step_1", task_run_id="task_1", step_order=1, step_type="agent.loop.execute", executor_key="agent.loop", status=StepStatus.PENDING, title="테스트 스텝")
+    task = TaskRun(task_run_id="task_1", task_type="agent.loop", intent_type="agent.loop", entry_handler_key="agent.loop", owner_key="user", status=TaskStatus.PENDING, title="테스트 태스크")
+    second_task = TaskRun(task_run_id="task_2", task_type="agent.loop", intent_type="agent.loop", entry_handler_key="agent.loop", owner_key="user", status=TaskStatus.COMPLETED, title="완료 태스크")
+    step = StepRun(step_run_id="step_1", task_run_id="task_1", step_order=1, step_type="agent.loop.execute", handler_key="agent.loop", status=StepStatus.PENDING, title="테스트 스텝")
 
     repository.create_task(task)
     repository.create_task(second_task)
@@ -36,7 +36,7 @@ def test_sqlite_repository_persists_task_step_event_approval_and_provider_auth(t
 
     assert repository.get_task("task_1") is not None
     assert repository.get_task("task_1").title == "테스트 태스크"
-    assert repository.get_task("task_1").entry_executor_key == "agent.loop"
+    assert repository.get_task("task_1").entry_handler_key == "agent.loop"
     assert repository.count_tasks() == 2
     assert repository.count_tasks(status=TaskStatus.PENDING) == 1
     assert listed_tasks[0].status == TaskStatus.PENDING
@@ -51,7 +51,7 @@ def test_sqlite_repository_persists_task_step_event_approval_and_provider_auth(t
     assert "20260422_provider_oauth_code_verifier" in applied_migrations
     with repository._connect() as connection:
         task_columns = {row["name"] for row in connection.execute("PRAGMA table_info(task_runs)").fetchall()}
-    assert "entry_executor_key" in task_columns
+    assert "entry_handler_key" in task_columns
     assert repository.list_events("task_1")[0].event_id == event.event_id
     assert repository.get_open_approval("task_1")["approval_id"] == approval["approval_id"]
     assert oauth_state["state"] == "state_123"
@@ -69,7 +69,7 @@ def test_sqlite_repository_only_pending_approval_can_be_resolved_or_canceled(tmp
         task_run_id="task_pending_only",
         task_type="agent.loop",
         intent_type="agent.loop",
-        entry_executor_key="agent.loop",
+        entry_handler_key="agent.loop",
         owner_key="user",
         status=TaskStatus.WAITING,
         title="승인 대기 태스크",
@@ -79,7 +79,7 @@ def test_sqlite_repository_only_pending_approval_can_be_resolved_or_canceled(tmp
         task_run_id=task.task_run_id,
         step_order=1,
         step_type="agent.loop.execute",
-        executor_key="agent.loop",
+        handler_key="agent.loop",
         status=StepStatus.WAITING,
         title="승인 대기 스텝",
     )

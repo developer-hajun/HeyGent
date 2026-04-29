@@ -90,7 +90,7 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "COMPLETED"
-    assert body["entry_executor_key"] == "agent.loop"
+    assert "entry_handler_key" not in body
     assert body["result_payload"]["text"] == "NATIVE_LOOP_DONE"
     assert [item["name"] for item in body["result_payload"]["tool_results"]] == ["skills.list", "todo", "terminal.run"]
     assert body["todo_state"]["currentKey"] is None
@@ -209,9 +209,9 @@ def test_agent_loop_provider_timeout_fails_task_and_materializes_failed_step(cli
     assert steps[0]["summary_message"] == "작업 처리 중 오류가 발생했습니다."
     operations = steps[0]["detail_json"]["operationDetail"]["operations"]
     assert [operation["key"] for operation in operations[-3:]] == [
-        "executor.diagnose",
-        "executor.retry.unavailable",
-        "executor.failure",
+        "handler.diagnose",
+        "handler.retry.unavailable",
+        "handler.failure",
     ]
     assert operations[-3]["status"] == "completed"
     assert operations[-2]["status"] == "waiting"
@@ -423,9 +423,9 @@ def test_agent_loop_resume_provider_runtime_error_fails_existing_step(client, mo
     assert steps[0]["status"] == "FAILED"
     assert steps[0]["error_message"] == "RuntimeError: provider unavailable"
     operations = steps[0]["detail_json"]["operationDetail"]["operations"]
-    assert operations[-3]["key"] == "executor.diagnose"
-    assert operations[-2]["key"] == "executor.retry.unavailable"
-    assert operations[-1]["key"] == "executor.failure"
+    assert operations[-3]["key"] == "handler.diagnose"
+    assert operations[-2]["key"] == "handler.retry.unavailable"
+    assert operations[-1]["key"] == "handler.failure"
     approval_detail = steps[0]["detail_json"]["approvalDetail"]
     assert approval_detail["approvalRequested"] is False
     assert approval_detail["approvalId"] == approval_id
@@ -688,7 +688,7 @@ def test_taskruns_active_product_session_alias_overrides_legacy_session_key(clie
             task_run_id="task_product_alias",
             task_type="agent.loop",
             intent_type="agent.loop",
-            entry_executor_key="agent.loop",
+            entry_handler_key="agent.loop",
             owner_key="product-user",
             session_key="product_session",
             status="RUNNING",
@@ -700,7 +700,7 @@ def test_taskruns_active_product_session_alias_overrides_legacy_session_key(clie
             task_run_id="task_legacy_alias",
             task_type="agent.loop",
             intent_type="agent.loop",
-            entry_executor_key="agent.loop",
+            entry_handler_key="agent.loop",
             owner_key="legacy-user",
             session_key="legacy_session",
             status="RUNNING",
@@ -905,7 +905,7 @@ def test_taskruns_active_prefers_redis_projection_for_live_session(client):
         task_run_id="task_projection_active",
         task_type="agent.loop",
         intent_type="agent.loop",
-        entry_executor_key="agent.loop",
+        entry_handler_key="agent.loop",
         owner_key="projection-user",
         session_key="sess_projection",
         status="RUNNING",
@@ -917,7 +917,7 @@ def test_taskruns_active_prefers_redis_projection_for_live_session(client):
         task_run_id=task.task_run_id,
         step_order=1,
         step_type="agent.loop.execute",
-        executor_key="agent.loop",
+        handler_key="agent.loop",
         status="RUNNING",
         title="projection 단계",
     )
@@ -981,7 +981,7 @@ def test_taskruns_flow_returns_observed_step_node(client, monkeypatch):
     flow_response = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/flow")
     assert flow_response.status_code == 200
     flow = flow_response.json()
-    assert flow["entry_executor_key"] == "agent.loop"
+    assert "entry_handler_key" not in flow
     assert len(flow["nodes"]) == 1
     assert flow["nodes"][0]["semantic"]["key"] == "agent.loop"
     assert flow["nodes"][0]["is_current"] is True
