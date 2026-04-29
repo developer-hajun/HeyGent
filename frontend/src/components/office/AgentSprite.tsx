@@ -3,10 +3,19 @@ import type { AgentRuntime } from './types'
 const SIZE_NORMAL = 200
 const SIZE_SITTING = 260
 
+const SITTING_SPRITES: Record<string, string> = {
+  sitting_desk: 'sit_desk',
+  sitting_sofa: 'sit_sofa',
+  sitting_floor_lean: 'sit_floor_lean',
+  sitting_meeting: 'meeting',
+}
+
+const WALK_FRAMES = ['walk_side_01', 'walk_side_stand', 'walk_side_02', 'walk_side_stand'] as const
+
 function getSpriteSrc(agent: AgentRuntime): string {
   const base = agent.config.spritePath
-  if (agent.state === 'sitting') return `${base}/sit_desk.png`
-  if (agent.state === 'walking') return `${base}/walk_side_0${agent.walkFrame + 1}.png`
+  if (agent.state in SITTING_SPRITES) return `${base}/${SITTING_SPRITES[agent.state]}.png`
+  if (agent.state === 'walking') return `${base}/${WALK_FRAMES[agent.walkFrame]}.png`
   return `${base}/idle_front.png`
 }
 
@@ -17,7 +26,7 @@ interface AgentSpriteProps {
 
 export function AgentSprite({ agent, onArrived }: AgentSpriteProps) {
   const { config, position, state, transitionDuration } = agent
-  const size = state === 'sitting' ? SIZE_SITTING : SIZE_NORMAL
+  const size = state === 'sitting_desk' ? SIZE_SITTING : SIZE_NORMAL
 
   return (
     <div
