@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.router import build_api_router
+from app.clients.backend_auth import BackendAuthClient
 from app.core.config import get_settings
 from app.core.logger import configure_logging
 from app.domain.gateway import EventBroadcaster, SessionRegistry, SessionService, WebSocketManager
@@ -41,6 +42,7 @@ async def lifespan(app: FastAPI):
     session_registry = SessionRegistry()
     session_service = SessionService(session_registry, ws_manager, topic_router)
     broadcaster = EventBroadcaster(ws_manager, topic_router)
+    backend_auth_client = BackendAuthClient(settings=settings)
     approval_service = ApprovalService(repository, ApprovalQueue())
     provider_registry = ProviderRegistry(
         [
@@ -82,6 +84,7 @@ async def lifespan(app: FastAPI):
     app.state.ws_manager = ws_manager
     app.state.session_registry = session_registry
     app.state.session_service = session_service
+    app.state.backend_auth_client = backend_auth_client
     app.state.provider_registry = provider_registry
     app.state.session_store = session_store
     # app.state.recall_service = recall_service
@@ -96,6 +99,7 @@ async def lifespan(app: FastAPI):
     app.state.orchestrator = orchestrator
     app.state.task_engine = task_engine
     yield
+    await backend_auth_client.aclose()
     session_store.close()
 
 

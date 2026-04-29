@@ -34,11 +34,14 @@ class BackendAuthClient:
         """사용자 access token을 backend에 위임 검증하고 검증 결과만 반환한다."""
 
         # AI는 사용자 JWT를 직접 신뢰하지 않고 backend 검증 결과만 신뢰한다.
-        response = await self._http_client.post(
-            self._settings.backend_auth_verify_url,
-            json={"accessToken": access_token},
-            headers={"X-Internal-Service-Token": self._settings.internal_service_token or ""},
-        )
+        try:
+            response = await self._http_client.post(
+                self._settings.backend_auth_verify_url,
+                json={"accessToken": access_token},
+                headers={"X-Internal-Service-Token": self._settings.internal_service_token or ""},
+            )
+        except httpx.HTTPError as exc:
+            raise BackendAuthVerifyError("backend JWT 검증 요청 중 네트워크 오류가 발생했습니다.") from exc
         if response.status_code >= 400:
             raise BackendAuthVerifyError(f"backend JWT 검증 요청 실패: HTTP {response.status_code}")
 

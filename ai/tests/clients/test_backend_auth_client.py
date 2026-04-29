@@ -59,6 +59,22 @@ async def test_verify_access_token_raises_on_backend_error_status():
 
 
 @pytest.mark.asyncio
+async def test_verify_access_token_wraps_network_error():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("backend unavailable", request=request)
+
+    settings = Settings(
+        backend_auth_verify_url="http://backend/internal/auth/verify",
+        internal_service_token="service-token",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = BackendAuthClient(settings=settings, http_client=http_client)
+
+        with pytest.raises(BackendAuthVerifyError, match="네트워크 오류"):
+            await client.verify_access_token("user-access-token")
+
+
+@pytest.mark.asyncio
 async def test_verify_access_token_raises_when_wrapper_data_missing():
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"success": True})

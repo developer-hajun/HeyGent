@@ -1,18 +1,58 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
+from app.clients.backend_auth import BackendAuthVerifyError, BackendAuthVerifyResult
 from app.api.ws.subscriptions import handle_subscription
 
 router = APIRouter()
 
 
+async def _authenticate_first_message(websocket: WebSocket) -> BackendAuthVerifyResult | None:
+    """인증 완료 전 상태 전이를 처리한다."""
+
+    auth_client = websocket.app.state.backend_auth_client
+    while True:
+        message = await websocket.receive_json()
+        action = message.get("action")
+        if action == "ping":
+            await websocket.send_json({"type": "pong"})
+            continue
+        if action != "auth":
+            # 인증 전 구독을 허용하면 다른 사용자의 작업 이벤트를 엿볼 수 있으므로 즉시 거부한다.
+            await websocket.send_json({"type": "auth.required"})
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return None
+
+        access_token = message.get("accessToken")
+        if not isinstance(access_token, str) or not access_token:
+            await websocket.send_json({"type": "auth.failed"})
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return None
+
+        try:
+            result = await auth_client.verify_access_token(access_token)
+        except BackendAuthVerifyError:
+            await websocket.send_json({"type": "auth.failed"})
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return None
+
+        await websocket.send_json({"type": "auth.ok", "userId": result.user_id})
+        return result
+
+
 async def _handle_gateway_socket(websocket: WebSocket) -> None:
     manager = websocket.app.state.ws_manager
     session_service = websocket.app.state.session_service
-    session_id = websocket.query_params.get("session_id", "anonymous")
+    session_id: str | None = None
     await manager.connect(websocket)
     try:
+        auth_result = await _authenticate_first_message(websocket)
+        if auth_result is None:
+            return
+
+        # client query string의 userId/session_id는 위조 가능하므로 backend 검증 결과의 user_id만 세션 키로 사용한다.
+        session_id = f"user:{auth_result.user_id}"
         while True:
             message = await websocket.receive_json()
             action = message.get("action")
@@ -29,7 +69,10 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
             elif action == "ping":
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
-        session_service.unsubscribe_all(session_id)
+        pass
+    finally:
+        if session_id is not None:
+            session_service.unsubscribe_all(session_id)
         manager.disconnect(websocket)
 
 
