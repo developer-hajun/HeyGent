@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Configuration;
 public class MqttConfig {
 
     /*
+     * local, 서버 분리 필요cq
      * 현재 단계에서는 env 값을 MqttProperties로 바인딩하는 역할만 한다.
      *
      * 나중에 MQTT publish를 실제로 붙일 때 추가할 내용:
