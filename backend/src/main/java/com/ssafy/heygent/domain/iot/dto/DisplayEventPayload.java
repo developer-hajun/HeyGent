@@ -6,7 +6,8 @@ import jakarta.validation.constraints.PositiveOrZero;
 
 public record DisplayEventPayload(
     @NotNull DisplayEventType type,
-    String taskRunId,
+    @NotBlank String sessionId,
+    @NotBlank String stepRunId,
     @NotNull DisplayIcon icon,
     @NotBlank String text,
     @PositiveOrZero long ttlMs,
