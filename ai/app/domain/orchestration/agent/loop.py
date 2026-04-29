@@ -130,38 +130,39 @@ class TaskEngine:
         if not observed_steps:
             return None
 
-        last_index = len(observed_steps) - 1
-        current_step: StepRun | None = None
+        observed_step = self._current_observed_step(observed_steps)
         now = utc_now()
-        for index, observed_step in enumerate(observed_steps):
-            step = self.planner.materialize_observed_semantic_step(
-                task=task,
-                executor=executor,
-                input_payload=task.input_payload,
-                step_order=index + 1,
-                observed_step=observed_step,
-                outcome=outcome,
-                include_outcome_detail=index == last_index,
-            )
-            task.current_step_run_id = step.step_run_id
-            self.repository.update_task(task)
-            self.repository.create_step(step)
-            await self._emit("step.created", task, step)
-            step.status = StepStatus.RUNNING
-            step.started_at = step.started_at or task.started_at or now
-            self.repository.update_step(step)
-            await self._emit("step.started", task, step)
-            if index == last_index:
-                current_step = step
-                continue
+        step = self.planner.materialize_observed_semantic_step(
+            task=task,
+            executor=executor,
+            input_payload=task.input_payload,
+            step_order=1,
+            observed_step=observed_step,
+            outcome=outcome,
+            include_outcome_detail=True,
+        )
+        task.current_step_run_id = step.step_run_id
+        self.repository.update_task(task)
+        self.repository.create_step(step)
+        await self._emit("step.created", task, step)
+        step.status = StepStatus.RUNNING
+        step.started_at = step.started_at or task.started_at or now
+        self.repository.update_step(step)
+        await self._emit("step.started", task, step)
+        return step
 
-            # 모델이 선언한 이전 의미 단계는 이미 다음 단계로 넘어간 것으로 보고 닫는다.
-            # todo 항목처럼 1:1 투영하지 않고, step planning tool로 선언된 큰 단계만 이 경로를 탄다.
-            step.status = StepStatus.COMPLETED
-            step.ended_at = step.ended_at or now
-            self.repository.update_step(step)
-            await self._emit("step.completed", task, step)
-        return current_step
+    @staticmethod
+    def _current_observed_step(observed_steps: list[dict]) -> dict:
+        # 한 번의 agent.loop outcome은 여러 표시용 StepRun을 선생성하지 않고,
+        # 현재 진행 중이거나 다음으로 볼 의미 단계 하나만 StepRun anchor로 만든다.
+        return next(
+            (
+                observed_step
+                for observed_step in observed_steps
+                if str(observed_step.get("status") or "").strip().lower() in {"in_progress", "pending"}
+            ),
+            observed_steps[-1],
+        )
 
     async def resume(self, *, task: TaskRun, executor, approval_id: str, payload: dict) -> TaskRun:
         approval = self.approval_service.resolve(approval_id, payload)
@@ -357,6 +358,7 @@ class TaskEngine:
     def _build_executor_failure_outcome(self, error: Exception) -> dict:
         error_message = self._safe_error_message(error)
         summary_message = "작업 처리 중 오류가 발생했습니다."
+        retryable = self._executor_error_retryable(error)
         return {
             "task_status": TaskStatus.FAILED,
             "step_status": StepStatus.FAILED,
@@ -365,17 +367,37 @@ class TaskEngine:
                 "error": {
                     "type": type(error).__name__,
                     "message": error_message,
+                    "recovery": {
+                        "diagnose": True,
+                        "retryable": retryable,
+                        "retry_attempted": False,
+                        "retry_policy": "manual_or_next_loop",
+                    },
                 }
             },
             "wait_payload": {},
             "detail_json": build_model_decision_detail(
-                action="failed",
-                action_summary=summary_message,
+                action="diagnose_then_fail",
+                action_summary="오류 원인을 기록하고 재시도 가능성을 남긴 뒤 종료했습니다.",
             ),
             "todo_state": {},
             "summary_message": summary_message,
             "error_message": error_message,
             "operations": [
+                {
+                    "key": "executor.diagnose",
+                    "title": "오류 원인 기록",
+                    "kind": "execute",
+                    "status": "completed",
+                    "summary": error_message,
+                },
+                {
+                    "key": "executor.retry.unavailable",
+                    "title": "재시도 후보 기록",
+                    "kind": "execute",
+                    "status": "waiting" if retryable else "completed",
+                    "summary": "자동 재시도 없이 다음 판단 또는 수동 재개 대상으로 남겼습니다.",
+                },
                 {
                     "key": "executor.failure",
                     "title": "실행 실패",
@@ -385,6 +407,15 @@ class TaskEngine:
                 }
             ],
         }
+
+    @staticmethod
+    def _executor_error_retryable(error: Exception) -> bool:
+        retryable_names = {
+            "TimeoutError",
+            "ConnectionError",
+            "RuntimeError",
+        }
+        return type(error).__name__ in retryable_names
 
     @staticmethod
     def _safe_error_message(error: Exception) -> str:

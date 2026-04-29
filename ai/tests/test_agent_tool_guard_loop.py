@@ -27,9 +27,10 @@ def _tool_call(call_id: str, name: str, arguments: dict) -> AssistantToolCall:
 class FakeProvider:
     name = "fake"
 
-    def __init__(self, responses: list[AgentModelResponse]) -> None:
+    def __init__(self, responses: list[AgentModelResponse], settings=None) -> None:
         self.responses = iter(responses)
         self.calls: list[dict] = []
+        self.settings = settings
 
     def respond(self, messages, tools, model, tool_choice=None):
         self.calls.append({"messages": list(messages), "tools": tools, "model": model, "tool_choice": tool_choice})
@@ -51,6 +52,22 @@ class FakeToolCatalog:
                 "schema": {
                     "name": "terminal.run",
                     "description": "terminal",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+
+class FakeDelegateToolCatalog:
+    def list_available_tools(self, *, requested_toolsets=None):
+        return [
+            {
+                "name": "delegate_task",
+                "summary": "delegate",
+                "toolset": "delegation",
+                "schema": {
+                    "name": "delegate_task",
+                    "description": "delegate",
                     "parameters": {"type": "object", "properties": {}},
                 },
             }
@@ -118,6 +135,24 @@ class RecordingRuntime:
     def run_call(self, *, name, args, enabled_toolsets=None):
         self.calls.append({"name": name, "args": args, "enabled_toolsets": enabled_toolsets})
         return {"ok": True, "content": "executed"}
+
+
+class DelegationRuntime(RecordingRuntime):
+    def run_call(self, *, name, args, enabled_toolsets=None):
+        self.calls.append({"name": name, "args": args, "enabled_toolsets": enabled_toolsets})
+        return {
+            "ok": True,
+            "child_session": {
+                "intent_type": "agent.loop",
+                "entry_executor_key": "agent.loop",
+                "goal": args["goal"],
+                "context": args.get("context"),
+                "toolsets": args.get("toolsets") or [],
+                "max_iterations": args.get("max_iterations"),
+                "input_payload": {"prompt": args["goal"]},
+                "metadata": {"profile_key": args.get("profile_key") or "worker.default"},
+            },
+        }
 
 
 class StaticGuard:
@@ -196,6 +231,45 @@ def _executor(provider, runtime, guard, session_store=None) -> ToolCallingLoopEx
     )
 
 
+def test_delegate_task_tool_result_becomes_child_session_outcome():
+    provider = FakeProvider(
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_delegate",
+                        "delegate_task",
+                        {
+                            "goal": "분리 검증",
+                            "context": "worker가 별도 세션에서 검증한다.",
+                            "toolsets": ["file"],
+                            "max_iterations": 2,
+                        },
+                    )
+                ]
+            ),
+            _response(text="worker 요청을 반영했습니다."),
+        ]
+    )
+    runtime = DelegationRuntime()
+    executor = ToolCallingLoopExecutor(
+        provider=provider,
+        prompt_builder=FakePromptBuilder(),
+        tool_runtime=runtime,
+        tool_catalog=FakeDelegateToolCatalog(),
+        tool_guard=StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW)),
+    )
+
+    outcome = executor.execute(
+        task=_task(input_payload={"prompt": "worker에게 검증을 맡겨라.", "enabled_toolsets": ["delegation"]}),
+        step=_step(),
+    )
+
+    assert outcome["child_session"]["goal"] == "분리 검증"
+    assert outcome["child_session"]["toolsets"] == ["file"]
+    assert outcome["child_session"]["max_iterations"] == 2
+
+
 def test_guard_block_appends_blocked_tool_result_without_runtime_call():
     provider = FakeProvider(
         [
@@ -226,6 +300,61 @@ def test_guard_block_appends_blocked_tool_result_without_runtime_call():
     assert len(replayed_tool_messages) == 1
     assert replayed_tool_messages[0].tool_call_id == "call_block"
     assert "blocked by policy" in replayed_tool_messages[0].content
+
+
+def test_agent_loop_explicit_max_iterations_can_exceed_legacy_hard_clamp():
+    responses = [
+        _response(tool_calls=[_tool_call(f"call_{index}", "terminal_run", {"argv": ["echo", str(index)]})])
+        for index in range(13)
+    ]
+    responses.append(_response(text="ITERATION_13_DONE"))
+    provider = FakeProvider(
+        responses,
+        settings=SimpleNamespace(
+            agent_loop_default_max_iterations=60,
+            agent_loop_max_iterations=60,
+        ),
+    )
+    runtime = RecordingRuntime()
+    guard = StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW))
+
+    outcome = _executor(provider, runtime, guard).execute(
+        task=_task({"prompt": "run", "max_iterations": 20}),
+        step=_step(),
+    )
+
+    assert outcome["task_status"] == TaskStatus.COMPLETED
+    assert outcome["result_payload"]["text"] == "ITERATION_13_DONE"
+    assert len(provider.calls) == 14
+    assert len(runtime.calls) == 13
+
+
+def test_agent_loop_worker_payload_uses_worker_default_when_max_iterations_is_absent():
+    responses = [
+        _response(tool_calls=[_tool_call(f"call_worker_{index}", "terminal_run", {"argv": ["echo", str(index)]})])
+        for index in range(13)
+    ]
+    responses.append(_response(text="WORKER_DEFAULT_DONE"))
+    provider = FakeProvider(
+        responses,
+        settings=SimpleNamespace(
+            agent_loop_default_max_iterations=60,
+            agent_loop_worker_default_max_iterations=50,
+            agent_loop_max_iterations=60,
+        ),
+    )
+    runtime = RecordingRuntime()
+    guard = StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW))
+
+    outcome = _executor(provider, runtime, guard).execute(
+        task=_task({"prompt": "worker", "worker": {"leaf": True}}),
+        step=_step(),
+    )
+
+    assert outcome["task_status"] == TaskStatus.COMPLETED
+    assert outcome["result_payload"]["text"] == "WORKER_DEFAULT_DONE"
+    assert len(provider.calls) == 14
+    assert len(runtime.calls) == 13
 
 
 def test_resume_rejected_appends_blocked_pending_tool_result_and_recontinues_loop():

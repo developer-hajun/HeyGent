@@ -211,6 +211,13 @@ async def websocket_gateway(websocket: WebSocket) -> None:
     await _handle_gateway_socket(websocket)
 
 
+@router.websocket("/realtime/user/ws")
+async def websocket_realtime_user(websocket: WebSocket) -> None:
+    """제품 클라이언트가 사용하는 canonical WebSocket 경로다."""
+
+    await _handle_gateway_socket(websocket)
+
+
 @router.websocket("/ws")
 async def websocket_gateway_legacy(websocket: WebSocket) -> None:
     """이전 테스트나 임시 클라이언트를 위한 호환 경로다."""

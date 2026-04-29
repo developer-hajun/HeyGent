@@ -6,7 +6,7 @@ from typing import Any
 from app.contracts.task.task_status import TaskStatus
 from app.core.utils.ids import new_id
 from app.domain.orchestration.delegation.launcher import ChildSessionLauncher
-from app.domain.orchestration.delegation.policies import child_task_unsuccessful
+from app.domain.orchestration.delegation.policies import worker_session_unsuccessful
 from app.domain.orchestration.delegation.spec import ChildSessionSpec
 from app.domain.session.sessions.transcript_store import TranscriptStore
 from app.domain.tasks.detail import merge_step_detail
@@ -14,6 +14,7 @@ from app.domain.tasks.detail import merge_step_detail
 
 BLOCKED_WORKER_TOOLSETS = ("delegate", "delegation")
 DEFAULT_WORKER_TOOLSETS = ("skills", "terminal", "file")
+DEFAULT_WORKER_MAX_ITERATIONS = 50
 
 
 class DelegateRuntime:
@@ -105,10 +106,14 @@ class DelegateRuntime:
                     "delegate": delegate_summary,
                     "results": delegate_summary["results"],
                     "total_duration_seconds": delegate_summary["total_duration_seconds"],
+                    "workerSessionId": worker_session_id,
+                    "profileKey": normalized_contract["profile_key"],
                 },
                 "output_payload": {
                     **dict(outcome.get("output_payload") or {}),
                     "delegate": delegate_summary,
+                    "workerSessionId": worker_session_id,
+                    "profileKey": normalized_contract["profile_key"],
                 },
                 "detail_json": merge_step_detail(
                     outcome.get("detail_json"),
@@ -118,7 +123,7 @@ class DelegateRuntime:
                     *list(outcome.get("operations") or []),
                     {
                         "key": "agent.delegate",
-                        "title": "Child 세션 실행",
+                        "title": "worker 세션 실행",
                         "kind": "agent",
                         "status": "failed",
                         "summary": error_message,
@@ -143,12 +148,14 @@ class DelegateRuntime:
             result_summary=delegate_summary,
         )
         merged_output_payload = {**dict(outcome.get("output_payload") or {})}
-        merged_output_payload["childTaskRunId"] = launch_result.child_task_run_id
         merged_output_payload["childStatus"] = launch_result.status
+        merged_output_payload["workerSessionId"] = worker_session_id
+        merged_output_payload["profileKey"] = normalized_contract["profile_key"]
         merged_output_payload["delegate"] = delegate_summary
 
         merged_result_payload = {**dict(outcome.get("result_payload") or {})}
-        merged_result_payload["childTaskRunId"] = launch_result.child_task_run_id
+        merged_result_payload["workerSessionId"] = worker_session_id
+        merged_result_payload["profileKey"] = normalized_contract["profile_key"]
         merged_result_payload["delegate"] = delegate_summary
         merged_result_payload["results"] = delegate_summary["results"]
         merged_result_payload["total_duration_seconds"] = delegate_summary["total_duration_seconds"]
@@ -157,21 +164,21 @@ class DelegateRuntime:
             *list(outcome.get("operations") or []),
             {
                 "key": "agent.delegate",
-                "title": "Child 세션 실행",
+                "title": "worker 세션 실행",
                 "kind": "agent",
-                "status": "completed" if not child_task_unsuccessful(launch_result.status) else "failed",
-                "summary": launch_result.summary or launch_result.child_task_run_id,
+                "status": "completed" if not worker_session_unsuccessful(launch_result.status) else "failed",
+                "summary": launch_result.summary or worker_session_id,
             },
             {
                 "key": "agent.collect_summary",
-                "title": "Child 결과 회수",
+                "title": "worker 결과 회수",
                 "kind": "agent",
-                "status": "completed" if not child_task_unsuccessful(launch_result.status) else "failed",
-                "summary": launch_result.summary or launch_result.child_task_run_id,
+                "status": "completed" if not worker_session_unsuccessful(launch_result.status) else "failed",
+                "summary": launch_result.summary or worker_session_id,
             },
         ]
 
-        if child_task_unsuccessful(launch_result.status):
+        if worker_session_unsuccessful(launch_result.status):
             terminal_status = TaskStatus.FAILED if launch_result.status == TaskStatus.FAILED else TaskStatus.CANCELED
             return {
                 **outcome,
@@ -179,8 +186,8 @@ class DelegateRuntime:
                 "step_status": terminal_status,
                 "result_payload": merged_result_payload,
                 "output_payload": merged_output_payload,
-                "error_message": f"child task ended in {launch_result.status}: {launch_result.child_task_run_id}",
-                "summary_message": launch_result.summary or "child session ended unsuccessfully",
+                "error_message": f"worker session ended in {launch_result.status}: {worker_session_id}",
+                "summary_message": launch_result.summary or "worker session ended unsuccessfully",
                 "detail_json": merge_step_detail(outcome.get("detail_json"), detail_patch),
                 "operations": merged_operations,
             }
@@ -206,7 +213,7 @@ class DelegateRuntime:
                 "handoff_id": handoff_id,
                 "task_run_id": spec.parent_task_run_id,
                 "parent_step_run_id": spec.parent_step_run_id,
-                "parent_session_id": getattr(task, "session_key", None),
+                "parent_session_id": contract.get("parent_session_id"),
                 "worker_session_id": spec.worker_session_id,
                 "worker_profile_id": contract["profile_id"] or contract["profile_key"],
                 "worker_profile_version": contract["profile_version"],
@@ -246,6 +253,7 @@ class DelegateRuntime:
         latest_parent = self.session_store.get_latest_session_by_key(session_key)
         if latest_parent is not None:
             parent_session_id = str(latest_parent.get("id") or "").strip() or None
+        contract["parent_session_id"] = parent_session_id
 
         worker_session_id = new_id("session")
         # worker session은 같은 product session_key 아래에 두되 parent_session_id와 parent_step_run_id로 계층을 고정한다.
@@ -302,7 +310,7 @@ class DelegateRuntime:
         )
         max_iterations = cls._normalize_positive_int(
             child_session.get("max_iterations", source_payload.get("max_iterations", profile_policy.get("maxIterations", profile_policy.get("max_iterations")))),
-            default=12,
+            default=DEFAULT_WORKER_MAX_ITERATIONS,
         )
         profile_key = cls._optional_text(child_session.get("profile_key")) or cls._optional_text(metadata.get("profile_key")) or "worker.default"
         profile_id = cls._optional_text((profile or {}).get("profile_id"))
@@ -408,15 +416,16 @@ class DelegateRuntime:
         }
         return {
             "profile_key": contract["profile_key"],
+            "profileKey": contract["profile_key"],
             "agent_id": agent_id,
             "worker_session_id": worker_session_id,
+            "workerSessionId": worker_session_id,
             "tasks": list(contract.get("tasks") or []),
             "results": [result_item],
             "total_duration_seconds": duration,
             "toolsets": contract["toolsets"],
             "blocked_toolsets": contract["blocked_toolsets"],
             "leaf": True,
-            "childTaskRunId": getattr(launch_result, "child_task_run_id", None),
             "status": status,
             "summary": summary,
             "error": error,

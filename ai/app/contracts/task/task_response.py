@@ -31,8 +31,8 @@ class StepRunResponse(BaseModel):
     semantic: TaskRunFlowSemanticResponse | None = None
     is_current: bool = False
     is_projected: bool = False
-    child_task_run_id: str | None = None
-    child_task: TaskRunFlowChildTaskResponse | None = None
+    worker_session_id: str | None = None
+    worker_session: TaskRunFlowWorkerSessionResponse | None = None
     input_payload: dict[str, Any] = Field(default_factory=dict)
     output_payload: dict[str, Any] = Field(default_factory=dict)
     wait_payload: dict[str, Any] = Field(default_factory=dict)
@@ -122,11 +122,12 @@ class TaskRunFlowActivityResponse(BaseModel):
     occurred_at: str
 
 
-class TaskRunFlowChildTaskResponse(BaseModel):
-    task_run_id: str
+class TaskRunFlowWorkerSessionResponse(BaseModel):
+    session_id: str
     status: str | None = None
     summary: str | None = None
     agent_id: str | None = None
+    profile_key: str | None = None
 
 
 class TaskRunFlowNodeResponse(BaseModel):
@@ -139,8 +140,8 @@ class TaskRunFlowNodeResponse(BaseModel):
     semantic: TaskRunFlowSemanticResponse | None = None
     is_current: bool
     is_projected: bool
-    child_task_run_id: str | None = None
-    child_task: TaskRunFlowChildTaskResponse | None = None
+    worker_session_id: str | None = None
+    worker_session: TaskRunFlowWorkerSessionResponse | None = None
     activity: list[TaskRunFlowActivityResponse] = Field(default_factory=list)
 
 
@@ -148,6 +149,7 @@ class TaskRunFlowEdgeResponse(BaseModel):
     from_step_run_id: str | None = None
     to_step_run_id: str | None = None
     to_task_run_id: str | None = None
+    to_agent_session_id: str | None = None
     relation: str
 
 

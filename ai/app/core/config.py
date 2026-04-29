@@ -50,6 +50,9 @@ class Settings:
     ws_auth_rate_limit_window_seconds: int = 60
     task_projection_ttl_seconds: int = 3600
     task_projection_max_events: int = 200
+    agent_loop_default_max_iterations: int = 60
+    agent_loop_worker_default_max_iterations: int = 50
+    agent_loop_max_iterations: int = 60
 
     def resolved_api_base_url(self) -> str:
         """CLI 와 외부 클라이언트가 공통으로 사용할 기본 API 주소를 계산한다."""
@@ -202,5 +205,17 @@ def get_settings() -> Settings:
         task_projection_max_events=_parse_int(
             _read_env("HEYGENT_TASK_PROJECTION_MAX_EVENTS", 200, dotenv_values),
             default=200,
+        ),
+        agent_loop_default_max_iterations=_parse_int(
+            _read_env("HEYGENT_AGENT_LOOP_DEFAULT_MAX_ITERATIONS", 60, dotenv_values),
+            default=60,
+        ),
+        agent_loop_worker_default_max_iterations=_parse_int(
+            _read_env("HEYGENT_AGENT_LOOP_WORKER_DEFAULT_MAX_ITERATIONS", 50, dotenv_values),
+            default=50,
+        ),
+        agent_loop_max_iterations=_parse_int(
+            _read_env("HEYGENT_AGENT_LOOP_MAX_ITERATIONS", 60, dotenv_values),
+            default=60,
         ),
     )

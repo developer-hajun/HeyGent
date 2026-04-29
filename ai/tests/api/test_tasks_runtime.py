@@ -4,10 +4,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 
+from app.clients.backend_auth import BackendAuthVerifyResult
 from app.contracts.event.task_events import TaskEventEnvelope
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse, AssistantToolCall
 from app.domain.tasks.models import StepRun, TaskRun
 from app.storage.redis import FakeRedis, RedisTaskProjectionStore
+
+
+class FakeBackendAuthClient:
+    async def verify_access_token(self, access_token: str) -> BackendAuthVerifyResult:
+        return BackendAuthVerifyResult(user_id=access_token)
 
 
 def _response(*, text: str = "", tool_calls: list[AssistantToolCall] | None = None, model: str = "gpt-test") -> AgentModelResponse:
@@ -104,7 +110,7 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert transcript[2]["tool_call_id"] == "call_skills"
 
 
-def test_agent_loop_declared_steps_materialize_multiple_stepruns(client, monkeypatch):
+def test_agent_loop_declared_steps_materialize_single_current_steprun(client, monkeypatch):
     provider_calls = _patch_respond(
         monkeypatch,
         [
@@ -163,11 +169,11 @@ def test_agent_loop_declared_steps_materialize_multiple_stepruns(client, monkeyp
     assert "step" in exposed_tool_names
 
     steps = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps").json()
-    assert len(steps) == 3
-    assert [step["title"] for step in steps] == ["뉴스 근거 자료 조사", "뉴스 브리핑 문서 초안 작성", "뉴스 브리핑 결과 검토"]
-    assert [step["summary_message"] for step in steps] == ["뉴스 근거 자료 조사 중", "뉴스 브리핑 문서 초안 작성 중", "뉴스 브리핑 결과 검토 중"]
-    assert [step["input_payload"].get("observed_step_key") for step in steps] == ["research", "draft", "review"]
-    assert [step["semantic"]["key"] for step in steps] == ["observed.research", "observed.draft", "observed.review"]
+    assert len(steps) == 1
+    assert steps[0]["title"] == "뉴스 브리핑 결과 검토"
+    assert steps[0]["summary_message"] == "뉴스 브리핑 결과 검토 중"
+    assert steps[0]["input_payload"].get("observed_step_key") == "review"
+    assert steps[0]["semantic"]["key"] == "observed.review"
     assert all(step["input_payload"].get("todo_key") is None for step in steps)
     assert all(step["status"] == "COMPLETED" for step in steps)
 
@@ -198,9 +204,18 @@ def test_agent_loop_provider_timeout_fails_task_and_materializes_failed_step(cli
     assert steps[0]["error_message"] == "TimeoutError: provider read timeout"
     assert steps[0]["summary_message"] == "작업 처리 중 오류가 발생했습니다."
     operations = steps[0]["detail_json"]["operationDetail"]["operations"]
-    assert operations[-1]["key"] == "executor.failure"
+    assert [operation["key"] for operation in operations[-3:]] == [
+        "executor.diagnose",
+        "executor.retry.unavailable",
+        "executor.failure",
+    ]
+    assert operations[-3]["status"] == "completed"
+    assert operations[-2]["status"] == "waiting"
     assert operations[-1]["status"] == "failed"
     assert operations[-1]["summary"] == "TimeoutError: provider read timeout"
+    assert steps[0]["output_payload"]["error"]["recovery"]["diagnose"] is True
+    assert steps[0]["output_payload"]["error"]["recovery"]["retryable"] is True
+    assert steps[0]["output_payload"]["error"]["recovery"]["retry_attempted"] is False
 
 
 def test_agent_loop_explicit_task_plan_continues_across_plan_step_anchors(client, monkeypatch):
@@ -403,6 +418,10 @@ def test_agent_loop_resume_provider_runtime_error_fails_existing_step(client, mo
     assert steps[0]["step_run_id"] == waiting_step_id
     assert steps[0]["status"] == "FAILED"
     assert steps[0]["error_message"] == "RuntimeError: provider unavailable"
+    operations = steps[0]["detail_json"]["operationDetail"]["operations"]
+    assert operations[-3]["key"] == "executor.diagnose"
+    assert operations[-2]["key"] == "executor.retry.unavailable"
+    assert operations[-1]["key"] == "executor.failure"
     approval_detail = steps[0]["detail_json"]["approvalDetail"]
     assert approval_detail["approvalRequested"] is False
     assert approval_detail["approvalId"] == approval_id
@@ -659,6 +678,110 @@ def test_taskruns_active_supports_session_filter_and_recent_terminal(client, mon
     assert expired_active.json()["items"] == []
 
 
+def test_taskruns_active_product_session_alias_overrides_legacy_session_key(client):
+    client.app.state.repository.create_task(
+        TaskRun(
+            task_run_id="task_product_alias",
+            task_type="agent.loop",
+            intent_type="agent.loop",
+            entry_executor_key="agent.loop",
+            owner_key="product-user",
+            session_key="product_session",
+            status="RUNNING",
+            title="product alias 작업",
+        )
+    )
+    client.app.state.repository.create_task(
+        TaskRun(
+            task_run_id="task_legacy_alias",
+            task_type="agent.loop",
+            intent_type="agent.loop",
+            entry_executor_key="agent.loop",
+            owner_key="legacy-user",
+            session_key="legacy_session",
+            status="RUNNING",
+            title="legacy alias 작업",
+        )
+    )
+
+    response = client.get(
+        "/api/v1/taskRuns/active",
+        params={"sessionKey": "legacy_session", "productSessionId": "product_session"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 1
+    assert body["items"][0]["task_run_id"] == "task_product_alias"
+    assert body["items"][0]["session_key"] == "product_session"
+
+
+def test_taskruns_create_product_session_alias_overrides_legacy_session_key(client, monkeypatch):
+    _patch_respond(monkeypatch, [_response(text="PRODUCT_SESSION_ALIAS_DONE")])
+
+    response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "product-alias-user",
+            "sessionKey": "legacy_create_session",
+            "productSessionId": "product_create_session",
+            "input_payload": {"prompt": "productSessionId를 canonical로 사용해줘.", "model": "gpt-test"},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert body["session_key"] == "product_create_session"
+    assert client.app.state.session_store.get_latest_session_by_key("product_create_session") is not None
+    assert client.app.state.session_store.get_latest_session_by_key("legacy_create_session") is None
+
+
+def test_agent_session_messages_returns_wrapper_after_numeric_message_id(client):
+    session_store = client.app.state.session_store
+    session_store.create_session(
+        session_id="agent_session_messages_api",
+        session_key="product_messages",
+        source="agent.loop",
+        user_id="messages-user",
+        model="gpt-test",
+        title="messages API",
+    )
+    first_id = session_store.append_message(session_id="agent_session_messages_api", role="user", content="첫 메시지")
+    second_id = session_store.append_message(session_id="agent_session_messages_api", role="assistant", content="둘째 메시지")
+    session_store.append_message(session_id="agent_session_messages_api", role="tool", content="셋째 메시지", tool_name="terminal.run")
+
+    response = client.get(
+        "/api/v1/agentSessions/agent_session_messages_api/messages",
+        params={"afterMessageId": first_id, "limit": 1},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["agentSessionId"] == "agent_session_messages_api"
+    assert body["afterMessageId"] == first_id
+    assert body["limit"] == 1
+    assert body["totalCount"] == 1
+    assert body["nextAfterMessageId"] == second_id
+    assert [message["id"] for message in body["items"]] == [second_id]
+    assert body["items"][0]["role"] == "assistant"
+    assert body["items"][0]["content"] == "둘째 메시지"
+
+
+def test_agent_session_messages_returns_not_found_for_authenticated_missing_session(client):
+    client.app.state.settings.allow_sqlite_legacy = False
+    client.app.state.backend_auth_client = FakeBackendAuthClient()
+
+    response = client.get(
+        "/api/v1/agentSessions/missing_agent_session/messages",
+        headers={"Authorization": "Bearer messages-user"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "agent session not found"
+
+
 def test_taskruns_create_rejects_second_active_task_in_same_session(client, monkeypatch):
     _patch_respond(
         monkeypatch,
@@ -694,11 +817,53 @@ def test_taskruns_create_rejects_second_active_task_in_same_session(client, monk
     assert "active task already exists" in second_response.json()["detail"]
 
 
+def test_taskruns_create_active_lock_is_scoped_by_authenticated_owner(client, monkeypatch):
+    client.app.state.settings.allow_sqlite_legacy = False
+    client.app.state.backend_auth_client = FakeBackendAuthClient()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(tool_calls=[_tool_call("call_owner_a_wait", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
+            _response(text="OWNER_B_DONE"),
+        ],
+    )
+
+    first_response = client.post(
+        "/api/v1/taskRuns",
+        headers={"Authorization": "Bearer owner-a"},
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "ignored-owner",
+            "session_key": "shared_product_session",
+            "input_payload": {"prompt": "owner-a 작업은 승인 대기", "approval_required": True},
+        },
+    )
+    assert first_response.status_code == 200
+    assert first_response.json()["status"] == "WAITING"
+
+    second_response = client.post(
+        "/api/v1/taskRuns",
+        headers={"Authorization": "Bearer owner-b"},
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "ignored-owner",
+            "session_key": "shared_product_session",
+            "input_payload": {"prompt": "owner-b는 같은 productSessionId라도 별도 사용자"},
+        },
+    )
+
+    assert second_response.status_code == 200
+    body = second_response.json()
+    assert body["session_key"] == "shared_product_session"
+    assert body["status"] == "COMPLETED"
+    assert client.app.state.repository.get_task(body["task_run_id"]).owner_key == "owner-b"
+
+
 def test_taskruns_create_uses_redis_active_session_lock_before_start(client, monkeypatch):
     _patch_respond(monkeypatch, [_response(text="SHOULD_NOT_START")])
     projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
     client.app.state.task_projection_store = projection
-    assert projection.acquire_active_session_lock("sess_locked_by_redis", "existing_task") is True
+    assert projection.acquire_active_session_lock("sess_locked_by_redis", "existing_task", owner_key="active-lock-user") is True
 
     response = client.post(
         "/api/v1/taskRuns",

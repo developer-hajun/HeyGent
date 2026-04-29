@@ -112,7 +112,7 @@ async def lifespan(app: FastAPI):
     skill_prompt_builder = SkillPromptBuilder(skill_registry)
     prompt_builder = PromptBuilder(skill_prompt_builder)
     tool_runtime = LocalToolRuntime(skill_registry=skill_registry, session_store=session_store)
-    tool_catalog = ToolCatalog(tool_runtime, default_toolsets=("skills", "session", "planning", "terminal", "file"))
+    tool_catalog = ToolCatalog(tool_runtime, default_toolsets=("skills", "session", "planning", "terminal", "file", "delegation"))
     child_session_launcher = ChildSessionLauncher()
     planner = Planner()
     tool_registry = ToolRegistry(
@@ -129,7 +129,7 @@ async def lifespan(app: FastAPI):
         task_engine=task_engine,
         tool_registry=tool_registry,
     )
-    child_session_launcher.bind_start(loop_runner.start_child)
+    child_session_launcher.bind_worker_start(loop_runner.start_worker_session)
     orchestrator = Orchestrator(loop_runner, repository)
 
     app.state.settings = settings

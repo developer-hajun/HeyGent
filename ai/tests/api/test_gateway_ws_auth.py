@@ -144,6 +144,15 @@ def test_empty_websocket_allowed_origins_allows_existing_clients(client):
         assert websocket.receive_json() == {"type": "auth.ok", "userId": "42"}
 
 
+def test_realtime_user_websocket_alias_authenticates_like_gateway(client):
+    client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="42")
+
+    with client.websocket_connect("/api/v1/realtime/user/ws") as websocket:
+        websocket.send_json({"action": "auth", "accessToken": "valid-token"})
+
+        assert websocket.receive_json() == {"type": "auth.ok", "userId": "42"}
+
+
 def test_websocket_rejects_origin_outside_allowed_list(client):
     client.app.state.settings.ws_allowed_origins = ["https://app.example.com"]
     client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="42")

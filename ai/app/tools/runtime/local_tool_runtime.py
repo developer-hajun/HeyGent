@@ -45,6 +45,7 @@ class LocalToolRuntime:
                 "session.search": self._search_sessions,
                 "step": self._step,
                 "todo": self._todo,
+                "delegate_task": self._delegate_task,
                 "terminal.run": self._run_terminal_command,
                 "read_file": self._read_file,
                 "write_file": self._write_file,
@@ -284,6 +285,53 @@ class LocalToolRuntime:
             "status": normalized["status"],
         }
 
+    def _delegate_task(self, args: dict[str, Any]) -> dict[str, Any]:
+        """worker 위임 요청을 실행 엔진이 해석할 수 있는 handoff 계약으로 정규화한다."""
+
+        goal = str(args.get("goal") or "").strip()
+        context = args.get("context")
+        profile_key = self._optional_text(args.get("profile_key")) or "worker.default"
+        toolsets = self._normalize_delegate_toolsets(args.get("toolsets"))
+        max_iterations = self._optional_positive_int(args.get("max_iterations"))
+        input_payload = {
+            "prompt": goal,
+            "goal": goal,
+            "context": context if context is not None else {},
+            "enabled_toolsets": toolsets,
+            "toolsets": toolsets,
+            "profile_key": profile_key,
+        }
+        if max_iterations is not None:
+            input_payload["max_iterations"] = max_iterations
+
+        child_session = {
+            "intent_type": "agent.loop",
+            "entry_executor_key": "agent.loop",
+            "goal": goal,
+            "context": context if context is not None else {},
+            "toolsets": toolsets,
+            "max_iterations": max_iterations,
+            "role": "worker",
+            "profile_key": profile_key,
+            "agent_id": self._optional_text(args.get("agent_id")),
+            "tasks": args.get("tasks") if isinstance(args.get("tasks"), list) else [],
+            "acp_command": self._optional_text(args.get("acp_command")),
+            "acp_args": dict(args.get("acp_args") or {}) if isinstance(args.get("acp_args"), dict) else {},
+            "input_payload": input_payload,
+            "metadata": {
+                "profile_key": profile_key,
+            },
+        }
+        if max_iterations is None:
+            child_session.pop("max_iterations", None)
+
+        # parent transcript에는 수락 메시지만 남기고, worker 실행 계약은 별도 필드로 넘긴다.
+        return {
+            "ok": True,
+            "content": f"worker delegation accepted: {goal}",
+            "child_session": child_session,
+        }
+
     def _run_terminal_command(self, args: dict[str, Any]) -> dict[str, Any]:
         argv = list(args.get("argv") or []) or None
         command = args.get("command")
@@ -476,6 +524,33 @@ class LocalToolRuntime:
     def _dedupe_todos(items: list[dict[str, str]]) -> list[dict[str, str]]:
         last_index_by_id = {item["id"]: index for index, item in enumerate(items)}
         return [items[index] for index in sorted(last_index_by_id.values())]
+
+    @staticmethod
+    def _normalize_delegate_toolsets(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return ["skills", "terminal", "file"]
+        normalized: list[str] = []
+        for item in value:
+            name = str(item or "").strip()
+            if not name or name in {"delegate", "delegation", "delegate_task"} or name in normalized:
+                continue
+            normalized.append(name)
+        return normalized or ["skills", "terminal", "file"]
+
+    @staticmethod
+    def _optional_positive_int(value: Any) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    @staticmethod
+    def _optional_text(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        stripped = value.strip()
+        return stripped or None
 
     @staticmethod
     def _todo_summary(items: list[dict[str, str]]) -> dict[str, int]:

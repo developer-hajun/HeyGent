@@ -204,7 +204,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
             'main.default',
             1,
             'main',
-            '{"promptRole":"main","toolsets":["skills","session","planning","terminal","file"]}'::jsonb,
+            '{"promptRole":"main","toolsets":["skills","session","planning","terminal","file","delegation"]}'::jsonb,
             '{"canDelegate":true,"maxWorkerDepth":1,"maxConcurrentWorkers":3}'::jsonb
         ),
         (

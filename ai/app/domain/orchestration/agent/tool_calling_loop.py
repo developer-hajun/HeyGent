@@ -683,6 +683,11 @@ class ToolCallingLoopExecutor:
             "summary_message": step_summary or final_text[:120] or "agent loop completed",
             "operations": operations,
         }
+        child_session = self._child_session_from_tool_results(tool_results)
+        if child_session is not None:
+            # delegate_task는 runtime tool result로 관찰되지만 실제 worker 실행은 TaskEngine이
+            # parent StepRun에 worker agent_session linkage를 만든 뒤 처리해야 한다.
+            outcome["child_session"] = child_session
         return outcome
 
     def _build_waiting_outcome(
@@ -748,14 +753,39 @@ class ToolCallingLoopExecutor:
         normalized = tuple(str(item).strip() for item in raw_toolsets if str(item).strip())
         return normalized or None
 
-    @staticmethod
-    def _max_iterations(task_input: dict[str, Any]) -> int:
+    def _max_iterations(self, task_input: dict[str, Any]) -> int:
         raw_value = task_input.get("max_iterations")
+        explicit_value = raw_value is not None and raw_value != ""
+        default_value = self._default_max_iterations(task_input)
+        try:
+            value = int(raw_value) if explicit_value else default_value
+        except (TypeError, ValueError):
+            value = default_value
+        upper_bound = self._configured_positive_int("agent_loop_max_iterations", default=60)
+        return max(1, min(value, upper_bound))
+
+    def _default_max_iterations(self, task_input: dict[str, Any]) -> int:
+        if self._is_worker_payload(task_input):
+            return self._configured_positive_int("agent_loop_worker_default_max_iterations", default=50)
+        return self._configured_positive_int("agent_loop_default_max_iterations", default=60)
+
+    def _configured_positive_int(self, name: str, *, default: int) -> int:
+        settings = getattr(self.provider, "settings", None)
+        raw_value = getattr(settings, name, default)
         try:
             value = int(raw_value)
         except (TypeError, ValueError):
-            value = 4
-        return max(1, min(value, 12))
+            value = default
+        return max(1, value)
+
+    @staticmethod
+    def _is_worker_payload(task_input: dict[str, Any]) -> bool:
+        worker_payload = task_input.get("worker")
+        if isinstance(worker_payload, dict) and worker_payload.get("leaf") is True:
+            return True
+        role = str(task_input.get("role") or "").strip().lower()
+        profile_key = str(task_input.get("profile_key") or "").strip().lower()
+        return role == "worker" or profile_key.startswith("worker.")
 
     @staticmethod
     def _optional_text(value: Any) -> str | None:
@@ -807,6 +837,19 @@ class ToolCallingLoopExecutor:
         return observed
 
     @staticmethod
+    def _child_session_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for tool_result in tool_results:
+            if str(tool_result.get("name") or "") != "delegate_task":
+                continue
+            result = tool_result.get("result")
+            if not isinstance(result, dict) or result.get("ok") is False:
+                continue
+            child_session = result.get("child_session")
+            if isinstance(child_session, dict):
+                return dict(child_session)
+        return None
+
+    @staticmethod
     def _normalize_observed_step(item: dict[str, Any], *, index: int) -> dict[str, str] | None:
         title = str(item.get("title") or item.get("summary") or "").strip()
         if not title:
@@ -854,7 +897,8 @@ class ToolCallingLoopExecutor:
             "agentDetail": {
                 "called": False,
                 "agentId": None,
-                "childTaskRunId": None,
+                "workerSessionId": None,
+                "profileKey": None,
             },
             "toolDetail": {
                 "toolNames": unique_tool_names,
