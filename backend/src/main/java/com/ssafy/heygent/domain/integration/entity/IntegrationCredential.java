@@ -1,4 +1,4 @@
-package com.ssafy.heygent.domain.session.entity;
+package com.ssafy.heygent.domain.integration.entity;
 
 import java.time.LocalDateTime;
 
@@ -15,6 +15,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -26,28 +27,29 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
-@Table(name = "product_sessions")
+@Table(
+    name = "integration_credentials",
+    uniqueConstraints = @UniqueConstraint(columnNames = {"integration_id", "credential_key"})
+)
 @EntityListeners(AuditingEntityListener.class)
-public class ProductSession {
+public class IntegrationCredential {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
-    private Long userId;
+    @Column(name = "integration_id", nullable = false)
+    private Long integrationId;
 
-    @Column(nullable = false, length = 100)
-    private String title;
+    @Column(name = "credential_key", nullable = false, length = 100)
+    private String credentialKey;
 
-    @Column(length = 100)
-    private String workspaceKey;
-
-    private Long mainAgentProfileId;
+    @Column(nullable = false, columnDefinition = "TEXT")
+    private String secretValue;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
-    private ProductSessionStatus status;
+    private IntegrationCredentialStatus status;
 
     @CreatedDate
     @Column(updatable = false)
@@ -56,7 +58,12 @@ public class ProductSession {
     @LastModifiedDate
     private LocalDateTime updatedAt;
 
-    public void connectMainAgent(Long agentProfileId) {
-        this.mainAgentProfileId = agentProfileId;
+    public void updateSecretValue(String secretValue) {
+        this.secretValue = secretValue;
+        this.status = IntegrationCredentialStatus.ACTIVE;
+    }
+
+    public void delete() {
+        this.status = IntegrationCredentialStatus.DELETED;
     }
 }

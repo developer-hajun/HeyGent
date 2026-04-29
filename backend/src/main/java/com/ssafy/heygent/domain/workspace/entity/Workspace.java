@@ -1,4 +1,4 @@
-package com.ssafy.heygent.domain.session.entity;
+package com.ssafy.heygent.domain.workspace.entity;
 
 import java.time.LocalDateTime;
 
@@ -26,28 +26,26 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
-@Table(name = "product_sessions")
+@Table(name = "workspaces")
 @EntityListeners(AuditingEntityListener.class)
-public class ProductSession {
+public class Workspace {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
-    private Long userId;
-
-    @Column(nullable = false, length = 100)
-    private String title;
-
-    @Column(length = 100)
+    @Column(nullable = false, unique = true, length = 100)
     private String workspaceKey;
 
-    private Long mainAgentProfileId;
+    @Column(nullable = false, length = 100)
+    private String name;
+
+    @Column(nullable = false)
+    private Long ownerUserId;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
-    private ProductSessionStatus status;
+    private WorkspaceStatus status;
 
     @CreatedDate
     @Column(updatable = false)
@@ -55,8 +53,4 @@ public class ProductSession {
 
     @LastModifiedDate
     private LocalDateTime updatedAt;
-
-    public void connectMainAgent(Long agentProfileId) {
-        this.mainAgentProfileId = agentProfileId;
-    }
 }

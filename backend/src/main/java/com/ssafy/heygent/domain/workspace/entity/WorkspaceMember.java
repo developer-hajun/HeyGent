@@ -1,4 +1,4 @@
-package com.ssafy.heygent.domain.session.entity;
+package com.ssafy.heygent.domain.workspace.entity;
 
 import java.time.LocalDateTime;
 
@@ -15,6 +15,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -26,28 +27,30 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
-@Table(name = "product_sessions")
+@Table(
+    name = "workspace_members",
+    uniqueConstraints = @UniqueConstraint(columnNames = {"workspace_id", "user_id"})
+)
 @EntityListeners(AuditingEntityListener.class)
-public class ProductSession {
+public class WorkspaceMember {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
+    @Column(name = "workspace_id", nullable = false)
+    private Long workspaceId;
+
+    @Column(name = "user_id", nullable = false)
     private Long userId;
-
-    @Column(nullable = false, length = 100)
-    private String title;
-
-    @Column(length = 100)
-    private String workspaceKey;
-
-    private Long mainAgentProfileId;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 30)
-    private ProductSessionStatus status;
+    private WorkspaceRole role;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 30)
+    private WorkspaceMemberStatus status;
 
     @CreatedDate
     @Column(updatable = false)
@@ -55,8 +58,4 @@ public class ProductSession {
 
     @LastModifiedDate
     private LocalDateTime updatedAt;
-
-    public void connectMainAgent(Long agentProfileId) {
-        this.mainAgentProfileId = agentProfileId;
-    }
 }
