@@ -102,6 +102,14 @@ class RedisTaskProjectionStore:
         members = self.redis.zrange(self._task_events_key(task_run_id), 0, -1)
         return [json.loads(self._decode_required(member)) for member in members]
 
+    def get_latest_sequence(self, task_run_id: str) -> int | None:
+        """구독 ack와 reconnect 판단에 쓸 최신 sequence를 조회한다."""
+
+        value = self._decode(self.redis.get(self._task_sequence_key(task_run_id)))
+        if value is None:
+            return None
+        return int(value)
+
     def trim_recent_events(self, task_run_id: str, *, max_events: int | None = None) -> int:
         limit = self.max_events if max_events is None else max_events
         if limit < 0:

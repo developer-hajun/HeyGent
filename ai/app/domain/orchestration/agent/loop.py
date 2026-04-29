@@ -592,8 +592,8 @@ class TaskEngine:
             summary_message=task.progress_summary,
             payload=payload or {},
         )
-        self.repository.append_event(event)
-        await self.broadcaster.publish(event)
+        saved_event = self.repository.append_event(event)
+        await self.broadcaster.publish(saved_event)
 
     async def _sync_todo_steps(self, *, task: TaskRun, executor) -> None:
         todo_state = parse_task_todo_payload(task.todo_state)

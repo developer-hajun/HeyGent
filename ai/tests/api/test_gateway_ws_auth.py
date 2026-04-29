@@ -4,6 +4,8 @@ import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from app.clients.backend_auth import BackendAuthVerifyError, BackendAuthVerifyResult
+from app.contracts.event.task_events import TaskEventEnvelope
+from app.storage.redis import FakeRedis, RedisTaskProjectionStore
 
 
 class FakeBackendAuthClient:
@@ -85,6 +87,33 @@ def test_auth_success_uses_backend_user_id_for_session(client):
         assert subscribe_response == {"type": "subscribed", "task_run_id": "task_1"}
         assert client.app.state.session_registry.get_subscriptions("user:42") == {"task:task_1"}
         assert client.app.state.session_registry.get_subscriptions("user:spoof") == set()
+
+
+def test_subscribe_ack_includes_latest_sequence_when_projection_exists(client):
+    fake_auth = FakeBackendAuthClient(user_id="42")
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
+    client.app.state.backend_auth_client = fake_auth
+    client.app.state.task_projection_store = projection
+    projection.append_event(
+        TaskEventEnvelope(
+            event_id="event_ws_latest",
+            event_type="task.updated",
+            task_run_id="task_ws_latest",
+            producer="test",
+            occurred_at="2026-04-29T00:00:00+00:00",
+        )
+    )
+
+    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+        websocket.send_json({"action": "auth", "accessToken": "valid-token"})
+        websocket.send_json({"action": "subscribe", "task_run_id": "task_ws_latest"})
+
+        assert websocket.receive_json() == {"type": "auth.ok", "userId": "42"}
+        subscribe_response = websocket.receive_json()
+
+        assert subscribe_response["type"] == "subscribed"
+        assert subscribe_response["task_run_id"] == "task_ws_latest"
+        assert subscribe_response["latestSequence"] == 1
 
 
 def test_auth_success_registers_random_connection_for_backend_user(client):

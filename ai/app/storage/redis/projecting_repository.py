@@ -41,8 +41,14 @@ class ProjectingTaskRepository:
     def append_event(self, event: TaskEventEnvelope) -> TaskEventEnvelope:
         saved_event = self.durable_repository.append_event(event)
         try:
-            self.projection_store.append_event(saved_event)
+            projected_event = self.projection_store.append_event(saved_event)
             self.projection_store.trim_recent_events(saved_event.task_run_id)
+            return saved_event.model_copy(
+                update={
+                    "sequence": projected_event.get("sequence"),
+                    "event_id_alias": projected_event.get("eventId"),
+                }
+            )
         except Exception:
             # Redis projection은 조회/전파 최적화 계층이므로 durable write 성공을 되돌리지 않는다.
             logger.exception("Redis TaskRun event projection 갱신에 실패했습니다.")

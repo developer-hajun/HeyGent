@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 
 from app.contracts.event.task_events import TaskEventEnvelope
+from app.domain.gateway.delivery.envelope import build_websocket_event
 from app.domain.tasks.models import StepRun, TaskRun
 from app.storage.sqlite import SQLiteTaskRepository
 from app.storage.redis import FakeRedis, RedisTaskProjectionStore
@@ -277,12 +278,15 @@ def test_projecting_repository_writes_redis_projection_after_durable_repository(
 
     repository.create_task(task)
     repository.create_step(step)
-    repository.append_event(event)
+    saved_event = repository.append_event(event)
 
     assert projection.get_task_snapshot(task.task_run_id).title == "repository projection"
     assert projection.get_step_snapshot(step.step_run_id).title == "repository step"
     assert projection.list_active_task_ids(session_key="session_repo_projection") == [task.task_run_id]
     assert projection.list_recent_events(task.task_run_id)[0]["sequence"] == 1
+    assert saved_event.sequence == 1
+    assert build_websocket_event(saved_event)["data"]["sequence"] == 1
+    assert build_websocket_event(saved_event)["data"]["eventId"] == "event_repo_projection"
 
     task.status = "COMPLETED"
     repository.update_task(task)
