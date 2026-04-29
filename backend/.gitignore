@@ -40,4 +40,4 @@ out/
 tmp
 src/main/resources/application-local.yaml
 /.agents/
-notes/daily-dev/
+notes/
