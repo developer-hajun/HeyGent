@@ -53,3 +53,20 @@ def test_postgres_settings_read_environment(monkeypatch, tmp_path):
 
     assert settings.postgres_dsn == "postgresql://user:pass@localhost:5432/heygent"
     assert settings.postgres_migrations_enabled is False
+
+
+def test_cors_settings_read_environment(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HEYGENT_CORS_ALLOWED_ORIGINS", "http://localhost:5173, https://app.example.com")
+    monkeypatch.setenv("HEYGENT_CORS_ALLOWED_METHODS", "GET,POST,OPTIONS")
+    monkeypatch.setenv("HEYGENT_CORS_ALLOWED_HEADERS", "Authorization,Content-Type,X-Workspace-Key")
+    monkeypatch.setenv("HEYGENT_CORS_ALLOW_CREDENTIALS", "false")
+    monkeypatch.setenv("HEYGENT_CORS_MAX_AGE_SECONDS", "1200")
+
+    settings = get_settings()
+
+    assert settings.cors_allowed_origins == ["http://localhost:5173", "https://app.example.com"]
+    assert settings.cors_allowed_methods == ["GET", "POST", "OPTIONS"]
+    assert settings.cors_allowed_headers == ["Authorization", "Content-Type", "X-Workspace-Key"]
+    assert settings.cors_allow_credentials is False
+    assert settings.cors_max_age_seconds == 1200

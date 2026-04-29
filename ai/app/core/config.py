@@ -23,10 +23,8 @@ class Settings:
     port: int = 8000
     reload: bool = False
     log_level: str = "info"
-    db_path: Path = Path("tmp/app.db")
     postgres_dsn: str | None = None
     postgres_migrations_enabled: bool = True
-    allow_sqlite_legacy: bool = False
     api_base_url: str | None = None
     openai_api_key: str | None = None
     openai_oauth_client_id: str | None = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -43,6 +41,13 @@ class Settings:
     backend_auth_verify_url: str = "http://127.0.0.1:8080/internal/ai/auth/validate"
     internal_service_token: str | None = None
     redis_url: str | None = None
+    cors_allowed_origins: list[str] = field(default_factory=list)
+    cors_allowed_methods: list[str] = field(default_factory=lambda: ["GET", "POST", "OPTIONS"])
+    cors_allowed_headers: list[str] = field(
+        default_factory=lambda: ["Authorization", "Content-Type", "X-Workspace-Key"]
+    )
+    cors_allow_credentials: bool = True
+    cors_max_age_seconds: int = 600
     ws_connection_ttl_seconds: int = 60
     ws_auth_first_message_timeout_seconds: float = 10.0
     ws_allowed_origins: list[str] = field(default_factory=list)
@@ -50,6 +55,7 @@ class Settings:
     ws_auth_rate_limit_window_seconds: int = 60
     task_projection_ttl_seconds: int = 3600
     task_projection_max_events: int = 200
+    public_session_limit_per_user: int = 10
     agent_loop_default_max_iterations: int = 60
     agent_loop_worker_default_max_iterations: int = 50
     agent_loop_max_iterations: int = 60
@@ -151,15 +157,10 @@ def get_settings() -> Settings:
         port=_parse_int(_read_env("HEYGENT_PORT", 8000, dotenv_values), default=8000),
         reload=_parse_bool(_read_env("HEYGENT_RELOAD", "false", dotenv_values)),
         log_level=_read_env("HEYGENT_LOG_LEVEL", "info", dotenv_values),
-        db_path=Path(_read_env("HEYGENT_AI_DB_PATH", "tmp/app.db", dotenv_values)),
         postgres_dsn=_read_env("HEYGENT_POSTGRES_DSN", None, dotenv_values),
         postgres_migrations_enabled=_parse_bool(
             _read_env("HEYGENT_POSTGRES_MIGRATIONS_ENABLED", "true", dotenv_values),
             default=True,
-        ),
-        allow_sqlite_legacy=_parse_bool(
-            _read_env("HEYGENT_ALLOW_SQLITE_LEGACY", "false", dotenv_values),
-            default=False,
         ),
         api_base_url=_read_env("HEYGENT_API_BASE_URL", None, dotenv_values),
         openai_api_key=_read_env("HEYGENT_OPENAI_API_KEY", None, dotenv_values),
@@ -181,6 +182,21 @@ def get_settings() -> Settings:
         ),
         internal_service_token=_read_env("HEYGENT_INTERNAL_SERVICE_TOKEN", None, dotenv_values),
         redis_url=_read_env("HEYGENT_REDIS_URL", None, dotenv_values),
+        cors_allowed_origins=_parse_csv(_read_env("HEYGENT_CORS_ALLOWED_ORIGINS", "", dotenv_values)),
+        cors_allowed_methods=_parse_csv(
+            _read_env("HEYGENT_CORS_ALLOWED_METHODS", "GET,POST,OPTIONS", dotenv_values)
+        ),
+        cors_allowed_headers=_parse_csv(
+            _read_env("HEYGENT_CORS_ALLOWED_HEADERS", "Authorization,Content-Type,X-Workspace-Key", dotenv_values)
+        ),
+        cors_allow_credentials=_parse_bool(
+            _read_env("HEYGENT_CORS_ALLOW_CREDENTIALS", "true", dotenv_values),
+            default=True,
+        ),
+        cors_max_age_seconds=_parse_int(
+            _read_env("HEYGENT_CORS_MAX_AGE_SECONDS", 600, dotenv_values),
+            default=600,
+        ),
         ws_connection_ttl_seconds=_parse_int(
             _read_env("HEYGENT_WS_CONNECTION_TTL_SECONDS", 60, dotenv_values),
             default=60,
@@ -205,6 +221,10 @@ def get_settings() -> Settings:
         task_projection_max_events=_parse_int(
             _read_env("HEYGENT_TASK_PROJECTION_MAX_EVENTS", 200, dotenv_values),
             default=200,
+        ),
+        public_session_limit_per_user=_parse_int(
+            _read_env("HEYGENT_PUBLIC_SESSION_LIMIT_PER_USER", 10, dotenv_values),
+            default=10,
         ),
         agent_loop_default_max_iterations=_parse_int(
             _read_env("HEYGENT_AGENT_LOOP_DEFAULT_MAX_ITERATIONS", 60, dotenv_values),

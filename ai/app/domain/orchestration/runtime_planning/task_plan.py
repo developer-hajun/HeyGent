@@ -14,7 +14,7 @@ class TaskPlanStep:
     semantic_key: str
     kind: str = "step"
     intent_type: str | None = None
-    entry_executor_key: str | None = None
+    entry_handler_key: str | None = None
     input_payload: dict[str, Any] | None = None
 
 
@@ -94,7 +94,7 @@ def _build_explicit_task_plan(*, raw_plan: Any, default_task_title: str | None, 
     for index, raw_step in enumerate(raw_steps, start=1):
         if not isinstance(raw_step, dict):
             continue
-        _reject_executor_routing_fields(raw_step)
+        _reject_handler_routing_fields(raw_step)
         key = _normalize_step_key(raw_step, fallback=f"step_{index}")
         title_value = _normalize_optional_text(
             raw_step.get("title") or raw_step.get("content") or raw_step.get("name") or key
@@ -110,7 +110,7 @@ def _build_explicit_task_plan(*, raw_plan: Any, default_task_title: str | None, 
                 semantic_key=semantic_key,
                 kind=kind,
                 intent_type=None,
-                entry_executor_key=None,
+                entry_handler_key=None,
                 input_payload=dict(raw_step.get("inputPayload") or raw_step.get("input_payload") or {})
                 if isinstance(raw_step.get("inputPayload") or raw_step.get("input_payload"), dict)
                 else None,
@@ -148,7 +148,7 @@ def _reject_removed_workflow_key(value: Any) -> None:
         raise ValueError(f"workflow_key routing has been removed: {workflow_key}")
 
 
-def _reject_executor_routing_fields(raw_step: dict[str, Any]) -> None:
-    for field_name in ("intentType", "intent_type", "entryExecutorKey", "entry_executor_key", "executorKey", "executor_key"):
+def _reject_handler_routing_fields(raw_step: dict[str, Any]) -> None:
+    for field_name in ("intentType", "intent_type", "entryHandlerKey", "entry_handler_key", "handlerKey", "handler_key"):
         if _normalize_optional_text(raw_step.get(field_name)) is not None:
-            raise ValueError(f"task_plan executor routing field has been removed: {field_name}")
+            raise ValueError(f"task_plan handler routing field has been removed: {field_name}")

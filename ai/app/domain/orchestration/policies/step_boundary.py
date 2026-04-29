@@ -14,14 +14,14 @@ class StepBoundaryDecision:
     reason: str
 
 
-def decide_executor_step_boundary(
+def decide_handler_step_boundary(
     *,
     current_detail: dict[str, Any] | None,
     next_semantic_key: str,
     is_resume: bool = False,
     requires_independent_anchor: bool = False,
 ) -> StepBoundaryDecision:
-    """executor 전환이 새 StepRun anchor 를 요구하는지 판단한다."""
+    """handler 전환이 새 StepRun anchor 를 요구하는지 판단한다."""
 
     if is_resume:
         return StepBoundaryDecision(

@@ -4,12 +4,11 @@ from app.domain.session.context import (
     build_session_context_prompt,
     build_session_key,
 )
-from app.domain.session.sessions import SessionStore, TranscriptStore
+from app.domain.session.sessions import TranscriptStore
 
 __all__ = [
     "SessionContext",
     "SessionSource",
-    "SessionStore",
     "TranscriptStore",
     "build_session_context_prompt",
     "build_session_key",

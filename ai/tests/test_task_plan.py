@@ -1,15 +1,15 @@
 import pytest
 
 from app.domain.orchestration.runtime_planning import Planner, build_task_plan
-from app.tools.contracts import ExecutorSpec
+from app.tools.contracts import HandlerSpec
 
 
-class StubExecutor:
+class StubHandler:
     def __init__(self) -> None:
-        self.spec = ExecutorSpec(
+        self.spec = HandlerSpec(
             intent_type="agent.loop",
-            entry_executor_key="agent.loop",
-            executor_key="agent.loop",
+            entry_handler_key="agent.loop",
+            handler_key="agent.loop",
             task_type="agent.loop",
             task_title="agent loop 요청",
             step_type="agent.loop.execute",
@@ -27,8 +27,8 @@ def test_build_task_plan_rejects_removed_workflow_key():
         )
 
 
-def test_build_task_plan_rejects_explicit_executor_routing():
-    with pytest.raises(ValueError, match="task_plan executor routing field has been removed"):
+def test_build_task_plan_rejects_explicit_handler_routing():
+    with pytest.raises(ValueError, match="task_plan handler routing field has been removed"):
         build_task_plan(
             input_payload={
                 "task_plan": {
@@ -36,7 +36,7 @@ def test_build_task_plan_rejects_explicit_executor_routing():
                         {
                             "key": "publish",
                             "title": "외부 반영",
-                            "entryExecutorKey": "notion.page.create",
+                            "entryHandlerKey": "notion.page.create",
                         }
                     ]
                 }
@@ -47,7 +47,7 @@ def test_build_task_plan_rejects_explicit_executor_routing():
 
 def test_planner_uses_explicit_task_plan_for_current_step_and_remaining_todos():
     planner = Planner()
-    executor = StubExecutor()
+    handler = StubHandler()
     input_payload = {
         "task_plan": {
             "title": "작업 반영 계획",
@@ -75,18 +75,18 @@ def test_planner_uses_explicit_task_plan_for_current_step_and_remaining_todos():
         owner_key="workflow-user",
         session_key=None,
         input_payload=input_payload,
-        executor=executor,
+        handler=handler,
     )
     step = planner.materialize_step(
         task=task,
-        executor=executor,
+        handler=handler,
         input_payload=input_payload,
         step_order=1,
     )
 
     assert task.title == "작업 반영 계획"
     assert task.intent_type == "agent.loop"
-    assert task.entry_executor_key == "agent.loop"
+    assert task.entry_handler_key == "agent.loop"
     assert [item["id"] for item in task.todo_state["items"]] == ["write_docs", "share_summary"]
     assert task.todo_state["currentKey"] == "write_docs"
     assert step.title == "작업 커밋 분석"
@@ -96,8 +96,8 @@ def test_planner_uses_explicit_task_plan_for_current_step_and_remaining_todos():
     assert step.detail_json["semanticDetail"]["semanticKey"] == "plan.analyze"
     assert step.detail_json["semanticDetail"]["goal"] == "현재 변경 상태를 정리한다."
 
-    plan = build_task_plan(input_payload=input_payload, default_task_title=executor.spec.task_title)
+    plan = build_task_plan(input_payload=input_payload, default_task_title=handler.spec.task_title)
     assert plan is not None
-    assert plan.steps[2].entry_executor_key is None
+    assert plan.steps[2].entry_handler_key is None
     assert plan.steps[2].intent_type is None
     assert plan.steps[2].input_payload == {"title": "API 명세", "content": "요약"}

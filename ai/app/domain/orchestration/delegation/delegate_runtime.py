@@ -40,7 +40,7 @@ class DelegateRuntime:
             parent_task_run_id=task.task_run_id,
             parent_step_run_id=step.step_run_id,
             child_intent_type=str(child_session["intent_type"]),
-            child_entry_executor_key=str(child_session["entry_executor_key"]),
+            child_entry_handler_key=str(child_session["entry_handler_key"]),
             summary_prompt=child_session.get("summary_prompt"),
             metadata={
                 **dict(child_session.get("metadata") or {}),
@@ -221,7 +221,7 @@ class DelegateRuntime:
                 "input_payload": {
                     **contract,
                     "child_intent_type": spec.child_intent_type,
-                    "child_entry_executor_key": spec.child_entry_executor_key,
+                    "child_entry_handler_key": spec.child_entry_handler_key,
                     "summary_prompt": spec.summary_prompt,
                     "metadata": metadata,
                 },
@@ -256,7 +256,7 @@ class DelegateRuntime:
         contract["parent_session_id"] = parent_session_id
 
         worker_session_id = new_id("session")
-        # worker session은 같은 product session_key 아래에 두되 parent_session_id와 parent_step_run_id로 계층을 고정한다.
+        # worker session은 같은 session_key 아래에 두되 parent_session_id와 parent_step_run_id로 계층을 고정한다.
         self.session_store.create_session(
             session_id=worker_session_id,
             session_key=session_key,

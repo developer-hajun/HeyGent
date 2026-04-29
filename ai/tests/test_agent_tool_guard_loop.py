@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
-from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopExecutor
+from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopHandler
 from app.domain.orchestration.agent.tool_guard import ToolGuardDecision, ToolGuardResult
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse, AssistantToolCall, ToolResultMessage
 
@@ -144,7 +144,7 @@ class DelegationRuntime(RecordingRuntime):
             "ok": True,
             "child_session": {
                 "intent_type": "agent.loop",
-                "entry_executor_key": "agent.loop",
+                "entry_handler_key": "agent.loop",
                 "goal": args["goal"],
                 "context": args.get("context"),
                 "toolsets": args.get("toolsets") or [],
@@ -175,7 +175,7 @@ class StaticGuard:
 def test_worker_transcript_session_id_is_reused_without_collapsing_into_parent_session():
     session_store = FakeSessionStore()
     session_store.messages_by_session_id["agent_session_worker"] = []
-    executor = ToolCallingLoopExecutor(
+    handler = ToolCallingLoopHandler(
         provider=FakeProvider([]),
         prompt_builder=FakePromptBuilder(),
         tool_runtime=RecordingRuntime(),
@@ -185,18 +185,18 @@ def test_worker_transcript_session_id_is_reused_without_collapsing_into_parent_s
     task = SimpleNamespace(
         task_run_id="task_child",
         owner_key="user_1",
-        session_key="product_session",
+        session_key="parent_session",
         title="Worker child",
     )
 
-    session_id = executor._ensure_transcript_session(
+    session_id = handler._ensure_transcript_session(
         task=task,
         task_input={"transcript_session_id": "agent_session_worker"},
         model="gpt-test",
     )
 
     assert session_id == "agent_session_worker"
-    assert "product_session" not in session_store.sessions_by_key
+    assert "parent_session" not in session_store.sessions_by_key
 
 
 def _task(input_payload: dict | None = None):
@@ -220,8 +220,8 @@ def _step(wait_payload: dict | None = None):
     return SimpleNamespace(step_run_id="step_guard", wait_payload=wait_payload or {})
 
 
-def _executor(provider, runtime, guard, session_store=None) -> ToolCallingLoopExecutor:
-    return ToolCallingLoopExecutor(
+def _handler(provider, runtime, guard, session_store=None) -> ToolCallingLoopHandler:
+    return ToolCallingLoopHandler(
         provider=provider,
         prompt_builder=FakePromptBuilder(),
         tool_runtime=runtime,
@@ -252,7 +252,7 @@ def test_delegate_task_tool_result_becomes_child_session_outcome():
         ]
     )
     runtime = DelegationRuntime()
-    executor = ToolCallingLoopExecutor(
+    handler = ToolCallingLoopHandler(
         provider=provider,
         prompt_builder=FakePromptBuilder(),
         tool_runtime=runtime,
@@ -260,7 +260,7 @@ def test_delegate_task_tool_result_becomes_child_session_outcome():
         tool_guard=StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW)),
     )
 
-    outcome = executor.execute(
+    outcome = handler.execute(
         task=_task(input_payload={"prompt": "worker에게 검증을 맡겨라.", "enabled_toolsets": ["delegation"]}),
         step=_step(),
     )
@@ -286,7 +286,7 @@ def test_guard_block_appends_blocked_tool_result_without_runtime_call():
         )
     )
 
-    outcome = _executor(provider, runtime, guard).execute(task=_task(), step=_step())
+    outcome = _handler(provider, runtime, guard).execute(task=_task(), step=_step())
 
     assert runtime.calls == []
     assert outcome["task_status"] == TaskStatus.COMPLETED
@@ -318,7 +318,7 @@ def test_agent_loop_explicit_max_iterations_can_exceed_legacy_hard_clamp():
     runtime = RecordingRuntime()
     guard = StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW))
 
-    outcome = _executor(provider, runtime, guard).execute(
+    outcome = _handler(provider, runtime, guard).execute(
         task=_task({"prompt": "run", "max_iterations": 20}),
         step=_step(),
     )
@@ -346,7 +346,7 @@ def test_agent_loop_worker_payload_uses_worker_default_when_max_iterations_is_ab
     runtime = RecordingRuntime()
     guard = StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW))
 
-    outcome = _executor(provider, runtime, guard).execute(
+    outcome = _handler(provider, runtime, guard).execute(
         task=_task({"prompt": "worker", "worker": {"leaf": True}}),
         step=_step(),
     )
@@ -369,7 +369,7 @@ def test_resume_rejected_appends_blocked_pending_tool_result_and_recontinues_loo
         }
     )
 
-    outcome = _executor(provider, runtime, guard).execute(
+    outcome = _handler(provider, runtime, guard).execute(
         task=_task(),
         step=step,
         resume_payload={"approved": False, "reason": "user denied"},
@@ -406,7 +406,7 @@ def test_approved_resume_context_allows_followup_tool_calls_after_global_approva
         }
     )
 
-    outcome = _executor(provider, runtime, guard=None).execute(
+    outcome = _handler(provider, runtime, guard=None).execute(
         task=_task({"prompt": "run", "approval_required": True}),
         step=step,
         resume_payload={"approved": True},
@@ -440,12 +440,12 @@ def test_resume_after_first_sibling_wait_replays_outputs_for_every_previous_tool
     )
     task = _session_task()
 
-    waiting = _executor(provider, runtime, guard, session_store=session_store).execute(task=task, step=_step())
+    waiting = _handler(provider, runtime, guard, session_store=session_store).execute(task=task, step=_step())
     assert waiting["task_status"] == TaskStatus.WAITING
 
     step = _step(waiting["wait_payload"])
     resume_provider = FakeProvider([_response(text="RESUMED")])
-    resumed = _executor(
+    resumed = _handler(
         resume_provider,
         runtime,
         StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW)),
@@ -483,11 +483,11 @@ def test_rejected_resume_after_sibling_wait_replays_outputs_in_tool_call_order()
     )
     task = _session_task()
 
-    waiting = _executor(provider, runtime, guard, session_store=session_store).execute(task=task, step=_step())
+    waiting = _handler(provider, runtime, guard, session_store=session_store).execute(task=task, step=_step())
 
     step = _step(waiting["wait_payload"])
     resume_provider = FakeProvider([_response(text="REJECTED_CONTINUED")])
-    resumed = _executor(
+    resumed = _handler(
         resume_provider,
         runtime,
         StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW)),
@@ -530,12 +530,12 @@ def test_resume_after_second_sibling_wait_replays_outputs_for_every_previous_too
 
     task = _session_task()
 
-    waiting = _executor(provider, runtime, SecondCallWaitGuard(), session_store=session_store).execute(task=task, step=_step())
+    waiting = _handler(provider, runtime, SecondCallWaitGuard(), session_store=session_store).execute(task=task, step=_step())
     assert waiting["task_status"] == TaskStatus.WAITING
 
     step = _step(waiting["wait_payload"])
     resume_provider = FakeProvider([_response(text="RESUMED")])
-    resumed = _executor(
+    resumed = _handler(
         resume_provider,
         runtime,
         StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW)),
@@ -563,7 +563,7 @@ def test_guard_needs_approval_stores_pending_tool_snapshot_in_wait_and_approval_
         )
     )
 
-    outcome = _executor(provider, runtime, guard).execute(task=_task(), step=_step())
+    outcome = _handler(provider, runtime, guard).execute(task=_task(), step=_step())
 
     assert runtime.calls == []
     assert outcome["task_status"] == TaskStatus.WAITING

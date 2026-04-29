@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 from app.contracts.event.task_events import TaskEventEnvelope
 from app.domain.gateway.delivery.envelope import build_websocket_event
 from app.domain.tasks.models import StepRun, TaskRun
-from app.storage.sqlite import SQLiteTaskRepository
 from app.storage.redis import FakeRedis, RedisTaskProjectionStore
 from app.storage.redis.projecting_repository import ProjectingTaskRepository
+from tests.fakes import InMemoryTaskRepository
 
 
 def test_redis_projection_persists_task_and_step_snapshots_with_indexes():
@@ -258,8 +258,8 @@ def test_redis_projection_removes_sensitive_provider_tokens_from_payloads():
     assert projected_event["payload"]["safe"] == "kept"
 
 
-def test_projecting_repository_writes_redis_projection_after_durable_repository(tmp_path):
-    base_repository = SQLiteTaskRepository(tmp_path / "projection.db")
+def test_projecting_repository_writes_redis_projection_after_durable_repository():
+    base_repository = InMemoryTaskRepository()
     projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
     repository = ProjectingTaskRepository(base_repository, projection)
     task = TaskRun(

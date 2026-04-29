@@ -15,14 +15,31 @@ public class DisplayEventMapper {
 
     private final AtomicLong sequence = new AtomicLong(0);
 
-    public DisplayEventPayload toPayload(DisplayEventType type, String taskRunId, String text) {
+    public DisplayEventPayload toPayload(
+        DisplayEventType type,
+        String sessionId,
+        String stepRunId,
+        String text
+    ) {
+        return toPayload(type, null, sessionId, stepRunId, text);
+    }
+
+    public DisplayEventPayload toPayload(
+        DisplayEventType type,
+        DisplayIcon icon,
+        String sessionId,
+        String stepRunId,
+        String text
+    ) {
         DisplayEventType resolvedType = type == null ? DisplayEventType.INFO : type;
+        DisplayIcon resolvedIcon = icon == null ? defaultIcon(resolvedType) : icon;
         String resolvedText = compactText(text, defaultText(resolvedType));
 
         return new DisplayEventPayload(
             resolvedType,
-            taskRunId,
-            defaultIcon(resolvedType),
+            sessionId,
+            stepRunId,
+            resolvedIcon,
             resolvedText,
             defaultTtlMs(resolvedType),
             sequence.incrementAndGet()
@@ -39,12 +56,13 @@ public class DisplayEventMapper {
 
     private String defaultText(DisplayEventType type) {
         return switch (type) {
-            case STARTED -> "시작";
-            case STEP -> "진행 중";
-            case WAITING -> "확인 필요";
-            case DONE -> "완료";
-            case FAILED -> "실패";
-            case INFO -> "알림";
+            case STARTED -> "started";
+            case STEP -> "working";
+            case WAITING -> "check";
+            case DONE -> "done";
+            case FAILED -> "failed";
+            case CANCELED -> "canceled";
+            case INFO -> "info";
         };
     }
 
@@ -53,8 +71,9 @@ public class DisplayEventMapper {
             case STARTED -> DisplayIcon.START;
             case STEP -> DisplayIcon.THINKING;
             case WAITING -> DisplayIcon.QUESTION;
-            case DONE -> DisplayIcon.HAPPY;
-            case FAILED -> DisplayIcon.SAD;
+            case DONE -> DisplayIcon.SUCCESS;
+            case FAILED -> DisplayIcon.ERROR;
+            case CANCELED -> DisplayIcon.CANCEL;
             case INFO -> DisplayIcon.INFO;
         };
     }
@@ -64,7 +83,7 @@ public class DisplayEventMapper {
             case STARTED -> 2000L;
             case STEP -> 3000L;
             case WAITING -> 0L;
-            case DONE, FAILED -> 5000L;
+            case DONE, FAILED, CANCELED -> 5000L;
             case INFO -> 3000L;
         };
     }

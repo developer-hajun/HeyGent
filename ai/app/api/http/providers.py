@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from fastapi.responses import HTMLResponse
 import httpx
 
@@ -40,13 +40,29 @@ def _oauth_success_close_html(detail: str, provider_name: str, status: str, expi
         """
 
 
-@router.get("", response_model=list[ProviderHealthResponse])
+@router.get(
+    "",
+    response_model=list[ProviderHealthResponse],
+    summary="Model Provider 목록 조회",
+    description=(
+        "등록된 Model Provider(모델 제공자: OpenAI 같은 LLM/API 공급자)의 설정/연결 상태를 조회합니다. "
+        "이 API는 모델 호출 준비 상태 확인과 로컬 OAuth 연결 화면에서 사용합니다."
+    ),
+)
 def list_providers(context: ProviderContext = Depends(get_provider_context)) -> list[ProviderHealthResponse]:
     return context.registry.health()
 
 
-@router.get("/{provider_name}", response_model=ProviderHealthResponse)
-def get_provider(provider_name: str, context: ProviderContext = Depends(get_provider_context)) -> ProviderHealthResponse:
+@router.get(
+    "/{provider_name}",
+    response_model=ProviderHealthResponse,
+    summary="Model Provider 상태 조회",
+    description="특정 provider(모델 제공자)의 설정 여부, 인증 연결 여부, 현재 사용 가능 여부를 조회합니다.",
+)
+def get_provider(
+    provider_name: str = Path(..., description="조회할 provider 이름입니다. 예: `openai-api`, `openai-oauth`."),
+    context: ProviderContext = Depends(get_provider_context),
+) -> ProviderHealthResponse:
     try:
         provider = context.registry.get(provider_name)
     except KeyError as error:
@@ -54,10 +70,18 @@ def get_provider(provider_name: str, context: ProviderContext = Depends(get_prov
     return provider.health()
 
 
-@router.post("/{provider_name}/auth", response_model=ProviderAuthResponse)
+@router.post(
+    "/{provider_name}/auth",
+    response_model=ProviderAuthResponse,
+    summary="Model Provider 인증 시작",
+    description=(
+        "provider 인증을 시작합니다. OAuth provider는 브라우저에서 열 `authorization_url`을 반환하고, "
+        "API key provider는 환경변수 설정 상태를 반환합니다."
+    ),
+)
 def start_provider_auth(
-    provider_name: str,
     payload: ProviderAuthRequest,
+    provider_name: str = Path(..., description="인증을 시작할 provider 이름입니다. 예: `openai-api`, `openai-oauth`."),
     context: ProviderContext = Depends(get_provider_context),
 ) -> ProviderAuthResponse:
     """모델 프로바이더 인증 시작에 필요한 메타데이터를 반환한다."""
@@ -69,10 +93,15 @@ def start_provider_auth(
     return provider.start_auth(redirect_uri=payload.redirect_uri, state=payload.state, force_oauth=payload.force_oauth)
 
 
-@router.post("/{provider_name}/callback", response_model=ProviderConnectionResponse)
+@router.post(
+    "/{provider_name}/callback",
+    response_model=ProviderConnectionResponse,
+    summary="Model Provider OAuth callback 처리",
+    description="CLI, Swagger, 테스트에서 JSON 본문으로 OAuth `code`와 `state`를 전달해 provider 연결을 완료합니다.",
+)
 def complete_provider_auth(
-    provider_name: str,
     payload: ProviderCallbackRequest,
+    provider_name: str = Path(..., description="callback을 처리할 provider 이름입니다."),
     context: ProviderContext = Depends(get_provider_context),
 ) -> ProviderConnectionResponse:
     """CLI 나 테스트에서 쓰기 쉬운 JSON callback 엔드포인트다."""
@@ -92,8 +121,16 @@ def complete_provider_auth(
         raise HTTPException(status_code=502, detail=f"token exchange request failed: {error}") from error
 
 
-@router.post("/{provider_name}/refresh", response_model=ProviderConnectionResponse)
-def refresh_provider_connection(provider_name: str, context: ProviderContext = Depends(get_provider_context)) -> ProviderConnectionResponse:
+@router.post(
+    "/{provider_name}/refresh",
+    response_model=ProviderConnectionResponse,
+    summary="Model Provider 연결 갱신",
+    description="저장된 refresh token으로 OAuth provider 연결을 갱신합니다. API key provider에서는 지원하지 않을 수 있습니다.",
+)
+def refresh_provider_connection(
+    provider_name: str = Path(..., description="연결을 갱신할 provider 이름입니다."),
+    context: ProviderContext = Depends(get_provider_context),
+) -> ProviderConnectionResponse:
     """저장된 refresh token 으로 provider 연결을 갱신한다."""
 
     try:
@@ -108,8 +145,16 @@ def refresh_provider_connection(provider_name: str, context: ProviderContext = D
         raise HTTPException(status_code=502, detail=f"token refresh request failed: {error}") from error
 
 
-@router.post("/{provider_name}/disconnect", response_model=ProviderConnectionResponse)
-def disconnect_provider(provider_name: str, context: ProviderContext = Depends(get_provider_context)) -> ProviderConnectionResponse:
+@router.post(
+    "/{provider_name}/disconnect",
+    response_model=ProviderConnectionResponse,
+    summary="Model Provider 연결 해제",
+    description="저장된 provider 인증 정보를 제거합니다. 이후 모델 호출 가능 여부는 provider 설정에 따라 달라집니다.",
+)
+def disconnect_provider(
+    provider_name: str = Path(..., description="연결을 해제할 provider 이름입니다."),
+    context: ProviderContext = Depends(get_provider_context),
+) -> ProviderConnectionResponse:
     """저장된 provider 연결 정보를 제거한다."""
 
     try:
@@ -119,11 +164,18 @@ def disconnect_provider(provider_name: str, context: ProviderContext = Depends(g
     return provider.disconnect()
 
 
-@router.get("/{provider_name}/callback")
+@router.get(
+    "/{provider_name}/callback",
+    summary="브라우저 OAuth callback 처리",
+    description=(
+        "OAuth provider가 브라우저 redirect로 돌려준 `code`와 `state`를 처리하고, "
+        "연결 결과를 보여 준 뒤 창을 닫는 HTML 응답을 반환합니다."
+    ),
+)
 def complete_provider_auth_from_browser(
-    provider_name: str,
-    code: str = Query(..., description="OAuth authorization code"),
-    state: str = Query(..., description="OAuth state"),
+    provider_name: str = Path(..., description="브라우저 callback을 처리할 provider 이름입니다."),
+    code: str = Query(..., description="OAuth provider가 callback으로 돌려준 authorization code(토큰 교환용 일회성 코드)입니다."),
+    state: str = Query(..., description="`/auth` 단계에서 발급받은 state 값입니다."),
     context: ProviderContext = Depends(get_provider_context),
 ) -> HTMLResponse:
     """브라우저 redirect 에서 바로 볼 수 있는 한국어 완료 페이지다."""

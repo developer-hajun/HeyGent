@@ -40,7 +40,7 @@ _OPERATION_KIND_ALIASES = {
 DEFAULT_STEP_DETAIL: dict[str, Any] = {
     "semanticDetail": {
         # semanticKey 는 StepRun 을 어떤 의미 단위로 묶는지 나타낸다.
-        # executor/step_type 이 바뀌어도 "사용자에게 설명되는 단계"를 이 값으로 계속 추적한다.
+        # handler/step_type 이 바뀌어도 "사용자에게 설명되는 단계"를 이 값으로 계속 추적한다.
         "semanticKey": None,
         # 화면과 이벤트 로그에서 보여 줄 semantic step 이름.
         # step.title 과 유사하지만, 나중에 실행 세부가 더 쪼개져도 대표 이름으로 유지할 수 있게 분리한다.
