@@ -38,3 +38,14 @@ def test_redis_connection_registry_settings_read_environment(monkeypatch, tmp_pa
     assert settings.ws_connection_ttl_seconds == 120
     assert settings.task_projection_ttl_seconds == 1800
     assert settings.task_projection_max_events == 50
+
+
+def test_postgres_settings_read_environment(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HEYGENT_POSTGRES_DSN", "postgresql://user:pass@localhost:5432/heygent")
+    monkeypatch.setenv("HEYGENT_POSTGRES_MIGRATIONS_ENABLED", "false")
+
+    settings = get_settings()
+
+    assert settings.postgres_dsn == "postgresql://user:pass@localhost:5432/heygent"
+    assert settings.postgres_migrations_enabled is False

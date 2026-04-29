@@ -25,6 +25,7 @@ from app.domain.orchestration.orchestrator import Orchestrator
 from app.domain.orchestration.runtime_planning import Planner
 from app.domain.providers.model import OpenAIAPIProvider, OpenAIOAuthProvider
 from app.domain.providers.registry import ProviderRegistry
+from app.storage.postgres import apply_configured_postgres_migrations
 from app.storage.redis import ProjectingTaskRepository, build_task_projection_store
 from app.storage.sqlite import SQLiteTaskRepository
 
@@ -38,6 +39,10 @@ async def lifespan(app: FastAPI):
 
     configure_logging()
     settings = get_settings()
+    applied_postgres_migrations = apply_configured_postgres_migrations(
+        dsn=settings.postgres_dsn,
+        enabled=settings.postgres_migrations_enabled,
+    )
     durable_repository = SQLiteTaskRepository(settings.db_path)
     task_projection_store = build_task_projection_store(
         redis_url=settings.redis_url,
@@ -98,6 +103,7 @@ async def lifespan(app: FastAPI):
     orchestrator = Orchestrator(loop_runner, repository)
 
     app.state.settings = settings
+    app.state.applied_postgres_migrations = applied_postgres_migrations
     app.state.repository = repository
     app.state.task_projection_store = task_projection_store
     app.state.ws_manager = ws_manager

@@ -7,6 +7,8 @@ from app.domain.tasks.repository import (
     TaskRunRepository,
 )
 from app.storage.postgres.schema import POSTGRES_SCHEMA_STATEMENTS, render_postgres_schema
+from app.storage.postgres.connection import apply_configured_postgres_migrations
+from app.storage.postgres.migrations import POSTGRES_MIGRATIONS, apply_postgres_migrations
 from app.storage.sqlite import SQLiteTaskRepository
 
 
@@ -76,3 +78,57 @@ def test_postgres_schema_contains_anchor_profile_and_worker_linkage_columns():
         "WHERE status = 'PENDING'",
     ]:
         assert expected in schema_sql
+
+
+class _FakeCursor:
+    def __init__(self, rows=None):
+        self._rows = rows or []
+
+    def fetchall(self):
+        return self._rows
+
+
+class _FakePostgresConnection:
+    def __init__(self, *, applied=None):
+        self.applied = set(applied or [])
+        self.executed: list[tuple[str, tuple | None]] = []
+        self.committed = False
+
+    def execute(self, sql: str, params: tuple | None = None):
+        normalized = " ".join(sql.split())
+        self.executed.append((normalized, params))
+        if normalized.startswith("SELECT migration_id FROM schema_migrations"):
+            return _FakeCursor([(migration_id,) for migration_id in sorted(self.applied)])
+        if normalized.startswith("INSERT INTO schema_migrations") and params:
+            self.applied.add(params[0])
+        return _FakeCursor()
+
+    def commit(self):
+        self.committed = True
+
+
+def test_postgres_migration_runner_applies_unapplied_migrations_once():
+    connection = _FakePostgresConnection()
+
+    applied = apply_postgres_migrations(connection)
+
+    assert applied == [POSTGRES_MIGRATIONS[0].migration_id]
+    assert connection.committed is True
+    assert any("CREATE TABLE IF NOT EXISTS schema_migrations" in sql for sql, _ in connection.executed)
+    assert any("CREATE TABLE IF NOT EXISTS agent_sessions" in sql for sql, _ in connection.executed)
+    assert any(params == (POSTGRES_MIGRATIONS[0].migration_id,) for _sql, params in connection.executed)
+
+
+def test_postgres_migration_runner_skips_already_applied_migrations():
+    connection = _FakePostgresConnection(applied={POSTGRES_MIGRATIONS[0].migration_id})
+
+    applied = apply_postgres_migrations(connection)
+
+    assert applied == []
+    assert not any("CREATE TABLE IF NOT EXISTS agent_sessions" in sql for sql, _ in connection.executed)
+    assert connection.committed is True
+
+
+def test_configured_postgres_migration_runner_skips_when_disabled_or_missing_dsn():
+    assert apply_configured_postgres_migrations(dsn=None, enabled=True) == []
+    assert apply_configured_postgres_migrations(dsn="postgresql://example", enabled=False) == []
