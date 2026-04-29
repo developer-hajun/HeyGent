@@ -80,7 +80,7 @@ services:
     container_name: heygent-frontend
     restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "3000:3000"
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
