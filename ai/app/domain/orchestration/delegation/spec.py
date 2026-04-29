@@ -12,11 +12,14 @@ class ChildSessionSpec:
     child_entry_executor_key: str
     summary_prompt: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    worker_session_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ChildSessionLaunchResult:
     agent_id: str
-    child_task_run_id: str
     status: str
     summary: str | None
+    result_payload: dict[str, Any] = field(default_factory=dict)
+    output_payload: dict[str, Any] = field(default_factory=dict)
+    duration_seconds: float | None = None

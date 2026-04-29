@@ -12,12 +12,15 @@ from app.domain.tasks.models import StepRun, TaskRun
 def isolate_openai_auth_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HEYGENT_OPENAI_AUTH_FILE", str(tmp_path / "missing-auth.json"))
     monkeypatch.setenv("HEYGENT_OPENAI_API_KEY", "")
+    # 제품 런타임은 Postgres를 요구하지만, 기존 단위/CLI 테스트는 명시적으로 legacy SQLite를 사용한다.
+    monkeypatch.setenv("HEYGENT_ALLOW_SQLITE_LEGACY", "true")
 
 
 @pytest.fixture()
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     db_path = tmp_path / "test.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+    monkeypatch.setenv("HEYGENT_ALLOW_SQLITE_LEGACY", "true")
     from app.main import app
 
     with TestClient(app) as test_client:

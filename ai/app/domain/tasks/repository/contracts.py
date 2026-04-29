@@ -1,12 +1,36 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from app.contracts.event.task_events import TaskEventEnvelope
+from app.domain.providers.repository import ProviderCredentialRepository
 from app.domain.tasks.models import StepRun, TaskRun
 
 
-class TaskRepository(Protocol):
+@runtime_checkable
+class DurableRunAnchorRepository(Protocol):
+    """TaskRun/StepRun 실행 anchor 저장 경계다.
+
+    이 경계는 전체 진행률을 Postgres canonical로 만들기 위한 것이 아니라,
+    재개와 인수인계가 참조할 최소 durable anchor를 남기기 위한 계약이다.
+    Redis는 빠른 조회용 projection으로 남고, 장기 복구 기준점만 durable 저장소가 맡는다.
+    """
+
+    def upsert_run_anchor(self, task_run_id: str, payload: dict[str, Any]) -> dict[str, Any]: ...
+    def get_run_anchor(self, task_run_id: str) -> dict[str, Any] | None: ...
+    def upsert_step_anchor(self, step_run_id: str, payload: dict[str, Any]) -> dict[str, Any]: ...
+    def get_step_anchor(self, step_run_id: str) -> dict[str, Any] | None: ...
+    def create_worker_handoff(self, payload: dict[str, Any]) -> dict[str, Any]: ...
+    def complete_worker_handoff(self, handoff_id: str, payload: dict[str, Any]) -> dict[str, Any] | None: ...
+
+
+@runtime_checkable
+class TaskRunRepository(Protocol):
+    """기존 TaskRun/StepRun CRUD 호환 경계다.
+
+    새 Postgres durable anchor 계약과 달리, 이 경계는 현재 SQLite 기반 Task API 호출부를 보존하기 위한 것이다.
+    """
+
     def create_task(self, task: TaskRun) -> TaskRun: ...
     def update_task(self, task: TaskRun) -> TaskRun: ...
     def get_task(self, task_run_id: str) -> TaskRun | None: ...
@@ -18,9 +42,32 @@ class TaskRepository(Protocol):
     def list_steps(self, task_run_id: str) -> list[StepRun]: ...
     def create_step(self, step: StepRun) -> StepRun: ...
     def update_step(self, step: StepRun) -> StepRun: ...
+
+
+@runtime_checkable
+class TaskEventRepository(Protocol):
+    """agent transcript/event를 append-only durable 기록으로 남기는 경계다."""
+
     def append_event(self, event: TaskEventEnvelope) -> TaskEventEnvelope: ...
     def list_events(self, task_run_id: str) -> list[TaskEventEnvelope]: ...
-    def create_approval_request(self, task_run_id: str, step_run_id: str, payload: dict) -> dict: ...
-    def resolve_approval_request(self, approval_id: str, payload: dict) -> dict | None: ...
-    def cancel_approval_request(self, approval_id: str) -> dict | None: ...
-    def get_open_approval(self, task_run_id: str) -> dict | None: ...
+
+
+@runtime_checkable
+class ApprovalRepository(Protocol):
+    """사용자 승인 요청과 resume 결정을 durable하게 보존하는 경계다."""
+
+    def create_approval_request(self, task_run_id: str, step_run_id: str, payload: dict) -> dict[str, Any]: ...
+    def resolve_approval_request(self, approval_id: str, payload: dict) -> dict[str, Any] | None: ...
+    def cancel_approval_request(self, approval_id: str) -> dict[str, Any] | None: ...
+    def get_open_approval(self, task_run_id: str) -> dict[str, Any] | None: ...
+
+
+@runtime_checkable
+class TaskRepository(
+    TaskRunRepository,
+    TaskEventRepository,
+    ApprovalRepository,
+    ProviderCredentialRepository,
+    Protocol,
+):
+    """기존 호출부 호환을 위한 조합 repository 계약이다."""

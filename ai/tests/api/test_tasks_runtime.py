@@ -4,7 +4,20 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 
+from app.clients.backend_auth import BackendAuthVerifyResult
+from app.contracts.event.task_events import TaskEventEnvelope
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse, AssistantToolCall
+from app.domain.tasks.models import StepRun, TaskRun
+from app.storage.redis import FakeRedis, RedisTaskProjectionStore
+
+
+class FakeBackendAuthClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, str | None]] = []
+
+    async def verify_access_token(self, access_token: str, *, workspace_key: str | None = None) -> BackendAuthVerifyResult:
+        self.calls.append({"access_token": access_token, "workspace_key": workspace_key})
+        return BackendAuthVerifyResult(user_id=access_token)
 
 
 def _response(*, text: str = "", tool_calls: list[AssistantToolCall] | None = None, model: str = "gpt-test") -> AgentModelResponse:
@@ -65,7 +78,7 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     )
 
     response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "tool-user",
@@ -86,7 +99,7 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert "terminal_run" in exposed_tool_names
     assert all("." not in name for name in exposed_tool_names)
 
-    steps = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
     assert len(steps) == 1
     assert steps[0]["input_payload"].get("todo_key") is None
     assert steps[0]["status"] == "COMPLETED"
@@ -101,7 +114,7 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert transcript[2]["tool_call_id"] == "call_skills"
 
 
-def test_agent_loop_declared_steps_materialize_multiple_stepruns(client, monkeypatch):
+def test_agent_loop_declared_steps_materialize_single_current_steprun(client, monkeypatch):
     provider_calls = _patch_respond(
         monkeypatch,
         [
@@ -143,7 +156,7 @@ def test_agent_loop_declared_steps_materialize_multiple_stepruns(client, monkeyp
     )
 
     response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "declared-step-user",
@@ -159,12 +172,12 @@ def test_agent_loop_declared_steps_materialize_multiple_stepruns(client, monkeyp
     exposed_tool_names = [tool["function"]["name"] for tool in provider_calls[0]["tools"]]
     assert "step" in exposed_tool_names
 
-    steps = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps").json()
-    assert len(steps) == 3
-    assert [step["title"] for step in steps] == ["뉴스 근거 자료 조사", "뉴스 브리핑 문서 초안 작성", "뉴스 브리핑 결과 검토"]
-    assert [step["summary_message"] for step in steps] == ["뉴스 근거 자료 조사 중", "뉴스 브리핑 문서 초안 작성 중", "뉴스 브리핑 결과 검토 중"]
-    assert [step["input_payload"].get("observed_step_key") for step in steps] == ["research", "draft", "review"]
-    assert [step["semantic"]["key"] for step in steps] == ["observed.research", "observed.draft", "observed.review"]
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert len(steps) == 1
+    assert steps[0]["title"] == "뉴스 브리핑 결과 검토"
+    assert steps[0]["summary_message"] == "뉴스 브리핑 결과 검토 중"
+    assert steps[0]["input_payload"].get("observed_step_key") == "review"
+    assert steps[0]["semantic"]["key"] == "observed.review"
     assert all(step["input_payload"].get("todo_key") is None for step in steps)
     assert all(step["status"] == "COMPLETED" for step in steps)
 
@@ -173,7 +186,7 @@ def test_agent_loop_provider_timeout_fails_task_and_materializes_failed_step(cli
     _patch_respond(monkeypatch, [TimeoutError("provider read timeout")])
 
     response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "timeout-user",
@@ -188,16 +201,25 @@ def test_agent_loop_provider_timeout_fails_task_and_materializes_failed_step(cli
     assert body["progress_summary"] == "작업 처리 중 오류가 발생했습니다."
     assert body["current_step_run_id"]
 
-    steps = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
     assert len(steps) == 1
     assert steps[0]["step_run_id"] == body["current_step_run_id"]
     assert steps[0]["status"] == "FAILED"
     assert steps[0]["error_message"] == "TimeoutError: provider read timeout"
     assert steps[0]["summary_message"] == "작업 처리 중 오류가 발생했습니다."
     operations = steps[0]["detail_json"]["operationDetail"]["operations"]
-    assert operations[-1]["key"] == "executor.failure"
+    assert [operation["key"] for operation in operations[-3:]] == [
+        "executor.diagnose",
+        "executor.retry.unavailable",
+        "executor.failure",
+    ]
+    assert operations[-3]["status"] == "completed"
+    assert operations[-2]["status"] == "waiting"
     assert operations[-1]["status"] == "failed"
     assert operations[-1]["summary"] == "TimeoutError: provider read timeout"
+    assert steps[0]["output_payload"]["error"]["recovery"]["diagnose"] is True
+    assert steps[0]["output_payload"]["error"]["recovery"]["retryable"] is True
+    assert steps[0]["output_payload"]["error"]["recovery"]["retry_attempted"] is False
 
 
 def test_agent_loop_explicit_task_plan_continues_across_plan_step_anchors(client, monkeypatch):
@@ -211,7 +233,7 @@ def test_agent_loop_explicit_task_plan_continues_across_plan_step_anchors(client
     )
 
     response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "explicit-plan-user",
@@ -234,7 +256,7 @@ def test_agent_loop_explicit_task_plan_continues_across_plan_step_anchors(client
     assert body["status"] == "COMPLETED"
     assert body["result_payload"]["text"] == "SHARE_DONE"
 
-    steps = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
     assert len(steps) == 3
     assert [step["input_payload"].get("plan_step_key") for step in steps] == ["analyze", "write", "share"]
     assert [step["input_payload"].get("plan_step_title") for step in steps] == ["요청 분석", "초안 작성", "결과 공유"]
@@ -278,7 +300,7 @@ def test_agent_loop_uses_input_workspace_root_for_file_and_terminal_runtime(clie
     )
 
     response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "workspace-root-user",
@@ -317,7 +339,7 @@ def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch
     )
 
     create_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "approval-user",
@@ -336,12 +358,12 @@ def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch
     assert created["wait_payload"]["pending_tool_name"] == "terminal.run"
     assert created["current_step_run_id"]
 
-    events = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/events").json()
+    events = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/events").json()
     approval_id = next(event["payload"]["approval_id"] for event in events if event["event_type"] == "approval.requested")
     waiting_step_id = created["current_step_run_id"]
 
     resume_response = client.post(
-        f"/api/v1/taskRuns/{created['task_run_id']}/resume",
+        f"/ai/api/v1/taskRuns/{created['task_run_id']}/resume",
         json={"approval_id": approval_id, "payload": {"approved": True}},
     )
 
@@ -352,7 +374,7 @@ def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch
     assert resumed["result_payload"]["text"] == "APPROVED_DONE"
     assert [item["tool_call_id"] for item in resumed["result_payload"]["tool_results"]] == ["call_terminal", "call_followup"]
 
-    resumed_events = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/events").json()
+    resumed_events = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/events").json()
     assert [event["event_type"] for event in resumed_events].count("approval.requested") == 1
 
 
@@ -366,7 +388,7 @@ def test_agent_loop_resume_provider_runtime_error_fails_existing_step(client, mo
     )
 
     create_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "resume-error-user",
@@ -381,11 +403,11 @@ def test_agent_loop_resume_provider_runtime_error_fails_existing_step(client, mo
     assert created["status"] == "WAITING"
     waiting_step_id = created["current_step_run_id"]
 
-    events = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/events").json()
+    events = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/events").json()
     approval_id = next(event["payload"]["approval_id"] for event in events if event["event_type"] == "approval.requested")
 
     resume_response = client.post(
-        f"/api/v1/taskRuns/{created['task_run_id']}/resume",
+        f"/ai/api/v1/taskRuns/{created['task_run_id']}/resume",
         json={"approval_id": approval_id, "payload": {"approved": True}},
     )
 
@@ -395,11 +417,15 @@ def test_agent_loop_resume_provider_runtime_error_fails_existing_step(client, mo
     assert resumed["current_step_run_id"] == waiting_step_id
     assert resumed["error_message"] == "RuntimeError: provider unavailable"
 
-    steps = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/steps").json()
+    steps = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/steps").json()
     assert len(steps) == 1
     assert steps[0]["step_run_id"] == waiting_step_id
     assert steps[0]["status"] == "FAILED"
     assert steps[0]["error_message"] == "RuntimeError: provider unavailable"
+    operations = steps[0]["detail_json"]["operationDetail"]["operations"]
+    assert operations[-3]["key"] == "executor.diagnose"
+    assert operations[-2]["key"] == "executor.retry.unavailable"
+    assert operations[-1]["key"] == "executor.failure"
     approval_detail = steps[0]["detail_json"]["approvalDetail"]
     assert approval_detail["approvalRequested"] is False
     assert approval_detail["approvalId"] == approval_id
@@ -416,7 +442,7 @@ def test_taskruns_resume_rejects_missing_approval_id_for_waiting_task(client, mo
     )
 
     create_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "approval-missing-user",
@@ -428,13 +454,13 @@ def test_taskruns_resume_rejects_missing_approval_id_for_waiting_task(client, mo
     assert created["status"] == "WAITING"
 
     resume_response = client.post(
-        f"/api/v1/taskRuns/{created['task_run_id']}/resume",
+        f"/ai/api/v1/taskRuns/{created['task_run_id']}/resume",
         json={"payload": {"approved": True}},
     )
 
     assert resume_response.status_code == 409
     assert "approval id is required" in resume_response.json()["detail"]
-    assert client.get(f"/api/v1/taskRuns/{created['task_run_id']}").json()["status"] == "WAITING"
+    assert client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}").json()["status"] == "WAITING"
 
 
 def test_taskruns_resume_rejects_approval_id_from_other_waiting_task(client, monkeypatch):
@@ -448,7 +474,7 @@ def test_taskruns_resume_rejects_approval_id_from_other_waiting_task(client, mon
     )
 
     task_a_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "approval-a",
@@ -456,7 +482,7 @@ def test_taskruns_resume_rejects_approval_id_from_other_waiting_task(client, mon
         },
     )
     task_b_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "approval-b",
@@ -468,17 +494,17 @@ def test_taskruns_resume_rejects_approval_id_from_other_waiting_task(client, mon
     task_a = task_a_response.json()
     task_b = task_b_response.json()
 
-    task_b_events = client.get(f"/api/v1/taskRuns/{task_b['task_run_id']}/events").json()
+    task_b_events = client.get(f"/ai/api/v1/taskRuns/{task_b['task_run_id']}/events").json()
     task_b_approval_id = next(event["payload"]["approval_id"] for event in task_b_events if event["event_type"] == "approval.requested")
 
     resume_response = client.post(
-        f"/api/v1/taskRuns/{task_a['task_run_id']}/resume",
+        f"/ai/api/v1/taskRuns/{task_a['task_run_id']}/resume",
         json={"approval_id": task_b_approval_id, "payload": {"approved": True}},
     )
 
     assert resume_response.status_code == 409
     assert "does not match open approval" in resume_response.json()["detail"]
-    assert client.get(f"/api/v1/taskRuns/{task_a['task_run_id']}").json()["status"] == "WAITING"
+    assert client.get(f"/ai/api/v1/taskRuns/{task_a['task_run_id']}").json()["status"] == "WAITING"
 
 
 def test_taskruns_cancel_records_pending_tool_result_without_resuming_loop(client, monkeypatch):
@@ -490,7 +516,7 @@ def test_taskruns_cancel_records_pending_tool_result_without_resuming_loop(clien
     )
 
     create_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "cancel-user",
@@ -506,14 +532,14 @@ def test_taskruns_cancel_records_pending_tool_result_without_resuming_loop(clien
     created = create_response.json()
     assert created["status"] == "WAITING"
 
-    cancel_response = client.post(f"/api/v1/taskRuns/{created['task_run_id']}/cancel")
+    cancel_response = client.post(f"/ai/api/v1/taskRuns/{created['task_run_id']}/cancel")
 
     assert cancel_response.status_code == 200
     canceled = cancel_response.json()
     assert canceled["status"] == "CANCELED"
     assert len(provider_calls) == 1
 
-    steps = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/steps").json()
+    steps = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/steps").json()
     step = next(item for item in steps if item["step_run_id"] == created["current_step_run_id"])
     tool_results = step["output_payload"]["tool_results"]
     assert tool_results[0]["tool_call_id"] == "call_cancel"
@@ -531,7 +557,7 @@ def test_taskruns_cancel_records_pending_tool_result_without_resuming_loop(clien
 
 def test_taskruns_resume_and_cancel_reject_non_waiting_task(client):
     create_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "non-waiting-user",
@@ -542,18 +568,18 @@ def test_taskruns_resume_and_cancel_reject_non_waiting_task(client):
     created = create_response.json()
     assert created["status"] == "COMPLETED"
 
-    resume_response = client.post(f"/api/v1/taskRuns/{created['task_run_id']}/resume", json={"payload": {"approved": True}})
+    resume_response = client.post(f"/ai/api/v1/taskRuns/{created['task_run_id']}/resume", json={"payload": {"approved": True}})
     assert resume_response.status_code == 409
     assert resume_response.json()["detail"] == "task is not waiting"
 
-    cancel_response = client.post(f"/api/v1/taskRuns/{created['task_run_id']}/cancel")
+    cancel_response = client.post(f"/ai/api/v1/taskRuns/{created['task_run_id']}/cancel")
     assert cancel_response.status_code == 409
     assert cancel_response.json()["detail"] == "task is not waiting"
 
 
 def test_removed_legacy_routing_is_rejected(client):
     legacy_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "model.generate",
             "owner_key": "legacy-user",
@@ -564,7 +590,7 @@ def test_removed_legacy_routing_is_rejected(client):
     assert "legacy intent routing has been removed" in legacy_response.json()["detail"]
 
     workflow_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "workflow-user",
@@ -585,7 +611,7 @@ def test_runtime_tool_error_is_model_observation_not_immediate_task_failure(clie
     )
 
     response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "restricted-tools-user",
@@ -615,14 +641,14 @@ def test_taskruns_active_supports_session_filter_and_recent_terminal(client, mon
     )
 
     completed_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={"intent_type": "agent.loop", "owner_key": "completed-user", "input_payload": {"prompt": "완료 작업"}},
     )
     assert completed_response.status_code == 200
     completed_task = completed_response.json()
 
     waiting_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "waiting-user",
@@ -634,7 +660,7 @@ def test_taskruns_active_supports_session_filter_and_recent_terminal(client, mon
     waiting_task = waiting_response.json()
     assert waiting_task["status"] == "WAITING"
 
-    active_response = client.get("/api/v1/taskRuns/active", params={"sessionKey": "sess_a"})
+    active_response = client.get("/ai/api/v1/taskRuns/active", params={"sessionKey": "sess_a"})
     assert active_response.status_code == 200
     active_body = active_response.json()
     assert active_body["total_count"] == 1
@@ -651,16 +677,298 @@ def test_taskruns_active_supports_session_filter_and_recent_terminal(client, mon
 
     completed_at = datetime.fromisoformat(completed_task["updated_at"])
     monkeypatch.setattr("app.api.http.tasks.utc_now", lambda: completed_at + timedelta(seconds=301))
-    expired_active = client.get("/api/v1/taskRuns/active", params={"sessionKey": "missing"})
+    expired_active = client.get("/ai/api/v1/taskRuns/active", params={"sessionKey": "missing"})
     assert expired_active.status_code == 200
     assert expired_active.json()["items"] == []
+
+
+def test_taskruns_active_product_session_alias_overrides_legacy_session_key(client):
+    client.app.state.repository.create_task(
+        TaskRun(
+            task_run_id="task_product_alias",
+            task_type="agent.loop",
+            intent_type="agent.loop",
+            entry_executor_key="agent.loop",
+            owner_key="product-user",
+            session_key="product_session",
+            status="RUNNING",
+            title="product alias 작업",
+        )
+    )
+    client.app.state.repository.create_task(
+        TaskRun(
+            task_run_id="task_legacy_alias",
+            task_type="agent.loop",
+            intent_type="agent.loop",
+            entry_executor_key="agent.loop",
+            owner_key="legacy-user",
+            session_key="legacy_session",
+            status="RUNNING",
+            title="legacy alias 작업",
+        )
+    )
+
+    response = client.get(
+        "/ai/api/v1/taskRuns/active",
+        params={"sessionKey": "legacy_session", "productSessionId": "product_session"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 1
+    assert body["items"][0]["task_run_id"] == "task_product_alias"
+    assert body["items"][0]["session_key"] == "product_session"
+
+
+def test_taskruns_create_product_session_alias_overrides_legacy_session_key(client, monkeypatch):
+    _patch_respond(monkeypatch, [_response(text="PRODUCT_SESSION_ALIAS_DONE")])
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "product-alias-user",
+            "sessionKey": "legacy_create_session",
+            "productSessionId": "product_create_session",
+            "input_payload": {"prompt": "productSessionId를 canonical로 사용해줘.", "model": "gpt-test"},
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert body["session_key"] == "product_create_session"
+    assert client.app.state.session_store.get_latest_session_by_key("product_create_session") is not None
+    assert client.app.state.session_store.get_latest_session_by_key("legacy_create_session") is None
+
+
+def test_agent_session_messages_returns_wrapper_after_numeric_message_id(client):
+    session_store = client.app.state.session_store
+    session_store.create_session(
+        session_id="agent_session_messages_api",
+        session_key="product_messages",
+        source="agent.loop",
+        user_id="messages-user",
+        model="gpt-test",
+        title="messages API",
+    )
+    first_id = session_store.append_message(session_id="agent_session_messages_api", role="user", content="첫 메시지")
+    second_id = session_store.append_message(session_id="agent_session_messages_api", role="assistant", content="둘째 메시지")
+    session_store.append_message(session_id="agent_session_messages_api", role="tool", content="셋째 메시지", tool_name="terminal.run")
+
+    response = client.get(
+        "/ai/api/v1/agentSessions/agent_session_messages_api/messages",
+        params={"afterMessageId": first_id, "limit": 1},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["agentSessionId"] == "agent_session_messages_api"
+    assert body["afterMessageId"] == first_id
+    assert body["limit"] == 1
+    assert body["totalCount"] == 1
+    assert body["nextAfterMessageId"] == second_id
+    assert [message["id"] for message in body["items"]] == [second_id]
+    assert body["items"][0]["role"] == "assistant"
+    assert body["items"][0]["content"] == "둘째 메시지"
+
+
+def test_agent_session_messages_returns_not_found_for_authenticated_missing_session(client):
+    client.app.state.settings.allow_sqlite_legacy = False
+    client.app.state.backend_auth_client = FakeBackendAuthClient()
+
+    response = client.get(
+        "/ai/api/v1/agentSessions/missing_agent_session/messages",
+        headers={"Authorization": "Bearer messages-user"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "agent session not found"
+
+
+def test_authenticated_http_request_passes_workspace_key_hint_to_backend(client):
+    auth_client = FakeBackendAuthClient()
+    client.app.state.settings.allow_sqlite_legacy = False
+    client.app.state.backend_auth_client = auth_client
+
+    response = client.get(
+        "/ai/api/v1/taskRuns/active",
+        params={"productSessionId": "workspace-hint-session", "workspaceKey": "workspace-a"},
+        headers={"Authorization": "Bearer owner-a", "X-Workspace-Key": "workspace-header"},
+    )
+
+    assert response.status_code == 200
+    assert auth_client.calls == [{"access_token": "owner-a", "workspace_key": "workspace-header"}]
+
+
+def test_taskruns_create_rejects_second_active_task_in_same_session(client, monkeypatch):
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(tool_calls=[_tool_call("call_active_lock", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
+            _response(text="SHOULD_NOT_START"),
+        ],
+    )
+
+    first_response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "active-lock-user",
+            "session_key": "sess_active_lock",
+            "input_payload": {"prompt": "첫 작업은 승인 대기", "approval_required": True},
+        },
+    )
+    assert first_response.status_code == 200
+    assert first_response.json()["status"] == "WAITING"
+
+    second_response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "active-lock-user",
+            "session_key": "sess_active_lock",
+            "input_payload": {"prompt": "동일 세션 두 번째 작업"},
+        },
+    )
+
+    assert second_response.status_code == 409
+    assert "active task already exists" in second_response.json()["detail"]
+
+
+def test_taskruns_create_active_lock_is_scoped_by_authenticated_owner(client, monkeypatch):
+    client.app.state.settings.allow_sqlite_legacy = False
+    client.app.state.backend_auth_client = FakeBackendAuthClient()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(tool_calls=[_tool_call("call_owner_a_wait", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
+            _response(text="OWNER_B_DONE"),
+        ],
+    )
+
+    first_response = client.post(
+        "/ai/api/v1/taskRuns",
+        headers={"Authorization": "Bearer owner-a"},
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "ignored-owner",
+            "session_key": "shared_product_session",
+            "input_payload": {"prompt": "owner-a 작업은 승인 대기", "approval_required": True},
+        },
+    )
+    assert first_response.status_code == 200
+    assert first_response.json()["status"] == "WAITING"
+
+    second_response = client.post(
+        "/ai/api/v1/taskRuns",
+        headers={"Authorization": "Bearer owner-b"},
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "ignored-owner",
+            "session_key": "shared_product_session",
+            "input_payload": {"prompt": "owner-b는 같은 productSessionId라도 별도 사용자"},
+        },
+    )
+
+    assert second_response.status_code == 200
+    body = second_response.json()
+    assert body["session_key"] == "shared_product_session"
+    assert body["status"] == "COMPLETED"
+    assert client.app.state.repository.get_task(body["task_run_id"]).owner_key == "owner-b"
+
+
+def test_taskruns_create_uses_redis_active_session_lock_before_start(client, monkeypatch):
+    _patch_respond(monkeypatch, [_response(text="SHOULD_NOT_START")])
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
+    client.app.state.task_projection_store = projection
+    assert projection.acquire_active_session_lock("sess_locked_by_redis", "existing_task", owner_key="active-lock-user") is True
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "active-lock-user",
+            "session_key": "sess_locked_by_redis",
+            "input_payload": {"prompt": "Redis lock이 있으면 시작하면 안 됨"},
+        },
+    )
+
+    assert response.status_code == 409
+    assert "active task already exists" in response.json()["detail"]
+
+
+def test_taskruns_active_prefers_redis_projection_for_live_session(client):
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
+    client.app.state.task_projection_store = projection
+    task = TaskRun(
+        task_run_id="task_projection_active",
+        task_type="agent.loop",
+        intent_type="agent.loop",
+        entry_executor_key="agent.loop",
+        owner_key="projection-user",
+        session_key="sess_projection",
+        status="RUNNING",
+        title="projection 작업",
+        progress_summary="projection 실행 중",
+    )
+    step = StepRun(
+        step_run_id="step_projection_active",
+        task_run_id=task.task_run_id,
+        step_order=1,
+        step_type="agent.loop.execute",
+        executor_key="agent.loop",
+        status="RUNNING",
+        title="projection 단계",
+    )
+    task.current_step_run_id = step.step_run_id
+    projection.save_task_snapshot(task)
+    projection.save_step_snapshot(step)
+
+    response = client.get("/ai/api/v1/taskRuns/active", params={"sessionKey": "sess_projection"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 1
+    assert body["items"][0]["task_run_id"] == "task_projection_active"
+    assert body["items"][0]["source"] == "active"
+    assert body["items"][0]["current_step"]["step_run_id"] == "step_projection_active"
+
+
+def test_taskruns_events_reads_redis_recent_projection_with_sequence_window(client):
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
+    client.app.state.task_projection_store = projection
+    for index in range(3):
+        projection.append_event(
+            TaskEventEnvelope(
+                event_id=f"event_projection_{index}",
+                event_type="task.updated",
+                task_run_id="task_projection_events",
+                step_run_id="step_projection_events",
+                producer="test",
+                occurred_at=f"2026-04-29T00:00:0{index}+00:00",
+                status="RUNNING",
+                summary_message=f"event {index}",
+            )
+        )
+
+    response = client.get(
+        "/ai/api/v1/taskRuns/task_projection_events/events",
+        params={"afterSequence": 1, "limit": 1},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["event_id"] == "event_projection_1"
+    assert body[0]["sequence"] == 2
 
 
 def test_taskruns_flow_returns_observed_step_node(client, monkeypatch):
     _patch_respond(monkeypatch, [_response(text="FLOW_OK")])
 
     create_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
             "intent_type": "agent.loop",
             "owner_key": "flow-user",
@@ -670,7 +978,7 @@ def test_taskruns_flow_returns_observed_step_node(client, monkeypatch):
 
     assert create_response.status_code == 200
     created = create_response.json()
-    flow_response = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/flow")
+    flow_response = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/flow")
     assert flow_response.status_code == 200
     flow = flow_response.json()
     assert flow["entry_executor_key"] == "agent.loop"
