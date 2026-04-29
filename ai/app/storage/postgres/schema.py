@@ -110,7 +110,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     );
     """,
     """
-    CREATE TABLE IF NOT EXISTS agent_profiles (
+    CREATE TABLE IF NOT EXISTS ai_agent_profiles (
         profile_id TEXT PRIMARY KEY,
         owner_key TEXT NOT NULL,
         profile_key TEXT NOT NULL,
@@ -126,7 +126,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     );
     """,
     """
-    CREATE TABLE IF NOT EXISTS agent_templates (
+    CREATE TABLE IF NOT EXISTS ai_agent_templates (
         template_id TEXT PRIMARY KEY,
         owner_key TEXT NOT NULL,
         template_key TEXT NOT NULL,
@@ -188,7 +188,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     ON worker_handoffs(parent_step_run_id, created_at);
     """,
     """
-    INSERT INTO agent_profiles (
+    INSERT INTO ai_agent_profiles (
         profile_id,
         owner_key,
         profile_key,

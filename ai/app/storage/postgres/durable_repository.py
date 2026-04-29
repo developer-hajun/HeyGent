@@ -449,7 +449,7 @@ class PostgresTaskRepository(PostgresDurableRepository):
         connection = self.connection_factory()
         row = connection.execute(
             """
-            SELECT * FROM agent_profiles
+            SELECT * FROM ai_agent_profiles
             WHERE owner_key = %s AND profile_key = %s AND profile_version = %s
             """,
             (owner_key, profile_key, version),

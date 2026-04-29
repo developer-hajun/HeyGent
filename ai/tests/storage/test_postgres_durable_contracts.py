@@ -49,8 +49,8 @@ def test_postgres_schema_contains_required_durable_tables():
         "run_anchors",
         "step_anchors",
         "worker_handoffs",
-        "agent_profiles",
-        "agent_templates",
+        "ai_agent_profiles",
+        "ai_agent_templates",
         "provider_oauth_states",
         "provider_tokens",
     }
@@ -196,7 +196,7 @@ class _FakeDurableConnection:
             }
         elif normalized.startswith("SELECT * FROM step_anchors"):
             return _FakeCursor([self.step_anchors[params[0]]] if params[0] in self.step_anchors else [])
-        elif normalized.startswith("SELECT * FROM agent_profiles"):
+        elif normalized.startswith("SELECT * FROM ai_agent_profiles"):
             owner_key, profile_key, profile_version = params
             key = (owner_key, profile_key, profile_version)
             return _FakeCursor([self.agent_profiles[key]] if key in self.agent_profiles else [])
