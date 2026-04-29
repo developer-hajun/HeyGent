@@ -36,19 +36,28 @@ from app.storage.sqlite import SQLiteTaskRepository
 router_settings = get_settings()
 
 
+def _validate_runtime_storage_settings(settings=None) -> None:
+    settings = settings or get_settings()
+    if settings.allow_sqlite_legacy:
+        return
+    if not settings.postgres_dsn:
+        raise RuntimeError("제품 런타임은 HEYGENT_POSTGRES_DSN 설정이 필요합니다.")
+    if not settings.redis_url:
+        raise RuntimeError("제품 런타임은 HEYGENT_REDIS_URL 설정이 필요합니다.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """앱 시작 시 백본 구성요소를 조립한다."""
 
     configure_logging()
     settings = get_settings()
+    _validate_runtime_storage_settings(settings)
     applied_postgres_migrations = apply_configured_postgres_migrations(
         dsn=settings.postgres_dsn,
         enabled=settings.postgres_migrations_enabled,
     )
     postgres_connection_factory = (lambda: connect_postgres(settings.postgres_dsn)) if settings.postgres_dsn else None
-    if postgres_connection_factory is None and not settings.allow_sqlite_legacy:
-        raise RuntimeError("제품 런타임은 HEYGENT_POSTGRES_DSN 설정이 필요합니다.")
     durable_repository = (
         PostgresTaskRepository(postgres_connection_factory)
         if postgres_connection_factory is not None

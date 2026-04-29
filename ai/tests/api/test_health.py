@@ -17,3 +17,18 @@ def test_ready(client):
     provider_names = [provider["provider_name"] for provider in body["providers"]]
     assert "openai_api" in provider_names
     assert "openai_oauth" in provider_names
+
+
+def test_product_runtime_requires_redis_when_postgres_is_configured(monkeypatch):
+    monkeypatch.setenv("HEYGENT_POSTGRES_DSN", "postgresql://example")
+    monkeypatch.delenv("HEYGENT_REDIS_URL", raising=False)
+    monkeypatch.delenv("HEYGENT_ALLOW_SQLITE_LEGACY", raising=False)
+
+    from app.main import _validate_runtime_storage_settings
+
+    try:
+        _validate_runtime_storage_settings()
+    except RuntimeError as error:
+        assert "HEYGENT_REDIS_URL" in str(error)
+    else:
+        raise AssertionError("제품 런타임은 Redis 설정 없이는 시작하면 안 된다.")
