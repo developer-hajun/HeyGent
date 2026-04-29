@@ -13,7 +13,9 @@ class FakeRedis:
         self._ttls: dict[str, int] = {}
         self._zsets: dict[str, dict[str, float]] = defaultdict(dict)
 
-    def set(self, name: str, value: str, ex: int | None = None) -> bool:
+    def set(self, name: str, value: str, ex: int | None = None, nx: bool = False) -> bool:
+        if nx and name in self._strings:
+            return False
         self._strings[name] = value
         if ex is not None:
             self._ttls[name] = ex
@@ -66,6 +68,13 @@ class FakeRedis:
                 del zset[normalized]
                 removed += 1
         return removed
+
+    def delete(self, name: str) -> int:
+        existed = name in self._strings or name in self._zsets
+        self._strings.pop(name, None)
+        self._zsets.pop(name, None)
+        self._ttls.pop(name, None)
+        return 1 if existed else 0
 
     def zremrangebyscore(self, name: str, min_score: int | float | str, max_score: int | float | str) -> int:
         zset = self._zsets.get(name, {})

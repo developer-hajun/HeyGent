@@ -123,6 +123,18 @@ def test_redis_projection_removes_terminal_tasks_from_active_indexes_and_lazy_cl
     assert store.list_active_task_ids(owner_key="user_terminal") == []
 
 
+def test_redis_projection_active_session_lock_uses_lease():
+    redis = FakeRedis()
+    store = RedisTaskProjectionStore(redis, ttl_seconds=60)
+
+    assert store.acquire_active_session_lock("session_lock", "task_1") is True
+    assert store.acquire_active_session_lock("session_lock", "task_2") is False
+
+    store.release_active_session_lock("session_lock", "task_1")
+
+    assert store.acquire_active_session_lock("session_lock", "task_2") is True
+
+
 def test_redis_projection_assigns_sequences_and_trims_recent_events():
     redis = FakeRedis()
     store = RedisTaskProjectionStore(redis, ttl_seconds=60, max_events=2)

@@ -163,8 +163,14 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
                     task_run_id=message["task_run_id"],
                 )
             elif action == "subscribe_all":
-                session_service.subscribe_all(session_id=session_id, websocket=websocket)
-                await websocket.send_json({"type": "subscribed", "task_run_id": "all"})
+                # 전체 토픽 구독은 사용자별 소유권 검증을 우회하므로 제품 WebSocket에서는 열지 않는다.
+                await websocket.send_json(
+                    {
+                        "type": "subscription.denied",
+                        "task_run_id": "all",
+                        "reason": "subscribe_all_disabled",
+                    }
+                )
             elif action == "ping":
                 try:
                     await connection_registry.touch_connection(

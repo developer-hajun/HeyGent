@@ -694,6 +694,26 @@ def test_taskruns_create_rejects_second_active_task_in_same_session(client, monk
     assert "active task already exists" in second_response.json()["detail"]
 
 
+def test_taskruns_create_uses_redis_active_session_lock_before_start(client, monkeypatch):
+    _patch_respond(monkeypatch, [_response(text="SHOULD_NOT_START")])
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
+    client.app.state.task_projection_store = projection
+    assert projection.acquire_active_session_lock("sess_locked_by_redis", "existing_task") is True
+
+    response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "active-lock-user",
+            "session_key": "sess_locked_by_redis",
+            "input_payload": {"prompt": "Redis lock이 있으면 시작하면 안 됨"},
+        },
+    )
+
+    assert response.status_code == 409
+    assert "active task already exists" in response.json()["detail"]
+
+
 def test_taskruns_active_prefers_redis_projection_for_live_session(client):
     projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
     client.app.state.task_projection_store = projection

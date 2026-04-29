@@ -187,6 +187,22 @@ def test_subscribe_all_before_auth_is_rejected(client):
         assert client.app.state.session_registry.get_subscriptions("user:spoof") == set()
 
 
+def test_subscribe_all_after_auth_is_rejected_by_policy(client):
+    client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="owner-a")
+
+    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+        websocket.send_json({"action": "auth", "accessToken": "valid-token"})
+        websocket.send_json({"action": "subscribe_all"})
+
+        assert websocket.receive_json() == {"type": "auth.ok", "userId": "owner-a"}
+        assert websocket.receive_json() == {
+            "type": "subscription.denied",
+            "task_run_id": "all",
+            "reason": "subscribe_all_disabled",
+        }
+        assert client.app.state.session_registry.get_subscriptions("user:owner-a") == set()
+
+
 def test_subscribe_before_auth_is_rejected(client):
     client.app.state.backend_auth_client = FakeBackendAuthClient()
 

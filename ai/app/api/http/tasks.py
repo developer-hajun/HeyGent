@@ -502,11 +502,17 @@ def list_active_tasks(
 @router.post("", response_model=TaskRunResponse)
 async def create_task(request: Request, payload: CreateTaskRequest, context: TaskContext = Depends(get_task_context)) -> TaskRunResponse:
     orchestrator = request.app.state.orchestrator
+    active_lock_task_id = None
     if payload.session_key:
         active_count = context.repository.count_tasks_by_statuses(_ACTIVE_TASK_STATUSES, session_key=payload.session_key)
         if active_count > 0:
             # 외부 product session에서는 중복 실행을 서버에서 막아 다중 탭/다중 기기 race를 줄인다.
             raise HTTPException(status_code=409, detail="active task already exists in this session")
+        projection = context.task_projection_store
+        if projection is not None:
+            active_lock_task_id = f"pending:{payload.owner_key}:{payload.session_key}"
+            if not projection.acquire_active_session_lock(payload.session_key, active_lock_task_id):
+                raise HTTPException(status_code=409, detail="active task already exists in this session")
     try:
         task = await orchestrator.start(
             OrchestrationRequest(
@@ -517,9 +523,16 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
                 entry_executor_key=payload.entry_executor_key,
             )
         )
+        if payload.session_key and active_lock_task_id and context.task_projection_store is not None:
+            context.task_projection_store.release_active_session_lock(payload.session_key, active_lock_task_id)
+            context.task_projection_store.acquire_active_session_lock(payload.session_key, task.task_run_id)
     except KeyError as error:
+        if payload.session_key and active_lock_task_id and context.task_projection_store is not None:
+            context.task_projection_store.release_active_session_lock(payload.session_key, active_lock_task_id)
         raise HTTPException(status_code=404, detail=f"unknown intent or executor: {error.args[0]}") from error
     except ValueError as error:
+        if payload.session_key and active_lock_task_id and context.task_projection_store is not None:
+            context.task_projection_store.release_active_session_lock(payload.session_key, active_lock_task_id)
         raise HTTPException(status_code=400, detail=str(error)) from error
     return _build_task_response(task, context)
 

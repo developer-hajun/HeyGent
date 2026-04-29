@@ -110,6 +110,23 @@ class RedisTaskProjectionStore:
             return None
         return int(value)
 
+    def acquire_active_session_lock(self, session_key: str, task_run_id: str) -> bool:
+        """같은 product session의 active TaskRun 생성을 원자적 lease로 제한한다."""
+
+        if not session_key:
+            return True
+        return bool(self.redis.set(self._active_session_lock_key(session_key), task_run_id, ex=self.ttl_seconds, nx=True))
+
+    def release_active_session_lock(self, session_key: str, task_run_id: str) -> None:
+        """생성 실패처럼 TaskRun snapshot이 남지 않은 경우 lease를 해제한다."""
+
+        if not session_key:
+            return
+        key = self._active_session_lock_key(session_key)
+        current = self._decode(self.redis.get(key))
+        if current == task_run_id:
+            self.redis.delete(key)
+
     def trim_recent_events(self, task_run_id: str, *, max_events: int | None = None) -> int:
         limit = self.max_events if max_events is None else max_events
         if limit < 0:
@@ -200,6 +217,7 @@ class RedisTaskProjectionStore:
             self.redis.zrem(self._active_user_key(task.owner_key), task.task_run_id)
         if task.session_key:
             self.redis.zrem(self._active_session_key(task.session_key), task.task_run_id)
+            self.release_active_session_lock(task.session_key, task.task_run_id)
 
     @staticmethod
     def _looks_async(redis_client: Any) -> bool:
@@ -224,6 +242,10 @@ class RedisTaskProjectionStore:
     @staticmethod
     def _active_session_key(session_key: str) -> str:
         return f"heygent:ai:task:active:session:{session_key}"
+
+    @staticmethod
+    def _active_session_lock_key(session_key: str) -> str:
+        return f"heygent:ai:task:active:session:{session_key}:lock"
 
     @staticmethod
     def _task_events_key(task_run_id: str) -> str:
