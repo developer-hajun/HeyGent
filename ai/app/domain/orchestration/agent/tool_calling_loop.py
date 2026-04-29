@@ -9,6 +9,7 @@ from app.contracts.task.task_status import TaskStatus
 from app.core.utils.ids import new_id
 from app.domain.orchestration.agent.tool_guard import ToolGuard, ToolGuardDecision, ToolGuardResult
 from app.domain.providers.model.base import AgentMessage, ToolResultMessage
+from app.domain.session.sessions.transcript_store import TranscriptStore
 from app.domain.orchestration.runtime_planning.todo_state import (
     apply_tool_results_to_todo_state,
     build_task_todo_payload,
@@ -20,7 +21,15 @@ from app.domain.orchestration.runtime_planning.todo_state import (
 class ToolCallingLoopExecutor:
     """현재 provider 위에서 native tool call(모델이 구조화된 도구 호출을 직접 반환하는 방식) loop를 실행한다."""
 
-    def __init__(self, provider, prompt_builder, tool_runtime, tool_catalog, session_store=None, tool_guard=None) -> None:
+    def __init__(
+        self,
+        provider,
+        prompt_builder,
+        tool_runtime,
+        tool_catalog,
+        session_store: TranscriptStore | None = None,
+        tool_guard=None,
+    ) -> None:
         self.provider = provider
         self.prompt_builder = prompt_builder
         self.tool_runtime = tool_runtime
@@ -307,7 +316,7 @@ class ToolCallingLoopExecutor:
         return prompt_tools
 
     def _ensure_transcript_session(self, *, task, task_input: dict[str, Any], model: str) -> str | None:
-        """기존 SessionStore가 있으면 agent.loop transcript(모델 왕복 기록)를 같은 세션에 묶는다."""
+        """transcript 저장소가 있으면 agent.loop 기록을 같은 세션에 묶는다."""
 
         if self.session_store is None:
             return None

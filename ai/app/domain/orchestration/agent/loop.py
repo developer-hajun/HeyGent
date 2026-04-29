@@ -24,6 +24,7 @@ from app.domain.orchestration.runtime_planning.todo_state import (
     update_task_todo_item_status,
 )
 from app.domain.orchestration.result_inspector import OutcomeInspector
+from app.domain.session.sessions.transcript_store import TranscriptStore
 from app.domain.tasks.detail import (
     build_model_decision_detail,
     build_planning_detail,
@@ -312,7 +313,7 @@ class TaskEngine:
         }
 
     @staticmethod
-    def _session_store_from_executor(executor):
+    def _session_store_from_executor(executor) -> TranscriptStore | None:
         loop_executor = getattr(executor, "loop_executor", None)
         return getattr(loop_executor, "session_store", None)
 

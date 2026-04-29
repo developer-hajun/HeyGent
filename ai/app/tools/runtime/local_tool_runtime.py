@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.utils.ids import new_id
+from app.domain.session.sessions.transcript_store import TranscriptStore
 from app.tools.runtime.registry import build_runtime_tool_entries, list_runtime_tool_definitions
 from app.tools.runtime.toolsets import resolve_runtime_tool_names
 
@@ -28,7 +29,7 @@ class LocalToolRuntime:
         self,
         *,
         skill_registry,
-        session_store,
+        session_store: TranscriptStore,
         workspace_root: str | os.PathLike[str] | None = None,
     ) -> None:
         self.skill_registry = skill_registry
