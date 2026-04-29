@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 
@@ -9,6 +10,7 @@ from app.clients.backend_auth import BackendAuthClient
 from app.core.config import get_settings
 from app.core.logger import configure_logging
 from app.domain.gateway import EventBroadcaster, SessionRegistry, SessionService, WebSocketManager
+from app.domain.gateway.delivery import RedisFanoutPublisher, RedisFanoutSubscriber
 from app.domain.gateway.gateway_sessions.connection_registry import build_connection_registry
 from app.domain.gateway.routing.topic_router import TopicRouter
 from app.domain.session import SessionStore
@@ -56,6 +58,7 @@ async def lifespan(app: FastAPI):
     )
     topic_router = TopicRouter()
     ws_manager = WebSocketManager()
+    redis_fanout_task: asyncio.Task | None = None
     session_registry = SessionRegistry()
     connection_registry = build_connection_registry(
         redis_url=settings.redis_url,
@@ -64,7 +67,13 @@ async def lifespan(app: FastAPI):
     if hasattr(connection_registry, "ping"):
         await connection_registry.ping()
     session_service = SessionService(session_registry, ws_manager, topic_router)
-    broadcaster = EventBroadcaster(ws_manager, topic_router)
+    fanout_publisher = None
+    if task_projection_store is not None:
+        fanout_publisher = RedisFanoutPublisher(task_projection_store.redis, topic_router)
+        redis_fanout_pubsub = task_projection_store.redis.pubsub()
+        # Redis Pub/Sub subscriber가 현재 프로세스의 local WebSocketManager로 live event를 fan-out한다.
+        redis_fanout_task = asyncio.create_task(RedisFanoutSubscriber(ws_manager).run_forever(redis_fanout_pubsub))
+    broadcaster = EventBroadcaster(ws_manager, topic_router, fanout_publisher=fanout_publisher)
     backend_auth_client = BackendAuthClient(settings=settings)
     approval_service = ApprovalService(repository, ApprovalQueue())
     provider_registry = ProviderRegistry(
@@ -124,7 +133,12 @@ async def lifespan(app: FastAPI):
     app.state.child_session_launcher = child_session_launcher
     app.state.orchestrator = orchestrator
     app.state.task_engine = task_engine
+    app.state.redis_fanout_task = redis_fanout_task
     yield
+    if redis_fanout_task is not None:
+        redis_fanout_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await redis_fanout_task
     await backend_auth_client.aclose()
     await connection_registry.aclose()
     if task_projection_store is not None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from typing import Any
 
 from app.domain.gateway.delivery.envelope import build_websocket_event
@@ -39,6 +40,37 @@ class RedisFanoutSubscriber:
         payload = decoded["payload"]
         # Pub/Sub은 replay 저장소가 아니므로, 수신한 payload는 현재 살아 있는 local socket에만 전달한다.
         await self.manager.broadcast(payload, topic)
+
+    async def run_once(self, pubsub) -> bool:
+        """테스트와 lifecycle loop가 공유하는 단일 Pub/Sub poll 단위다."""
+
+        if not getattr(pubsub, "_heygent_psubscribed", False):
+            pubsub.psubscribe("heygent:ai:ws:topic:*")
+            pubsub._heygent_psubscribed = True
+        message = await asyncio.to_thread(
+            pubsub.get_message,
+            ignore_subscribe_messages=True,
+            timeout=1.0,
+        )
+        if not message:
+            return False
+        if isinstance(message, dict) and message.get("type") not in {None, "message", "pmessage"}:
+            return False
+        await self.handle_message(message)
+        return True
+
+    async def run_forever(self, pubsub, *, poll_interval_seconds: float = 0.1) -> None:
+        """앱 lifespan에서 실행할 Pub/Sub subscriber loop다."""
+
+        try:
+            while True:
+                delivered = await self.run_once(pubsub)
+                if not delivered:
+                    await asyncio.sleep(poll_interval_seconds)
+        finally:
+            close = getattr(pubsub, "close", None)
+            if callable(close):
+                close()
 
     @staticmethod
     def _decode_message(message: str | bytes | dict) -> dict:
