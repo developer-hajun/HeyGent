@@ -19,7 +19,7 @@ def test_ready(client):
     assert "openai_oauth" in provider_names
 
 
-def test_product_runtime_requires_redis_when_postgres_is_configured(monkeypatch):
+def test_runtime_requires_redis_when_postgres_is_configured(monkeypatch):
     monkeypatch.setenv("HEYGENT_POSTGRES_DSN", "postgresql://example")
     monkeypatch.delenv("HEYGENT_REDIS_URL", raising=False)
     monkeypatch.delenv("HEYGENT_ALLOW_SQLITE_LEGACY", raising=False)

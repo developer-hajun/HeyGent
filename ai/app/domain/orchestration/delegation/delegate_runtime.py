@@ -256,7 +256,7 @@ class DelegateRuntime:
         contract["parent_session_id"] = parent_session_id
 
         worker_session_id = new_id("session")
-        # worker session은 같은 product session_key 아래에 두되 parent_session_id와 parent_step_run_id로 계층을 고정한다.
+        # worker session은 같은 session_key 아래에 두되 parent_session_id와 parent_step_run_id로 계층을 고정한다.
         self.session_store.create_session(
             session_id=worker_session_id,
             session_key=session_key,

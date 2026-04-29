@@ -136,15 +136,16 @@ def test_postgres_migration_runner_applies_unapplied_migrations_once():
 
     applied = apply_postgres_migrations(connection)
 
-    assert applied == [POSTGRES_MIGRATIONS[0].migration_id]
+    assert applied == [migration.migration_id for migration in POSTGRES_MIGRATIONS]
     assert connection.committed is True
     assert any("CREATE TABLE IF NOT EXISTS schema_migrations" in sql for sql, _ in connection.executed)
     assert any("CREATE TABLE IF NOT EXISTS agent_sessions" in sql for sql, _ in connection.executed)
-    assert any(params == (POSTGRES_MIGRATIONS[0].migration_id,) for _sql, params in connection.executed)
+    for migration in POSTGRES_MIGRATIONS:
+        assert any(params == (migration.migration_id,) for _sql, params in connection.executed)
 
 
 def test_postgres_migration_runner_skips_already_applied_migrations():
-    connection = _FakePostgresConnection(applied={POSTGRES_MIGRATIONS[0].migration_id})
+    connection = _FakePostgresConnection(applied={migration.migration_id for migration in POSTGRES_MIGRATIONS})
 
     applied = apply_postgres_migrations(connection)
 
@@ -169,12 +170,12 @@ class _FakeDurableConnection:
     def execute(self, sql: str, params: tuple | None = None):
         normalized = " ".join(sql.split())
         if normalized.startswith("INSERT INTO run_anchors"):
-            task_run_id, session_id, owner_key, product_session_id, current_step_run_id, durable_status, anchor_payload = params
+            task_run_id, session_id, owner_key, session_key, current_step_run_id, durable_status, anchor_payload = params
             self.run_anchors[task_run_id] = {
                 "task_run_id": task_run_id,
                 "session_id": session_id,
                 "owner_key": owner_key,
-                "product_session_id": product_session_id,
+                "session_key": session_key,
                 "current_step_run_id": current_step_run_id,
                 "durable_status": durable_status,
                 "anchor_payload": anchor_payload,
@@ -215,7 +216,7 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
         {
             "owner_key": "user_pg",
             "session_id": "agent_session_pg",
-            "product_session_id": "product_session_pg",
+            "session_key": "session_pg",
             "current_step_run_id": "step_pg_anchor",
             "durable_status": "WAITING",
             "anchor_payload": {"reason": "approval"},

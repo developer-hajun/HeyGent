@@ -15,8 +15,9 @@ router = APIRouter(prefix="/agentSessions", tags=["agentSessions"], dependencies
     summary="AgentSession 메시지 조회",
     description=(
         "AgentSession(AI와 주고받은 대화/도구 호출 기록 세션)의 메시지를 조회합니다. "
-        "TaskRun의 productSessionId가 아니라, `/taskRuns/{taskRunId}/flow`의 `worker_session_id` 또는 `to_agent_session_id`로 받은 값을 넣습니다. "
-        "subagent/worker가 실제로 어떤 메시지와 도구 호출을 남겼는지 확인할 때 사용합니다."
+        "일반 사용자 대화는 `/sessions/{sessionId}/messages`를 사용하고, "
+        "이 API에는 `/taskRuns/{taskRunId}/flow`의 `worker_session_id` 또는 `to_agent_session_id`로 받은 값을 넣습니다. "
+        "subagent/worker(격리된 하위 AI 작업)가 실제로 어떤 메시지와 도구 호출을 남겼는지 확인할 때 사용합니다."
     ),
 )
 async def list_agent_session_messages(

@@ -6,11 +6,11 @@ from app.clients.backend_auth import BackendAuthVerifyError, BackendAuthVerifyRe
 
 
 async def authenticate_http_user(request: Request) -> BackendAuthVerifyResult | None:
-    """제품 HTTP API에서 backend 검증 결과를 실행 권한 기준으로 사용한다."""
+    """AI HTTP API에서 backend 검증 결과를 실행 권한 기준으로 사용한다."""
 
     authorization = str(request.headers.get("authorization") or "").strip()
     if not authorization:
-        # legacy SQLite 테스트 런타임은 기존 단위 테스트와 CLI 호환을 위해 인증 없는 호출을 유지한다.
+        # SQLite 테스트 런타임은 기존 단위 테스트와 CLI 호환을 위해 인증 없는 호출을 유지한다.
         if getattr(request.app.state.settings, "allow_sqlite_legacy", False):
             return None
         raise HTTPException(status_code=401, detail="authorization required")

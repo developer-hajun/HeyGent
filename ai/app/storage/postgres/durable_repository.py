@@ -24,14 +24,14 @@ class PostgresDurableRepository:
         connection.execute(
             """
             INSERT INTO run_anchors (
-                task_run_id, session_id, owner_key, product_session_id,
+                task_run_id, session_id, owner_key, session_key,
                 current_step_run_id, durable_status, anchor_payload
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
             ON CONFLICT (task_run_id) DO UPDATE SET
                 session_id = EXCLUDED.session_id,
                 owner_key = EXCLUDED.owner_key,
-                product_session_id = EXCLUDED.product_session_id,
+                session_key = EXCLUDED.session_key,
                 current_step_run_id = EXCLUDED.current_step_run_id,
                 durable_status = EXCLUDED.durable_status,
                 anchor_payload = EXCLUDED.anchor_payload,
@@ -42,7 +42,7 @@ class PostgresDurableRepository:
                 task_run_id,
                 payload.get("session_id"),
                 owner_key,
-                payload.get("product_session_id"),
+                payload.get("session_key"),
                 payload.get("current_step_run_id"),
                 payload.get("durable_status", "OPEN"),
                 _json(payload.get("anchor_payload", {})),
@@ -236,7 +236,7 @@ class PostgresTaskRepository(PostgresDurableRepository):
             {
                 "owner_key": anchor["owner_key"],
                 "session_id": anchor.get("session_id"),
-                "product_session_id": anchor.get("product_session_id"),
+                "session_key": anchor.get("session_key"),
                 "current_step_run_id": anchor.get("current_step_run_id"),
                 "durable_status": anchor.get("durable_status", "OPEN"),
                 "anchor_payload": payload,
@@ -471,7 +471,7 @@ class PostgresTaskRepository(PostgresDurableRepository):
             {
                 "owner_key": task.owner_key,
                 "session_id": payload.get("transcript_session_id"),
-                "product_session_id": task.session_key,
+                "session_key": task.session_key,
                 "current_step_run_id": task.current_step_run_id,
                 "durable_status": _durable_status(task.status),
                 "anchor_payload": payload,

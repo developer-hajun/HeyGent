@@ -59,7 +59,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
         task_run_id TEXT PRIMARY KEY,
         session_id TEXT REFERENCES agent_sessions(session_id) ON DELETE SET NULL,
         owner_key TEXT NOT NULL,
-        product_session_id TEXT,
+        session_key TEXT,
         entry_handler_key TEXT,
         current_step_run_id TEXT,
         durable_status TEXT NOT NULL DEFAULT 'OPEN' CHECK (durable_status IN ('OPEN', 'WAITING', 'TERMINAL')),
@@ -173,6 +173,10 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_agent_messages_session_created
     ON agent_messages(session_id, created_at);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_run_anchors_owner_session
+    ON run_anchors(owner_key, session_key);
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_approval_requests_task_pending

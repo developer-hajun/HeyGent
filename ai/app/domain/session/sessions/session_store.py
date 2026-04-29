@@ -179,12 +179,37 @@ class SessionStore:
             row = self._conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
         return self._row_to_session(row)
 
-    def get_latest_session_by_key(self, session_key: str) -> dict[str, Any] | None:
+    def list_sessions(
+        self,
+        owner: str | None = None,
+        *,
+        user_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM sessions"
+        params: list[Any] = []
+        effective_owner = owner if owner is not None else user_id
+        if effective_owner is not None:
+            sql += " WHERE user_id = ?"
+            params.append(effective_owner)
+        sql += " ORDER BY updated_at DESC, started_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM sessions WHERE session_key = ? ORDER BY started_at DESC LIMIT 1",
-                (session_key,),
-            ).fetchone()
+            rows = self._conn.execute(sql, params).fetchall()
+        return [record for row in rows if (record := self._row_to_session(row)) is not None]
+
+    def get_latest_session_by_key(self, session_key: str, *, owner: str | None = None) -> dict[str, Any] | None:
+        sql = "SELECT * FROM sessions WHERE session_key = ?"
+        params: list[Any] = [session_key]
+        if owner is not None:
+            sql += " AND user_id = ?"
+            params.append(owner)
+        sql += " ORDER BY started_at DESC LIMIT 1"
+
+        with self._lock:
+            row = self._conn.execute(sql, params).fetchone()
         return self._row_to_session(row)
 
     def append_message(

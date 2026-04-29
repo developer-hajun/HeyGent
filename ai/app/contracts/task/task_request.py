@@ -2,19 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CreateTaskRequest(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
+        extra="forbid",
         json_schema_extra={
             "examples": [
                 {
                     "summary": "자료 조사 요청 실행",
                     "value": {
                         "intent_type": "agent.loop",
-                        "productSessionId": "swagger-research-test-001",
+                        "sessionId": "session_research_test_001",
                         "input_payload": {
                             "prompt": (
                                 "최근 AI 에이전트 오케스트레이션에서 subagent를 쓰는 이유를 간단히 조사해줘. "
@@ -52,11 +53,11 @@ class CreateTaskRequest(BaseModel):
     )
     session_key: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("productSessionId", "session_key", "sessionKey"),
-        title="Product Session ID",
+        validation_alias="sessionId",
+        title="Session ID",
         description=(
-            "productSessionId(제품 화면/대화방/외부 채널의 세션 ID)입니다. "
-            "같은 사용자와 같은 productSessionId 안에서는 동시에 실행 중인 TaskRun(사용자 요청 하나의 실행 묶음)을 하나만 허용합니다. "
+            "sessionId(AI가 직접 관리하는 대화 세션 ID)입니다. "
+            "같은 사용자와 같은 sessionId 안에서는 동시에 실행 중인 TaskRun(사용자 요청 하나의 실행 묶음)을 하나만 허용합니다. "
             "내부 저장명은 session_key입니다."
         ),
     )

@@ -44,17 +44,18 @@ _TASK_TITLE_FALLBACKS = {
 }
 
 
-def _select_product_session_id(request: Request, product_session_id: str | None) -> str | None:
-    if product_session_id is not None:
-        normalized = product_session_id.strip()
-        if normalized:
-            return normalized
-    legacy_session_key = request.query_params.get("sessionKey")
-    if legacy_session_key is not None:
-        normalized = legacy_session_key.strip()
+def _normalize_session_id(session_id: str | None) -> str | None:
+    if session_id is not None:
+        normalized = session_id.strip()
         if normalized:
             return normalized
     return None
+
+
+def _reject_removed_session_aliases(request: Request) -> None:
+    removed = sorted({"productSessionId", "sessionKey"}.intersection(request.query_params.keys()))
+    if removed:
+        raise HTTPException(status_code=422, detail=f"removed session query parameter: {', '.join(removed)}; use sessionId")
 
 
 def _select_page_size(request: Request, page_size: int) -> int:
@@ -275,7 +276,7 @@ def _build_task_response(task, context: TaskContext) -> TaskRunResponse:
 
 
 def _has_active_task_for_owner_session(context: TaskContext, *, owner_key: str, session_key: str) -> bool:
-    """productSessionId 중복 실행 제한은 인증 owner 범위 안에서만 적용한다."""
+    """sessionId 중복 실행 제한은 인증 owner 범위 안에서만 적용한다."""
 
     active_total = context.repository.count_tasks_by_statuses(_ACTIVE_TASK_STATUSES, session_key=session_key)
     active_tasks = context.repository.list_tasks_by_statuses(
@@ -472,7 +473,7 @@ def _events_from_projection(
         "현재 사용자의 TaskRun 목록을 페이지 단위로 조회합니다. "
         "TaskRun은 사용자가 한 번 보낸 요청이 시작부터 완료/실패/취소될 때까지 이어지는 실행 묶음입니다. "
         "프론트 목록 화면, 운영 확인, 재현 테스트에서 사용합니다. "
-        "응답 필드명은 기존 클라이언트 호환을 위해 `task_run_id`, `session_key` 같은 snake_case를 유지합니다."
+        "sessionId를 넣으면 특정 AI 세션에서 실행된 TaskRun만 조회합니다."
     ),
 )
 async def list_tasks(
@@ -483,16 +484,17 @@ async def list_tasks(
         default="ALL",
         description="상태 필터입니다. `ALL`, `PENDING`, `RUNNING`, `WAITING`, `BLOCKED`, `COMPLETED`, `FAILED`, `CANCELED` 중 하나를 넣습니다.",
     ),
-    product_session_id: str | None = Query(
+    session_id: str | None = Query(
         default=None,
-        alias="productSessionId",
-        description="productSessionId(제품 화면/대화방/외부 채널 세션 ID)로 TaskRun 목록을 좁힙니다.",
+        alias="sessionId",
+        description="sessionId(AI 세션 ID)로 TaskRun 목록을 좁힙니다.",
     ),
     context: TaskContext = Depends(get_task_context),
 ) -> TaskRunListResponse:
     user = await authenticate_http_user(request)
+    _reject_removed_session_aliases(request)
     page_size = _select_page_size(request, page_size)
-    session_key = _select_product_session_id(request, product_session_id)
+    session_key = _normalize_session_id(session_id)
     status_filter = _normalize_task_status_filter(status)
     offset = (page - 1) * page_size
     tasks = context.repository.list_tasks(status=status_filter, session_key=session_key, limit=page_size, offset=offset)
@@ -519,22 +521,23 @@ async def list_tasks(
     response_model=ActiveTaskRunListResponse,
     summary="현재 세션의 활성 TaskRun 조회",
     description=(
-        "productSessionId 기준으로 아직 진행 중인 TaskRun과 방금 끝난 TaskRun을 조회합니다. "
+        "sessionId 기준으로 아직 진행 중인 TaskRun과 방금 끝난 TaskRun을 조회합니다. "
         "`source=active`는 실행/대기 중인 작업, `source=recent`는 최근 300초 안에 완료/실패/취소된 작업입니다. "
         "프론트가 새로고침 후 현재 작업 상태를 복원할 때 사용합니다."
     ),
 )
 async def list_active_tasks(
     request: Request,
-    product_session_id: str | None = Query(
+    session_id: str | None = Query(
         default=None,
-        alias="productSessionId",
-        description="productSessionId(제품 화면/대화방/외부 채널 세션 ID)입니다. 같은 세션의 현재 작업을 찾을 때 사용합니다.",
+        alias="sessionId",
+        description="sessionId(AI 세션 ID)입니다. 같은 세션의 현재 작업을 찾을 때 사용합니다.",
     ),
     context: TaskContext = Depends(get_task_context),
 ) -> ActiveTaskRunListResponse:
     user = await authenticate_http_user(request)
-    session_key = _select_product_session_id(request, product_session_id)
+    _reject_removed_session_aliases(request)
+    session_key = _normalize_session_id(session_id)
     now = utc_now()
     items_by_task_run_id = (
         _build_active_items_from_projection(session_key=session_key, context=context)
@@ -594,7 +597,7 @@ async def list_active_tasks(
     description=(
         "사용자 요청을 TaskRun으로 생성하고 Orchestrator(작업 시작/재개를 맡는 내부 실행 관리자)에 실행을 맡깁니다. "
         "Authorization 토큰이 있으면 토큰의 사용자 ID가 owner(작업 소유자)가 됩니다. "
-        "같은 사용자와 같은 productSessionId 안에서는 동시에 실행 중인 TaskRun을 하나만 허용합니다."
+        "같은 사용자와 같은 sessionId 안에서는 동시에 실행 중인 TaskRun을 하나만 허용합니다."
     ),
 )
 async def create_task(request: Request, payload: CreateTaskRequest, context: TaskContext = Depends(get_task_context)) -> TaskRunResponse:
@@ -604,7 +607,7 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
     active_lock_task_id = None
     if payload.session_key:
         if _has_active_task_for_owner_session(context, owner_key=owner_key, session_key=payload.session_key):
-            # 같은 사용자의 동일 product session만 막아 다른 사용자의 같은 외부 session id와 충돌하지 않게 한다.
+            # 같은 사용자의 동일 AI 세션만 막아 다른 사용자의 같은 문자열 session id와 충돌하지 않게 한다.
             raise HTTPException(status_code=409, detail="active task already exists in this session")
         projection = context.task_projection_store
         if projection is not None:

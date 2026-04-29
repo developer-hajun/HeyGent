@@ -185,7 +185,7 @@ def test_worker_transcript_session_id_is_reused_without_collapsing_into_parent_s
     task = SimpleNamespace(
         task_run_id="task_child",
         owner_key="user_1",
-        session_key="product_session",
+        session_key="parent_session",
         title="Worker child",
     )
 
@@ -196,7 +196,7 @@ def test_worker_transcript_session_id_is_reused_without_collapsing_into_parent_s
     )
 
     assert session_id == "agent_session_worker"
-    assert "product_session" not in session_store.sessions_by_key
+    assert "parent_session" not in session_store.sessions_by_key
 
 
 def _task(input_payload: dict | None = None):
