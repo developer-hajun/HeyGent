@@ -104,7 +104,26 @@ def test_openapi_documents_public_sessions_without_product_session_alias():
     assert "content" in message_request
     assert "sessionId" in message_request
     assert "productSessionId" not in message_request
+    message_example = schema["components"]["schemas"]["CreateSessionMessageRequest"]["example"]
+    assert message_example == {
+        "content": "최근 AI 에이전트가 worker를 분리해서 쓰는 이유를 조사해줘.",
+        "model": "gpt-5.4",
+    }
+    assert "summary" not in message_example
+    assert "value" not in message_example
 
     message_response = schema["components"]["schemas"]["CreateSessionMessageResponse"]["properties"]
     assert "taskRunId" in message_response
     assert "TaskRun" in message_response["taskRunId"]["description"]
+
+
+def test_openapi_request_examples_are_actual_request_bodies():
+    app = FastAPI()
+    app.include_router(build_api_router(Settings(api_prefix="/ai/api/v1")))
+
+    schema = app.openapi()
+
+    for schema_name in ("CreateSessionMessageRequest", "CreateTaskRequest", "ResumeTaskRequest"):
+        example = schema["components"]["schemas"][schema_name]["example"]
+        assert "summary" not in example
+        assert "value" not in example

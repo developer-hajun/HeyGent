@@ -38,16 +38,11 @@ class CreateSessionMessageRequest(BaseModel):
         populate_by_name=True,
         extra="forbid",
         json_schema_extra={
-            "examples": [
-                {
-                    "summary": "사용자 메시지 전송",
-                    "value": {
-                        "content": "최근 AI 에이전트가 worker를 분리해서 쓰는 이유를 조사해줘.",
-                        "model": "gpt-5.4",
-                    },
-                }
-            ]
-        }
+            "example": {
+                "content": "최근 AI 에이전트가 worker를 분리해서 쓰는 이유를 조사해줘.",
+                "model": "gpt-5.4",
+            },
+        },
     )
 
     session_id: str | None = Field(

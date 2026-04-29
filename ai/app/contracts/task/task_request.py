@@ -10,23 +10,18 @@ class CreateTaskRequest(BaseModel):
         populate_by_name=True,
         extra="forbid",
         json_schema_extra={
-            "examples": [
-                {
-                    "summary": "자료 조사 요청 실행",
-                    "value": {
-                        "intent_type": "agent.loop",
-                        "sessionId": "session_research_test_001",
-                        "input_payload": {
-                            "prompt": (
-                                "최근 AI 에이전트 오케스트레이션에서 subagent를 쓰는 이유를 간단히 조사해줘. "
-                                "가능하면 worker/subagent에게 자료 조사를 맡기고, 부모 agent는 결과를 종합해서 "
-                                "핵심 이유 3가지와 주의점 2가지를 한국어로 정리해줘. "
-                                "웹검색을 사용할 수 없으면 그 한계를 먼저 말하고, 알고 있는 범위에서 답해줘."
-                            ),
-                        },
-                    },
-                }
-            ]
+            "example": {
+                "intent_type": "agent.loop",
+                "sessionId": "session_research_test_001",
+                "input_payload": {
+                    "prompt": (
+                        "최근 AI 에이전트 오케스트레이션에서 subagent를 쓰는 이유를 간단히 조사해줘. "
+                        "가능하면 worker/subagent에게 자료 조사를 맡기고, 부모 agent는 결과를 종합해서 "
+                        "핵심 이유 3가지와 주의점 2가지를 한국어로 정리해줘. "
+                        "웹검색을 사용할 수 없으면 그 한계를 먼저 말하고, 알고 있는 범위에서 답해줘."
+                    ),
+                },
+            },
         },
     )
 
@@ -66,12 +61,7 @@ class CreateTaskRequest(BaseModel):
 class ResumeTaskRequest(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
-            "examples": [
-                {
-                    "summary": "승인 대기 작업 계속 진행",
-                    "value": {"approval_id": "approval_123", "payload": {"approved": True}},
-                }
-            ]
+            "example": {"approval_id": "approval_123", "payload": {"approved": True}},
         }
     )
 
