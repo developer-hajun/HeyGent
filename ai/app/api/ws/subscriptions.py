@@ -28,18 +28,18 @@ async def handle_subscription(
 
     if task is None:
         await websocket.send_json(
-            {"type": "subscription.denied", "task_run_id": task_run_id, "reason": "not_found"}
+            {"type": "subscription.denied", "taskRunId": task_run_id, "reason": "not_found"}
         )
         return
 
     if str(task.owner_key) != str(authenticated_user_id):
         await websocket.send_json(
-            {"type": "subscription.denied", "task_run_id": task_run_id, "reason": "forbidden"}
+            {"type": "subscription.denied", "taskRunId": task_run_id, "reason": "forbidden"}
         )
         return
 
     session_service.subscribe_task(session_id=session_id, websocket=websocket, task_run_id=task_run_id)
-    response = {"type": "subscribed", "task_run_id": task_run_id}
+    response = {"type": "subscribed", "taskRunId": task_run_id}
     if projection_store is not None:
         latest_sequence = projection_store.get_latest_sequence(task_run_id)
         if latest_sequence is not None:
