@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.contracts.task.task_status import TaskStatus
+from app.core.utils.ids import new_id
 from app.domain.orchestration.delegation.launcher import ChildSessionLauncher
 from app.domain.orchestration.delegation.policies import child_task_unsuccessful
 from app.domain.orchestration.delegation.spec import ChildSessionSpec
@@ -32,6 +33,12 @@ class DelegateRuntime:
         # 이후 exact step 기준으로 parent-child linkage 를 다시 복원할 수 있다.
         step.detail_json = merge_step_detail(step.detail_json, self.child_session_launcher.build_pending_detail(spec))
         repository.update_step(step)
+        handoff_id = self._create_worker_handoff(
+            repository=repository,
+            spec=spec,
+            task=task,
+            child_session=child_session,
+        )
 
         try:
             launch_result = await self.child_session_launcher.launch(
@@ -42,6 +49,12 @@ class DelegateRuntime:
             )
         except Exception as error:
             error_message = f"child session launch failed: {error}"
+            self._complete_worker_handoff(
+                repository=repository,
+                handoff_id=handoff_id,
+                status="FAILED",
+                result_summary={"error": error_message},
+            )
             return {
                 **outcome,
                 "task_status": TaskStatus.FAILED,
@@ -65,6 +78,17 @@ class DelegateRuntime:
             }
 
         detail_patch = self.child_session_launcher.build_result_detail(spec, launch_result)
+        self._complete_worker_handoff(
+            repository=repository,
+            handoff_id=handoff_id,
+            status=str(launch_result.status),
+            result_summary={
+                "agentId": launch_result.agent_id,
+                "childTaskRunId": launch_result.child_task_run_id,
+                "status": str(launch_result.status),
+                "summary": launch_result.summary,
+            },
+        )
         merged_output_payload = {**dict(outcome.get("output_payload") or {})}
         merged_output_payload["childTaskRunId"] = launch_result.child_task_run_id
         merged_output_payload["childStatus"] = launch_result.status
@@ -112,3 +136,42 @@ class DelegateRuntime:
             "detail_json": merge_step_detail(outcome.get("detail_json"), detail_patch),
             "operations": merged_operations,
         }
+
+    @staticmethod
+    def _create_worker_handoff(*, repository, spec: ChildSessionSpec, task, child_session: dict) -> str | None:
+        if not hasattr(repository, "create_worker_handoff"):
+            return None
+        handoff_id = new_id("handoff")
+        metadata = dict(spec.metadata or {})
+        # worker handoff row는 parent transcript와 분리된 실행 시도를 재시작 뒤에도 추적하기 위한 anchor다.
+        repository.create_worker_handoff(
+            {
+                "handoff_id": handoff_id,
+                "task_run_id": spec.parent_task_run_id,
+                "parent_step_run_id": spec.parent_step_run_id,
+                "parent_session_id": getattr(task, "session_key", None),
+                "worker_profile_id": metadata.get("profile_key") or metadata.get("agent_id") or "worker.default",
+                "worker_profile_version": metadata.get("profile_version") or 1,
+                "status": "PENDING",
+                "input_payload": {
+                    "child_intent_type": spec.child_intent_type,
+                    "child_entry_executor_key": spec.child_entry_executor_key,
+                    "summary_prompt": spec.summary_prompt,
+                    "metadata": metadata,
+                    "input_payload": dict(child_session.get("input_payload") or {}),
+                },
+            }
+        )
+        return handoff_id
+
+    @staticmethod
+    def _complete_worker_handoff(*, repository, handoff_id: str | None, status: str, result_summary: dict) -> None:
+        if handoff_id is None or not hasattr(repository, "complete_worker_handoff"):
+            return
+        repository.complete_worker_handoff(
+            handoff_id,
+            {
+                "status": status,
+                "result_summary": result_summary,
+            },
+        )
