@@ -16,6 +16,7 @@ public class ProductSessionResponse {
     private Long userId;
     private String title;
     private String workspaceKey;
+    private Long mainAgentProfileId;
     private ProductSessionStatus status;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -26,6 +27,7 @@ public class ProductSessionResponse {
             .userId(session.getUserId())
             .title(session.getTitle())
             .workspaceKey(session.getWorkspaceKey())
+            .mainAgentProfileId(session.getMainAgentProfileId())
             .status(session.getStatus())
             .createdAt(session.getCreatedAt())
             .updatedAt(session.getUpdatedAt())

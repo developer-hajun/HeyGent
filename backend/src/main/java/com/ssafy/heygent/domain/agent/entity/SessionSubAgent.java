@@ -1,20 +1,18 @@
-package com.ssafy.heygent.domain.session.entity;
+package com.ssafy.heygent.domain.agent.entity;
 
 import java.time.LocalDateTime;
 
 import org.springframework.data.annotation.CreatedDate;
-import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EntityListeners;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -26,37 +24,24 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @AllArgsConstructor
 @Builder
-@Table(name = "product_sessions")
+@Table(
+    name = "session_sub_agents",
+    uniqueConstraints = @UniqueConstraint(columnNames = {"session_id", "agent_profile_id"})
+)
 @EntityListeners(AuditingEntityListener.class)
-public class ProductSession {
+public class SessionSubAgent {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false)
-    private Long userId;
+    @Column(name = "session_id", nullable = false)
+    private Long sessionId;
 
-    @Column(nullable = false, length = 100)
-    private String title;
-
-    @Column(length = 100)
-    private String workspaceKey;
-
-    private Long mainAgentProfileId;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 30)
-    private ProductSessionStatus status;
+    @Column(name = "agent_profile_id", nullable = false)
+    private Long agentProfileId;
 
     @CreatedDate
     @Column(updatable = false)
     private LocalDateTime createdAt;
-
-    @LastModifiedDate
-    private LocalDateTime updatedAt;
-
-    public void connectMainAgent(Long agentProfileId) {
-        this.mainAgentProfileId = agentProfileId;
-    }
 }
