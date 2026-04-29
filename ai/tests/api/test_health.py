@@ -12,7 +12,8 @@ def test_ready(client):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ready"
-    assert body["db_path"].endswith("test.db")
+    assert body["storage"]["backend"] == "sqlite"
+    assert body["storage"]["db_path"].endswith("test.db")
     provider_names = [provider["provider_name"] for provider in body["providers"]]
     assert "openai_api" in provider_names
     assert "openai_oauth" in provider_names

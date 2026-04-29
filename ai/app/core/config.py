@@ -26,6 +26,7 @@ class Settings:
     db_path: Path = Path("tmp/app.db")
     postgres_dsn: str | None = None
     postgres_migrations_enabled: bool = True
+    allow_sqlite_legacy: bool = False
     api_base_url: str | None = None
     openai_api_key: str | None = None
     openai_oauth_client_id: str | None = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -152,6 +153,10 @@ def get_settings() -> Settings:
         postgres_migrations_enabled=_parse_bool(
             _read_env("HEYGENT_POSTGRES_MIGRATIONS_ENABLED", "true", dotenv_values),
             default=True,
+        ),
+        allow_sqlite_legacy=_parse_bool(
+            _read_env("HEYGENT_ALLOW_SQLITE_LEGACY", "false", dotenv_values),
+            default=False,
         ),
         api_base_url=_read_env("HEYGENT_API_BASE_URL", None, dotenv_values),
         openai_api_key=_read_env("HEYGENT_OPENAI_API_KEY", None, dotenv_values),

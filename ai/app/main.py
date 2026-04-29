@@ -47,6 +47,8 @@ async def lifespan(app: FastAPI):
         enabled=settings.postgres_migrations_enabled,
     )
     postgres_connection_factory = (lambda: connect_postgres(settings.postgres_dsn)) if settings.postgres_dsn else None
+    if postgres_connection_factory is None and not settings.allow_sqlite_legacy:
+        raise RuntimeError("제품 런타임은 HEYGENT_POSTGRES_DSN 설정이 필요합니다.")
     durable_repository = (
         PostgresTaskRepository(postgres_connection_factory)
         if postgres_connection_factory is not None
