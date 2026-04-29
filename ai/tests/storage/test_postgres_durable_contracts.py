@@ -8,6 +8,7 @@ from app.domain.tasks.repository import (
 )
 from app.storage.postgres.schema import POSTGRES_SCHEMA_STATEMENTS, render_postgres_schema
 from app.storage.postgres.connection import apply_configured_postgres_migrations
+from app.storage.postgres.durable_repository import PostgresDurableRepository
 from app.storage.postgres.migrations import POSTGRES_MIGRATIONS, apply_postgres_migrations
 from app.storage.sqlite import SQLiteTaskRepository
 
@@ -87,6 +88,9 @@ class _FakeCursor:
     def fetchall(self):
         return self._rows
 
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
 
 class _FakePostgresConnection:
     def __init__(self, *, applied=None):
@@ -132,3 +136,80 @@ def test_postgres_migration_runner_skips_already_applied_migrations():
 def test_configured_postgres_migration_runner_skips_when_disabled_or_missing_dsn():
     assert apply_configured_postgres_migrations(dsn=None, enabled=True) == []
     assert apply_configured_postgres_migrations(dsn="postgresql://example", enabled=False) == []
+
+
+class _FakeDurableConnection:
+    def __init__(self):
+        self.run_anchors: dict[str, dict] = {}
+        self.step_anchors: dict[str, dict] = {}
+        self.worker_handoffs: dict[str, dict] = {}
+        self.commits = 0
+
+    def execute(self, sql: str, params: tuple | None = None):
+        normalized = " ".join(sql.split())
+        if normalized.startswith("INSERT INTO run_anchors"):
+            task_run_id, session_id, owner_key, product_session_id, current_step_run_id, durable_status, anchor_payload = params
+            self.run_anchors[task_run_id] = {
+                "task_run_id": task_run_id,
+                "session_id": session_id,
+                "owner_key": owner_key,
+                "product_session_id": product_session_id,
+                "current_step_run_id": current_step_run_id,
+                "durable_status": durable_status,
+                "anchor_payload": anchor_payload,
+            }
+        elif normalized.startswith("SELECT * FROM run_anchors"):
+            return _FakeCursor([self.run_anchors[params[0]]] if params[0] in self.run_anchors else [])
+        elif normalized.startswith("INSERT INTO step_anchors"):
+            step_run_id, task_run_id, parent_step_run_id, worker_session_id, step_order, step_type, executor_key, durable_status, anchor_payload = params
+            self.step_anchors[step_run_id] = {
+                "step_run_id": step_run_id,
+                "task_run_id": task_run_id,
+                "parent_step_run_id": parent_step_run_id,
+                "worker_session_id": worker_session_id,
+                "step_order": step_order,
+                "step_type": step_type,
+                "executor_key": executor_key,
+                "durable_status": durable_status,
+                "anchor_payload": anchor_payload,
+            }
+        elif normalized.startswith("SELECT * FROM step_anchors"):
+            return _FakeCursor([self.step_anchors[params[0]]] if params[0] in self.step_anchors else [])
+        return _FakeCursor()
+
+    def commit(self):
+        self.commits += 1
+
+
+def test_postgres_durable_repository_upserts_run_and_step_anchors():
+    connection = _FakeDurableConnection()
+    repository = PostgresDurableRepository(lambda: connection)
+
+    run_anchor = repository.upsert_run_anchor(
+        "task_pg_anchor",
+        {
+            "owner_key": "user_pg",
+            "session_id": "agent_session_pg",
+            "product_session_id": "product_session_pg",
+            "current_step_run_id": "step_pg_anchor",
+            "durable_status": "WAITING",
+            "anchor_payload": {"reason": "approval"},
+        },
+    )
+    step_anchor = repository.upsert_step_anchor(
+        "step_pg_anchor",
+        {
+            "task_run_id": "task_pg_anchor",
+            "step_order": 3,
+            "step_type": "agent.loop.execute",
+            "executor_key": "agent.loop",
+            "durable_status": "WAITING",
+            "anchor_payload": {"tool": "terminal.run"},
+        },
+    )
+
+    assert run_anchor["owner_key"] == "user_pg"
+    assert run_anchor["anchor_payload"] == {"reason": "approval"}
+    assert step_anchor["step_order"] == 3
+    assert step_anchor["anchor_payload"] == {"tool": "terminal.run"}
+    assert connection.commits == 2
