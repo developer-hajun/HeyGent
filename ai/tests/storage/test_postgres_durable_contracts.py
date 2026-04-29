@@ -8,7 +8,7 @@ from app.domain.tasks.repository import (
 )
 from app.storage.postgres.schema import POSTGRES_SCHEMA_STATEMENTS, render_postgres_schema
 from app.storage.postgres.connection import apply_configured_postgres_migrations
-from app.storage.postgres.durable_repository import PostgresDurableRepository
+from app.storage.postgres.durable_repository import PostgresDurableRepository, PostgresTaskRepository
 from app.storage.postgres.migrations import POSTGRES_MIGRATIONS, apply_postgres_migrations
 from app.storage.sqlite import SQLiteTaskRepository
 
@@ -26,6 +26,17 @@ def test_sqlite_repository_satisfies_durable_boundary_protocols(tmp_path):
     assert ApprovalRepository in TaskRepository.__mro__
     assert TaskEventRepository in TaskRepository.__mro__
     assert ProviderCredentialRepository in TaskRepository.__mro__
+
+
+def test_postgres_task_repository_satisfies_runtime_repository_protocols():
+    repository = PostgresTaskRepository(lambda: None)
+
+    assert isinstance(repository, ApprovalRepository)
+    assert isinstance(repository, TaskEventRepository)
+    assert isinstance(repository, ProviderCredentialRepository)
+    assert isinstance(repository, TaskRunRepository)
+    assert isinstance(repository, DurableRunAnchorRepository)
+    assert isinstance(repository, TaskRepository)
 
 
 def test_postgres_schema_contains_required_durable_tables():

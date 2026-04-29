@@ -7,6 +7,7 @@ from app.domain.orchestration.agent.loop import TaskEngine
 from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopExecutor
 from app.domain.session import SessionStore, TranscriptStore
 from app.domain.session.sessions import TranscriptStore as SessionsTranscriptStore
+from app.storage.postgres import PostgresSessionStore
 from app.tools.runtime.local_tool_runtime import LocalToolRuntime
 
 
@@ -16,6 +17,12 @@ def test_sqlite_session_store_implements_transcript_store(tmp_path):
         assert isinstance(store, TranscriptStore)
     finally:
         store.close()
+
+
+def test_postgres_session_store_implements_transcript_store():
+    store = PostgresSessionStore(lambda: None)
+
+    assert isinstance(store, TranscriptStore)
 
 
 def test_sqlite_session_store_satisfies_transcript_semantic_contract(tmp_path):

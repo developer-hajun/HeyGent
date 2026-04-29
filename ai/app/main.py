@@ -28,7 +28,7 @@ from app.domain.orchestration.orchestrator import Orchestrator
 from app.domain.orchestration.runtime_planning import Planner
 from app.domain.providers.model import OpenAIAPIProvider, OpenAIOAuthProvider
 from app.domain.providers.registry import ProviderRegistry
-from app.storage.postgres import apply_configured_postgres_migrations
+from app.storage.postgres import PostgresSessionStore, PostgresTaskRepository, apply_configured_postgres_migrations, connect_postgres
 from app.storage.redis import ProjectingTaskRepository, build_task_projection_store
 from app.storage.sqlite import SQLiteTaskRepository
 
@@ -46,7 +46,12 @@ async def lifespan(app: FastAPI):
         dsn=settings.postgres_dsn,
         enabled=settings.postgres_migrations_enabled,
     )
-    durable_repository = SQLiteTaskRepository(settings.db_path)
+    postgres_connection_factory = (lambda: connect_postgres(settings.postgres_dsn)) if settings.postgres_dsn else None
+    durable_repository = (
+        PostgresTaskRepository(postgres_connection_factory)
+        if postgres_connection_factory is not None
+        else SQLiteTaskRepository(settings.db_path)
+    )
     task_projection_store = build_task_projection_store(
         redis_url=settings.redis_url,
         ttl_seconds=settings.task_projection_ttl_seconds,
@@ -83,7 +88,11 @@ async def lifespan(app: FastAPI):
             OpenAIOAuthProvider(settings, repository),
         ]
     )
-    session_store = SessionStore(settings.db_path.with_name("session_state.db"))
+    session_store = (
+        PostgresSessionStore(postgres_connection_factory)
+        if postgres_connection_factory is not None
+        else SessionStore(settings.db_path.with_name("session_state.db"))
+    )
     # recall_service = RecallService(session_store)
     # memory_store = MemoryStore()
     skill_registry = SkillRegistry()

@@ -10,9 +10,10 @@ def connect_postgres(dsn: str) -> Any:
 
     try:
         import psycopg
+        from psycopg.rows import dict_row
     except ModuleNotFoundError as error:
         raise RuntimeError("Postgres 저장소를 사용하려면 psycopg 패키지가 필요합니다.") from error
-    return psycopg.connect(dsn)
+    return psycopg.connect(dsn, row_factory=dict_row)
 
 
 def apply_configured_postgres_migrations(
