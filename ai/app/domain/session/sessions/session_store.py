@@ -70,7 +70,7 @@ END;
 
 
 class SessionStore:
-    """agent.loop transcript와 세션 검색에 쓰는 SQLite 저장소다."""
+    """agent.loop transcript와 세션 검색에 쓰는 SQLite 구현체다."""
 
     _WRITE_MAX_RETRIES = 12
     _WRITE_RETRY_MIN_S = 0.020

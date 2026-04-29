@@ -65,7 +65,42 @@ def test_file_toolset_is_available_for_coding_and_local_core_but_not_safe():
     assert file_tool_names <= resolve_runtime_tool_names(("file",))
     assert file_tool_names <= resolve_runtime_tool_names(("coding",))
     assert file_tool_names <= resolve_runtime_tool_names(("local-core",))
+    assert "delegate_task" in resolve_runtime_tool_names(("local-core",))
     assert file_tool_names.isdisjoint(resolve_runtime_tool_names(("safe",)))
+
+
+def test_delegation_toolset_exposes_delegate_task_contract():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    definitions = runtime.list_tool_definitions(enabled_toolsets=("delegation",))
+
+    assert [definition["name"] for definition in definitions] == ["delegate_task"]
+    schema = definitions[0]["schema"]
+    assert "goal" in schema["parameters"]["properties"]
+    assert "tasks" in schema["parameters"]["properties"]
+
+
+def test_delegate_task_runtime_returns_worker_handoff_request():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    result = runtime.run_call(
+        name="delegate_task",
+        args={
+            "goal": "문서 구현 여부 검증",
+            "context": "Postgres/Redis orchestration 구현을 검토한다.",
+            "toolsets": ["file", "terminal"],
+            "profile_key": "worker.default",
+            "max_iterations": 2,
+        },
+        enabled_toolsets=("delegation",),
+    )
+
+    assert result["ok"] is True
+    assert result["child_session"]["intent_type"] == "agent.loop"
+    assert result["child_session"]["entry_executor_key"] == "agent.loop"
+    assert result["child_session"]["goal"] == "문서 구현 여부 검증"
+    assert result["child_session"]["toolsets"] == ["file", "terminal"]
+    assert result["child_session"]["metadata"]["profile_key"] == "worker.default"
 
 
 def test_todo_writes_and_reads_full_json_ready_result():
