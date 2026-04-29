@@ -593,7 +593,7 @@ async def list_active_tasks(
 @router.post(
     "",
     response_model=TaskRunResponse,
-    summary="TaskRun 직접 실행",
+    summary="세션 루틴/디버깅용 TaskRun 직접 실행",
     description=(
         "메시지 저장 없이 TaskRun을 바로 생성해 Orchestrator(작업 시작/재개를 맡는 내부 실행 관리자)에 실행을 맡깁니다. "
         "일반 채팅 입력은 `/sessions/messages` 또는 `/sessions/{sessionId}/messages`를 사용합니다. "
