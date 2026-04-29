@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
+from app.api.deps.openapi_auth import document_bearer_auth
 from app.contracts.session.agent_session_response import AgentSessionMessageResponse, AgentSessionMessagesResponse
 
-router = APIRouter(prefix="/agentSessions", tags=["agentSessions"])
+router = APIRouter(prefix="/agentSessions", tags=["agentSessions"], dependencies=[Depends(document_bearer_auth)])
 
 
 @router.get("/{agent_session_id}/messages", response_model=AgentSessionMessagesResponse)

@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
+from app.api.deps.openapi_auth import document_bearer_auth
 from app.api.deps.task_context import TaskContext, get_task_context
 from app.core.time import utc_now
 from app.contracts.task.step_status import StepStatus
@@ -32,7 +33,7 @@ from app.contracts.task.task_status import TaskStatus
 from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.tasks.models import StepRun
 
-router = APIRouter(prefix="/taskRuns", tags=["taskRuns"])
+router = APIRouter(prefix="/taskRuns", tags=["taskRuns"], dependencies=[Depends(document_bearer_auth)])
 
 _ACTIVE_TASK_STATUSES = [status.value for status in (TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.WAITING, TaskStatus.BLOCKED)]
 _RECENT_TERMINAL_TASK_STATUSES = [status.value for status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED)]
