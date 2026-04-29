@@ -25,6 +25,7 @@ from app.domain.orchestration.orchestrator import Orchestrator
 from app.domain.orchestration.runtime_planning import Planner
 from app.domain.providers.model import OpenAIAPIProvider, OpenAIOAuthProvider
 from app.domain.providers.registry import ProviderRegistry
+from app.storage.redis import ProjectingTaskRepository, build_task_projection_store
 from app.storage.sqlite import SQLiteTaskRepository
 
 
@@ -37,7 +38,17 @@ async def lifespan(app: FastAPI):
 
     configure_logging()
     settings = get_settings()
-    repository = SQLiteTaskRepository(settings.db_path)
+    durable_repository = SQLiteTaskRepository(settings.db_path)
+    task_projection_store = build_task_projection_store(
+        redis_url=settings.redis_url,
+        ttl_seconds=settings.task_projection_ttl_seconds,
+        max_events=settings.task_projection_max_events,
+    )
+    repository = (
+        ProjectingTaskRepository(durable_repository, task_projection_store)
+        if task_projection_store is not None
+        else durable_repository
+    )
     topic_router = TopicRouter()
     ws_manager = WebSocketManager()
     session_registry = SessionRegistry()
@@ -88,6 +99,7 @@ async def lifespan(app: FastAPI):
 
     app.state.settings = settings
     app.state.repository = repository
+    app.state.task_projection_store = task_projection_store
     app.state.ws_manager = ws_manager
     app.state.session_registry = session_registry
     app.state.connection_registry = connection_registry
@@ -109,6 +121,8 @@ async def lifespan(app: FastAPI):
     yield
     await backend_auth_client.aclose()
     await connection_registry.aclose()
+    if task_projection_store is not None:
+        task_projection_store.close()
     session_store.close()
 
 

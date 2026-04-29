@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -166,6 +167,47 @@ def _build_active_task_item(
         wait_reason=(task.wait_payload or {}).get("reason"),
         pending_approval=pending_approval,
     )
+
+
+def _projection_steps(context: TaskContext, task_run_id: str) -> list[StepRun]:
+    """Redis projection에 남은 StepRun snapshot을 순서대로 복원한다."""
+
+    projection = context.task_projection_store
+    if projection is None:
+        return []
+    steps: list[StepRun] = []
+    for step_run_id in projection.list_task_steps(task_run_id):
+        step = projection.get_step_snapshot(step_run_id)
+        if step is not None:
+            steps.append(step)
+    return steps
+
+
+def _build_active_items_from_projection(
+    *,
+    session_key: str,
+    context: TaskContext,
+) -> dict[str, ActiveTaskRunListItemResponse]:
+    """Redis projection이 살아 있으면 active 목록을 DB 조회 전에 빠르게 만든다."""
+
+    projection = context.task_projection_store
+    if projection is None:
+        return {}
+
+    items_by_task_run_id: dict[str, ActiveTaskRunListItemResponse] = {}
+    for task_run_id in projection.list_active_task_ids(session_key=session_key):
+        task = projection.get_task_snapshot(task_run_id)
+        if task is None:
+            continue
+        steps = _projection_steps(context, task.task_run_id)
+        pending_approval = _build_pending_approval_response(context.repository.get_open_approval(task.task_run_id))
+        items_by_task_run_id[task.task_run_id] = _build_active_task_item(
+            task,
+            steps,
+            source="active",
+            pending_approval=pending_approval,
+        )
+    return items_by_task_run_id
 
 
 def _build_pending_approval_response(approval: dict | None) -> PendingApprovalResponse | None:
@@ -364,6 +406,25 @@ def _build_flow_edges(steps: list[StepRun]) -> list[TaskRunFlowEdgeResponse]:
     return edges
 
 
+def _events_from_projection(
+    context: TaskContext,
+    task_run_id: str,
+    *,
+    after_sequence: int | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """재연결 복구용 recent event projection을 sequence window로 잘라낸다."""
+
+    projection = context.task_projection_store
+    if projection is None:
+        return []
+
+    events = projection.list_recent_events(task_run_id)
+    if after_sequence is not None:
+        events = [event for event in events if int(event.get("sequence") or 0) > after_sequence]
+    return events[:limit]
+
+
 @router.get("", response_model=TaskRunListResponse)
 def list_tasks(
     page: int = Query(default=1, ge=1),
@@ -394,6 +455,12 @@ def list_active_tasks(
     context: TaskContext = Depends(get_task_context),
 ) -> ActiveTaskRunListResponse:
     now = utc_now()
+    items_by_task_run_id = (
+        _build_active_items_from_projection(session_key=session_key, context=context)
+        if session_key
+        else {}
+    )
+
     active_total_count = context.repository.count_tasks_by_statuses(_ACTIVE_TASK_STATUSES, session_key=session_key)
     active_tasks = context.repository.list_tasks_by_statuses(_ACTIVE_TASK_STATUSES, session_key=session_key, limit=max(active_total_count, 1), offset=0)
 
@@ -405,8 +472,9 @@ def list_active_tasks(
         offset=0,
     )
 
-    items_by_task_run_id: dict[str, ActiveTaskRunListItemResponse] = {}
     for task in active_tasks:
+        if task.task_run_id in items_by_task_run_id:
+            continue
         steps = context.repository.list_steps(task.task_run_id)
         pending_approval = _build_pending_approval_response(context.repository.get_open_approval(task.task_run_id))
         items_by_task_run_id[task.task_run_id] = _build_active_task_item(
@@ -499,9 +567,23 @@ def list_steps(task_run_id: str, context: TaskContext = Depends(get_task_context
 
 
 @router.get("/{task_run_id}/events", response_model=list[TaskEventResponse])
-def list_events(task_run_id: str, context: TaskContext = Depends(get_task_context)) -> list[TaskEventResponse]:
+def list_events(
+    task_run_id: str,
+    after_sequence: int | None = Query(default=None, ge=0, alias="afterSequence"),
+    limit: int = Query(default=200, ge=1, le=500),
+    context: TaskContext = Depends(get_task_context),
+) -> list[TaskEventResponse]:
+    projected_events = _events_from_projection(
+        context,
+        task_run_id,
+        after_sequence=after_sequence,
+        limit=limit,
+    )
+    if projected_events:
+        return [TaskEventResponse.model_validate(event, from_attributes=True) for event in projected_events]
+
     events = context.repository.list_events(task_run_id)
-    return [TaskEventResponse.model_validate(event, from_attributes=True) for event in events]
+    return [TaskEventResponse.model_validate(event, from_attributes=True) for event in events[:limit]]
 
 
 @router.post("/{task_run_id}/resume", response_model=TaskRunResponse)

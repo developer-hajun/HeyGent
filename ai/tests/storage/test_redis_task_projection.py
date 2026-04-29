@@ -3,7 +3,9 @@ from datetime import datetime, timezone
 
 from app.contracts.event.task_events import TaskEventEnvelope
 from app.domain.tasks.models import StepRun, TaskRun
+from app.storage.sqlite import SQLiteTaskRepository
 from app.storage.redis import FakeRedis, RedisTaskProjectionStore
+from app.storage.redis.projecting_repository import ProjectingTaskRepository
 
 
 def test_redis_projection_persists_task_and_step_snapshots_with_indexes():
@@ -241,3 +243,48 @@ def test_redis_projection_removes_sensitive_provider_tokens_from_payloads():
     assert saved_task["input_payload"]["nested"]["safe"] == "kept"
     assert "api_key" not in projected_event["payload"]
     assert projected_event["payload"]["safe"] == "kept"
+
+
+def test_projecting_repository_writes_redis_projection_after_durable_repository(tmp_path):
+    base_repository = SQLiteTaskRepository(tmp_path / "projection.db")
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
+    repository = ProjectingTaskRepository(base_repository, projection)
+    task = TaskRun(
+        task_run_id="task_repo_projection",
+        task_type="agent.loop",
+        owner_key="user_repo_projection",
+        session_key="session_repo_projection",
+        status="RUNNING",
+        title="repository projection",
+    )
+    step = StepRun(
+        step_run_id="step_repo_projection",
+        task_run_id=task.task_run_id,
+        step_order=1,
+        step_type="agent.loop.execute",
+        status="RUNNING",
+        title="repository step",
+    )
+    event = TaskEventEnvelope(
+        event_id="event_repo_projection",
+        event_type="task.updated",
+        task_run_id=task.task_run_id,
+        step_run_id=step.step_run_id,
+        producer="test",
+        occurred_at="2026-04-29T00:00:00+00:00",
+        status="RUNNING",
+    )
+
+    repository.create_task(task)
+    repository.create_step(step)
+    repository.append_event(event)
+
+    assert projection.get_task_snapshot(task.task_run_id).title == "repository projection"
+    assert projection.get_step_snapshot(step.step_run_id).title == "repository step"
+    assert projection.list_active_task_ids(session_key="session_repo_projection") == [task.task_run_id]
+    assert projection.list_recent_events(task.task_run_id)[0]["sequence"] == 1
+
+    task.status = "COMPLETED"
+    repository.update_task(task)
+
+    assert projection.list_active_task_ids(session_key="session_repo_projection") == []

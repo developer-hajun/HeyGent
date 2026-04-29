@@ -41,6 +41,8 @@ class Settings:
     internal_service_token: str | None = None
     redis_url: str | None = None
     ws_connection_ttl_seconds: int = 60
+    task_projection_ttl_seconds: int = 3600
+    task_projection_max_events: int = 200
 
     def resolved_api_base_url(self) -> str:
         """CLI 와 외부 클라이언트가 공통으로 사용할 기본 API 주소를 계산한다."""
@@ -151,5 +153,13 @@ def get_settings() -> Settings:
         ws_connection_ttl_seconds=_parse_int(
             _read_env("HEYGENT_WS_CONNECTION_TTL_SECONDS", 60, dotenv_values),
             default=60,
+        ),
+        task_projection_ttl_seconds=_parse_int(
+            _read_env("HEYGENT_TASK_PROJECTION_TTL_SECONDS", 3600, dotenv_values),
+            default=3600,
+        ),
+        task_projection_max_events=_parse_int(
+            _read_env("HEYGENT_TASK_PROJECTION_MAX_EVENTS", 200, dotenv_values),
+            default=200,
         ),
     )

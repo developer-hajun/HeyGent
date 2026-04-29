@@ -112,6 +112,13 @@ class RedisTaskProjectionStore:
             return 0
         return self.redis.zremrangebyrank(self._task_events_key(task_run_id), 0, overflow - 1)
 
+    def close(self) -> None:
+        """sync Redis client가 close를 제공하면 앱 종료 시 연결을 닫는다."""
+
+        close = getattr(self.redis, "close", None)
+        if callable(close):
+            close()
+
     @staticmethod
     def _dump_dataclass(value: Any) -> dict[str, Any]:
         return asdict(value)

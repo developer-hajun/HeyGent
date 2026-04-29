@@ -29,8 +29,12 @@ def test_redis_connection_registry_settings_read_environment(monkeypatch, tmp_pa
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HEYGENT_REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("HEYGENT_WS_CONNECTION_TTL_SECONDS", "120")
+    monkeypatch.setenv("HEYGENT_TASK_PROJECTION_TTL_SECONDS", "1800")
+    monkeypatch.setenv("HEYGENT_TASK_PROJECTION_MAX_EVENTS", "50")
 
     settings = get_settings()
 
     assert settings.redis_url == "redis://localhost:6379/0"
     assert settings.ws_connection_ttl_seconds == 120
+    assert settings.task_projection_ttl_seconds == 1800
+    assert settings.task_projection_max_events == 50

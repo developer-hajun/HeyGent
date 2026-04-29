@@ -193,7 +193,10 @@ class ActiveTaskRunListResponse(BaseModel):
 
 
 class TaskEventResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     event_id: str
+    event_id_alias: str | None = Field(default=None, alias="eventId")
     event_type: str
     task_run_id: str
     step_run_id: str | None = None
@@ -201,3 +204,4 @@ class TaskEventResponse(BaseModel):
     summary_message: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
     occurred_at: str
+    sequence: int | None = None

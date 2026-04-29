@@ -4,7 +4,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 
+from app.contracts.event.task_events import TaskEventEnvelope
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse, AssistantToolCall
+from app.domain.tasks.models import StepRun, TaskRun
+from app.storage.redis import FakeRedis, RedisTaskProjectionStore
 
 
 def _response(*, text: str = "", tool_calls: list[AssistantToolCall] | None = None, model: str = "gpt-test") -> AgentModelResponse:
@@ -654,6 +657,72 @@ def test_taskruns_active_supports_session_filter_and_recent_terminal(client, mon
     expired_active = client.get("/api/v1/taskRuns/active", params={"sessionKey": "missing"})
     assert expired_active.status_code == 200
     assert expired_active.json()["items"] == []
+
+
+def test_taskruns_active_prefers_redis_projection_for_live_session(client):
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
+    client.app.state.task_projection_store = projection
+    task = TaskRun(
+        task_run_id="task_projection_active",
+        task_type="agent.loop",
+        intent_type="agent.loop",
+        entry_executor_key="agent.loop",
+        owner_key="projection-user",
+        session_key="sess_projection",
+        status="RUNNING",
+        title="projection 작업",
+        progress_summary="projection 실행 중",
+    )
+    step = StepRun(
+        step_run_id="step_projection_active",
+        task_run_id=task.task_run_id,
+        step_order=1,
+        step_type="agent.loop.execute",
+        executor_key="agent.loop",
+        status="RUNNING",
+        title="projection 단계",
+    )
+    task.current_step_run_id = step.step_run_id
+    projection.save_task_snapshot(task)
+    projection.save_step_snapshot(step)
+
+    response = client.get("/api/v1/taskRuns/active", params={"sessionKey": "sess_projection"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 1
+    assert body["items"][0]["task_run_id"] == "task_projection_active"
+    assert body["items"][0]["source"] == "active"
+    assert body["items"][0]["current_step"]["step_run_id"] == "step_projection_active"
+
+
+def test_taskruns_events_reads_redis_recent_projection_with_sequence_window(client):
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
+    client.app.state.task_projection_store = projection
+    for index in range(3):
+        projection.append_event(
+            TaskEventEnvelope(
+                event_id=f"event_projection_{index}",
+                event_type="task.updated",
+                task_run_id="task_projection_events",
+                step_run_id="step_projection_events",
+                producer="test",
+                occurred_at=f"2026-04-29T00:00:0{index}+00:00",
+                status="RUNNING",
+                summary_message=f"event {index}",
+            )
+        )
+
+    response = client.get(
+        "/api/v1/taskRuns/task_projection_events/events",
+        params={"afterSequence": 1, "limit": 1},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["event_id"] == "event_projection_1"
+    assert body[0]["sequence"] == 2
 
 
 def test_taskruns_flow_returns_observed_step_node(client, monkeypatch):
