@@ -1,31 +1,53 @@
 from __future__ import annotations
 
+from time import monotonic
+from typing import Any
+
 from app.contracts.task.task_status import TaskStatus
 from app.core.utils.ids import new_id
 from app.domain.orchestration.delegation.launcher import ChildSessionLauncher
 from app.domain.orchestration.delegation.policies import child_task_unsuccessful
 from app.domain.orchestration.delegation.spec import ChildSessionSpec
+from app.domain.session.sessions.transcript_store import TranscriptStore
 from app.domain.tasks.detail import merge_step_detail
+
+
+BLOCKED_WORKER_TOOLSETS = ("delegate", "delegation")
+DEFAULT_WORKER_TOOLSETS = ("skills", "terminal", "file")
 
 
 class DelegateRuntime:
     """child session lifecycle 을 parent step 관점에서 정리한다."""
 
-    def __init__(self, child_session_launcher: ChildSessionLauncher) -> None:
+    def __init__(self, child_session_launcher: ChildSessionLauncher, session_store: TranscriptStore | None = None) -> None:
         self.child_session_launcher = child_session_launcher
+        self.session_store = session_store
 
     async def apply(self, *, task, step, outcome: dict, repository) -> dict:
         child_session = outcome.get("child_session")
         if not child_session:
             return outcome
 
+        normalized_contract = self._normalize_child_contract(task=task, step=step, child_session=child_session)
+        worker_session_id = self._create_worker_session(
+            task=task,
+            step=step,
+            contract=normalized_contract,
+        )
         spec = ChildSessionSpec(
             parent_task_run_id=task.task_run_id,
             parent_step_run_id=step.step_run_id,
             child_intent_type=str(child_session["intent_type"]),
             child_entry_executor_key=str(child_session["entry_executor_key"]),
             summary_prompt=child_session.get("summary_prompt"),
-            metadata=dict(child_session.get("metadata") or {}),
+            metadata={
+                **dict(child_session.get("metadata") or {}),
+                "profile_key": normalized_contract["profile_key"],
+                "agent_id": normalized_contract["agent_id"],
+                "toolsets": normalized_contract["toolsets"],
+                "blocked_toolsets": normalized_contract["blocked_toolsets"],
+            },
+            worker_session_id=worker_session_id,
         )
 
         # parent step 은 child 실행이 끝나기 전에도 "어떤 child 를 띄우려 했는가"를 저장해야 한다.
@@ -37,23 +59,37 @@ class DelegateRuntime:
             repository=repository,
             spec=spec,
             task=task,
-            child_session=child_session,
+            contract=normalized_contract,
         )
 
+        started_at = monotonic()
         try:
             launch_result = await self.child_session_launcher.launch(
                 spec=spec,
                 owner_key=task.owner_key,
                 session_key=task.session_key,
-                input_payload=dict(child_session.get("input_payload") or {}),
+                input_payload=self._build_worker_input_payload(
+                    contract=normalized_contract,
+                    worker_session_id=worker_session_id,
+                    handoff_id=handoff_id,
+                ),
             )
         except Exception as error:
             error_message = f"child session launch failed: {error}"
+            delegate_summary = self._build_delegate_summary(
+                contract=normalized_contract,
+                agent_id=normalized_contract["agent_id"],
+                worker_session_id=worker_session_id,
+                status=TaskStatus.FAILED,
+                summary="child session launch failed",
+                started_at=started_at,
+                error=error_message,
+            )
             self._complete_worker_handoff(
                 repository=repository,
                 handoff_id=handoff_id,
                 status="FAILED",
-                result_summary={"error": error_message},
+                result_summary=delegate_summary,
             )
             return {
                 **outcome,
@@ -61,6 +97,16 @@ class DelegateRuntime:
                 "step_status": TaskStatus.FAILED,
                 "error_message": error_message,
                 "summary_message": "child session launch failed",
+                "result_payload": {
+                    **dict(outcome.get("result_payload") or {}),
+                    "delegate": delegate_summary,
+                    "results": delegate_summary["results"],
+                    "total_duration_seconds": delegate_summary["total_duration_seconds"],
+                },
+                "output_payload": {
+                    **dict(outcome.get("output_payload") or {}),
+                    "delegate": delegate_summary,
+                },
                 "detail_json": merge_step_detail(
                     outcome.get("detail_json"),
                     self.child_session_launcher.build_failed_detail(spec, error_message),
@@ -78,23 +124,31 @@ class DelegateRuntime:
             }
 
         detail_patch = self.child_session_launcher.build_result_detail(spec, launch_result)
+        delegate_summary = self._build_delegate_summary(
+            contract=normalized_contract,
+            agent_id=launch_result.agent_id,
+            worker_session_id=worker_session_id,
+            status=str(launch_result.status),
+            summary=launch_result.summary,
+            started_at=started_at,
+            launch_result=launch_result,
+        )
         self._complete_worker_handoff(
             repository=repository,
             handoff_id=handoff_id,
             status=str(launch_result.status),
-            result_summary={
-                "agentId": launch_result.agent_id,
-                "childTaskRunId": launch_result.child_task_run_id,
-                "status": str(launch_result.status),
-                "summary": launch_result.summary,
-            },
+            result_summary=delegate_summary,
         )
         merged_output_payload = {**dict(outcome.get("output_payload") or {})}
         merged_output_payload["childTaskRunId"] = launch_result.child_task_run_id
         merged_output_payload["childStatus"] = launch_result.status
+        merged_output_payload["delegate"] = delegate_summary
 
         merged_result_payload = {**dict(outcome.get("result_payload") or {})}
         merged_result_payload["childTaskRunId"] = launch_result.child_task_run_id
+        merged_result_payload["delegate"] = delegate_summary
+        merged_result_payload["results"] = delegate_summary["results"]
+        merged_result_payload["total_duration_seconds"] = delegate_summary["total_duration_seconds"]
 
         merged_operations = [
             *list(outcome.get("operations") or []),
@@ -138,7 +192,7 @@ class DelegateRuntime:
         }
 
     @staticmethod
-    def _create_worker_handoff(*, repository, spec: ChildSessionSpec, task, child_session: dict) -> str | None:
+    def _create_worker_handoff(*, repository, spec: ChildSessionSpec, task, contract: dict[str, Any]) -> str | None:
         if not hasattr(repository, "create_worker_handoff"):
             return None
         handoff_id = new_id("handoff")
@@ -150,15 +204,16 @@ class DelegateRuntime:
                 "task_run_id": spec.parent_task_run_id,
                 "parent_step_run_id": spec.parent_step_run_id,
                 "parent_session_id": getattr(task, "session_key", None),
-                "worker_profile_id": metadata.get("profile_key") or metadata.get("agent_id") or "worker.default",
+                "worker_session_id": spec.worker_session_id,
+                "worker_profile_id": contract["profile_key"],
                 "worker_profile_version": metadata.get("profile_version") or 1,
                 "status": "PENDING",
                 "input_payload": {
+                    **contract,
                     "child_intent_type": spec.child_intent_type,
                     "child_entry_executor_key": spec.child_entry_executor_key,
                     "summary_prompt": spec.summary_prompt,
                     "metadata": metadata,
-                    "input_payload": dict(child_session.get("input_payload") or {}),
                 },
             }
         )
@@ -175,3 +230,251 @@ class DelegateRuntime:
                 "result_summary": result_summary,
             },
         )
+
+    def _create_worker_session(self, *, task, step, contract: dict[str, Any]) -> str | None:
+        if self.session_store is None:
+            return None
+
+        session_key = str(getattr(task, "session_key", "") or getattr(task, "task_run_id", "")).strip()
+        if not session_key:
+            return None
+
+        parent_session_id = None
+        latest_parent = self.session_store.get_latest_session_by_key(session_key)
+        if latest_parent is not None:
+            parent_session_id = str(latest_parent.get("id") or "").strip() or None
+
+        worker_session_id = new_id("session")
+        # worker session은 같은 product session_key 아래에 두되 parent_session_id와 parent_step_run_id로 계층을 고정한다.
+        self.session_store.create_session(
+            session_id=worker_session_id,
+            session_key=session_key,
+            source="worker",
+            user_id=getattr(task, "owner_key", None),
+            model=contract.get("model"),
+            parent_session_id=parent_session_id,
+            title=str(contract.get("goal") or getattr(step, "title", None) or "worker")[:120],
+            metadata={
+                "task_run_id": getattr(task, "task_run_id", None),
+                "parent_task_run_id": getattr(task, "task_run_id", None),
+                "parent_step_run_id": getattr(step, "step_run_id", None),
+                "profile_key": contract["profile_key"],
+                "agent_id": contract["agent_id"],
+                "session_role": "worker",
+                "delegation_policy": {
+                    "leaf": True,
+                    "max_worker_depth": 0,
+                    "blocked_toolsets": list(BLOCKED_WORKER_TOOLSETS),
+                },
+                "toolsets": contract["toolsets"],
+            },
+        )
+        return worker_session_id
+
+    @classmethod
+    def _normalize_child_contract(cls, *, task, step, child_session: dict[str, Any]) -> dict[str, Any]:
+        source_payload = dict(child_session.get("input_payload") or {})
+        metadata = dict(child_session.get("metadata") or {})
+        goal = cls._optional_text(child_session.get("goal")) or cls._optional_text(source_payload.get("goal")) or cls._optional_text(source_payload.get("prompt")) or "worker task"
+        context = child_session.get("context", source_payload.get("context", {}))
+        toolsets = cls._normalize_worker_toolsets(
+            child_session.get("toolsets", source_payload.get("toolsets", source_payload.get("enabled_toolsets")))
+        )
+        max_iterations = cls._normalize_positive_int(child_session.get("max_iterations", source_payload.get("max_iterations")), default=12)
+        profile_key = cls._optional_text(child_session.get("profile_key")) or cls._optional_text(metadata.get("profile_key")) or "worker.default"
+        agent_id = (
+            cls._optional_text(child_session.get("agent_id"))
+            or cls._optional_text(metadata.get("agent_id"))
+            or f"{getattr(step, 'step_run_id', 'step')}:worker"
+        )
+        role = cls._optional_text(child_session.get("role", source_payload.get("role"))) or "worker"
+        tasks = child_session.get("tasks", source_payload.get("tasks", []))
+        if not isinstance(tasks, list):
+            tasks = []
+
+        return {
+            "goal": goal,
+            "context": context if context is not None else {},
+            "toolsets": toolsets,
+            "blocked_toolsets": list(BLOCKED_WORKER_TOOLSETS),
+            "max_iterations": max_iterations,
+            "role": role,
+            "acp_command": child_session.get("acp_command", source_payload.get("acp_command")),
+            "acp_args": dict(child_session.get("acp_args", source_payload.get("acp_args", {})) or {}),
+            "tasks": tasks,
+            "profile_key": profile_key,
+            "agent_id": agent_id,
+            "model": cls._optional_text(child_session.get("model", source_payload.get("model"))),
+            "input_payload": source_payload,
+            "parent_task_run_id": getattr(task, "task_run_id", None),
+            "parent_step_run_id": getattr(step, "step_run_id", None),
+        }
+
+    @staticmethod
+    def _build_worker_input_payload(*, contract: dict[str, Any], worker_session_id: str | None, handoff_id: str | None) -> dict[str, Any]:
+        payload = dict(contract.get("input_payload") or {})
+        prompt = str(payload.get("prompt") or "").strip()
+        if not prompt:
+            prompt_parts = [f"Goal: {contract['goal']}"]
+            context_value = contract.get("context")
+            if context_value is not None and context_value != "" and context_value != {}:
+                prompt_parts.append(f"Context: {contract['context']}")
+            prompt = "\n".join(prompt_parts)
+        payload.update(
+            {
+                "prompt": prompt,
+                "goal": contract["goal"],
+                "context": contract["context"],
+                "toolsets": contract["toolsets"],
+                "enabled_toolsets": contract["toolsets"],
+                "blocked_toolsets": contract["blocked_toolsets"],
+                "max_iterations": contract["max_iterations"],
+                "role": contract["role"],
+                "acp_command": contract["acp_command"],
+                "acp_args": contract["acp_args"],
+                "tasks": contract["tasks"],
+                "profile_key": contract["profile_key"],
+                "agent_id": contract["agent_id"],
+                "transcript_session_id": worker_session_id,
+                "worker": {
+                    "leaf": True,
+                    "handoff_id": handoff_id,
+                    "parent_task_run_id": contract["parent_task_run_id"],
+                    "parent_step_run_id": contract["parent_step_run_id"],
+                    "worker_session_id": worker_session_id,
+                    "blocked_toolsets": contract["blocked_toolsets"],
+                },
+            }
+        )
+        return payload
+
+    @classmethod
+    def _build_delegate_summary(
+        cls,
+        *,
+        contract: dict[str, Any],
+        agent_id: str,
+        worker_session_id: str | None,
+        status: str,
+        summary: str | None,
+        started_at: float,
+        launch_result=None,
+        error: str | None = None,
+    ) -> dict[str, Any]:
+        duration = cls._duration_since(started_at)
+        result_payload = dict(getattr(launch_result, "result_payload", {}) or {})
+        output_payload = dict(getattr(launch_result, "output_payload", {}) or {})
+        result_item = {
+            "task_index": 0,
+            "status": status,
+            "summary": summary,
+            "api_calls": cls._api_call_count(result_payload=result_payload, output_payload=output_payload),
+            "duration_seconds": getattr(launch_result, "duration_seconds", None) if launch_result is not None else duration,
+            "model": cls._model_name(result_payload=result_payload, output_payload=output_payload, contract=contract),
+            "exit_reason": status,
+            "tokens": cls._tokens(result_payload=result_payload, output_payload=output_payload),
+            "tool_trace": cls._tool_trace(result_payload=result_payload, output_payload=output_payload),
+            "error": error,
+        }
+        return {
+            "profile_key": contract["profile_key"],
+            "agent_id": agent_id,
+            "worker_session_id": worker_session_id,
+            "tasks": list(contract.get("tasks") or []),
+            "results": [result_item],
+            "total_duration_seconds": duration,
+            "toolsets": contract["toolsets"],
+            "blocked_toolsets": contract["blocked_toolsets"],
+            "leaf": True,
+            "childTaskRunId": getattr(launch_result, "child_task_run_id", None),
+            "status": status,
+            "summary": summary,
+            "error": error,
+        }
+
+    @staticmethod
+    def _normalize_worker_toolsets(raw_toolsets: Any) -> list[str]:
+        source = raw_toolsets if isinstance(raw_toolsets, list) else list(DEFAULT_WORKER_TOOLSETS)
+        normalized: list[str] = []
+        blocked = set(BLOCKED_WORKER_TOOLSETS)
+        for item in source:
+            name = str(item or "").strip()
+            if not name or name in blocked or name in normalized:
+                continue
+            normalized.append(name)
+        return normalized or list(DEFAULT_WORKER_TOOLSETS)
+
+    @staticmethod
+    def _normalize_positive_int(value: Any, *, default: int) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        return max(1, parsed)
+
+    @staticmethod
+    def _optional_text(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    @staticmethod
+    def _duration_since(started_at: float) -> float:
+        return round(max(0.0, monotonic() - started_at), 3)
+
+    @staticmethod
+    def _api_call_count(*, result_payload: dict[str, Any], output_payload: dict[str, Any]) -> int:
+        for payload in (output_payload, result_payload):
+            detail = payload.get("llmDetail") if isinstance(payload.get("llmDetail"), dict) else None
+            if detail is not None and detail.get("callCount") is not None:
+                return int(detail.get("callCount") or 0)
+            usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
+            if usage:
+                return 1
+        return 0
+
+    @staticmethod
+    def _model_name(*, result_payload: dict[str, Any], output_payload: dict[str, Any], contract: dict[str, Any]) -> str | None:
+        metadata = result_payload.get("metadata") if isinstance(result_payload.get("metadata"), dict) else {}
+        for value in (
+            output_payload.get("model"),
+            result_payload.get("model"),
+            metadata.get("model"),
+            metadata.get("resolved_model"),
+            contract.get("model"),
+        ):
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    @staticmethod
+    def _tokens(*, result_payload: dict[str, Any], output_payload: dict[str, Any]) -> dict[str, Any]:
+        for payload in (output_payload, result_payload):
+            usage = payload.get("usage")
+            if isinstance(usage, dict):
+                return dict(usage)
+            tokens = payload.get("tokens")
+            if isinstance(tokens, dict):
+                return dict(tokens)
+        return {}
+
+    @staticmethod
+    def _tool_trace(*, result_payload: dict[str, Any], output_payload: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_results = output_payload.get("tool_results") or result_payload.get("tool_results") or []
+        if not isinstance(raw_results, list):
+            return []
+        trace = []
+        for item in raw_results:
+            if not isinstance(item, dict):
+                continue
+            result = item.get("result") if isinstance(item.get("result"), dict) else {}
+            trace.append(
+                {
+                    "tool_call_id": item.get("tool_call_id"),
+                    "name": item.get("name"),
+                    "status": "failed" if result.get("ok") is False else "completed",
+                    "error": result.get("error"),
+                }
+            )
+        return trace

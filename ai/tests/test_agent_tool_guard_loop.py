@@ -65,6 +65,11 @@ class FakeSessionStore:
     def get_latest_session_by_key(self, session_key):
         return self.sessions_by_key.get(session_key)
 
+    def get_session(self, session_id):
+        if session_id in self.messages_by_session_id:
+            return {"id": session_id, "metadata": {}}
+        return None
+
     def create_session(self, *, session_id, session_key, source, user_id, model, title, metadata):
         session = {
             "id": session_id,
@@ -130,6 +135,33 @@ class StaticGuard:
             }
         )
         return self.result
+
+
+def test_worker_transcript_session_id_is_reused_without_collapsing_into_parent_session():
+    session_store = FakeSessionStore()
+    session_store.messages_by_session_id["agent_session_worker"] = []
+    executor = ToolCallingLoopExecutor(
+        provider=FakeProvider([]),
+        prompt_builder=FakePromptBuilder(),
+        tool_runtime=RecordingRuntime(),
+        tool_catalog=FakeToolCatalog(),
+        session_store=session_store,
+    )
+    task = SimpleNamespace(
+        task_run_id="task_child",
+        owner_key="user_1",
+        session_key="product_session",
+        title="Worker child",
+    )
+
+    session_id = executor._ensure_transcript_session(
+        task=task,
+        task_input={"transcript_session_id": "agent_session_worker"},
+        model="gpt-test",
+    )
+
+    assert session_id == "agent_session_worker"
+    assert "product_session" not in session_store.sessions_by_key
 
 
 def _task(input_payload: dict | None = None):

@@ -45,10 +45,10 @@ class PostgresSessionStore:
             """
             INSERT INTO agent_sessions (
                 session_id, owner_key, session_key, parent_session_id,
-                agent_profile_id, agent_profile_version, agent_config_snapshot,
+                parent_step_run_id, agent_profile_id, agent_profile_version, agent_config_snapshot,
                 session_role, status, title, metadata, created_at, updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, 'ACTIVE', %s, %s::jsonb, now(), now())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, 'ACTIVE', %s, %s::jsonb, now(), now())
             ON CONFLICT (session_id) DO NOTHING
             """,
             (
@@ -56,6 +56,7 @@ class PostgresSessionStore:
                 owner_key,
                 session_key,
                 parent_session_id,
+                metadata_payload.get("parent_step_run_id"),
                 metadata_payload.get("agent_profile_id"),
                 int(metadata_payload.get("agent_profile_version") or 1),
                 _json(metadata_payload.get("agent_config_snapshot") or {}),
@@ -211,6 +212,7 @@ def _session_from_row(row: Any) -> dict[str, Any] | None:
         "model": metadata.get("model"),
         "system_prompt": metadata.get("system_prompt"),
         "parent_session_id": row.get("parent_session_id"),
+        "parent_step_run_id": row.get("parent_step_run_id"),
         "title": row.get("title"),
         "metadata": metadata,
         "started_at": row.get("created_at"),

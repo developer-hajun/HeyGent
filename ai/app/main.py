@@ -111,7 +111,7 @@ async def lifespan(app: FastAPI):
         tool_catalog=tool_catalog,
         session_store=session_store,
     )
-    task_engine = TaskEngine(repository, broadcaster, approval_service, child_session_launcher, planner, tool_registry)
+    task_engine = TaskEngine(repository, broadcaster, approval_service, child_session_launcher, planner, tool_registry, session_store=session_store)
     loop_runner = AgentLoopRunner(
         repository=repository,
         planner=planner,

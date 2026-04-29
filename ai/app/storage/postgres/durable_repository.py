@@ -467,6 +467,7 @@ class PostgresTaskRepository(PostgresDurableRepository):
             step.step_run_id,
             {
                 "task_run_id": step.task_run_id,
+                "worker_session_id": ((step.detail_json or {}).get("agentDetail") or {}).get("workerSessionId"),
                 "step_order": step.step_order,
                 "step_type": step.step_type,
                 "executor_key": step.executor_key,

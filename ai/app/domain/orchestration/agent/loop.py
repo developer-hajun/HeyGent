@@ -49,6 +49,7 @@ class TaskEngine:
         child_session_launcher: ChildSessionLauncher,
         planner: Planner,
         tool_registry,
+        session_store: TranscriptStore | None = None,
     ) -> None:
         self.repository = repository
         self.broadcaster = broadcaster
@@ -57,7 +58,7 @@ class TaskEngine:
         self.planner = planner
         self.tool_registry = tool_registry
         self.approval_runtime = ApprovalRuntime()
-        self.delegate_runtime = DelegateRuntime(child_session_launcher)
+        self.delegate_runtime = DelegateRuntime(child_session_launcher, session_store=session_store)
         self.outcome_inspector = OutcomeInspector()
         self.step_executor = StepExecutor()
 
