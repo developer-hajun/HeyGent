@@ -6,30 +6,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class CreateSessionRequest(BaseModel):
-    model_config = ConfigDict(
-        populate_by_name=True,
-        extra="forbid",
-        json_schema_extra={
-            "examples": [
-                {
-                    "summary": "새 AI 세션 생성",
-                    "value": {
-                        "title": "자료 조사 대화",
-                        "ownerKey": "local-user",
-                        "metadata": {"channel": "web"},
-                    },
-                }
-            ]
-        }
-    )
-
-    title: str | None = Field(default=None, max_length=120, description="세션 제목입니다. 비워 두면 첫 메시지나 세션 ID를 기준으로 표시할 수 있습니다.")
-    owner_key: str = Field(default="local-user", alias="ownerKey", description="로컬 테스트용 소유자 키입니다. 운영에서는 Authorization 토큰의 사용자 ID가 우선합니다.")
-    model: str | None = Field(default=None, max_length=100, description="이 세션에서 기본으로 쓰고 싶은 모델 이름입니다. 비워 두면 서버 기본 모델을 씁니다.")
-    metadata: dict[str, Any] = Field(default_factory=dict, description="화면 채널, 디바이스 종류 같은 부가 정보입니다. 서버가 모르는 키는 그대로 저장합니다.")
-
-
 class SessionResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -74,11 +50,18 @@ class CreateSessionMessageRequest(BaseModel):
         }
     )
 
+    session_id: str | None = Field(
+        default=None,
+        alias="sessionId",
+        description=(
+            "이어 쓸 AI 세션 ID입니다. 비워 두고 `/sessions/messages`로 요청하면 "
+            "서버가 새 세션을 자동으로 만들고 응답의 sessionId로 돌려줍니다."
+        ),
+    )
     content: str = Field(min_length=1, description="사용자가 보낸 메시지 본문입니다. 이 값이 모델에 전달되는 기본 prompt가 됩니다.")
     model: str | None = Field(default=None, max_length=100, description="이번 메시지 처리에 사용할 모델 이름입니다. 비워 두면 서버 기본 모델을 사용합니다.")
     input_payload: dict[str, Any] = Field(default_factory=dict, alias="inputPayload", description="첨부, 실행 옵션 같은 추가 입력입니다. 서버는 content를 기본 prompt로 넣습니다.")
     intent_type: str = Field(default="agent.loop", alias="intentType", description="실행 의도입니다. 일반 대화는 기본값 `agent.loop`을 사용합니다.")
-    owner_key: str = Field(default="local-user", alias="ownerKey", description="로컬 테스트용 소유자 키입니다. 운영에서는 Authorization 토큰의 사용자 ID가 우선합니다.")
 
 
 class SessionMessageResponse(BaseModel):

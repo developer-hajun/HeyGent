@@ -697,12 +697,16 @@ async def get_task(
 @router.get(
     "/{taskRunId}/steps",
     response_model=list[StepRunResponse],
-    summary="TaskRun 단계 목록 조회",
-    description="TaskRun 안에서 실행된 StepRun(세부 단계) 목록을 순서대로 조회합니다. 상세 디버깅이나 단계별 UI에 사용합니다.",
+    summary="StepRun 목록 조회",
+    description=(
+        "TaskRun(사용자 요청 하나의 실행 묶음)에 속한 StepRun 목록을 순서대로 조회합니다. "
+        "여기서 StepRun은 TaskRun 내부에서 실제로 저장된 세부 실행 단위입니다. "
+        "각 StepRun의 step_run_id, 상태, 제목, 입력/결과 요약, 승인 대기 정보를 확인할 때 사용합니다."
+    ),
 )
 async def list_steps(
     request: Request,
-    taskRunId: str = Path(..., description="단계를 조회할 TaskRun ID입니다."),
+    taskRunId: str = Path(..., description="StepRun 목록을 조회할 부모 TaskRun ID입니다."),
     context: TaskContext = Depends(get_task_context),
 ) -> list[StepRunResponse]:
     task_run_id = taskRunId

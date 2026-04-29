@@ -743,21 +743,14 @@ def test_taskruns_rejects_removed_session_aliases(client):
 def test_public_session_message_creates_taskrun_and_stores_public_transcript(client, monkeypatch):
     _patch_respond(monkeypatch, [_response(text="PUBLIC_SESSION_DONE")])
 
-    session_response = client.post(
-        "/ai/api/v1/sessions",
-        json={"title": "공개 세션 테스트", "ownerKey": "session-user"},
-    )
-
-    assert session_response.status_code == 200
-    session_id = session_response.json()["sessionId"]
-
     message_response = client.post(
-        f"/ai/api/v1/sessions/{session_id}/messages",
+        "/ai/api/v1/sessions/messages",
         json={"content": "공개 세션 메시지를 처리해줘.", "model": "gpt-test"},
     )
 
     assert message_response.status_code == 200
     body = message_response.json()
+    session_id = body["sessionId"]
     assert body["sessionId"] == session_id
     assert body["status"] == "COMPLETED"
     assert body["taskRunId"].startswith("task_")
@@ -771,6 +764,27 @@ def test_public_session_message_creates_taskrun_and_stores_public_transcript(cli
 
     task = client.get(f"/ai/api/v1/taskRuns/{body['taskRunId']}").json()
     assert task["session_key"] == session_id
+
+
+def test_public_session_message_rejects_new_session_over_limit(client, monkeypatch):
+    _patch_respond(monkeypatch, [_response(text="LIMIT_TEST")])
+    client.app.state.settings.public_session_limit_per_user = 1
+    session_store = client.app.state.session_store
+    session_store.create_session(
+        session_id="existing_public_session",
+        session_key="existing_public_session",
+        source="api.session",
+        user_id="local-user",
+        title="이미 있는 세션",
+    )
+
+    response = client.post(
+        "/ai/api/v1/sessions/messages",
+        json={"content": "새 세션을 하나 더 만들려고 한다.", "model": "gpt-test"},
+    )
+
+    assert response.status_code == 409
+    assert "public session limit exceeded" in response.json()["detail"]
 
 
 def test_public_sessions_list_and_get_only_public_sessions(client):

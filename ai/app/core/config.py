@@ -55,6 +55,7 @@ class Settings:
     ws_auth_rate_limit_window_seconds: int = 60
     task_projection_ttl_seconds: int = 3600
     task_projection_max_events: int = 200
+    public_session_limit_per_user: int = 10
     agent_loop_default_max_iterations: int = 60
     agent_loop_worker_default_max_iterations: int = 50
     agent_loop_max_iterations: int = 60
@@ -220,6 +221,10 @@ def get_settings() -> Settings:
         task_projection_max_events=_parse_int(
             _read_env("HEYGENT_TASK_PROJECTION_MAX_EVENTS", 200, dotenv_values),
             default=200,
+        ),
+        public_session_limit_per_user=_parse_int(
+            _read_env("HEYGENT_PUBLIC_SESSION_LIMIT_PER_USER", 10, dotenv_values),
+            default=10,
         ),
         agent_loop_default_max_iterations=_parse_int(
             _read_env("HEYGENT_AGENT_LOOP_DEFAULT_MAX_ITERATIONS", 60, dotenv_values),

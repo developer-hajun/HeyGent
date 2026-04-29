@@ -10,7 +10,6 @@ from app.api.deps.openapi_auth import document_bearer_auth
 from app.contracts.session import (
     CreateSessionMessageRequest,
     CreateSessionMessageResponse,
-    CreateSessionRequest,
     SessionListResponse,
     SessionMessageResponse,
     SessionMessagesResponse,
@@ -26,31 +25,26 @@ _TASK_TRANSCRIPT_SOURCE = "agent.loop"
 
 
 @router.post(
-    "",
-    response_model=SessionResponse,
-    summary="AI 대화 세션 만들기",
+    "/messages",
+    response_model=CreateSessionMessageResponse,
+    summary="새 세션 자동 생성 후 AI 대화 메시지 보내기",
     description=(
-        "새 AI 대화 세션을 만듭니다. 세션은 사용자가 AI와 주고받는 공개 대화방입니다. "
-        "TaskRun(사용자 요청 하나의 실행 묶음)은 메시지를 보낼 때 자동으로 만들어집니다."
+        "첫 사용자 메시지를 저장하면서 AI 대화 세션을 자동으로 만듭니다. "
+        "프론트에서 새 대화 버튼을 눌렀을 때 빈 세션 생성 API를 먼저 호출할 필요 없이 이 API만 호출하면 됩니다. "
+        "사용자별 공개 세션은 기본 10개까지 허용합니다."
     ),
 )
-async def create_session(request: Request, payload: CreateSessionRequest) -> SessionResponse:
+async def create_message_in_new_session(
+    request: Request,
+    payload: CreateSessionMessageRequest,
+) -> CreateSessionMessageResponse:
     user = await authenticate_http_user(request)
-    owner_key = user.user_id
-    session_id = new_id("session")
-    metadata = {**payload.metadata, "source": _PUBLIC_SESSION_SOURCE}
-    request.app.state.session_store.create_session(
-        session_id=session_id,
-        session_key=session_id,
-        source=_PUBLIC_SESSION_SOURCE,
-        user_id=owner_key,
-        title=payload.title,
-        metadata=metadata,
-    )
-    session = request.app.state.session_store.get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=500, detail="session was not created")
-    return _session_response(session)
+    if payload.session_id:
+        session = _get_public_session_or_404(request, payload.session_id)
+        ensure_owner(user, session.get("user_id"))
+    else:
+        session = _create_public_session_for_message(request, owner_key=user.user_id, payload=payload)
+    return await _create_message_in_session(request, payload, session=session, user=user)
 
 
 @router.get(
@@ -114,8 +108,21 @@ async def create_session_message(
     sessionId: str = Path(..., description="메시지를 보낼 AI 대화 세션 ID입니다."),
 ) -> CreateSessionMessageResponse:
     user = await authenticate_http_user(request)
+    if payload.session_id is not None and payload.session_id != sessionId:
+        raise HTTPException(status_code=400, detail="sessionId in path and body must match")
     session = _get_public_session_or_404(request, sessionId)
     ensure_owner(user, session.get("user_id"))
+    return await _create_message_in_session(request, payload, session=session, user=user)
+
+
+async def _create_message_in_session(
+    request: Request,
+    payload: CreateSessionMessageRequest,
+    *,
+    session: dict[str, Any],
+    user,
+) -> CreateSessionMessageResponse:
+    sessionId = str(session["id"])
     owner_key = str(session.get("user_id") or user.user_id)
     session_store = request.app.state.session_store
 
@@ -223,6 +230,42 @@ def _create_task_transcript_session(
         metadata={"source": _TASK_TRANSCRIPT_SOURCE, "public_session_id": session_id},
     )
     return transcript_session_id
+
+
+def _create_public_session_for_message(
+    request: Request,
+    *,
+    owner_key: str,
+    payload: CreateSessionMessageRequest,
+) -> dict[str, Any]:
+    session_store = request.app.state.session_store
+    session_limit = max(1, int(getattr(request.app.state.settings, "public_session_limit_per_user", 10)))
+    _, total_count = _list_public_sessions(session_store, owner_key=owner_key, limit=1, offset=0)
+    if total_count >= session_limit:
+        raise HTTPException(
+            status_code=409,
+            detail=f"public session limit exceeded: {session_limit}",
+        )
+
+    session_id = new_id("session")
+    session_store.create_session(
+        session_id=session_id,
+        session_key=session_id,
+        source=_PUBLIC_SESSION_SOURCE,
+        user_id=owner_key,
+        model=payload.model,
+        title=_derive_session_title(payload.content),
+        metadata={"source": _PUBLIC_SESSION_SOURCE},
+    )
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=500, detail="session was not created")
+    return session
+
+
+def _derive_session_title(content: str) -> str:
+    title = " ".join(content.split())
+    return title[:60] or "새 AI 대화"
 
 
 def _get_public_session_or_404(request: Request, session_id: str) -> dict[str, Any]:

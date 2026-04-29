@@ -17,7 +17,8 @@ def test_openapi_documents_bearer_auth_for_task_runs():
         "description": "backend /api/v1/auth/dev-login 에서 받은 accessToken 을 입력한다.",
         "scheme": "bearer",
     }
-    assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions"]["post"]["security"]
+    assert "post" not in schema["paths"]["/ai/api/v1/sessions"]
+    assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/messages"]["post"]["security"]
     assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/{sessionId}/messages"]["post"]["security"]
     assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/taskRuns"]["post"]["security"]
     assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/agentSessions/{agentSessionId}/messages"]["get"]["security"]
@@ -73,7 +74,7 @@ def test_openapi_documents_flow_agent_session_and_provider_terms():
     assert "AgentSession" in edge_schema["to_agent_session_id"]["description"]
 
     messages_operation = schema["paths"]["/ai/api/v1/agentSessions/{agentSessionId}/messages"]["get"]
-    assert "일반 사용자 대화는 `/sessions/{sessionId}/messages`" in messages_operation["description"]
+    assert "새 일반 사용자 대화는 `/sessions/messages`" in messages_operation["description"]
     assert "productSessionId" not in messages_operation["description"]
     message_schema = schema["components"]["schemas"]["AgentSessionMessageResponse"]["properties"]
     assert "도구 호출" in message_schema["toolCalls"]["description"]
@@ -96,10 +97,12 @@ def test_openapi_documents_public_sessions_without_product_session_alias():
     }
     rendered_session_docs = str(session_paths)
     assert "productSessionId" not in rendered_session_docs
+    assert "/ai/api/v1/sessions/messages" in session_paths
     assert "/ai/api/v1/sessions/{sessionId}/messages" in session_paths
 
     message_request = schema["components"]["schemas"]["CreateSessionMessageRequest"]["properties"]
     assert "content" in message_request
+    assert "sessionId" in message_request
     assert "productSessionId" not in message_request
 
     message_response = schema["components"]["schemas"]["CreateSessionMessageResponse"]["properties"]
