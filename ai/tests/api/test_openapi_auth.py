@@ -52,6 +52,11 @@ def test_openapi_documents_task_run_contract_in_plain_language():
     assert "pageSize" in list_param_names
     assert "page_size" not in list_param_names
 
+    create_operation = schema["paths"]["/ai/api/v1/taskRuns"]["post"]
+    assert create_operation["summary"] == "TaskRun 직접 실행"
+    assert "세션 루틴 즉시 실행" in create_operation["description"]
+    assert "/sessions/messages" in create_operation["description"]
+
     events_operation = schema["paths"]["/ai/api/v1/taskRuns/{taskRunId}/events"]["get"]
     assert "WebSocket" in events_operation["description"]
     assert "subscribe.task" in events_operation["description"]

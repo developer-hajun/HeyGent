@@ -593,9 +593,11 @@ async def list_active_tasks(
 @router.post(
     "",
     response_model=TaskRunResponse,
-    summary="AI 작업 시작",
+    summary="TaskRun 직접 실행",
     description=(
-        "사용자 요청을 TaskRun으로 생성하고 Orchestrator(작업 시작/재개를 맡는 내부 실행 관리자)에 실행을 맡깁니다. "
+        "메시지 저장 없이 TaskRun을 바로 생성해 Orchestrator(작업 시작/재개를 맡는 내부 실행 관리자)에 실행을 맡깁니다. "
+        "일반 채팅 입력은 `/sessions/messages` 또는 `/sessions/{sessionId}/messages`를 사용합니다. "
+        "이 API는 세션 루틴 즉시 실행, 예약/외부 트리거, 운영 재현 테스트처럼 이미 실행할 세션과 입력이 정해진 경우에 사용합니다. "
         "Authorization 토큰이 있으면 토큰의 사용자 ID가 owner(작업 소유자)가 됩니다. "
         "같은 사용자와 같은 sessionId 안에서는 동시에 실행 중인 TaskRun을 하나만 허용합니다."
     ),

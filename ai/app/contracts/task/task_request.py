@@ -12,13 +12,12 @@ class CreateTaskRequest(BaseModel):
         json_schema_extra={
             "example": {
                 "intent_type": "agent.loop",
-                "sessionId": "session_research_test_001",
+                "sessionId": "session_routine_test_001",
                 "input_payload": {
+                    "routineId": "routine_morning_brief",
                     "prompt": (
-                        "최근 AI 에이전트 오케스트레이션에서 subagent를 쓰는 이유를 간단히 조사해줘. "
-                        "가능하면 worker/subagent에게 자료 조사를 맡기고, 부모 agent는 결과를 종합해서 "
-                        "핵심 이유 3가지와 주의점 2가지를 한국어로 정리해줘. "
-                        "웹검색을 사용할 수 없으면 그 한계를 먼저 말하고, 알고 있는 범위에서 답해줘."
+                        "이 세션에 설정된 아침 브리핑 루틴을 지금 즉시 실행해줘. "
+                        "최근 일정, 할 일, 필요한 확인 사항을 정리해서 보고해줘."
                     ),
                 },
             },
@@ -28,15 +27,15 @@ class CreateTaskRequest(BaseModel):
     intent_type: str = Field(
         default="agent.loop",
         description=(
-            "AI가 요청을 처리하는 방식입니다. 일반 사용자 요청은 기본값 `agent.loop`을 그대로 둡니다. "
+            "AI가 요청을 처리하는 방식입니다. 루틴 즉시 실행도 일반적으로 기본값 `agent.loop`을 사용합니다. "
             "intent(의도)는 Orchestrator(작업 시작/재개를 맡는 내부 실행 관리자)가 어떤 실행 흐름을 고를지 판단하는 값입니다."
         ),
     )
     input_payload: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "사용자가 실제로 시킨 내용을 담는 객체입니다. 보통 `prompt`에 자연어 요청을 넣습니다. "
-            "필요하면 `model`, `workspacePath`, `attachments` 같은 화면/채널별 값을 함께 넣을 수 있습니다."
+            "TaskRun에 넘길 실행 입력입니다. 보통 `prompt`에 실행 지시문을 넣고, "
+            "루틴 즉시 실행이면 `routineId` 같은 루틴 식별자나 예약/외부 트리거 메타데이터를 함께 넣을 수 있습니다."
         ),
     )
     owner_key: str = Field(
@@ -52,6 +51,7 @@ class CreateTaskRequest(BaseModel):
         title="Session ID",
         description=(
             "sessionId(AI가 직접 관리하는 대화 세션 ID)입니다. "
+            "루틴 즉시 실행에서는 어떤 세션에 붙은 루틴을 실행하는지 가리키는 부모 세션 ID로 사용합니다. "
             "같은 사용자와 같은 sessionId 안에서는 동시에 실행 중인 TaskRun(사용자 요청 하나의 실행 묶음)을 하나만 허용합니다. "
             "내부 저장명은 session_key입니다."
         ),
