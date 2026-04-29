@@ -9,6 +9,7 @@ from app.clients.backend_auth import BackendAuthClient
 from app.core.config import get_settings
 from app.core.logger import configure_logging
 from app.domain.gateway import EventBroadcaster, SessionRegistry, SessionService, WebSocketManager
+from app.domain.gateway.gateway_sessions.connection_registry import build_connection_registry
 from app.domain.gateway.routing.topic_router import TopicRouter
 from app.domain.session import SessionStore
 from app.tools.registry import ToolRegistry
@@ -40,6 +41,12 @@ async def lifespan(app: FastAPI):
     topic_router = TopicRouter()
     ws_manager = WebSocketManager()
     session_registry = SessionRegistry()
+    connection_registry = build_connection_registry(
+        redis_url=settings.redis_url,
+        ttl_seconds=settings.ws_connection_ttl_seconds,
+    )
+    if hasattr(connection_registry, "ping"):
+        await connection_registry.ping()
     session_service = SessionService(session_registry, ws_manager, topic_router)
     broadcaster = EventBroadcaster(ws_manager, topic_router)
     backend_auth_client = BackendAuthClient(settings=settings)
@@ -83,6 +90,7 @@ async def lifespan(app: FastAPI):
     app.state.repository = repository
     app.state.ws_manager = ws_manager
     app.state.session_registry = session_registry
+    app.state.connection_registry = connection_registry
     app.state.session_service = session_service
     app.state.backend_auth_client = backend_auth_client
     app.state.provider_registry = provider_registry
@@ -100,6 +108,7 @@ async def lifespan(app: FastAPI):
     app.state.task_engine = task_engine
     yield
     await backend_auth_client.aclose()
+    await connection_registry.aclose()
     session_store.close()
 
 

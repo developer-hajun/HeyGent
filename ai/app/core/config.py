@@ -39,6 +39,8 @@ class Settings:
     openai_embedding_model: str = "text-embedding-3-small"
     backend_auth_verify_url: str = "http://127.0.0.1:8080/api/v1/internal/auth/verify"
     internal_service_token: str | None = None
+    redis_url: str | None = None
+    ws_connection_ttl_seconds: int = 60
 
     def resolved_api_base_url(self) -> str:
         """CLI 와 외부 클라이언트가 공통으로 사용할 기본 API 주소를 계산한다."""
@@ -145,4 +147,9 @@ def get_settings() -> Settings:
             dotenv_values,
         ),
         internal_service_token=_read_env("HEYGENT_INTERNAL_SERVICE_TOKEN", None, dotenv_values),
+        redis_url=_read_env("HEYGENT_REDIS_URL", None, dotenv_values),
+        ws_connection_ttl_seconds=_parse_int(
+            _read_env("HEYGENT_WS_CONNECTION_TTL_SECONDS", 60, dotenv_values),
+            default=60,
+        ),
     )

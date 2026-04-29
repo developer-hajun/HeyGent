@@ -23,3 +23,14 @@ def test_backend_auth_verify_settings_read_environment(monkeypatch, tmp_path):
 
     assert settings.backend_auth_verify_url == "http://backend/internal/auth/verify"
     assert settings.internal_service_token == "service-token"
+
+
+def test_redis_connection_registry_settings_read_environment(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HEYGENT_REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("HEYGENT_WS_CONNECTION_TTL_SECONDS", "120")
+
+    settings = get_settings()
+
+    assert settings.redis_url == "redis://localhost:6379/0"
+    assert settings.ws_connection_ttl_seconds == 120

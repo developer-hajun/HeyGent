@@ -19,6 +19,32 @@ class FakeBackendAuthClient:
         return BackendAuthVerifyResult(user_id=self.user_id)
 
 
+class FakeConnectionRegistry:
+    def __init__(self, *, fail_register: bool = False, fail_unregister: bool = False) -> None:
+        self.fail_register = fail_register
+        self.fail_unregister = fail_unregister
+        self.registered: list[dict[str, str]] = []
+        self.touched: list[dict[str, str]] = []
+        self.unregistered: list[dict[str, str]] = []
+
+    async def register_connection(self, *, connection_id: str, user_id: str, session_id: str) -> None:
+        if self.fail_register:
+            raise RuntimeError("테스트용 등록 실패")
+        self.registered.append(
+            {"connection_id": connection_id, "user_id": user_id, "session_id": session_id}
+        )
+
+    async def touch_connection(self, *, connection_id: str, user_id: str, session_id: str) -> None:
+        self.touched.append({"connection_id": connection_id, "user_id": user_id, "session_id": session_id})
+
+    async def unregister_connection(self, *, connection_id: str, user_id: str, session_id: str) -> None:
+        if self.fail_unregister:
+            raise RuntimeError("테스트용 정리 실패")
+        self.unregistered.append(
+            {"connection_id": connection_id, "user_id": user_id, "session_id": session_id}
+        )
+
+
 def test_subscribe_all_before_auth_is_rejected(client):
     client.app.state.backend_auth_client = FakeBackendAuthClient()
 
@@ -61,9 +87,94 @@ def test_auth_success_uses_backend_user_id_for_session(client):
         assert client.app.state.session_registry.get_subscriptions("user:spoof") == set()
 
 
+def test_auth_success_registers_random_connection_for_backend_user(client):
+    fake_auth = FakeBackendAuthClient(user_id="42")
+    fake_registry = FakeConnectionRegistry()
+    client.app.state.backend_auth_client = fake_auth
+    client.app.state.connection_registry = fake_registry
+
+    with client.websocket_connect("/api/v1/gateway/ws?session_id=user:spoof") as websocket:
+        websocket.send_json({"action": "auth", "accessToken": "valid-token"})
+
+        assert websocket.receive_json() == {"type": "auth.ok", "userId": "42"}
+        assert len(fake_registry.registered) == 1
+        registered = fake_registry.registered[0]
+        assert registered["user_id"] == "42"
+        assert registered["session_id"] == "user:42"
+        assert registered["connection_id"]
+        assert "spoof" not in registered["connection_id"]
+
+
+def test_auth_success_ignores_query_user_id_spoofing(client):
+    fake_auth = FakeBackendAuthClient(user_id="backend-user")
+    fake_registry = FakeConnectionRegistry()
+    client.app.state.backend_auth_client = fake_auth
+    client.app.state.connection_registry = fake_registry
+
+    with client.websocket_connect("/api/v1/gateway/ws?userId=attacker&session_id=user:attacker") as websocket:
+        websocket.send_json({"action": "auth", "accessToken": "valid-token"})
+
+        assert websocket.receive_json() == {"type": "auth.ok", "userId": "backend-user"}
+        assert fake_registry.registered[0]["user_id"] == "backend-user"
+        assert fake_registry.registered[0]["session_id"] == "user:backend-user"
+
+
+def test_each_authenticated_connection_gets_distinct_connection_id(client):
+    fake_auth = FakeBackendAuthClient(user_id="42")
+    fake_registry = FakeConnectionRegistry()
+    client.app.state.backend_auth_client = fake_auth
+    client.app.state.connection_registry = fake_registry
+
+    with client.websocket_connect("/api/v1/gateway/ws") as first_websocket:
+        first_websocket.send_json({"action": "auth", "accessToken": "valid-token"})
+        first_websocket.receive_json()
+
+    with client.websocket_connect("/api/v1/gateway/ws") as second_websocket:
+        second_websocket.send_json({"action": "auth", "accessToken": "valid-token"})
+        second_websocket.receive_json()
+
+    assert fake_registry.registered[0]["connection_id"] != fake_registry.registered[1]["connection_id"]
+
+
+def test_auth_success_is_not_sent_when_connection_register_fails(client):
+    fake_auth = FakeBackendAuthClient(user_id="42")
+    fake_registry = FakeConnectionRegistry(fail_register=True)
+    client.app.state.backend_auth_client = fake_auth
+    client.app.state.connection_registry = fake_registry
+
+    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+        websocket.send_json({"action": "auth", "accessToken": "valid-token"})
+
+        with pytest.raises(WebSocketDisconnect):
+            websocket.receive_json()
+
+
+def test_authenticated_ping_refreshes_connection_ttl(client):
+    fake_auth = FakeBackendAuthClient(user_id="55")
+    fake_registry = FakeConnectionRegistry()
+    client.app.state.backend_auth_client = fake_auth
+    client.app.state.connection_registry = fake_registry
+
+    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+        websocket.send_json({"action": "auth", "accessToken": "valid-token"})
+        websocket.receive_json()
+        websocket.send_json({"action": "ping"})
+
+        assert websocket.receive_json() == {"type": "pong"}
+        assert fake_registry.touched == [
+            {
+                "connection_id": fake_registry.registered[0]["connection_id"],
+                "user_id": "55",
+                "session_id": "user:55",
+            }
+        ]
+
+
 def test_authenticated_session_cleanup_runs_on_disconnect(client):
     fake_auth = FakeBackendAuthClient(user_id="77")
+    fake_registry = FakeConnectionRegistry()
     client.app.state.backend_auth_client = fake_auth
+    client.app.state.connection_registry = fake_registry
 
     with client.websocket_connect("/api/v1/gateway/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
@@ -72,6 +183,42 @@ def test_authenticated_session_cleanup_runs_on_disconnect(client):
         websocket.receive_json()
 
     assert client.app.state.session_registry.get_subscriptions("user:77") == set()
+    assert fake_registry.unregistered == [
+        {
+            "connection_id": fake_registry.registered[0]["connection_id"],
+            "user_id": "77",
+            "session_id": "user:77",
+        }
+    ]
+
+
+def test_unregister_failure_still_cleans_local_websocket_directory(client):
+    fake_auth = FakeBackendAuthClient(user_id="77")
+    fake_registry = FakeConnectionRegistry(fail_unregister=True)
+    client.app.state.backend_auth_client = fake_auth
+    client.app.state.connection_registry = fake_registry
+
+    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+        websocket.send_json({"action": "auth", "accessToken": "valid-token"})
+        websocket.receive_json()
+        websocket.send_json({"action": "subscribe", "task_run_id": "task_cleanup"})
+        websocket.receive_json()
+
+    assert client.app.state.ws_manager.directory.get("task:task_cleanup") == set()
+
+
+def test_auth_failure_does_not_register_connection(client):
+    fake_auth = FakeBackendAuthClient(fail=True)
+    fake_registry = FakeConnectionRegistry()
+    client.app.state.backend_auth_client = fake_auth
+    client.app.state.connection_registry = fake_registry
+
+    with client.websocket_connect("/api/v1/ws") as websocket:
+        websocket.send_json({"action": "auth", "accessToken": "bad-token"})
+
+        assert websocket.receive_json() == {"type": "auth.failed"}
+
+    assert fake_registry.registered == []
 
 
 def test_auth_failure_sends_failed_and_closes(client):

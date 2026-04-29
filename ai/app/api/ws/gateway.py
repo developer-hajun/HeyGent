@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
+from secrets import token_urlsafe
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
 from app.clients.backend_auth import BackendAuthVerifyError, BackendAuthVerifyResult
 from app.api.ws.subscriptions import handle_subscription
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 async def _authenticate_first_message(websocket: WebSocket) -> BackendAuthVerifyResult | None:
@@ -37,14 +41,16 @@ async def _authenticate_first_message(websocket: WebSocket) -> BackendAuthVerify
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return None
 
-        await websocket.send_json({"type": "auth.ok", "userId": result.user_id})
         return result
 
 
 async def _handle_gateway_socket(websocket: WebSocket) -> None:
     manager = websocket.app.state.ws_manager
     session_service = websocket.app.state.session_service
+    connection_registry = websocket.app.state.connection_registry
     session_id: str | None = None
+    connection_id: str | None = None
+    user_id: str | None = None
     await manager.connect(websocket)
     try:
         auth_result = await _authenticate_first_message(websocket)
@@ -52,7 +58,22 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
             return
 
         # client query string의 userId/session_id는 위조 가능하므로 backend 검증 결과의 user_id만 세션 키로 사용한다.
-        session_id = f"user:{auth_result.user_id}"
+        user_id = auth_result.user_id
+        session_id = f"user:{user_id}"
+        connection_id = token_urlsafe(24)
+        try:
+            await connection_registry.register_connection(
+                connection_id=connection_id,
+                user_id=user_id,
+                session_id=session_id,
+            )
+        except Exception:
+            # 인증은 맞더라도 연결 인덱스 저장 실패 시 fan-out/cleanup 기준이 깨지므로 성공 응답을 보내지 않는다.
+            logger.exception("웹소켓 연결 레지스트리 등록에 실패했습니다.")
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+            return
+
+        await websocket.send_json({"type": "auth.ok", "userId": user_id})
         while True:
             message = await websocket.receive_json()
             action = message.get("action")
@@ -67,12 +88,31 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
                 session_service.subscribe_all(session_id=session_id, websocket=websocket)
                 await websocket.send_json({"type": "subscribed", "task_run_id": "all"})
             elif action == "ping":
+                try:
+                    await connection_registry.touch_connection(
+                        connection_id=connection_id,
+                        user_id=user_id,
+                        session_id=session_id,
+                    )
+                except Exception:
+                    # heartbeat refresh 실패는 다음 ping/reconnect에서 복구할 수 있으므로 연결 자체는 유지한다.
+                    logger.exception("웹소켓 연결 TTL 갱신에 실패했습니다.")
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
         pass
     finally:
         if session_id is not None:
             session_service.unsubscribe_all(session_id)
+        if connection_id is not None and user_id is not None and session_id is not None:
+            try:
+                await connection_registry.unregister_connection(
+                    connection_id=connection_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                )
+            except Exception:
+                # Redis cleanup 실패가 local WebSocketManager 정리를 막으면 같은 프로세스 fan-out 대상이 새므로 삼킨다.
+                logger.exception("웹소켓 연결 레지스트리 정리에 실패했습니다.")
         manager.disconnect(websocket)
 
 
