@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
+from app.api.ws.gateway import _authenticate_first_message
 from app.clients.backend_auth import BackendAuthVerifyError, BackendAuthVerifyResult
+from app.core.config import get_settings
 from app.contracts.event.task_events import TaskEventEnvelope
 from app.storage.redis import FakeRedis, RedisTaskProjectionStore
 
@@ -45,6 +50,75 @@ class FakeConnectionRegistry:
         self.unregistered.append(
             {"connection_id": connection_id, "user_id": user_id, "session_id": session_id}
         )
+
+
+class SlowFirstMessageWebSocket:
+    def __init__(self) -> None:
+        self.app = SimpleNamespace(
+            state=SimpleNamespace(
+                backend_auth_client=FakeBackendAuthClient(),
+                settings=SimpleNamespace(ws_auth_first_message_timeout_seconds=0.01),
+            )
+        )
+        self.sent: list[dict[str, str]] = []
+        self.closed_code: int | None = None
+
+    async def receive_json(self) -> dict[str, str]:
+        await asyncio.sleep(1)
+        return {"action": "auth", "accessToken": "too-late"}
+
+    async def send_json(self, message: dict[str, str]) -> None:
+        self.sent.append(message)
+
+    async def close(self, *, code: int) -> None:
+        self.closed_code = code
+
+
+def test_settings_reads_websocket_allowed_origins(monkeypatch):
+    monkeypatch.setenv("HEYGENT_WS_ALLOWED_ORIGINS", "https://app.example.com, https://admin.example.com")
+
+    settings = get_settings()
+
+    assert settings.ws_allowed_origins == ["https://app.example.com", "https://admin.example.com"]
+
+
+@pytest.mark.asyncio
+async def test_auth_first_message_timeout_closes_before_verification():
+    websocket = SlowFirstMessageWebSocket()
+
+    result = await _authenticate_first_message(websocket)
+
+    assert result is None
+    assert websocket.sent == [{"type": "auth.timeout"}]
+    assert websocket.closed_code == 1008
+    assert websocket.app.state.backend_auth_client.calls == []
+
+
+def test_empty_websocket_allowed_origins_allows_existing_clients(client):
+    client.app.state.settings.ws_allowed_origins = []
+    client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="42")
+
+    with client.websocket_connect(
+        "/api/v1/gateway/ws",
+        headers={"origin": "https://unconfigured.example.com"},
+    ) as websocket:
+        websocket.send_json({"action": "auth", "accessToken": "valid-token"})
+
+        assert websocket.receive_json() == {"type": "auth.ok", "userId": "42"}
+
+
+def test_websocket_rejects_origin_outside_allowed_list(client):
+    client.app.state.settings.ws_allowed_origins = ["https://app.example.com"]
+    client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="42")
+
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(
+            "/api/v1/gateway/ws",
+            headers={"origin": "https://evil.example.com"},
+        ):
+            pass
+
+    assert exc_info.value.code == 1008
 
 
 def test_subscribe_all_before_auth_is_rejected(client):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from secrets import token_urlsafe
 
@@ -12,12 +13,31 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _websocket_origin_allowed(websocket: WebSocket) -> bool:
+    """설정된 Origin 허용 목록과 요청 Origin 을 비교한다."""
+
+    settings = websocket.app.state.settings
+    allowed_origins = settings.ws_allowed_origins
+    if not allowed_origins:
+        return True
+
+    origin = websocket.headers.get("origin")
+    return origin in allowed_origins
+
+
 async def _authenticate_first_message(websocket: WebSocket) -> BackendAuthVerifyResult | None:
     """인증 완료 전 상태 전이를 처리한다."""
 
     auth_client = websocket.app.state.backend_auth_client
+    timeout_seconds = websocket.app.state.settings.ws_auth_first_message_timeout_seconds
     while True:
-        message = await websocket.receive_json()
+        try:
+            message = await asyncio.wait_for(websocket.receive_json(), timeout=timeout_seconds)
+        except TimeoutError:
+            # 인증 전 첫 메시지를 무기한 기다리면 연결 슬롯을 점유할 수 있으므로 정책 위반으로 종료한다.
+            await websocket.send_json({"type": "auth.timeout"})
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return None
         action = message.get("action")
         if action == "ping":
             await websocket.send_json({"type": "pong"})
@@ -51,6 +71,10 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
     session_id: str | None = None
     connection_id: str | None = None
     user_id: str | None = None
+    if not _websocket_origin_allowed(websocket):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     await manager.connect(websocket)
     try:
         auth_result = await _authenticate_first_message(websocket)

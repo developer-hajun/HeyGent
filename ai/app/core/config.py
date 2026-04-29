@@ -43,6 +43,8 @@ class Settings:
     internal_service_token: str | None = None
     redis_url: str | None = None
     ws_connection_ttl_seconds: int = 60
+    ws_auth_first_message_timeout_seconds: float = 10.0
+    ws_allowed_origins: list[str] = field(default_factory=list)
     task_projection_ttl_seconds: int = 3600
     task_projection_max_events: int = 200
 
@@ -104,10 +106,22 @@ def _parse_int(value, *, default: int) -> int:
     return int(value)
 
 
+def _parse_float(value, *, default: float) -> float:
+    if value in {None, ""}:
+        return default
+    return float(value)
+
+
 def _parse_scopes(value) -> list[str]:
     if value in {None, ""}:
         return []
     return [scope.strip() for scope in str(value).split(",") if scope.strip()]
+
+
+def _parse_csv(value) -> list[str]:
+    if value in {None, ""}:
+        return []
+    return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
 def _parse_optional_path(value) -> Path | None:
@@ -161,6 +175,11 @@ def get_settings() -> Settings:
             _read_env("HEYGENT_WS_CONNECTION_TTL_SECONDS", 60, dotenv_values),
             default=60,
         ),
+        ws_auth_first_message_timeout_seconds=_parse_float(
+            _read_env("HEYGENT_WS_AUTH_FIRST_MESSAGE_TIMEOUT_SECONDS", 10.0, dotenv_values),
+            default=10.0,
+        ),
+        ws_allowed_origins=_parse_csv(_read_env("HEYGENT_WS_ALLOWED_ORIGINS", "", dotenv_values)),
         task_projection_ttl_seconds=_parse_int(
             _read_env("HEYGENT_TASK_PROJECTION_TTL_SECONDS", 3600, dotenv_values),
             default=3600,
