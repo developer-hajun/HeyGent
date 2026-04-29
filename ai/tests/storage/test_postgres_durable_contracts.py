@@ -81,6 +81,15 @@ def test_postgres_schema_contains_anchor_profile_and_worker_linkage_columns():
         assert expected in schema_sql
 
 
+def test_postgres_schema_seeds_builtin_agent_profiles():
+    schema_sql = render_postgres_schema()
+
+    assert "main.default" in schema_sql
+    assert "worker.default" in schema_sql
+    assert "'worker'" in schema_sql
+    assert "ON CONFLICT (owner_key, profile_key, profile_version) DO NOTHING" in schema_sql
+
+
 class _FakeCursor:
     def __init__(self, rows=None):
         self._rows = rows or []

@@ -187,6 +187,37 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_worker_handoffs_parent_step
     ON worker_handoffs(parent_step_run_id, created_at);
     """,
+    """
+    INSERT INTO agent_profiles (
+        profile_id,
+        owner_key,
+        profile_key,
+        profile_version,
+        agent_type,
+        config_snapshot,
+        delegation_policy
+    )
+    VALUES
+        (
+            'system:main.default:1',
+            'system',
+            'main.default',
+            1,
+            'main',
+            '{"promptRole":"main","toolsets":["skills","session","planning","terminal","file"]}'::jsonb,
+            '{"canDelegate":true,"maxWorkerDepth":1,"maxConcurrentWorkers":3}'::jsonb
+        ),
+        (
+            'system:worker.default:1',
+            'system',
+            'worker.default',
+            1,
+            'worker',
+            '{"promptRole":"worker","toolsets":["skills","terminal","file"]}'::jsonb,
+            '{"canDelegate":false,"maxWorkerDepth":0,"hardTimeoutSeconds":300,"maxIterations":50}'::jsonb
+        )
+    ON CONFLICT (owner_key, profile_key, profile_version) DO NOTHING;
+    """,
 ]
 
 
