@@ -5,18 +5,17 @@ from typing import get_type_hints
 
 from app.domain.orchestration.agent.loop import TaskEngine
 from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopHandler
-from app.domain.session import SessionStore, TranscriptStore
+from app.domain.session import TranscriptStore
 from app.domain.session.sessions import TranscriptStore as SessionsTranscriptStore
 from app.storage.postgres import PostgresSessionStore
 from app.tools.runtime.local_tool_runtime import LocalToolRuntime
+from tests.fakes import InMemoryTranscriptStore
 
 
-def test_sqlite_session_store_implements_transcript_store(tmp_path):
-    store = SessionStore(tmp_path / "sessions.db")
-    try:
-        assert isinstance(store, TranscriptStore)
-    finally:
-        store.close()
+def test_in_memory_session_store_implements_transcript_store():
+    store = InMemoryTranscriptStore()
+
+    assert isinstance(store, TranscriptStore)
 
 
 def test_postgres_session_store_implements_transcript_store():
@@ -25,8 +24,8 @@ def test_postgres_session_store_implements_transcript_store():
     assert isinstance(store, TranscriptStore)
 
 
-def test_sqlite_session_store_satisfies_transcript_semantic_contract(tmp_path):
-    store = SessionStore(tmp_path / "sessions.db")
+def test_in_memory_session_store_satisfies_transcript_semantic_contract():
+    store = InMemoryTranscriptStore()
     try:
         session_id = store.create_session(
             session_id="session_contract",

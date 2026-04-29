@@ -10,7 +10,7 @@ from app.core.utils.ids import new_id
 class PostgresSessionStore:
     """agent transcript를 Postgres agent_sessions/agent_messages에 저장한다.
 
-    기존 SessionStore 호출부와 같은 응답 형태를 유지해 agent.loop replay 코드를 크게 흔들지 않는다.
+    TranscriptStore 호출부와 같은 응답 형태를 유지해 agent.loop replay 코드를 크게 흔들지 않는다.
     """
 
     def __init__(self, connection_factory: Callable[[], Any]) -> None:

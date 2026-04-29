@@ -833,7 +833,6 @@ def test_agent_session_messages_returns_wrapper_after_numeric_message_id(client)
 
 
 def test_agent_session_messages_returns_not_found_for_authenticated_missing_session(client):
-    client.app.state.settings.allow_sqlite_legacy = False
     client.app.state.backend_auth_client = FakeBackendAuthClient()
 
     response = client.get(
@@ -847,7 +846,6 @@ def test_agent_session_messages_returns_not_found_for_authenticated_missing_sess
 
 def test_authenticated_http_request_passes_workspace_key_hint_to_backend(client):
     auth_client = FakeBackendAuthClient()
-    client.app.state.settings.allow_sqlite_legacy = False
     client.app.state.backend_auth_client = auth_client
 
     response = client.get(
@@ -896,7 +894,6 @@ def test_taskruns_create_rejects_second_active_task_in_same_session(client, monk
 
 
 def test_taskruns_create_active_lock_is_scoped_by_authenticated_owner(client, monkeypatch):
-    client.app.state.settings.allow_sqlite_legacy = False
     client.app.state.backend_auth_client = FakeBackendAuthClient()
     _patch_respond(
         monkeypatch,

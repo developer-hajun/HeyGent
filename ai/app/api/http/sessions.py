@@ -36,7 +36,7 @@ _TASK_TRANSCRIPT_SOURCE = "agent.loop"
 )
 async def create_session(request: Request, payload: CreateSessionRequest) -> SessionResponse:
     user = await authenticate_http_user(request)
-    owner_key = user.user_id if user is not None else payload.owner_key
+    owner_key = user.user_id
     session_id = new_id("session")
     metadata = {**payload.metadata, "source": _PUBLIC_SESSION_SOURCE}
     request.app.state.session_store.create_session(
@@ -57,7 +57,7 @@ async def create_session(request: Request, payload: CreateSessionRequest) -> Ses
     "",
     response_model=SessionListResponse,
     summary="AI 대화 세션 목록 조회",
-    description="현재 사용자의 AI 대화 세션 목록을 최신순으로 조회합니다. 인증이 없고 로컬 테스트 모드이면 저장된 공개 세션을 모두 보여 줍니다.",
+    description="현재 사용자의 AI 대화 세션 목록을 최신순으로 조회합니다.",
 )
 async def list_sessions(
     request: Request,
@@ -68,7 +68,7 @@ async def list_sessions(
     offset = (page - 1) * page_size
     items, total_count = _list_public_sessions(
         request.app.state.session_store,
-        owner_key=user.user_id if user is not None else None,
+        owner_key=user.user_id,
         limit=page_size,
         offset=offset,
     )
@@ -116,7 +116,7 @@ async def create_session_message(
     user = await authenticate_http_user(request)
     session = _get_public_session_or_404(request, sessionId)
     ensure_owner(user, session.get("user_id"))
-    owner_key = str(session.get("user_id") or (user.user_id if user is not None else "local-user"))
+    owner_key = str(session.get("user_id") or user.user_id)
     session_store = request.app.state.session_store
 
     user_message_id = session_store.append_message(
@@ -285,27 +285,9 @@ def _assistant_content_from_task(task) -> str:
 
 
 def _list_public_sessions(store, *, owner_key: str | None, limit: int, offset: int) -> tuple[list[dict[str, Any]], int]:
-    if hasattr(store, "_conn") and hasattr(store, "_lock"):
-        return _list_sqlite_public_sessions(store, owner_key=owner_key, limit=limit, offset=offset)
     if hasattr(store, "connection_factory"):
         return _list_postgres_public_sessions(store, owner_key=owner_key, limit=limit, offset=offset)
     return [], 0
-
-
-def _list_sqlite_public_sessions(store, *, owner_key: str | None, limit: int, offset: int) -> tuple[list[dict[str, Any]], int]:
-    where = ["source = ?"]
-    params: list[Any] = [_PUBLIC_SESSION_SOURCE]
-    if owner_key is not None:
-        where.append("user_id = ?")
-        params.append(owner_key)
-    where_sql = " AND ".join(where)
-    with store._lock:
-        total_row = store._conn.execute(f"SELECT COUNT(*) AS count FROM sessions WHERE {where_sql}", params).fetchone()
-        rows = store._conn.execute(
-            f"SELECT * FROM sessions WHERE {where_sql} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-            [*params, limit, offset],
-        ).fetchall()
-    return [store._row_to_session(row) for row in rows if row is not None], int(total_row["count"] if total_row else 0)
 
 
 def _list_postgres_public_sessions(store, *, owner_key: str | None, limit: int, offset: int) -> tuple[list[dict[str, Any]], int]:

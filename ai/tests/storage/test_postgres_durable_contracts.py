@@ -10,11 +10,11 @@ from app.storage.postgres.schema import POSTGRES_SCHEMA_STATEMENTS, render_postg
 from app.storage.postgres.connection import apply_configured_postgres_migrations
 from app.storage.postgres.durable_repository import PostgresDurableRepository, PostgresTaskRepository
 from app.storage.postgres.migrations import POSTGRES_MIGRATIONS, apply_postgres_migrations
-from app.storage.sqlite import SQLiteTaskRepository
+from tests.fakes import InMemoryTaskRepository
 
 
-def test_sqlite_repository_satisfies_durable_boundary_protocols(tmp_path):
-    repository = SQLiteTaskRepository(tmp_path / "repo.db")
+def test_in_memory_repository_satisfies_task_boundary_protocols():
+    repository = InMemoryTaskRepository()
 
     assert isinstance(repository, ApprovalRepository)
     assert isinstance(repository, TaskEventRepository)
