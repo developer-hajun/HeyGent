@@ -1,0 +1,15 @@
+export {
+  createTaskRunSocket,
+  parseTaskRunSocketEvent,
+  type AuthFailedEvent,
+  type AuthOkEvent,
+  type AuthRequiredEvent,
+  type CreateTaskRunSocketOptions,
+  type PongEvent,
+  type SubscribedEvent,
+  type TaskEvent,
+  type TaskEventData,
+  type TaskRunSocketClient,
+  type TaskRunSocketEvent,
+  type TaskRunSocketEventHandler,
+} from './taskRunSocket'
