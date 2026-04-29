@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from secrets import token_urlsafe
+import time
+from typing import Callable
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
@@ -11,6 +13,34 @@ from app.api.ws.subscriptions import handle_subscription
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+class WebSocketAuthRateLimiter:
+    """인증 실패가 반복되는 client를 짧은 시간 동안 차단하는 in-memory limiter다."""
+
+    def __init__(self, *, max_failures: int, window_seconds: int, clock: Callable[[], float] = time.monotonic) -> None:
+        self.max_failures = max_failures
+        self.window_seconds = window_seconds
+        self.clock = clock
+        self._failures_by_client: dict[str, list[float]] = {}
+
+    def allowed(self, client_key: str) -> bool:
+        failures = self._recent_failures(client_key)
+        return len(failures) < self.max_failures
+
+    def record_failure(self, client_key: str) -> None:
+        failures = self._recent_failures(client_key)
+        failures.append(self.clock())
+        self._failures_by_client[client_key] = failures
+
+    def record_success(self, client_key: str) -> None:
+        self._failures_by_client.pop(client_key, None)
+
+    def _recent_failures(self, client_key: str) -> list[float]:
+        threshold = self.clock() - self.window_seconds
+        failures = [created_at for created_at in self._failures_by_client.get(client_key, []) if created_at >= threshold]
+        self._failures_by_client[client_key] = failures
+        return failures
 
 
 def _websocket_origin_allowed(websocket: WebSocket) -> bool:
@@ -23,6 +53,20 @@ def _websocket_origin_allowed(websocket: WebSocket) -> bool:
 
     origin = websocket.headers.get("origin")
     return origin in allowed_origins
+
+
+def _websocket_client_key(websocket: WebSocket) -> str:
+    client = websocket.client
+    if client is None:
+        return "unknown"
+    return client.host or "unknown"
+
+
+def build_websocket_auth_rate_limiter(settings) -> WebSocketAuthRateLimiter:
+    return WebSocketAuthRateLimiter(
+        max_failures=settings.ws_auth_rate_limit_max_failures,
+        window_seconds=settings.ws_auth_rate_limit_window_seconds,
+    )
 
 
 async def _authenticate_first_message(websocket: WebSocket) -> BackendAuthVerifyResult | None:
@@ -71,7 +115,12 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
     session_id: str | None = None
     connection_id: str | None = None
     user_id: str | None = None
+    client_key = _websocket_client_key(websocket)
+    rate_limiter = getattr(websocket.app.state, "ws_auth_rate_limiter", None)
     if not _websocket_origin_allowed(websocket):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+    if rate_limiter is not None and not rate_limiter.allowed(client_key):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
@@ -79,9 +128,13 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
     try:
         auth_result = await _authenticate_first_message(websocket)
         if auth_result is None:
+            if rate_limiter is not None:
+                rate_limiter.record_failure(client_key)
             return
 
         # client query string의 userId/session_id는 위조 가능하므로 backend 검증 결과의 user_id만 세션 키로 사용한다.
+        if rate_limiter is not None:
+            rate_limiter.record_success(client_key)
         user_id = auth_result.user_id
         session_id = f"user:{user_id}"
         connection_id = token_urlsafe(24)

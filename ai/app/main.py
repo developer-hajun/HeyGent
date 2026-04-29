@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI
 
 from app.api.router import build_api_router
+from app.api.ws.gateway import build_websocket_auth_rate_limiter
 from app.clients.backend_auth import BackendAuthClient
 from app.core.config import get_settings
 from app.core.logger import configure_logging
@@ -118,6 +119,7 @@ async def lifespan(app: FastAPI):
     app.state.ws_manager = ws_manager
     app.state.session_registry = session_registry
     app.state.connection_registry = connection_registry
+    app.state.ws_auth_rate_limiter = build_websocket_auth_rate_limiter(settings)
     app.state.session_service = session_service
     app.state.backend_auth_client = backend_auth_client
     app.state.provider_registry = provider_registry

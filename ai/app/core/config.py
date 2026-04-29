@@ -45,6 +45,8 @@ class Settings:
     ws_connection_ttl_seconds: int = 60
     ws_auth_first_message_timeout_seconds: float = 10.0
     ws_allowed_origins: list[str] = field(default_factory=list)
+    ws_auth_rate_limit_max_failures: int = 5
+    ws_auth_rate_limit_window_seconds: int = 60
     task_projection_ttl_seconds: int = 3600
     task_projection_max_events: int = 200
 
@@ -180,6 +182,14 @@ def get_settings() -> Settings:
             default=10.0,
         ),
         ws_allowed_origins=_parse_csv(_read_env("HEYGENT_WS_ALLOWED_ORIGINS", "", dotenv_values)),
+        ws_auth_rate_limit_max_failures=_parse_int(
+            _read_env("HEYGENT_WS_AUTH_RATE_LIMIT_MAX_FAILURES", 5, dotenv_values),
+            default=5,
+        ),
+        ws_auth_rate_limit_window_seconds=_parse_int(
+            _read_env("HEYGENT_WS_AUTH_RATE_LIMIT_WINDOW_SECONDS", 60, dotenv_values),
+            default=60,
+        ),
         task_projection_ttl_seconds=_parse_int(
             _read_env("HEYGENT_TASK_PROJECTION_TTL_SECONDS", 3600, dotenv_values),
             default=3600,

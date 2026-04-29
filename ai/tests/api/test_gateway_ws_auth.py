@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from app.api.ws.gateway import _authenticate_first_message
+from app.api.ws.gateway import WebSocketAuthRateLimiter, _authenticate_first_message
 from app.clients.backend_auth import BackendAuthVerifyError, BackendAuthVerifyResult
 from app.core.config import get_settings
 from app.contracts.event.task_events import TaskEventEnvelope
@@ -82,6 +82,30 @@ def test_settings_reads_websocket_allowed_origins(monkeypatch):
     assert settings.ws_allowed_origins == ["https://app.example.com", "https://admin.example.com"]
 
 
+def test_websocket_auth_rate_limiter_blocks_after_recent_failures():
+    current_time = 1000.0
+    limiter = WebSocketAuthRateLimiter(max_failures=2, window_seconds=60, clock=lambda: current_time)
+
+    assert limiter.allowed("client-a") is True
+    limiter.record_failure("client-a")
+    limiter.record_failure("client-a")
+
+    assert limiter.allowed("client-a") is False
+
+    current_time = 1061.0
+
+    assert limiter.allowed("client-a") is True
+
+
+def test_websocket_auth_rate_limiter_resets_after_success():
+    limiter = WebSocketAuthRateLimiter(max_failures=1, window_seconds=60, clock=lambda: 1000.0)
+
+    limiter.record_failure("client-a")
+    limiter.record_success("client-a")
+
+    assert limiter.allowed("client-a") is True
+
+
 @pytest.mark.asyncio
 async def test_auth_first_message_timeout_closes_before_verification():
     websocket = SlowFirstMessageWebSocket()
@@ -116,6 +140,23 @@ def test_websocket_rejects_origin_outside_allowed_list(client):
             "/api/v1/gateway/ws",
             headers={"origin": "https://evil.example.com"},
         ):
+            pass
+
+    assert exc_info.value.code == 1008
+
+
+def test_websocket_rate_limit_blocks_repeated_auth_failures(client):
+    client.app.state.settings.ws_auth_rate_limit_max_failures = 1
+    client.app.state.settings.ws_auth_rate_limit_window_seconds = 60
+    client.app.state.ws_auth_rate_limiter = WebSocketAuthRateLimiter(max_failures=1, window_seconds=60)
+    client.app.state.backend_auth_client = FakeBackendAuthClient(fail=True)
+
+    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+        websocket.send_json({"action": "auth", "accessToken": "bad-token"})
+        assert websocket.receive_json() == {"type": "auth.failed"}
+
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect("/api/v1/gateway/ws"):
             pass
 
     assert exc_info.value.code == 1008

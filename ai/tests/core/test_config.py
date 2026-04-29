@@ -29,6 +29,8 @@ def test_redis_connection_registry_settings_read_environment(monkeypatch, tmp_pa
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("HEYGENT_REDIS_URL", "redis://localhost:6379/0")
     monkeypatch.setenv("HEYGENT_WS_CONNECTION_TTL_SECONDS", "120")
+    monkeypatch.setenv("HEYGENT_WS_AUTH_RATE_LIMIT_MAX_FAILURES", "3")
+    monkeypatch.setenv("HEYGENT_WS_AUTH_RATE_LIMIT_WINDOW_SECONDS", "30")
     monkeypatch.setenv("HEYGENT_TASK_PROJECTION_TTL_SECONDS", "1800")
     monkeypatch.setenv("HEYGENT_TASK_PROJECTION_MAX_EVENTS", "50")
 
@@ -36,6 +38,8 @@ def test_redis_connection_registry_settings_read_environment(monkeypatch, tmp_pa
 
     assert settings.redis_url == "redis://localhost:6379/0"
     assert settings.ws_connection_ttl_seconds == 120
+    assert settings.ws_auth_rate_limit_max_failures == 3
+    assert settings.ws_auth_rate_limit_window_seconds == 30
     assert settings.task_projection_ttl_seconds == 1800
     assert settings.task_projection_max_events == 50
 
