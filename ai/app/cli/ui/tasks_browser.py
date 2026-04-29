@@ -544,8 +544,8 @@ def _step_detail_summary_lines(step: dict[str, Any]) -> list[str]:
         f"- LLM 호출: {llm_detail.get('callCount') or 0}회 ({llm_detail.get('model') or '-'})",
         f"- Operation: {operation_detail.get('completedCount') or 0}/{operation_detail.get('totalCount') or 0}",
         f"- 남은 todo: {planning_detail.get('currentKey') or '없음'}",
-        f"- Child task: {agent_detail.get('childTaskRunId') or '없음'}",
-        f"- Child 요약: {agent_detail.get('summary') or '없음'}",
+        f"- 작업 세션: {agent_detail.get('workerSessionId') or '없음'}",
+        f"- 작업 요약: {agent_detail.get('summary') or '없음'}",
     ]
 
 

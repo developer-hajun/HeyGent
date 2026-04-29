@@ -6,5 +6,6 @@ public enum DisplayEventType {
     WAITING,
     DONE,
     FAILED,
+    CANCELED,
     INFO
 }

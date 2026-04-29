@@ -32,6 +32,25 @@ def get_ready(request: Request) -> dict[str, object]:
         "status": "ready",
         "app_name": settings.app_name,
         "api_prefix": settings.api_prefix,
-        "db_path": str(repository.db_path),
+        "storage": _storage_status(request, repository),
         "providers": [provider.model_dump(mode="json") for provider in providers],
+    }
+
+
+def _storage_status(request: Request, repository) -> dict[str, object]:
+    durable_repository = getattr(repository, "durable_repository", repository)
+    backend = getattr(durable_repository, "storage_backend", None)
+    if backend == "postgres":
+        return {
+            "backend": "postgres",
+            "postgres_configured": True,
+            "postgres_migrations_applied": len(getattr(request.app.state, "applied_postgres_migrations", []) or []),
+            "redis_projection_enabled": getattr(request.app.state, "task_projection_store", None) is not None,
+        }
+    # SQLite는 테스트/legacy에서만 허용되므로 ready 응답에도 명시적으로 드러낸다.
+    return {
+        "backend": "sqlite",
+        "legacy": True,
+        "db_path": str(getattr(durable_repository, "db_path", "")),
+        "redis_projection_enabled": getattr(request.app.state, "task_projection_store", None) is not None,
     }

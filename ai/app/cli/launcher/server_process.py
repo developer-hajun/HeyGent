@@ -22,8 +22,6 @@ def is_local_base_url(base_url: str) -> bool:
 
 def ready_url(base_url: str) -> str:
     normalized = base_url.rstrip("/")
-    if normalized.endswith("/api/v1"):
-        return normalized[:-7] + "/api/v1/ready"
     return normalized + "/ready"
 
 

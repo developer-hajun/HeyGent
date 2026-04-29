@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.api.http.agent_sessions import router as agent_sessions_router
 from app.api.http.health import router as health_router
 from app.api.http.providers import router as providers_router
 from app.api.http.tasks import router as tasks_router
@@ -12,13 +13,14 @@ from app.core.config import Settings
 def build_api_router(settings: Settings) -> APIRouter:
     """전역 API prefix 를 한 곳에서만 주입한다.
 
-    각 라우터 파일에 /api/v1 를 반복해서 쓰지 않고,
+    각 라우터 파일에 /ai/api/v1 를 반복해서 쓰지 않고,
     앱 조립 시점에 한 번만 묶어서 경로 체계를 통일한다.
     """
 
     api_router = APIRouter(prefix=settings.api_prefix)
     api_router.include_router(health_router)
     api_router.include_router(tasks_router)
+    api_router.include_router(agent_sessions_router)
     api_router.include_router(providers_router)
     api_router.include_router(ws_router)
     return api_router

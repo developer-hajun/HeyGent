@@ -65,14 +65,16 @@ DEFAULT_STEP_DETAIL: dict[str, Any] = {
         # 호출한 agent 의 식별자.
         # 어떤 agent 에 위임됐는지 추적해야 디버깅과 상세 화면 연결이 가능하다.
         "agentId": None,
-        # agent 호출이 별도 child task 를 만들었다면 그 TaskRun ID.
-        # 부모 step 에서 자식 task 로 이어지는 관계를 복원하려고 저장한다.
-        "childTaskRunId": None,
-        # child agent 가 남긴 한 줄 요약.
-        # parent step 이 child 전체 로그를 열지 않아도 delegation 결과를 바로 보여 주기 위해 둔다.
+        # worker가 별도 transcript/session으로 실행되면 해당 agent_session ID를 저장한다.
+        # 부모 StepRun은 worker 중간 로그를 섞지 않고 이 세션 ID와 handoff summary만 참조한다.
+        "workerSessionId": None,
+        # worker profile key는 재시작 뒤에도 어떤 실행 설정이 주입됐는지 확인하는 힌트다.
+        "profileKey": None,
+        # worker agent 가 남긴 한 줄 요약.
+        # parent step 이 worker 전체 로그를 열지 않아도 delegation 결과를 바로 보여 주기 위해 둔다.
         "summary": None,
-        # child agent 의 최종 상태.
-        # parent step 이 linkage 만 보고도 child 성공/실패/대기를 바로 판단할 수 있게 남긴다.
+        # worker agent 의 최종 상태.
+        # parent step 이 linkage 만 보고도 worker 성공/실패/대기를 바로 판단할 수 있게 남긴다.
         "status": None,
     },
     "toolDetail": {

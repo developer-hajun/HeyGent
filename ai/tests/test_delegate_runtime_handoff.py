@@ -1,0 +1,412 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from app.contracts.task.task_status import TaskStatus
+from app.domain.orchestration.agent.runner import AgentLoopRunner
+from app.domain.orchestration.delegation.delegate_runtime import DelegateRuntime
+from app.domain.orchestration.delegation.launcher import ChildSessionLauncher
+from app.domain.orchestration.delegation.spec import ChildSessionLaunchResult, ChildSessionSpec
+from app.domain.orchestration.runtime_planning import Planner
+from app.tools.contracts import ExecutorSpec
+
+
+class FakeChildSessionLauncher:
+    def __init__(self, result: ChildSessionLaunchResult | Exception) -> None:
+        self.result = result
+        self.launched: list[dict] = []
+
+    def build_pending_detail(self, spec):
+        return {"agentDetail": {"status": "PENDING", "agentId": f"{spec.parent_step_run_id}:agent.loop"}}
+
+    def build_failed_detail(self, spec, error_message: str):
+        return {"agentDetail": {"status": "FAILED", "summary": error_message}}
+
+    def build_result_detail(self, spec, result):
+        return {
+            "agentDetail": {
+                "status": result.status,
+                "summary": result.summary,
+                "workerSessionId": spec.worker_session_id,
+                "profileKey": (spec.metadata or {}).get("profile_key"),
+                "agentId": result.agent_id,
+            }
+        }
+
+    async def launch(self, **kwargs):
+        self.launched.append(kwargs)
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+class FakeHandoffRepository:
+    def __init__(self) -> None:
+        self.steps: list[object] = []
+        self.created_handoffs: list[dict] = []
+        self.completed_handoffs: list[tuple[str, dict]] = []
+        self.agent_profiles: dict[str, dict] = {}
+
+    def update_step(self, step):
+        self.steps.append(step)
+        return step
+
+    def create_worker_handoff(self, payload):
+        self.created_handoffs.append(payload)
+        return payload
+
+    def complete_worker_handoff(self, handoff_id, payload):
+        self.completed_handoffs.append((handoff_id, payload))
+        return {"handoff_id": handoff_id, **payload}
+
+    def get_agent_profile(self, profile_key, *, owner_key="system", profile_version=None):
+        return self.agent_profiles.get(profile_key)
+
+
+class FakeWorkerSessionStore:
+    def __init__(self) -> None:
+        self.sessions_by_key = {
+            "session_1": {
+                "id": "agent_session_parent",
+                "session_key": "session_1",
+                "metadata": {"task_run_id": "task_parent"},
+            }
+        }
+        self.created_sessions: list[dict] = []
+
+    def get_latest_session_by_key(self, session_key):
+        return self.sessions_by_key.get(session_key)
+
+    def create_session(self, **payload):
+        self.created_sessions.append(payload)
+        session = {
+            "id": payload["session_id"],
+            "session_key": payload["session_key"],
+            "metadata": payload.get("metadata") or {},
+            "parent_session_id": payload.get("parent_session_id"),
+        }
+        self.sessions_by_key[payload["session_key"]] = session
+        return payload["session_id"]
+
+
+class FakeWorkerExecutor:
+    spec = ExecutorSpec(
+        intent_type="agent.loop",
+        entry_executor_key="agent.loop",
+        executor_key="agent.loop",
+        task_type="agent.loop",
+        task_title="Agent Loop",
+        step_type="agent.loop",
+        step_title="Agent Loop",
+    )
+
+    def __init__(self) -> None:
+        self.executed: list[dict] = []
+
+    def execute(self, *, task, step, resume_payload=None):
+        self.executed.append({"task": task, "step": step, "resume_payload": resume_payload})
+        return {
+            "task_status": TaskStatus.COMPLETED,
+            "step_status": TaskStatus.COMPLETED,
+            "result_payload": {"text": "worker result"},
+            "output_payload": {"text": "worker result"},
+            "summary_message": "worker result",
+        }
+
+
+class FakeWorkerRegistry:
+    def __init__(self, executor) -> None:
+        self.executor = executor
+
+    def resolve(self, *, intent_type, entry_executor_key):
+        return self.executor
+
+
+class RepositoryThatFailsOnCreateTask:
+    def create_task(self, task):
+        raise AssertionError("worker 실행은 별도 TaskRun을 저장하면 안 됩니다")
+
+
+def assert_legacy_task_run_id_not_exposed(value):
+    if isinstance(value, dict):
+        assert "childTaskRunId" not in value
+        for child in value.values():
+            assert_legacy_task_run_id_not_exposed(child)
+    elif isinstance(value, list):
+        for child in value:
+            assert_legacy_task_run_id_not_exposed(child)
+
+
+@pytest.mark.asyncio
+async def test_child_session_launcher_uses_worker_callback_without_legacy_task_run_id():
+    launched: list[dict] = []
+    launcher = ChildSessionLauncher()
+
+    async def start_worker(**kwargs):
+        launched.append(kwargs)
+        return ChildSessionLaunchResult(
+            agent_id="agent_worker",
+            status=TaskStatus.COMPLETED,
+            summary="작업 완료",
+            result_payload={"text": "작업 완료"},
+        )
+
+    launcher.bind_worker_start(start_worker)
+    spec = ChildSessionSpec(
+        parent_task_run_id="task_parent",
+        parent_step_run_id="step_parent",
+        child_intent_type="agent.loop",
+        child_entry_executor_key="agent.loop",
+        metadata={"profile_key": "worker.default", "agent_id": "agent_worker"},
+        worker_session_id="session_worker",
+    )
+
+    result = await launcher.launch(
+        spec=spec,
+        owner_key="user_1",
+        session_key="session_1",
+        input_payload={"transcript_session_id": "session_worker"},
+    )
+
+    assert launched[0]["input_payload"]["transcript_session_id"] == "session_worker"
+    detail = launcher.build_result_detail(spec, result)
+    assert detail["agentDetail"]["workerSessionId"] == "session_worker"
+    assert detail["agentDetail"]["profileKey"] == "worker.default"
+    assert_legacy_task_run_id_not_exposed(detail)
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_runner_worker_session_does_not_create_task_run():
+    executor = FakeWorkerExecutor()
+    runner = AgentLoopRunner(
+        repository=RepositoryThatFailsOnCreateTask(),
+        planner=Planner(),
+        task_engine=SimpleNamespace(),
+        tool_registry=FakeWorkerRegistry(executor),
+    )
+    spec = ChildSessionSpec(
+        parent_task_run_id="task_parent",
+        parent_step_run_id="step_parent",
+        child_intent_type="agent.loop",
+        child_entry_executor_key="agent.loop",
+        metadata={"agent_id": "agent_worker"},
+        worker_session_id="session_worker",
+    )
+
+    result = await runner.start_worker_session(
+        spec=spec,
+        owner_key="user_1",
+        session_key="session_1",
+        input_payload={"prompt": "worker", "transcript_session_id": "session_worker"},
+        intent_type="agent.loop",
+        entry_executor_key="agent.loop",
+    )
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.summary == "worker result"
+    assert executor.executed[0]["step"] is None
+
+
+@pytest.mark.asyncio
+async def test_delegate_runtime_records_worker_handoff_when_repository_supports_it():
+    launcher = FakeChildSessionLauncher(
+        ChildSessionLaunchResult(
+            agent_id="agent_worker",
+            status=TaskStatus.COMPLETED,
+            summary="작업 완료",
+        )
+    )
+    runtime = DelegateRuntime(launcher)
+    repository = FakeHandoffRepository()
+    task = SimpleNamespace(task_run_id="task_parent", owner_key="user_1", session_key="session_1")
+    step = SimpleNamespace(step_run_id="step_parent", detail_json={})
+
+    outcome = {
+        "child_session": {
+            "intent_type": "agent.loop",
+            "entry_executor_key": "agent.loop",
+            "input_payload": {"prompt": "하위 작업"},
+            "metadata": {"profile_key": "worker.default"},
+        }
+    }
+
+    result = await runtime.apply(task=task, step=step, outcome=outcome, repository=repository)
+
+    assert repository.created_handoffs[0]["task_run_id"] == "task_parent"
+    assert repository.created_handoffs[0]["parent_step_run_id"] == "step_parent"
+    assert repository.created_handoffs[0]["worker_profile_id"] == "worker.default"
+    assert repository.created_handoffs[0]["input_payload"]["child_intent_type"] == "agent.loop"
+    completed_id, completed_payload = repository.completed_handoffs[0]
+    assert completed_id == repository.created_handoffs[0]["handoff_id"]
+    assert completed_payload["status"] == "COMPLETED"
+    assert completed_payload["result_summary"]["workerSessionId"] is None
+    assert completed_payload["result_summary"]["profileKey"] == "worker.default"
+    assert result["result_payload"]["delegate"]["workerSessionId"] is None
+    assert result["result_payload"]["delegate"]["profileKey"] == "worker.default"
+    assert_legacy_task_run_id_not_exposed(completed_payload["result_summary"])
+    assert_legacy_task_run_id_not_exposed(result["result_payload"])
+    assert_legacy_task_run_id_not_exposed(result["output_payload"])
+
+
+@pytest.mark.asyncio
+async def test_delegate_runtime_creates_worker_session_and_normalizes_contract_payload():
+    launcher = FakeChildSessionLauncher(
+        ChildSessionLaunchResult(
+            agent_id="agent_worker",
+            status=TaskStatus.COMPLETED,
+            summary="worker summary",
+        )
+    )
+    session_store = FakeWorkerSessionStore()
+    runtime = DelegateRuntime(launcher, session_store=session_store)
+    repository = FakeHandoffRepository()
+    task = SimpleNamespace(task_run_id="task_parent", owner_key="user_1", session_key="session_1")
+    step = SimpleNamespace(step_run_id="step_parent", detail_json={})
+
+    result = await runtime.apply(
+        task=task,
+        step=step,
+        outcome={
+            "child_session": {
+                "intent_type": "agent.loop",
+                "entry_executor_key": "agent.loop",
+                "goal": "문서 갭 줄이기",
+                "context": {"branch": "AI-feat/Subagent_구조화"},
+                "toolsets": ["file", "delegation", "terminal", "file"],
+                "max_iterations": 15,
+                "role": "worker",
+                "acp_command": "run",
+                "acp_args": {"target": "delegate"},
+                "tasks": [{"summary": "계약 보강"}],
+                "metadata": {"profile_key": "worker.docs", "agent_id": "agent_worker"},
+            }
+        },
+        repository=repository,
+    )
+
+    created_session = session_store.created_sessions[0]
+    worker_session_id = created_session["session_id"]
+    assert created_session["source"] == "worker"
+    assert created_session["parent_session_id"] == "agent_session_parent"
+    assert created_session["metadata"]["parent_step_run_id"] == "step_parent"
+    assert created_session["metadata"]["profile_key"] == "worker.docs"
+    assert created_session["metadata"]["delegation_policy"]["leaf"] is True
+
+    handoff = repository.created_handoffs[0]
+    assert handoff["worker_session_id"] == worker_session_id
+    assert handoff["input_payload"]["profile_key"] == "worker.docs"
+    assert handoff["input_payload"]["agent_id"] == "agent_worker"
+    assert handoff["input_payload"]["toolsets"] == ["file", "terminal"]
+    assert handoff["input_payload"]["blocked_toolsets"] == ["delegate", "delegation"]
+
+    launched_payload = launcher.launched[0]["input_payload"]
+    assert launched_payload["transcript_session_id"] == worker_session_id
+    assert launched_payload["enabled_toolsets"] == ["file", "terminal"]
+    assert launched_payload["worker"]["leaf"] is True
+    assert launched_payload["tasks"] == [{"summary": "계약 보강"}]
+
+    delegate_result = result["output_payload"]["delegate"]
+    assert delegate_result["profile_key"] == "worker.docs"
+    assert delegate_result["profileKey"] == "worker.docs"
+    assert delegate_result["agent_id"] == "agent_worker"
+    assert delegate_result["workerSessionId"] == worker_session_id
+    assert delegate_result["total_duration_seconds"] is not None
+    assert delegate_result["results"][0]["task_index"] == 0
+    assert delegate_result["results"][0]["status"] == TaskStatus.COMPLETED
+    assert result["output_payload"]["workerSessionId"] == worker_session_id
+    assert result["output_payload"]["profileKey"] == "worker.docs"
+    assert result["result_payload"]["workerSessionId"] == worker_session_id
+    assert result["result_payload"]["profileKey"] == "worker.docs"
+    assert_legacy_task_run_id_not_exposed(result["output_payload"])
+    assert_legacy_task_run_id_not_exposed(result["result_payload"])
+    assert set(delegate_result["results"][0]) >= {
+        "summary",
+        "api_calls",
+        "duration_seconds",
+        "model",
+        "exit_reason",
+        "tokens",
+        "tool_trace",
+        "error",
+    }
+
+
+@pytest.mark.asyncio
+async def test_delegate_runtime_applies_profile_defaults_and_toolset_intersection():
+    launcher = FakeChildSessionLauncher(
+        ChildSessionLaunchResult(
+            agent_id="agent_worker",
+            status=TaskStatus.COMPLETED,
+            summary="worker summary",
+        )
+    )
+    runtime = DelegateRuntime(launcher, session_store=FakeWorkerSessionStore())
+    repository = FakeHandoffRepository()
+    repository.agent_profiles["worker.profiled"] = {
+        "profile_key": "worker.profiled",
+        "profile_id": "profile_worker_profiled",
+        "profile_version": 3,
+        "agent_type": "worker",
+        "config_snapshot": {
+            "model": "gpt-profile",
+            "toolsets": ["skills", "terminal"],
+        },
+        "delegation_policy": {
+            "maxIterations": 22,
+            "canDelegate": False,
+        },
+    }
+    task = SimpleNamespace(task_run_id="task_parent", owner_key="user_1", session_key="session_1")
+    step = SimpleNamespace(step_run_id="step_parent", detail_json={})
+
+    await runtime.apply(
+        task=task,
+        step=step,
+        outcome={
+            "child_session": {
+                "intent_type": "agent.loop",
+                "entry_executor_key": "agent.loop",
+                "goal": "profile 적용",
+                "toolsets": ["terminal", "file", "delegation"],
+                "metadata": {"profile_key": "worker.profiled"},
+            }
+        },
+        repository=repository,
+    )
+
+    handoff = repository.created_handoffs[0]
+    launched_payload = launcher.launched[0]["input_payload"]
+    assert handoff["worker_profile_id"] == "profile_worker_profiled"
+    assert handoff["worker_profile_version"] == 3
+    assert handoff["input_payload"]["toolsets"] == ["terminal"]
+    assert launched_payload["enabled_toolsets"] == ["terminal"]
+    assert launched_payload["model"] == "gpt-profile"
+    assert launched_payload["max_iterations"] == 22
+
+
+@pytest.mark.asyncio
+async def test_delegate_runtime_completes_handoff_as_failed_when_launch_fails():
+    launcher = FakeChildSessionLauncher(RuntimeError("launch unavailable"))
+    runtime = DelegateRuntime(launcher)
+    repository = FakeHandoffRepository()
+    task = SimpleNamespace(task_run_id="task_parent", owner_key="user_1", session_key=None)
+    step = SimpleNamespace(step_run_id="step_parent", detail_json={})
+
+    result = await runtime.apply(
+        task=task,
+        step=step,
+        outcome={
+            "child_session": {
+                "intent_type": "agent.loop",
+                "entry_executor_key": "agent.loop",
+                "input_payload": {"prompt": "하위 작업"},
+            }
+        },
+        repository=repository,
+    )
+
+    assert result["task_status"] == TaskStatus.FAILED
+    assert repository.completed_handoffs[0][1]["status"] == "FAILED"
+    assert "launch unavailable" in repository.completed_handoffs[0][1]["result_summary"]["error"]
