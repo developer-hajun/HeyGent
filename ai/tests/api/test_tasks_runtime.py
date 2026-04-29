@@ -659,6 +659,41 @@ def test_taskruns_active_supports_session_filter_and_recent_terminal(client, mon
     assert expired_active.json()["items"] == []
 
 
+def test_taskruns_create_rejects_second_active_task_in_same_session(client, monkeypatch):
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(tool_calls=[_tool_call("call_active_lock", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
+            _response(text="SHOULD_NOT_START"),
+        ],
+    )
+
+    first_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "active-lock-user",
+            "session_key": "sess_active_lock",
+            "input_payload": {"prompt": "첫 작업은 승인 대기", "approval_required": True},
+        },
+    )
+    assert first_response.status_code == 200
+    assert first_response.json()["status"] == "WAITING"
+
+    second_response = client.post(
+        "/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "active-lock-user",
+            "session_key": "sess_active_lock",
+            "input_payload": {"prompt": "동일 세션 두 번째 작업"},
+        },
+    )
+
+    assert second_response.status_code == 409
+    assert "active task already exists" in second_response.json()["detail"]
+
+
 def test_taskruns_active_prefers_redis_projection_for_live_session(client):
     projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
     client.app.state.task_projection_store = projection

@@ -502,6 +502,11 @@ def list_active_tasks(
 @router.post("", response_model=TaskRunResponse)
 async def create_task(request: Request, payload: CreateTaskRequest, context: TaskContext = Depends(get_task_context)) -> TaskRunResponse:
     orchestrator = request.app.state.orchestrator
+    if payload.session_key:
+        active_count = context.repository.count_tasks_by_statuses(_ACTIVE_TASK_STATUSES, session_key=payload.session_key)
+        if active_count > 0:
+            # 외부 product session에서는 중복 실행을 서버에서 막아 다중 탭/다중 기기 race를 줄인다.
+            raise HTTPException(status_code=409, detail="active task already exists in this session")
     try:
         task = await orchestrator.start(
             OrchestrationRequest(
