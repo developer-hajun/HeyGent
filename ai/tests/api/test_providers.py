@@ -30,7 +30,7 @@ def _make_test_access_token() -> str:
 
 
 def test_list_providers(client):
-    response = client.get("/api/v1/providers")
+    response = client.get("/ai/api/v1/providers")
 
     assert response.status_code == 200
     providers = {item["provider_name"]: item for item in response.json()}
@@ -40,7 +40,7 @@ def test_list_providers(client):
 
 
 def test_get_provider_detail(client):
-    response = client.get("/api/v1/providers/openai_oauth")
+    response = client.get("/ai/api/v1/providers/openai_oauth")
 
     assert response.status_code == 200
     body = response.json()
@@ -49,7 +49,7 @@ def test_get_provider_detail(client):
 
 
 def test_provider_auth_start_returns_authorization_url(client):
-    response = client.post("/api/v1/providers/openai_oauth/auth", json={"force_oauth": True})
+    response = client.post("/ai/api/v1/providers/openai_oauth/auth", json={"force_oauth": True})
 
     assert response.status_code == 200
     body = response.json()
@@ -78,8 +78,8 @@ def test_provider_auth_start_imports_local_chatgpt_login(monkeypatch, tmp_path):
     monkeypatch.setenv("HEYGENT_OPENAI_AUTH_FILE", str(auth_path))
 
     with TestClient(app) as local_client:
-        auth_response = local_client.post("/api/v1/providers/openai_oauth/auth", json={"force_oauth": False})
-        provider_response = local_client.get("/api/v1/providers/openai_oauth")
+        auth_response = local_client.post("/ai/api/v1/providers/openai_oauth/auth", json={"force_oauth": False})
+        provider_response = local_client.get("/ai/api/v1/providers/openai_oauth")
 
     assert auth_response.status_code == 200
     assert auth_response.json()["status"] == "connected"
@@ -112,14 +112,14 @@ def test_provider_callback_connects_provider(monkeypatch, tmp_path):
     monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.post", fake_post)
 
     with TestClient(app) as local_client:
-        auth_response = local_client.post("/api/v1/providers/openai_oauth/auth", json={"force_oauth": True})
+        auth_response = local_client.post("/ai/api/v1/providers/openai_oauth/auth", json={"force_oauth": True})
         state = auth_response.json()["state"]
 
         callback_response = local_client.post(
-            "/api/v1/providers/openai_oauth/callback",
+            "/ai/api/v1/providers/openai_oauth/callback",
             json={"code": "code-123", "state": state},
         )
-        provider_response = local_client.get("/api/v1/providers/openai_oauth")
+        provider_response = local_client.get("/ai/api/v1/providers/openai_oauth")
 
     assert callback_response.status_code == 200
     assert callback_response.json()["connected"] is True
@@ -127,7 +127,7 @@ def test_provider_callback_connects_provider(monkeypatch, tmp_path):
 
 
 def test_provider_refresh_requires_connection(client):
-    response = client.post("/api/v1/providers/openai_oauth/refresh")
+    response = client.post("/ai/api/v1/providers/openai_oauth/refresh")
 
     assert response.status_code == 200
     assert response.json()["status"] in {"reconnect_required", "not_connected"}
@@ -158,12 +158,12 @@ def test_provider_disconnect_clears_connection(monkeypatch, tmp_path):
     monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.post", fake_post)
 
     with TestClient(app) as local_client:
-        auth_response = local_client.post("/api/v1/providers/openai_oauth/auth", json={"force_oauth": True})
+        auth_response = local_client.post("/ai/api/v1/providers/openai_oauth/auth", json={"force_oauth": True})
         state = auth_response.json()["state"]
-        local_client.post("/api/v1/providers/openai_oauth/callback", json={"code": "code-123", "state": state})
+        local_client.post("/ai/api/v1/providers/openai_oauth/callback", json={"code": "code-123", "state": state})
 
-        disconnect_response = local_client.post("/api/v1/providers/openai_oauth/disconnect")
-        provider_response = local_client.get("/api/v1/providers/openai_oauth")
+        disconnect_response = local_client.post("/ai/api/v1/providers/openai_oauth/disconnect")
+        provider_response = local_client.get("/ai/api/v1/providers/openai_oauth")
 
     assert disconnect_response.status_code == 200
     assert disconnect_response.json()["status"] == "disconnected"

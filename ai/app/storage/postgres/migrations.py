@@ -1,0 +1,63 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Sequence
+
+from app.storage.postgres.schema import POSTGRES_SCHEMA_STATEMENTS
+
+
+@dataclass(frozen=True, slots=True)
+class PostgresMigration:
+    """Postgres forward-only migration 한 단위를 표현한다."""
+
+    migration_id: str
+    statements: Sequence[str]
+
+
+POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
+    PostgresMigration(
+        migration_id="0001_initial_durable_schema",
+        statements=POSTGRES_SCHEMA_STATEMENTS,
+    ),
+)
+
+
+SCHEMA_MIGRATIONS_SQL = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    migration_id TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+"""
+
+
+def apply_postgres_migrations(
+    connection: Any,
+    *,
+    migrations: Sequence[PostgresMigration] = POSTGRES_MIGRATIONS,
+) -> list[str]:
+    """아직 적용되지 않은 Postgres migration을 순서대로 실행한다."""
+
+    connection.execute(SCHEMA_MIGRATIONS_SQL)
+    rows = connection.execute("SELECT migration_id FROM schema_migrations").fetchall()
+    applied_migration_ids = {_first_column(row) for row in rows}
+    newly_applied: list[str] = []
+
+    for migration in migrations:
+        if migration.migration_id in applied_migration_ids:
+            continue
+        for statement in migration.statements:
+            connection.execute(statement)
+        connection.execute(
+            "INSERT INTO schema_migrations (migration_id) VALUES (%s)",
+            (migration.migration_id,),
+        )
+        newly_applied.append(migration.migration_id)
+
+    connection.commit()
+    return newly_applied
+
+
+def _first_column(row: Any) -> str:
+    if isinstance(row, dict):
+        return str(row["migration_id"])
+    return str(row[0])

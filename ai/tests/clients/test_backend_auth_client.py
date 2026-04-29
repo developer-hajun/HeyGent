@@ -1,0 +1,118 @@
+from __future__ import annotations
+
+import httpx
+import pytest
+
+from app.core.config import Settings
+from app.clients.backend_auth import BackendAuthClient, BackendAuthVerifyError
+
+
+@pytest.mark.asyncio
+async def test_verify_access_token_posts_token_and_internal_header():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert str(request.url) == "http://backend/internal/ai/auth/validate"
+        assert request.headers["Authorization"] == "Bearer service-token"
+        assert request.read() == b'{"accessToken":"user-access-token","workspaceKey":"workspace-a"}'
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "userId": 1,
+                    "workspaceKey": "workspace-a",
+                    "scope": ["task:read", "task:write"],
+                    "jwtExpiresAt": "2026-04-29T12:00:00Z",
+                    "scopeExpiresAt": "2026-04-29T12:10:00Z",
+                },
+            },
+        )
+
+    settings = Settings(
+        backend_auth_verify_url="http://backend/internal/ai/auth/validate",
+        internal_service_token="service-token",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = BackendAuthClient(settings=settings, http_client=http_client)
+
+        result = await client.verify_access_token("user-access-token", workspace_key="workspace-a")
+
+    assert result.user_id == "1"
+    assert result.workspace_key == "workspace-a"
+    assert result.scopes == ["task:read", "task:write"]
+    assert result.token_expires_at == "2026-04-29T12:00:00Z"
+    assert result.scope_expires_at == "2026-04-29T12:10:00Z"
+
+
+@pytest.mark.asyncio
+async def test_verify_access_token_raises_on_backend_error_status():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"success": False, "message": "invalid token"})
+
+    settings = Settings(
+        backend_auth_verify_url="http://backend/internal/ai/auth/validate",
+        internal_service_token="service-token",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = BackendAuthClient(settings=settings, http_client=http_client)
+
+        with pytest.raises(BackendAuthVerifyError, match="401"):
+            await client.verify_access_token("bad-token")
+
+
+@pytest.mark.asyncio
+async def test_verify_access_token_wraps_network_error():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("backend unavailable", request=request)
+
+    settings = Settings(
+        backend_auth_verify_url="http://backend/internal/ai/auth/validate",
+        internal_service_token="service-token",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = BackendAuthClient(settings=settings, http_client=http_client)
+
+        with pytest.raises(BackendAuthVerifyError, match="네트워크 오류"):
+            await client.verify_access_token("user-access-token")
+
+
+@pytest.mark.asyncio
+async def test_verify_access_token_raises_when_wrapper_data_missing():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"success": True})
+
+    settings = Settings(
+        backend_auth_verify_url="http://backend/internal/ai/auth/validate",
+        internal_service_token="service-token",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = BackendAuthClient(settings=settings, http_client=http_client)
+
+        with pytest.raises(BackendAuthVerifyError, match="data"):
+            await client.verify_access_token("user-access-token")
+
+
+@pytest.mark.asyncio
+async def test_verify_access_token_raises_when_user_id_missing():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "workspaceKey": "workspace-a",
+                    "scope": ["task:read"],
+                    "jwtExpiresAt": "2026-04-29T12:00:00Z",
+                },
+            },
+        )
+
+    settings = Settings(
+        backend_auth_verify_url="http://backend/internal/ai/auth/validate",
+        internal_service_token="service-token",
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = BackendAuthClient(settings=settings, http_client=http_client)
+
+        with pytest.raises(BackendAuthVerifyError, match="userId"):
+            await client.verify_access_token("user-access-token")

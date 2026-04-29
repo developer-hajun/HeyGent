@@ -62,10 +62,10 @@ def _make_test_access_token() -> str:
 
 
 def test_remote_client_does_not_duplicate_api_prefix():
-    client = RemoteCLIClient(base_url="http://127.0.0.1:8000/api/v1", timeout_seconds=10)
+    client = RemoteCLIClient(base_url="http://127.0.0.1:8000/ai/api/v1", timeout_seconds=10)
 
-    assert client._normalize_request_path("/api/v1/providers/openai_oauth/auth") == "/providers/openai_oauth/auth"
-    assert client._normalize_request_path("/api/v1/ready") == "/ready"
+    assert client._normalize_request_path("/ai/api/v1/providers/openai_oauth/auth") == "/providers/openai_oauth/auth"
+    assert client._normalize_request_path("/ai/api/v1/ready") == "/ready"
 
 
 def test_slash_command_completer_matches_prefix():
@@ -108,7 +108,7 @@ def test_render_box_keeps_terminal_width_aligned():
         [
             ("model", "gpt-5.4"),
             ("directory", r"C:\Users\Jun\Desktop\saffy\Openclaw\S14P31E105\ai"),
-            ("base-url", "http://127.0.0.1:8000/api/v1"),
+            ("base-url", "http://127.0.0.1:8000/ai/api/v1"),
         ],
         inner_padding=2,
         vertical_padding=1,
@@ -664,7 +664,7 @@ def test_initial_login_choice_uses_windows_console_arrows(monkeypatch, capsys):
 def test_remote_client_keeps_origin_base_url_paths():
     client = RemoteCLIClient(base_url="http://127.0.0.1:8000", timeout_seconds=10)
 
-    assert client._normalize_request_path("/api/v1/providers/openai_oauth/auth") == "/api/v1/providers/openai_oauth/auth"
+    assert client._normalize_request_path("/ai/api/v1/providers/openai_oauth/auth") == "/ai/api/v1/providers/openai_oauth/auth"
 
 
 def test_shell_slash_tasks_runs_browser(monkeypatch):
@@ -848,7 +848,7 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
 
     class FakeListener:
         def wait(self, timeout, *, poll_interval=0.2):
-            return {"ok": True, "payload": fake_client.request("POST", "/api/v1/providers/openai_oauth/callback").json()}
+            return {"ok": True, "payload": fake_client.request("POST", "/ai/api/v1/providers/openai_oauth/callback").json()}
 
         def close(self):
             return None
@@ -1047,7 +1047,7 @@ def test_cli_shell_auth_asks_before_reconnect(monkeypatch, capsys):
 
     monkeypatch.setattr(CLI_MAIN_MODULE, "_handle_openai_onboarding", fail_onboarding)
 
-    exit_code = main(["--base-url", "http://127.0.0.1:8000/api/v1"])
+    exit_code = main(["--base-url", "http://127.0.0.1:8000/ai/api/v1"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
@@ -1125,7 +1125,7 @@ def test_cli_shell_initial_login_runs_before_banner(monkeypatch, capsys):
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     monkeypatch.setattr(CLI_MAIN_MODULE, "_build_transport", lambda args: fake_client)
 
-    exit_code = main(["--base-url", "http://127.0.0.1:8000/api/v1"])
+    exit_code = main(["--base-url", "http://127.0.0.1:8000/ai/api/v1"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
@@ -1161,7 +1161,7 @@ def test_cli_shell_initial_login_ctrl_c_exits(monkeypatch, capsys):
     monkeypatch.setattr(PROMPT_UI, "_supports_windows_console_choice", lambda: False)
     monkeypatch.setattr(PROMPT_UI, "supports_interactive_choice", lambda: False)
 
-    exit_code = main(["--base-url", "http://127.0.0.1:8000/api/v1"])
+    exit_code = main(["--base-url", "http://127.0.0.1:8000/ai/api/v1"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
@@ -1194,7 +1194,7 @@ def test_cli_shell_initial_login_wait_cancel_exits_without_banner(monkeypatch, c
     monkeypatch.setattr(PROMPT_UI, "_supports_windows_console_choice", lambda: False)
     monkeypatch.setattr(PROMPT_UI, "supports_interactive_choice", lambda: False)
 
-    exit_code = main(["--base-url", "http://127.0.0.1:8000/api/v1"])
+    exit_code = main(["--base-url", "http://127.0.0.1:8000/ai/api/v1"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0

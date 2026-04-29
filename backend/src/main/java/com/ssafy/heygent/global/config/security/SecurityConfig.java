@@ -1,7 +1,5 @@
 package com.ssafy.heygent.global.config.security;
 
-import com.ssafy.heygent.global.config.jwt.JwtProvider;
-import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
@@ -11,13 +9,15 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
+import lombok.RequiredArgsConstructor;
+
 @Configuration
 @EnableWebSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {
 
-    private final JwtProvider jwtProvider;
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final AiInternalAuthenticationFilter aiInternalAuthenticationFilter;
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -44,6 +44,8 @@ public class SecurityConfig {
                         .anyRequest().authenticated()
                 )
 
+                .addFilterBefore(aiInternalAuthenticationFilter,
+                        UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthenticationFilter,
                         UsernamePasswordAuthenticationFilter.class);
 

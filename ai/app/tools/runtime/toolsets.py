@@ -40,9 +40,13 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
         description="Safe runtime tools without terminal execution.",
         includes=("skills", "session", "planning"),
     ),
+    "delegation": RuntimeToolsetDefinition(
+        description="Worker delegation tools.",
+        tools=("delegate_task",),
+    ),
     "local-core": RuntimeToolsetDefinition(
         description="Current minimal local runtime tool bundle.",
-        includes=("skills", "session", "planning", "terminal", "file"),
+        includes=("skills", "session", "planning", "terminal", "file", "delegation"),
     ),
 }
 
