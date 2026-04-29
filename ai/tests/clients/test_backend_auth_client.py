@@ -11,9 +11,9 @@ from app.clients.backend_auth import BackendAuthClient, BackendAuthVerifyError
 async def test_verify_access_token_posts_token_and_internal_header():
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
-        assert str(request.url) == "http://backend/internal/auth/verify"
-        assert request.headers["X-Internal-Service-Token"] == "service-token"
-        assert request.read() == b'{"accessToken":"user-access-token"}'
+        assert str(request.url) == "http://backend/internal/ai/auth/validate"
+        assert request.headers["Authorization"] == "Bearer service-token"
+        assert request.read() == b'{"accessToken":"user-access-token","workspaceKey":"workspace-a"}'
         return httpx.Response(
             200,
             json={
@@ -21,25 +21,27 @@ async def test_verify_access_token_posts_token_and_internal_header():
                 "data": {
                     "userId": 1,
                     "workspaceKey": "workspace-a",
-                    "scopes": ["task:read", "task:write"],
-                    "tokenExpiresAt": "2026-04-29T12:00:00Z",
+                    "scope": ["task:read", "task:write"],
+                    "jwtExpiresAt": "2026-04-29T12:00:00Z",
+                    "scopeExpiresAt": "2026-04-29T12:10:00Z",
                 },
             },
         )
 
     settings = Settings(
-        backend_auth_verify_url="http://backend/internal/auth/verify",
+        backend_auth_verify_url="http://backend/internal/ai/auth/validate",
         internal_service_token="service-token",
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         client = BackendAuthClient(settings=settings, http_client=http_client)
 
-        result = await client.verify_access_token("user-access-token")
+        result = await client.verify_access_token("user-access-token", workspace_key="workspace-a")
 
     assert result.user_id == "1"
     assert result.workspace_key == "workspace-a"
     assert result.scopes == ["task:read", "task:write"]
     assert result.token_expires_at == "2026-04-29T12:00:00Z"
+    assert result.scope_expires_at == "2026-04-29T12:10:00Z"
 
 
 @pytest.mark.asyncio
@@ -48,7 +50,7 @@ async def test_verify_access_token_raises_on_backend_error_status():
         return httpx.Response(401, json={"success": False, "message": "invalid token"})
 
     settings = Settings(
-        backend_auth_verify_url="http://backend/internal/auth/verify",
+        backend_auth_verify_url="http://backend/internal/ai/auth/validate",
         internal_service_token="service-token",
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
@@ -64,7 +66,7 @@ async def test_verify_access_token_wraps_network_error():
         raise httpx.ConnectError("backend unavailable", request=request)
 
     settings = Settings(
-        backend_auth_verify_url="http://backend/internal/auth/verify",
+        backend_auth_verify_url="http://backend/internal/ai/auth/validate",
         internal_service_token="service-token",
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
@@ -80,7 +82,7 @@ async def test_verify_access_token_raises_when_wrapper_data_missing():
         return httpx.Response(200, json={"success": True})
 
     settings = Settings(
-        backend_auth_verify_url="http://backend/internal/auth/verify",
+        backend_auth_verify_url="http://backend/internal/ai/auth/validate",
         internal_service_token="service-token",
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
@@ -99,14 +101,14 @@ async def test_verify_access_token_raises_when_user_id_missing():
                 "success": True,
                 "data": {
                     "workspaceKey": "workspace-a",
-                    "scopes": ["task:read"],
-                    "tokenExpiresAt": "2026-04-29T12:00:00Z",
+                    "scope": ["task:read"],
+                    "jwtExpiresAt": "2026-04-29T12:00:00Z",
                 },
             },
         )
 
     settings = Settings(
-        backend_auth_verify_url="http://backend/internal/auth/verify",
+        backend_auth_verify_url="http://backend/internal/ai/auth/validate",
         internal_service_token="service-token",
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:

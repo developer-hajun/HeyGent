@@ -20,7 +20,10 @@ async def authenticate_http_user(request: Request) -> BackendAuthVerifyResult | 
         raise HTTPException(status_code=401, detail="bearer token required")
 
     try:
-        return await request.app.state.backend_auth_client.verify_access_token(token.strip())
+        return await request.app.state.backend_auth_client.verify_access_token(
+            token.strip(),
+            workspace_key=_workspace_key_hint(request),
+        )
     except BackendAuthVerifyError as error:
         raise HTTPException(status_code=401, detail="invalid authorization") from error
 
@@ -32,3 +35,13 @@ def ensure_owner(user: BackendAuthVerifyResult | None, owner_key: str | None) ->
         return
     if str(owner_key or "") != str(user.user_id):
         raise HTTPException(status_code=403, detail="forbidden")
+
+
+def _workspace_key_hint(request: Request) -> str | None:
+    """backend workspace 권한 검증에 넘길 client hint를 HTTP 요청에서 고른다."""
+
+    header_value = str(request.headers.get("x-workspace-key") or "").strip()
+    if header_value:
+        return header_value
+    query_value = str(request.query_params.get("workspaceKey") or "").strip()
+    return query_value or None

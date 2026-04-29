@@ -20,6 +20,7 @@ class BackendAuthVerifyResult:
     workspace_key: str | None = None
     scopes: list[str] = field(default_factory=list)
     token_expires_at: str | None = None
+    scope_expires_at: str | None = None
 
 
 class BackendAuthClient:
@@ -30,15 +31,18 @@ class BackendAuthClient:
         self._http_client = http_client or httpx.AsyncClient()
         self._owns_http_client = http_client is None
 
-    async def verify_access_token(self, access_token: str) -> BackendAuthVerifyResult:
+    async def verify_access_token(self, access_token: str, *, workspace_key: str | None = None) -> BackendAuthVerifyResult:
         """사용자 access token을 backend에 위임 검증하고 검증 결과만 반환한다."""
 
         # AI는 사용자 JWT를 직접 신뢰하지 않고 backend 검증 결과만 신뢰한다.
+        request_payload = {"accessToken": access_token}
+        if workspace_key:
+            request_payload["workspaceKey"] = workspace_key
         try:
             response = await self._http_client.post(
                 self._settings.backend_auth_verify_url,
-                json={"accessToken": access_token},
-                headers={"X-Internal-Service-Token": self._settings.internal_service_token or ""},
+                json=request_payload,
+                headers={"Authorization": f"Bearer {self._settings.internal_service_token or ''}"},
             )
         except httpx.HTTPError as exc:
             raise BackendAuthVerifyError("backend JWT 검증 요청 중 네트워크 오류가 발생했습니다.") from exc
@@ -55,8 +59,9 @@ class BackendAuthClient:
         return BackendAuthVerifyResult(
             user_id=user_id,
             workspace_key=self._optional_str(data.get("workspaceKey")),
-            scopes=self._parse_scopes(data.get("scopes")),
-            token_expires_at=self._optional_str(data.get("tokenExpiresAt")),
+            scopes=self._parse_scopes(data.get("scope", data.get("scopes"))),
+            token_expires_at=self._optional_str(data.get("jwtExpiresAt", data.get("tokenExpiresAt"))),
+            scope_expires_at=self._optional_str(data.get("scopeExpiresAt")),
         )
 
     async def aclose(self) -> None:

@@ -12,7 +12,11 @@ from app.storage.redis import FakeRedis, RedisTaskProjectionStore
 
 
 class FakeBackendAuthClient:
-    async def verify_access_token(self, access_token: str) -> BackendAuthVerifyResult:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, str | None]] = []
+
+    async def verify_access_token(self, access_token: str, *, workspace_key: str | None = None) -> BackendAuthVerifyResult:
+        self.calls.append({"access_token": access_token, "workspace_key": workspace_key})
         return BackendAuthVerifyResult(user_id=access_token)
 
 
@@ -780,6 +784,21 @@ def test_agent_session_messages_returns_not_found_for_authenticated_missing_sess
 
     assert response.status_code == 404
     assert response.json()["detail"] == "agent session not found"
+
+
+def test_authenticated_http_request_passes_workspace_key_hint_to_backend(client):
+    auth_client = FakeBackendAuthClient()
+    client.app.state.settings.allow_sqlite_legacy = False
+    client.app.state.backend_auth_client = auth_client
+
+    response = client.get(
+        "/api/v1/taskRuns/active",
+        params={"productSessionId": "workspace-hint-session", "workspaceKey": "workspace-a"},
+        headers={"Authorization": "Bearer owner-a", "X-Workspace-Key": "workspace-header"},
+    )
+
+    assert response.status_code == 200
+    assert auth_client.calls == [{"access_token": "owner-a", "workspace_key": "workspace-header"}]
 
 
 def test_taskruns_create_rejects_second_active_task_in_same_session(client, monkeypatch):

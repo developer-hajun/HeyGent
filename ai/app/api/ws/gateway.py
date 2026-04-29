@@ -98,8 +98,14 @@ async def _authenticate_first_message(websocket: WebSocket) -> BackendAuthVerify
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return None
 
+        workspace_key = message.get("workspaceKey")
+        if workspace_key is not None and not isinstance(workspace_key, str):
+            await websocket.send_json({"type": "auth.failed"})
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return None
+
         try:
-            result = await auth_client.verify_access_token(access_token)
+            result = await auth_client.verify_access_token(access_token, workspace_key=(workspace_key or None))
         except BackendAuthVerifyError:
             await websocket.send_json({"type": "auth.failed"})
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -150,7 +156,10 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
             return
 
-        await websocket.send_json({"type": "auth.ok", "userId": user_id})
+        auth_response = {"type": "auth.ok", "userId": user_id}
+        if auth_result.workspace_key is not None:
+            auth_response["workspaceKey"] = auth_result.workspace_key
+        await websocket.send_json(auth_response)
         while True:
             message = await websocket.receive_json()
             action = message.get("action")

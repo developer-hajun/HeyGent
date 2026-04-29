@@ -19,12 +19,14 @@ class FakeBackendAuthClient:
         self.user_id = user_id
         self.fail = fail
         self.calls: list[str] = []
+        self.workspace_keys: list[str | None] = []
 
-    async def verify_access_token(self, access_token: str) -> BackendAuthVerifyResult:
+    async def verify_access_token(self, access_token: str, *, workspace_key: str | None = None) -> BackendAuthVerifyResult:
         self.calls.append(access_token)
+        self.workspace_keys.append(workspace_key)
         if self.fail:
             raise BackendAuthVerifyError("테스트용 인증 실패")
-        return BackendAuthVerifyResult(user_id=self.user_id)
+        return BackendAuthVerifyResult(user_id=self.user_id, workspace_key=workspace_key)
 
 
 class FakeConnectionRegistry:
@@ -151,6 +153,18 @@ def test_realtime_user_websocket_alias_authenticates_like_gateway(client):
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
 
         assert websocket.receive_json() == {"type": "auth.ok", "userId": "42"}
+
+
+def test_websocket_auth_passes_workspace_key_hint_to_backend(client):
+    auth_client = FakeBackendAuthClient(user_id="42")
+    client.app.state.backend_auth_client = auth_client
+
+    with client.websocket_connect("/api/v1/realtime/user/ws") as websocket:
+        websocket.send_json({"action": "auth", "accessToken": "valid-token", "workspaceKey": "workspace-a"})
+
+        assert websocket.receive_json() == {"type": "auth.ok", "userId": "42", "workspaceKey": "workspace-a"}
+        assert auth_client.calls == ["valid-token"]
+        assert auth_client.workspace_keys == ["workspace-a"]
 
 
 def test_websocket_rejects_origin_outside_allowed_list(client):

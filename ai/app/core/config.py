@@ -40,7 +40,7 @@ class Settings:
     openai_rest_api_base_url: str = "https://api.openai.com/v1"
     openai_response_model: str = "gpt-5.4"
     openai_embedding_model: str = "text-embedding-3-small"
-    backend_auth_verify_url: str = "http://127.0.0.1:8080/api/v1/internal/auth/verify"
+    backend_auth_verify_url: str = "http://127.0.0.1:8080/internal/ai/auth/validate"
     internal_service_token: str | None = None
     redis_url: str | None = None
     ws_connection_ttl_seconds: int = 60
@@ -176,7 +176,7 @@ def get_settings() -> Settings:
         openai_embedding_model=_read_env("HEYGENT_OPENAI_EMBEDDING_MODEL", "text-embedding-3-small", dotenv_values),
         backend_auth_verify_url=_read_env(
             "HEYGENT_BACKEND_AUTH_VERIFY_URL",
-            "http://127.0.0.1:8080/api/v1/internal/auth/verify",
+            "http://127.0.0.1:8080/internal/ai/auth/validate",
             dotenv_values,
         ),
         internal_service_token=_read_env("HEYGENT_INTERNAL_SERVICE_TOKEN", None, dotenv_values),
