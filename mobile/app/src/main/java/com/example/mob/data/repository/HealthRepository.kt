@@ -31,12 +31,25 @@ class HealthRepository(context: Context) {
             measuredAt = snapshot.measuredAt.format(formatter),
             heartRate = snapshot.heartRate,
             steps = snapshot.steps,
+            floors = snapshot.floors,
+            caloriesBurned = snapshot.caloriesBurned,
+            activeCalories = snapshot.activeCalories,
+            distance = snapshot.distance,
+            activeTimeMinutes = snapshot.activeTimeMinutes,
             sleepDurationMinutes = snapshot.sleepDurationMinutes,
             sleepStartAt = snapshot.sleepStartAt?.format(formatter),
             sleepEndAt = snapshot.sleepEndAt?.format(formatter),
+            sleepScore = snapshot.sleepScore,
             spO2 = snapshot.spO2,
-            stressLevel = snapshot.stressLevel,
-            caloriesBurned = snapshot.caloriesBurned
+            bodyWeight = snapshot.bodyWeight,
+            bodyHeight = snapshot.bodyHeight,
+            bodyFat = snapshot.bodyFat,
+            skeletalMuscle = snapshot.skeletalMuscle,
+            waterIntake = snapshot.waterIntake,
+            energyScore = snapshot.energyScore,
+            bloodPressureSystolic = snapshot.bloodPressureSystolic,
+            bloodPressureDiastolic = snapshot.bloodPressureDiastolic,
+            bloodGlucose = snapshot.bloodGlucose
         )
 
         val response = apiService.saveWatchData(WatchHealthDataBatchRequest(items = listOf(item)))
