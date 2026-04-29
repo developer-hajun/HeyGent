@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from app.api.router import build_api_router
 from app.api.ws.gateway import build_websocket_auth_rate_limiter
 from app.clients.backend_auth import BackendAuthClient
+from app.core.cors import configure_cors
 from app.core.config import get_settings
 from app.core.logger import configure_logging
 from app.domain.gateway import EventBroadcaster, SessionRegistry, SessionService, WebSocketManager
@@ -169,4 +170,5 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=router_settings.app_name, lifespan=lifespan)
+configure_cors(app, router_settings)
 app.include_router(build_api_router(router_settings))

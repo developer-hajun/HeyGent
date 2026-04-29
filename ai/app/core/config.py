@@ -43,6 +43,13 @@ class Settings:
     backend_auth_verify_url: str = "http://127.0.0.1:8080/internal/ai/auth/validate"
     internal_service_token: str | None = None
     redis_url: str | None = None
+    cors_allowed_origins: list[str] = field(default_factory=list)
+    cors_allowed_methods: list[str] = field(default_factory=lambda: ["GET", "POST", "OPTIONS"])
+    cors_allowed_headers: list[str] = field(
+        default_factory=lambda: ["Authorization", "Content-Type", "X-Workspace-Key"]
+    )
+    cors_allow_credentials: bool = True
+    cors_max_age_seconds: int = 600
     ws_connection_ttl_seconds: int = 60
     ws_auth_first_message_timeout_seconds: float = 10.0
     ws_allowed_origins: list[str] = field(default_factory=list)
@@ -181,6 +188,21 @@ def get_settings() -> Settings:
         ),
         internal_service_token=_read_env("HEYGENT_INTERNAL_SERVICE_TOKEN", None, dotenv_values),
         redis_url=_read_env("HEYGENT_REDIS_URL", None, dotenv_values),
+        cors_allowed_origins=_parse_csv(_read_env("HEYGENT_CORS_ALLOWED_ORIGINS", "", dotenv_values)),
+        cors_allowed_methods=_parse_csv(
+            _read_env("HEYGENT_CORS_ALLOWED_METHODS", "GET,POST,OPTIONS", dotenv_values)
+        ),
+        cors_allowed_headers=_parse_csv(
+            _read_env("HEYGENT_CORS_ALLOWED_HEADERS", "Authorization,Content-Type,X-Workspace-Key", dotenv_values)
+        ),
+        cors_allow_credentials=_parse_bool(
+            _read_env("HEYGENT_CORS_ALLOW_CREDENTIALS", "true", dotenv_values),
+            default=True,
+        ),
+        cors_max_age_seconds=_parse_int(
+            _read_env("HEYGENT_CORS_MAX_AGE_SECONDS", 600, dotenv_values),
+            default=600,
+        ),
         ws_connection_ttl_seconds=_parse_int(
             _read_env("HEYGENT_WS_CONNECTION_TTL_SECONDS", 60, dotenv_values),
             default=60,
