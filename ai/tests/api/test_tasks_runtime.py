@@ -965,7 +965,17 @@ def test_taskruns_events_reads_redis_recent_projection_with_sequence_window(clie
 
 
 def test_taskruns_flow_returns_observed_step_node(client, monkeypatch):
-    _patch_respond(monkeypatch, [_response(text="FLOW_OK")])
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                text=(
+                    "안녕하세요. 현재 연결은 정상으로 보이며, 로컬 도구 호출도 가능한 상태입니다.\n"
+                    "지금 바로 파일 조회, 검색, 터미널 실행, 계획 단계 설정 등을 진행할 수 있습니다."
+                )
+            )
+        ],
+    )
 
     create_response = client.post(
         "/ai/api/v1/taskRuns",
@@ -983,5 +993,8 @@ def test_taskruns_flow_returns_observed_step_node(client, monkeypatch):
     flow = flow_response.json()
     assert "entry_handler_key" not in flow
     assert len(flow["nodes"]) == 1
+    assert flow["nodes"][0]["title"] == "agent loop 실행"
+    assert "현재 연결은 정상" in flow["summary"]
     assert flow["nodes"][0]["semantic"]["key"] == "agent.loop"
+    assert flow["nodes"][0]["semantic"]["step"] == "agent loop 실행"
     assert flow["nodes"][0]["is_current"] is True

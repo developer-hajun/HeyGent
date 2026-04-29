@@ -110,11 +110,16 @@ class Planner:
         title = (
             plan_step.title
             if plan_step is not None
-            else semantic_detail.get("semanticStep")
-            or outcome.get("summary_message")
-            or handler.spec.step_title
+            else self._stable_step_title(semantic_detail.get("semanticStep"), fallback=handler.spec.step_title)
         )
-        goal = plan_step.goal if plan_step is not None else semantic_detail.get("goal") or handler.spec.semantic_goal or title
+        goal = (
+            plan_step.goal
+            if plan_step is not None
+            else semantic_detail.get("goal")
+            or handler.spec.semantic_goal
+            or outcome.get("summary_message")
+            or title
+        )
         semantic_key = (
             plan_step.semantic_key
             if plan_step is not None
@@ -351,3 +356,14 @@ class Planner:
         """
 
         return handler.spec.semantic_key or fallback or handler.spec.step_type
+
+    @staticmethod
+    def _stable_step_title(value: object, *, fallback: str) -> str:
+        """긴 모델 답변이 StepRun 제목으로 올라오지 않게 표시용 제목을 고정한다."""
+
+        title = str(value or "").strip()
+        if not title:
+            return fallback
+        if "\n" in title or len(title) > 80:
+            return fallback
+        return title
