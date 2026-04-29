@@ -69,6 +69,38 @@ def build_websocket_auth_rate_limiter(settings) -> WebSocketAuthRateLimiter:
     )
 
 
+def _client_message_action(message: dict) -> str | None:
+    """문서 계약의 type 메시지와 기존 action 메시지를 내부 동작명으로 정규화한다."""
+
+    message_type = message.get("type")
+    if message_type == "auth.start":
+        return "auth"
+    if message_type == "ping":
+        return "ping"
+    if message_type == "subscribe.task":
+        return "subscribe"
+    if message_type == "subscribe.all":
+        return "subscribe_all"
+
+    legacy_action = message.get("action")
+    if legacy_action in {"auth", "ping", "subscribe", "subscribe_all"}:
+        return legacy_action
+    return None
+
+
+def _client_task_run_id(message: dict) -> str | None:
+    """신규 camelCase 계약과 기존 snake_case 필드를 모두 받아 전환기 호환성을 유지한다."""
+
+    task_run_id = message.get("taskRunId")
+    if isinstance(task_run_id, str) and task_run_id:
+        return task_run_id
+
+    legacy_task_run_id = message.get("task_run_id")
+    if isinstance(legacy_task_run_id, str) and legacy_task_run_id:
+        return legacy_task_run_id
+    return None
+
+
 async def _authenticate_first_message(websocket: WebSocket) -> BackendAuthVerifyResult | None:
     """인증 완료 전 상태 전이를 처리한다."""
 
@@ -82,7 +114,7 @@ async def _authenticate_first_message(websocket: WebSocket) -> BackendAuthVerify
             await websocket.send_json({"type": "auth.timeout"})
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return None
-        action = message.get("action")
+        action = _client_message_action(message)
         if action == "ping":
             await websocket.send_json({"type": "pong"})
             continue
@@ -162,14 +194,15 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
         await websocket.send_json(auth_response)
         while True:
             message = await websocket.receive_json()
-            action = message.get("action")
-            if action == "subscribe" and message.get("task_run_id"):
+            action = _client_message_action(message)
+            task_run_id = _client_task_run_id(message)
+            if action == "subscribe" and task_run_id:
                 await handle_subscription(
                     websocket,
                     session_service=session_service,
                     session_id=session_id,
                     authenticated_user_id=user_id,
-                    task_run_id=message["task_run_id"],
+                    task_run_id=task_run_id,
                 )
             elif action == "subscribe_all":
                 # 전체 토픽 구독은 사용자별 소유권 검증을 우회하므로 제품 WebSocket에서는 열지 않는다.
@@ -213,7 +246,7 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
 async def websocket_gateway(websocket: WebSocket) -> None:
     """권장 WebSocket 경로다.
 
-    HTTP 표면이 `/api/v1/...` 로 정리된 뒤에는,
+    HTTP 표면이 `/ai/api/v1/...` 로 정리된 뒤에는,
     WebSocket 도 단순 `/ws` 보다 `/gateway/ws` 가 역할을 더 명확히 보여 준다.
     """
 

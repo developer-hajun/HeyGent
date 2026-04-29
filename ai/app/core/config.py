@@ -18,7 +18,7 @@ class Settings:
     """
 
     app_name: str = "HeyGent AI Backbone"
-    api_prefix: str = "/api/v1"
+    api_prefix: str = "/ai/api/v1"
     host: str = "127.0.0.1"
     port: int = 8000
     reload: bool = False
@@ -146,7 +146,7 @@ def get_settings() -> Settings:
     dotenv_values = load_dotenv_values()
     return Settings(
         app_name=_read_env("HEYGENT_APP_NAME", "HeyGent AI Backbone", dotenv_values),
-        api_prefix=_read_env("HEYGENT_API_PREFIX", "/api/v1", dotenv_values),
+        api_prefix=_read_env("HEYGENT_API_PREFIX", "/ai/api/v1", dotenv_values),
         host=_read_env("HEYGENT_HOST", "127.0.0.1", dotenv_values),
         port=_parse_int(_read_env("HEYGENT_PORT", 8000, dotenv_values), default=8000),
         reload=_parse_bool(_read_env("HEYGENT_RELOAD", "false", dotenv_values)),

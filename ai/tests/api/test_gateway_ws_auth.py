@@ -138,7 +138,7 @@ def test_empty_websocket_allowed_origins_allows_existing_clients(client):
     client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="42")
 
     with client.websocket_connect(
-        "/api/v1/gateway/ws",
+        "/ai/api/v1/gateway/ws",
         headers={"origin": "https://unconfigured.example.com"},
     ) as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
@@ -149,7 +149,7 @@ def test_empty_websocket_allowed_origins_allows_existing_clients(client):
 def test_realtime_user_websocket_alias_authenticates_like_gateway(client):
     client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="42")
 
-    with client.websocket_connect("/api/v1/realtime/user/ws") as websocket:
+    with client.websocket_connect("/ai/api/v1/realtime/user/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
 
         assert websocket.receive_json() == {"type": "auth.ok", "userId": "42"}
@@ -159,12 +159,39 @@ def test_websocket_auth_passes_workspace_key_hint_to_backend(client):
     auth_client = FakeBackendAuthClient(user_id="42")
     client.app.state.backend_auth_client = auth_client
 
-    with client.websocket_connect("/api/v1/realtime/user/ws") as websocket:
+    with client.websocket_connect("/ai/api/v1/realtime/user/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token", "workspaceKey": "workspace-a"})
 
         assert websocket.receive_json() == {"type": "auth.ok", "userId": "42", "workspaceKey": "workspace-a"}
         assert auth_client.calls == ["valid-token"]
         assert auth_client.workspace_keys == ["workspace-a"]
+
+
+def test_realtime_websocket_accepts_documented_type_auth_message(client):
+    auth_client = FakeBackendAuthClient(user_id="42")
+    client.app.state.backend_auth_client = auth_client
+
+    with client.websocket_connect("/ai/api/v1/realtime/user/ws") as websocket:
+        websocket.send_json({"type": "auth.start", "accessToken": "valid-token", "workspaceKey": "workspace-a"})
+
+        assert websocket.receive_json() == {"type": "auth.ok", "userId": "42", "workspaceKey": "workspace-a"}
+        assert auth_client.calls == ["valid-token"]
+        assert auth_client.workspace_keys == ["workspace-a"]
+
+
+def test_realtime_websocket_accepts_documented_ping_and_subscribe_messages(client):
+    client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="owner-a")
+    client.app.state.repository.create_task(task_for_owner("task_1", "owner-a"))
+
+    with client.websocket_connect("/ai/api/v1/realtime/user/ws") as websocket:
+        websocket.send_json({"type": "auth.start", "accessToken": "valid-token"})
+        assert websocket.receive_json() == {"type": "auth.ok", "userId": "owner-a"}
+
+        websocket.send_json({"type": "ping"})
+        assert websocket.receive_json() == {"type": "pong"}
+
+        websocket.send_json({"type": "subscribe.task", "taskRunId": "task_1"})
+        assert websocket.receive_json() == {"type": "subscribed", "task_run_id": "task_1"}
 
 
 def test_websocket_rejects_origin_outside_allowed_list(client):
@@ -173,7 +200,7 @@ def test_websocket_rejects_origin_outside_allowed_list(client):
 
     with pytest.raises(WebSocketDisconnect) as exc_info:
         with client.websocket_connect(
-            "/api/v1/gateway/ws",
+            "/ai/api/v1/gateway/ws",
             headers={"origin": "https://evil.example.com"},
         ):
             pass
@@ -187,12 +214,12 @@ def test_websocket_rate_limit_blocks_repeated_auth_failures(client):
     client.app.state.ws_auth_rate_limiter = WebSocketAuthRateLimiter(max_failures=1, window_seconds=60)
     client.app.state.backend_auth_client = FakeBackendAuthClient(fail=True)
 
-    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "bad-token"})
         assert websocket.receive_json() == {"type": "auth.failed"}
 
     with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect("/api/v1/gateway/ws"):
+        with client.websocket_connect("/ai/api/v1/gateway/ws"):
             pass
 
     assert exc_info.value.code == 1008
@@ -201,7 +228,7 @@ def test_websocket_rate_limit_blocks_repeated_auth_failures(client):
 def test_subscribe_all_before_auth_is_rejected(client):
     client.app.state.backend_auth_client = FakeBackendAuthClient()
 
-    with client.websocket_connect("/api/v1/gateway/ws?session_id=user:spoof") as websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws?session_id=user:spoof") as websocket:
         websocket.send_json({"action": "subscribe_all"})
 
         response = websocket.receive_json()
@@ -213,7 +240,7 @@ def test_subscribe_all_before_auth_is_rejected(client):
 def test_subscribe_all_after_auth_is_rejected_by_policy(client):
     client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="owner-a")
 
-    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
         websocket.send_json({"action": "subscribe_all"})
 
@@ -229,7 +256,7 @@ def test_subscribe_all_after_auth_is_rejected_by_policy(client):
 def test_subscribe_before_auth_is_rejected(client):
     client.app.state.backend_auth_client = FakeBackendAuthClient()
 
-    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws") as websocket:
         websocket.send_json({"action": "subscribe", "task_run_id": "task_1"})
 
         response = websocket.receive_json()
@@ -243,7 +270,7 @@ def test_auth_success_uses_backend_user_id_for_session(client):
     client.app.state.backend_auth_client = fake_auth
     client.app.state.repository.create_task(task_for_owner("task_1", "42"))
 
-    with client.websocket_connect("/api/v1/gateway/ws?session_id=user:spoof") as websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws?session_id=user:spoof") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
         websocket.send_json({"action": "subscribe", "task_run_id": "task_1"})
 
@@ -273,7 +300,7 @@ def test_subscribe_ack_includes_latest_sequence_when_projection_exists(client):
         )
     )
 
-    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
         websocket.send_json({"action": "subscribe", "task_run_id": "task_ws_latest"})
 
@@ -292,7 +319,7 @@ def test_subscribe_rejects_task_owned_by_other_user_from_projection(client):
     client.app.state.task_projection_store = projection
     projection.save_task_snapshot(task_for_owner("task_ws_other_owner", "owner-b"))
 
-    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
         websocket.send_json({"action": "subscribe", "task_run_id": "task_ws_other_owner"})
 
@@ -315,7 +342,7 @@ def test_subscribe_allows_owner_when_projection_snapshot_missing_but_repository_
         task_for_owner("task_ws_repo_fallback", "owner-a")
     )
 
-    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
         websocket.send_json({"action": "subscribe", "task_run_id": "task_ws_repo_fallback"})
 
@@ -332,7 +359,7 @@ def test_auth_success_registers_random_connection_for_backend_user(client):
     client.app.state.backend_auth_client = fake_auth
     client.app.state.connection_registry = fake_registry
 
-    with client.websocket_connect("/api/v1/gateway/ws?session_id=user:spoof") as websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws?session_id=user:spoof") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
 
         assert websocket.receive_json() == {"type": "auth.ok", "userId": "42"}
@@ -350,7 +377,7 @@ def test_auth_success_ignores_query_user_id_spoofing(client):
     client.app.state.backend_auth_client = fake_auth
     client.app.state.connection_registry = fake_registry
 
-    with client.websocket_connect("/api/v1/gateway/ws?userId=attacker&session_id=user:attacker") as websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws?userId=attacker&session_id=user:attacker") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
 
         assert websocket.receive_json() == {"type": "auth.ok", "userId": "backend-user"}
@@ -364,11 +391,11 @@ def test_each_authenticated_connection_gets_distinct_connection_id(client):
     client.app.state.backend_auth_client = fake_auth
     client.app.state.connection_registry = fake_registry
 
-    with client.websocket_connect("/api/v1/gateway/ws") as first_websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws") as first_websocket:
         first_websocket.send_json({"action": "auth", "accessToken": "valid-token"})
         first_websocket.receive_json()
 
-    with client.websocket_connect("/api/v1/gateway/ws") as second_websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws") as second_websocket:
         second_websocket.send_json({"action": "auth", "accessToken": "valid-token"})
         second_websocket.receive_json()
 
@@ -381,7 +408,7 @@ def test_auth_success_is_not_sent_when_connection_register_fails(client):
     client.app.state.backend_auth_client = fake_auth
     client.app.state.connection_registry = fake_registry
 
-    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
 
         with pytest.raises(WebSocketDisconnect):
@@ -394,7 +421,7 @@ def test_authenticated_ping_refreshes_connection_ttl(client):
     client.app.state.backend_auth_client = fake_auth
     client.app.state.connection_registry = fake_registry
 
-    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
         websocket.receive_json()
         websocket.send_json({"action": "ping"})
@@ -416,7 +443,7 @@ def test_authenticated_session_cleanup_runs_on_disconnect(client):
     client.app.state.connection_registry = fake_registry
     client.app.state.repository.create_task(task_for_owner("task_cleanup", "77"))
 
-    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
         websocket.receive_json()
         websocket.send_json({"action": "subscribe", "task_run_id": "task_cleanup"})
@@ -439,7 +466,7 @@ def test_unregister_failure_still_cleans_local_websocket_directory(client):
     client.app.state.connection_registry = fake_registry
     client.app.state.repository.create_task(task_for_owner("task_cleanup", "77"))
 
-    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+    with client.websocket_connect("/ai/api/v1/gateway/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
         websocket.receive_json()
         websocket.send_json({"action": "subscribe", "task_run_id": "task_cleanup"})
@@ -454,7 +481,7 @@ def test_auth_failure_does_not_register_connection(client):
     client.app.state.backend_auth_client = fake_auth
     client.app.state.connection_registry = fake_registry
 
-    with client.websocket_connect("/api/v1/ws") as websocket:
+    with client.websocket_connect("/ai/api/v1/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "bad-token"})
 
         assert websocket.receive_json() == {"type": "auth.failed"}
@@ -466,7 +493,7 @@ def test_auth_failure_sends_failed_and_closes(client):
     fake_auth = FakeBackendAuthClient(fail=True)
     client.app.state.backend_auth_client = fake_auth
 
-    with client.websocket_connect("/api/v1/ws") as websocket:
+    with client.websocket_connect("/ai/api/v1/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "bad-token"})
         websocket.send_json({"action": "ping"})
 

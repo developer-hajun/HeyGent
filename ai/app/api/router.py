@@ -13,7 +13,7 @@ from app.core.config import Settings
 def build_api_router(settings: Settings) -> APIRouter:
     """전역 API prefix 를 한 곳에서만 주입한다.
 
-    각 라우터 파일에 /api/v1 를 반복해서 쓰지 않고,
+    각 라우터 파일에 /ai/api/v1 를 반복해서 쓰지 않고,
     앱 조립 시점에 한 번만 묶어서 경로 체계를 통일한다.
     """
 
