@@ -22,6 +22,7 @@ import com.ssafy.heygent.domain.session.dto.response.ProductSessionResponse;
 import com.ssafy.heygent.domain.session.entity.ProductSession;
 import com.ssafy.heygent.domain.session.entity.ProductSessionStatus;
 import com.ssafy.heygent.domain.session.repository.ProductSessionRepository;
+import com.ssafy.heygent.domain.workspace.service.WorkspaceAccessService;
 import com.ssafy.heygent.global.exception.CustomException;
 import com.ssafy.heygent.global.exception.ErrorCode;
 
@@ -34,6 +35,9 @@ class ProductSessionServiceTest {
     @Mock
     private ProductSessionRepository productSessionRepository;
 
+    @Mock
+    private WorkspaceAccessService workspaceAccessService;
+
     @InjectMocks
     private ProductSessionService productSessionService;
 
@@ -42,6 +46,7 @@ class ProductSessionServiceTest {
         CreateProductSessionRequest request = request(" 회의 정리 ", " backend-project ");
         ProductSession savedSession = session(10L, USER_ID, "회의 정리", "backend-project");
 
+        when(workspaceAccessService.validateAccess(USER_ID, " backend-project ")).thenReturn("backend-project");
         when(productSessionRepository.save(any(ProductSession.class))).thenReturn(savedSession);
 
         ProductSessionResponse response = productSessionService.create(USER_ID, request);

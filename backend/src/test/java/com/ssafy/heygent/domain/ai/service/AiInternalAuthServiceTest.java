@@ -16,6 +16,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import com.ssafy.heygent.domain.ai.dto.request.AiAuthValidateRequest;
 import com.ssafy.heygent.domain.ai.dto.response.AiAuthValidateResponse;
 import com.ssafy.heygent.domain.user.repository.UserRepository;
+import com.ssafy.heygent.domain.workspace.service.WorkspaceAccessService;
 import com.ssafy.heygent.global.config.jwt.JwtProvider;
 import com.ssafy.heygent.global.exception.CustomException;
 import com.ssafy.heygent.global.exception.ErrorCode;
@@ -29,13 +30,16 @@ class AiInternalAuthServiceTest {
     @Mock
     private UserRepository userRepository;
 
+    @Mock
+    private WorkspaceAccessService workspaceAccessService;
+
     private JwtProvider jwtProvider;
     private AiInternalAuthService aiInternalAuthService;
 
     @BeforeEach
     void setUp() {
         jwtProvider = new JwtProvider(JWT_SECRET);
-        aiInternalAuthService = new AiInternalAuthService(jwtProvider, userRepository);
+        aiInternalAuthService = new AiInternalAuthService(jwtProvider, userRepository, workspaceAccessService);
     }
 
     @Test
@@ -45,6 +49,7 @@ class AiInternalAuthServiceTest {
         LocalDateTime beforeValidate = LocalDateTime.now();
 
         when(userRepository.existsById(USER_ID)).thenReturn(true);
+        when(workspaceAccessService.validateAccess(USER_ID, " backend-project ")).thenReturn("backend-project");
 
         AiAuthValidateResponse response = aiInternalAuthService.validate(request);
 

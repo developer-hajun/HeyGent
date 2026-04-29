@@ -11,6 +11,7 @@ import com.ssafy.heygent.domain.session.dto.response.ProductSessionResponse;
 import com.ssafy.heygent.domain.session.entity.ProductSession;
 import com.ssafy.heygent.domain.session.entity.ProductSessionStatus;
 import com.ssafy.heygent.domain.session.repository.ProductSessionRepository;
+import com.ssafy.heygent.domain.workspace.service.WorkspaceAccessService;
 import com.ssafy.heygent.global.exception.CustomException;
 import com.ssafy.heygent.global.exception.ErrorCode;
 
@@ -24,13 +25,14 @@ public class ProductSessionService {
     private static final String DEFAULT_SESSION_TITLE = "새 AI 세션";
 
     private final ProductSessionRepository productSessionRepository;
+    private final WorkspaceAccessService workspaceAccessService;
 
     @Transactional
     public ProductSessionResponse create(Long userId, CreateProductSessionRequest request) {
         ProductSession session = ProductSession.builder()
             .userId(userId)
             .title(resolveTitle(request.getTitle()))
-            .workspaceKey(trimToNull(request.getWorkspaceKey()))
+            .workspaceKey(resolveWorkspaceKey(userId, request.getWorkspaceKey()))
             .status(ProductSessionStatus.ACTIVE)
             .build();
 
@@ -68,5 +70,12 @@ public class ProductSessionService {
             return null;
         }
         return value.trim();
+    }
+
+    private String resolveWorkspaceKey(Long userId, String workspaceKey) {
+        if (!StringUtils.hasText(workspaceKey)) {
+            return null;
+        }
+        return workspaceAccessService.validateAccess(userId, workspaceKey);
     }
 }
