@@ -442,6 +442,25 @@ class PostgresTaskRepository(PostgresDurableRepository):
         connection.commit()
         return bool(getattr(result, "rowcount", 0) or 0)
 
+    def get_agent_profile(self, profile_key: str, *, owner_key: str = "system", profile_version: int | None = None) -> dict[str, Any] | None:
+        """실행 시점에 주입할 agent profile snapshot을 읽는다."""
+
+        version = int(profile_version or 1)
+        connection = self.connection_factory()
+        row = connection.execute(
+            """
+            SELECT * FROM agent_profiles
+            WHERE owner_key = %s AND profile_key = %s AND profile_version = %s
+            """,
+            (owner_key, profile_key, version),
+        ).fetchone()
+        record = _normalize_row(row)
+        if record is None:
+            return None
+        for key in ("config_snapshot", "delegation_policy"):
+            record[key] = _json_load(record.get(key), {})
+        return record
+
     def _save_task_anchor(self, task: TaskRun) -> None:
         existing = self.get_run_anchor(task.task_run_id) or {}
         payload = dict(existing.get("anchor_payload") or {})

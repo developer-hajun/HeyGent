@@ -28,7 +28,8 @@ class DelegateRuntime:
         if not child_session:
             return outcome
 
-        normalized_contract = self._normalize_child_contract(task=task, step=step, child_session=child_session)
+        profile = self._load_agent_profile(repository=repository, task=task, child_session=child_session)
+        normalized_contract = self._normalize_child_contract(task=task, step=step, child_session=child_session, profile=profile)
         worker_session_id = self._create_worker_session(
             task=task,
             step=step,
@@ -42,7 +43,9 @@ class DelegateRuntime:
             summary_prompt=child_session.get("summary_prompt"),
             metadata={
                 **dict(child_session.get("metadata") or {}),
+                "profile_id": normalized_contract["profile_id"],
                 "profile_key": normalized_contract["profile_key"],
+                "profile_version": normalized_contract["profile_version"],
                 "agent_id": normalized_contract["agent_id"],
                 "toolsets": normalized_contract["toolsets"],
                 "blocked_toolsets": normalized_contract["blocked_toolsets"],
@@ -205,8 +208,8 @@ class DelegateRuntime:
                 "parent_step_run_id": spec.parent_step_run_id,
                 "parent_session_id": getattr(task, "session_key", None),
                 "worker_session_id": spec.worker_session_id,
-                "worker_profile_id": contract["profile_key"],
-                "worker_profile_version": metadata.get("profile_version") or 1,
+                "worker_profile_id": contract["profile_id"] or contract["profile_key"],
+                "worker_profile_version": contract["profile_version"],
                 "status": "PENDING",
                 "input_payload": {
                     **contract,
@@ -272,19 +275,42 @@ class DelegateRuntime:
         return worker_session_id
 
     @classmethod
-    def _normalize_child_contract(cls, *, task, step, child_session: dict[str, Any]) -> dict[str, Any]:
+    def _load_agent_profile(cls, *, repository, task, child_session: dict[str, Any]) -> dict[str, Any] | None:
+        getter = getattr(repository, "get_agent_profile", None)
+        if not callable(getter):
+            return None
+        metadata = dict(child_session.get("metadata") or {})
+        profile_key = cls._optional_text(child_session.get("profile_key")) or cls._optional_text(metadata.get("profile_key")) or "worker.default"
+        profile_version = metadata.get("profile_version") or child_session.get("profile_version")
+        try:
+            return getter(profile_key, owner_key="system", profile_version=profile_version)
+        except TypeError:
+            # 테스트 double이나 이전 repository 계약은 keyword를 덜 받을 수 있다.
+            return getter(profile_key)
+
+    @classmethod
+    def _normalize_child_contract(cls, *, task, step, child_session: dict[str, Any], profile: dict[str, Any] | None = None) -> dict[str, Any]:
         source_payload = dict(child_session.get("input_payload") or {})
         metadata = dict(child_session.get("metadata") or {})
+        profile_config = dict((profile or {}).get("config_snapshot") or {})
+        profile_policy = dict((profile or {}).get("delegation_policy") or {})
         goal = cls._optional_text(child_session.get("goal")) or cls._optional_text(source_payload.get("goal")) or cls._optional_text(source_payload.get("prompt")) or "worker task"
         context = child_session.get("context", source_payload.get("context", {}))
         toolsets = cls._normalize_worker_toolsets(
-            child_session.get("toolsets", source_payload.get("toolsets", source_payload.get("enabled_toolsets")))
+            child_session.get("toolsets", source_payload.get("toolsets", source_payload.get("enabled_toolsets"))),
+            profile_toolsets=profile_config.get("toolsets"),
         )
-        max_iterations = cls._normalize_positive_int(child_session.get("max_iterations", source_payload.get("max_iterations")), default=12)
+        max_iterations = cls._normalize_positive_int(
+            child_session.get("max_iterations", source_payload.get("max_iterations", profile_policy.get("maxIterations", profile_policy.get("max_iterations")))),
+            default=12,
+        )
         profile_key = cls._optional_text(child_session.get("profile_key")) or cls._optional_text(metadata.get("profile_key")) or "worker.default"
+        profile_id = cls._optional_text((profile or {}).get("profile_id"))
+        profile_version = cls._normalize_positive_int((profile or {}).get("profile_version") or metadata.get("profile_version"), default=1)
         agent_id = (
             cls._optional_text(child_session.get("agent_id"))
             or cls._optional_text(metadata.get("agent_id"))
+            or profile_id
             or f"{getattr(step, 'step_run_id', 'step')}:worker"
         )
         role = cls._optional_text(child_session.get("role", source_payload.get("role"))) or "worker"
@@ -302,9 +328,11 @@ class DelegateRuntime:
             "acp_command": child_session.get("acp_command", source_payload.get("acp_command")),
             "acp_args": dict(child_session.get("acp_args", source_payload.get("acp_args", {})) or {}),
             "tasks": tasks,
+            "profile_id": profile_id,
             "profile_key": profile_key,
+            "profile_version": profile_version,
             "agent_id": agent_id,
-            "model": cls._optional_text(child_session.get("model", source_payload.get("model"))),
+            "model": cls._optional_text(child_session.get("model", source_payload.get("model", profile_config.get("model")))),
             "input_payload": source_payload,
             "parent_task_run_id": getattr(task, "task_run_id", None),
             "parent_step_run_id": getattr(step, "step_run_id", None),
@@ -334,7 +362,9 @@ class DelegateRuntime:
                 "acp_args": contract["acp_args"],
                 "tasks": contract["tasks"],
                 "profile_key": contract["profile_key"],
+                "profile_version": contract["profile_version"],
                 "agent_id": contract["agent_id"],
+                "model": contract["model"],
                 "transcript_session_id": worker_session_id,
                 "worker": {
                     "leaf": True,
@@ -393,16 +423,25 @@ class DelegateRuntime:
         }
 
     @staticmethod
-    def _normalize_worker_toolsets(raw_toolsets: Any) -> list[str]:
+    def _normalize_worker_toolsets(raw_toolsets: Any, *, profile_toolsets: Any = None) -> list[str]:
         source = raw_toolsets if isinstance(raw_toolsets, list) else list(DEFAULT_WORKER_TOOLSETS)
+        profile_allowed = _profile_allowed_toolsets(profile_toolsets)
         normalized: list[str] = []
         blocked = set(BLOCKED_WORKER_TOOLSETS)
         for item in source:
             name = str(item or "").strip()
             if not name or name in blocked or name in normalized:
                 continue
+            if profile_allowed is not None and name not in profile_allowed:
+                continue
             normalized.append(name)
-        return normalized or list(DEFAULT_WORKER_TOOLSETS)
+        if normalized:
+            return normalized
+        if profile_allowed is not None:
+            fallback = [item for item in DEFAULT_WORKER_TOOLSETS if item in profile_allowed]
+            if fallback:
+                return fallback
+        return list(DEFAULT_WORKER_TOOLSETS)
 
     @staticmethod
     def _normalize_positive_int(value: Any, *, default: int) -> int:
@@ -478,3 +517,11 @@ class DelegateRuntime:
                 }
             )
         return trace
+
+
+def _profile_allowed_toolsets(profile_toolsets: Any) -> set[str] | None:
+    if not isinstance(profile_toolsets, list):
+        return None
+    allowed = {str(item or "").strip() for item in profile_toolsets}
+    allowed.discard("")
+    return allowed or None

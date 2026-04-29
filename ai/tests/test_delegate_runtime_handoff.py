@@ -42,6 +42,7 @@ class FakeHandoffRepository:
         self.steps: list[object] = []
         self.created_handoffs: list[dict] = []
         self.completed_handoffs: list[tuple[str, dict]] = []
+        self.agent_profiles: dict[str, dict] = {}
 
     def update_step(self, step):
         self.steps.append(step)
@@ -54,6 +55,9 @@ class FakeHandoffRepository:
     def complete_worker_handoff(self, handoff_id, payload):
         self.completed_handoffs.append((handoff_id, payload))
         return {"handoff_id": handoff_id, **payload}
+
+    def get_agent_profile(self, profile_key, *, owner_key="system", profile_version=None):
+        return self.agent_profiles.get(profile_key)
 
 
 class FakeWorkerSessionStore:
@@ -193,6 +197,60 @@ async def test_delegate_runtime_creates_worker_session_and_normalizes_contract_p
         "tool_trace",
         "error",
     }
+
+
+@pytest.mark.asyncio
+async def test_delegate_runtime_applies_profile_defaults_and_toolset_intersection():
+    launcher = FakeChildSessionLauncher(
+        ChildSessionLaunchResult(
+            agent_id="agent_worker",
+            child_task_run_id="task_child",
+            status=TaskStatus.COMPLETED,
+            summary="worker summary",
+        )
+    )
+    runtime = DelegateRuntime(launcher, session_store=FakeWorkerSessionStore())
+    repository = FakeHandoffRepository()
+    repository.agent_profiles["worker.profiled"] = {
+        "profile_key": "worker.profiled",
+        "profile_id": "profile_worker_profiled",
+        "profile_version": 3,
+        "agent_type": "worker",
+        "config_snapshot": {
+            "model": "gpt-profile",
+            "toolsets": ["skills", "terminal"],
+        },
+        "delegation_policy": {
+            "maxIterations": 22,
+            "canDelegate": False,
+        },
+    }
+    task = SimpleNamespace(task_run_id="task_parent", owner_key="user_1", session_key="session_1")
+    step = SimpleNamespace(step_run_id="step_parent", detail_json={})
+
+    await runtime.apply(
+        task=task,
+        step=step,
+        outcome={
+            "child_session": {
+                "intent_type": "agent.loop",
+                "entry_executor_key": "agent.loop",
+                "goal": "profile 적용",
+                "toolsets": ["terminal", "file", "delegation"],
+                "metadata": {"profile_key": "worker.profiled"},
+            }
+        },
+        repository=repository,
+    )
+
+    handoff = repository.created_handoffs[0]
+    launched_payload = launcher.launched[0]["input_payload"]
+    assert handoff["worker_profile_id"] == "profile_worker_profiled"
+    assert handoff["worker_profile_version"] == 3
+    assert handoff["input_payload"]["toolsets"] == ["terminal"]
+    assert launched_payload["enabled_toolsets"] == ["terminal"]
+    assert launched_payload["model"] == "gpt-profile"
+    assert launched_payload["max_iterations"] == 22
 
 
 @pytest.mark.asyncio

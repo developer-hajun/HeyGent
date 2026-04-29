@@ -163,6 +163,7 @@ class _FakeDurableConnection:
         self.run_anchors: dict[str, dict] = {}
         self.step_anchors: dict[str, dict] = {}
         self.worker_handoffs: dict[str, dict] = {}
+        self.agent_profiles: dict[tuple[str, str, int], dict] = {}
         self.commits = 0
 
     def execute(self, sql: str, params: tuple | None = None):
@@ -195,6 +196,10 @@ class _FakeDurableConnection:
             }
         elif normalized.startswith("SELECT * FROM step_anchors"):
             return _FakeCursor([self.step_anchors[params[0]]] if params[0] in self.step_anchors else [])
+        elif normalized.startswith("SELECT * FROM agent_profiles"):
+            owner_key, profile_key, profile_version = params
+            key = (owner_key, profile_key, profile_version)
+            return _FakeCursor([self.agent_profiles[key]] if key in self.agent_profiles else [])
         return _FakeCursor()
 
     def commit(self):
@@ -233,3 +238,23 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
     assert step_anchor["step_order"] == 3
     assert step_anchor["anchor_payload"] == {"tool": "terminal.run"}
     assert connection.commits == 2
+
+
+def test_postgres_task_repository_reads_agent_profile_by_key():
+    connection = _FakeDurableConnection()
+    connection.agent_profiles[("system", "worker.default", 1)] = {
+        "profile_id": "system:worker.default:1",
+        "owner_key": "system",
+        "profile_key": "worker.default",
+        "profile_version": 1,
+        "agent_type": "worker",
+        "config_snapshot": '{"toolsets":["terminal"]}',
+        "delegation_policy": '{"canDelegate":false}',
+    }
+    repository = PostgresTaskRepository(lambda: connection)
+
+    profile = repository.get_agent_profile("worker.default")
+
+    assert profile["profile_id"] == "system:worker.default:1"
+    assert profile["config_snapshot"] == {"toolsets": ["terminal"]}
+    assert profile["delegation_policy"] == {"canDelegate": False}
