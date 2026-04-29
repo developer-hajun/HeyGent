@@ -3,9 +3,11 @@ package com.ssafy.heygent.domain.health.controller;
 import com.ssafy.heygent.domain.health.dto.request.SamsungHealthRequestDto;
 import com.ssafy.heygent.domain.health.service.HealthService;
 import com.ssafy.heygent.global.config.jwt.JwtProvider;
+import com.ssafy.heygent.global.config.security.CustomUserPrincipal;
 import com.ssafy.heygent.global.exception.ApiResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -18,11 +20,9 @@ public class HealthController {
 
     @PostMapping("/samsung")
     public ApiResponse<String> saveSamsungHealthData(
-            @RequestHeader("Authorization") String token, // JWT 토큰 수신
+            @AuthenticationPrincipal CustomUserPrincipal user, // JWT 토큰 수신
             @RequestBody SamsungHealthRequestDto requestDto) {
-
-         String jwtToken = token.replace("Bearer ", "");
-         Long userId = jwtProvider.getUserId(jwtToken);
+         Long userId = user.getUserId();
 
         healthService.processHealthData(userId,requestDto);
 
