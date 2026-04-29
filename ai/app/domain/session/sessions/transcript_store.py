@@ -31,8 +31,19 @@ class TranscriptStore(Protocol):
         """식별자로 transcript/session 메타데이터를 조회한다."""
         ...
 
-    def get_latest_session_by_key(self, session_key: str) -> dict[str, Any] | None:
-        """동일 session_key 중 가장 최근 transcript/session을 조회한다."""
+    def list_sessions(
+        self,
+        owner: str | None = None,
+        *,
+        user_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """owner 범위의 transcript/session 목록을 최근 업데이트 순서로 조회한다."""
+        ...
+
+    def get_latest_session_by_key(self, session_key: str, *, owner: str | None = None) -> dict[str, Any] | None:
+        """동일 owner/session_key 중 가장 최근 transcript/session을 조회한다."""
         ...
 
     def append_message(

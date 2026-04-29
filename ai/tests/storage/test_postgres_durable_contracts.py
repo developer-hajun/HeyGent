@@ -10,11 +10,11 @@ from app.storage.postgres.schema import POSTGRES_SCHEMA_STATEMENTS, render_postg
 from app.storage.postgres.connection import apply_configured_postgres_migrations
 from app.storage.postgres.durable_repository import PostgresDurableRepository, PostgresTaskRepository
 from app.storage.postgres.migrations import POSTGRES_MIGRATIONS, apply_postgres_migrations
-from app.storage.sqlite import SQLiteTaskRepository
+from tests.fakes import InMemoryTaskRepository
 
 
-def test_sqlite_repository_satisfies_durable_boundary_protocols(tmp_path):
-    repository = SQLiteTaskRepository(tmp_path / "repo.db")
+def test_in_memory_repository_satisfies_task_boundary_protocols():
+    repository = InMemoryTaskRepository()
 
     assert isinstance(repository, ApprovalRepository)
     assert isinstance(repository, TaskEventRepository)
@@ -49,8 +49,8 @@ def test_postgres_schema_contains_required_durable_tables():
         "run_anchors",
         "step_anchors",
         "worker_handoffs",
-        "agent_profiles",
-        "agent_templates",
+        "ai_agent_profiles",
+        "ai_agent_templates",
         "provider_oauth_states",
         "provider_tokens",
     }
@@ -136,15 +136,16 @@ def test_postgres_migration_runner_applies_unapplied_migrations_once():
 
     applied = apply_postgres_migrations(connection)
 
-    assert applied == [POSTGRES_MIGRATIONS[0].migration_id]
+    assert applied == [migration.migration_id for migration in POSTGRES_MIGRATIONS]
     assert connection.committed is True
     assert any("CREATE TABLE IF NOT EXISTS schema_migrations" in sql for sql, _ in connection.executed)
     assert any("CREATE TABLE IF NOT EXISTS agent_sessions" in sql for sql, _ in connection.executed)
-    assert any(params == (POSTGRES_MIGRATIONS[0].migration_id,) for _sql, params in connection.executed)
+    for migration in POSTGRES_MIGRATIONS:
+        assert any(params == (migration.migration_id,) for _sql, params in connection.executed)
 
 
 def test_postgres_migration_runner_skips_already_applied_migrations():
-    connection = _FakePostgresConnection(applied={POSTGRES_MIGRATIONS[0].migration_id})
+    connection = _FakePostgresConnection(applied={migration.migration_id for migration in POSTGRES_MIGRATIONS})
 
     applied = apply_postgres_migrations(connection)
 
@@ -169,12 +170,12 @@ class _FakeDurableConnection:
     def execute(self, sql: str, params: tuple | None = None):
         normalized = " ".join(sql.split())
         if normalized.startswith("INSERT INTO run_anchors"):
-            task_run_id, session_id, owner_key, product_session_id, current_step_run_id, durable_status, anchor_payload = params
+            task_run_id, session_id, owner_key, session_key, current_step_run_id, durable_status, anchor_payload = params
             self.run_anchors[task_run_id] = {
                 "task_run_id": task_run_id,
                 "session_id": session_id,
                 "owner_key": owner_key,
-                "product_session_id": product_session_id,
+                "session_key": session_key,
                 "current_step_run_id": current_step_run_id,
                 "durable_status": durable_status,
                 "anchor_payload": anchor_payload,
@@ -182,7 +183,7 @@ class _FakeDurableConnection:
         elif normalized.startswith("SELECT * FROM run_anchors"):
             return _FakeCursor([self.run_anchors[params[0]]] if params[0] in self.run_anchors else [])
         elif normalized.startswith("INSERT INTO step_anchors"):
-            step_run_id, task_run_id, parent_step_run_id, worker_session_id, step_order, step_type, executor_key, durable_status, anchor_payload = params
+            step_run_id, task_run_id, parent_step_run_id, worker_session_id, step_order, step_type, handler_key, durable_status, anchor_payload = params
             self.step_anchors[step_run_id] = {
                 "step_run_id": step_run_id,
                 "task_run_id": task_run_id,
@@ -190,13 +191,13 @@ class _FakeDurableConnection:
                 "worker_session_id": worker_session_id,
                 "step_order": step_order,
                 "step_type": step_type,
-                "executor_key": executor_key,
+                "handler_key": handler_key,
                 "durable_status": durable_status,
                 "anchor_payload": anchor_payload,
             }
         elif normalized.startswith("SELECT * FROM step_anchors"):
             return _FakeCursor([self.step_anchors[params[0]]] if params[0] in self.step_anchors else [])
-        elif normalized.startswith("SELECT * FROM agent_profiles"):
+        elif normalized.startswith("SELECT * FROM ai_agent_profiles"):
             owner_key, profile_key, profile_version = params
             key = (owner_key, profile_key, profile_version)
             return _FakeCursor([self.agent_profiles[key]] if key in self.agent_profiles else [])
@@ -215,7 +216,7 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
         {
             "owner_key": "user_pg",
             "session_id": "agent_session_pg",
-            "product_session_id": "product_session_pg",
+            "session_key": "session_pg",
             "current_step_run_id": "step_pg_anchor",
             "durable_status": "WAITING",
             "anchor_payload": {"reason": "approval"},
@@ -227,7 +228,7 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
             "task_run_id": "task_pg_anchor",
             "step_order": 3,
             "step_type": "agent.loop.execute",
-            "executor_key": "agent.loop",
+            "handler_key": "agent.loop",
             "durable_status": "WAITING",
             "anchor_payload": {"tool": "terminal.run"},
         },

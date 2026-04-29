@@ -306,7 +306,7 @@ class LocalToolRuntime:
 
         child_session = {
             "intent_type": "agent.loop",
-            "entry_executor_key": "agent.loop",
+            "entry_handler_key": "agent.loop",
             "goal": goal,
             "context": context if context is not None else {},
             "toolsets": toolsets,

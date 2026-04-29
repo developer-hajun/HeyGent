@@ -1,3 +1,3 @@
-from app.tools.model.agent_loop import AgentLoopExecutor
+from app.tools.model.agent_loop import AgentLoopHandler
 
-__all__ = ["AgentLoopExecutor"]
+__all__ = ["AgentLoopHandler"]

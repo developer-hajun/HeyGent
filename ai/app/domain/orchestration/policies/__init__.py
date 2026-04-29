@@ -1,8 +1,8 @@
 __all__ = []
-from app.domain.orchestration.policies.action_schema import normalize_executor_outcome
+from app.domain.orchestration.policies.action_schema import normalize_handler_outcome
 from app.domain.orchestration.policies.step_boundary import (
     StepBoundaryDecision,
-    decide_executor_step_boundary,
+    decide_handler_step_boundary,
 )
 from app.domain.orchestration.policies.state_machine import (
     InvalidTransitionError,
@@ -20,7 +20,7 @@ __all__ = [
     "semantic_lifecycle_for_status",
     "step_is_terminal",
     "task_is_terminal",
-    "normalize_executor_outcome",
+    "normalize_handler_outcome",
     "StepBoundaryDecision",
-    "decide_executor_step_boundary",
+    "decide_handler_step_boundary",
 ]

@@ -28,7 +28,7 @@ class DurableRunAnchorRepository(Protocol):
 class TaskRunRepository(Protocol):
     """기존 TaskRun/StepRun CRUD 호환 경계다.
 
-    새 Postgres durable anchor 계약과 달리, 이 경계는 현재 SQLite 기반 Task API 호출부를 보존하기 위한 것이다.
+    API와 Task Engine이 공통으로 사용하는 TaskRun/StepRun 조회/수정 계약이다.
     """
 
     def create_task(self, task: TaskRun) -> TaskRun: ...
