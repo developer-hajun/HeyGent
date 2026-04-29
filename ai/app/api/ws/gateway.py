@@ -159,6 +159,7 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
                     websocket,
                     session_service=session_service,
                     session_id=session_id,
+                    authenticated_user_id=user_id,
                     task_run_id=message["task_run_id"],
                 )
             elif action == "subscribe_all":

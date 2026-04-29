@@ -10,6 +10,7 @@ from app.api.ws.gateway import WebSocketAuthRateLimiter, _authenticate_first_mes
 from app.clients.backend_auth import BackendAuthVerifyError, BackendAuthVerifyResult
 from app.core.config import get_settings
 from app.contracts.event.task_events import TaskEventEnvelope
+from app.domain.tasks.models import TaskRun
 from app.storage.redis import FakeRedis, RedisTaskProjectionStore
 
 
@@ -72,6 +73,18 @@ class SlowFirstMessageWebSocket:
 
     async def close(self, *, code: int) -> None:
         self.closed_code = code
+
+
+def task_for_owner(task_run_id: str, owner_key: str) -> TaskRun:
+    return TaskRun(
+        task_run_id=task_run_id,
+        task_type="agent.loop",
+        intent_type="agent.loop",
+        entry_executor_key="agent.loop",
+        owner_key=owner_key,
+        status="RUNNING",
+        title="웹소켓 테스트 작업",
+    )
 
 
 def test_settings_reads_websocket_allowed_origins(monkeypatch):
@@ -189,6 +202,7 @@ def test_subscribe_before_auth_is_rejected(client):
 def test_auth_success_uses_backend_user_id_for_session(client):
     fake_auth = FakeBackendAuthClient(user_id="42")
     client.app.state.backend_auth_client = fake_auth
+    client.app.state.repository.create_task(task_for_owner("task_1", "42"))
 
     with client.websocket_connect("/api/v1/gateway/ws?session_id=user:spoof") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
@@ -209,6 +223,7 @@ def test_subscribe_ack_includes_latest_sequence_when_projection_exists(client):
     projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
     client.app.state.backend_auth_client = fake_auth
     client.app.state.task_projection_store = projection
+    projection.save_task_snapshot(task_for_owner("task_ws_latest", "42"))
     projection.append_event(
         TaskEventEnvelope(
             event_id="event_ws_latest",
@@ -229,6 +244,47 @@ def test_subscribe_ack_includes_latest_sequence_when_projection_exists(client):
         assert subscribe_response["type"] == "subscribed"
         assert subscribe_response["task_run_id"] == "task_ws_latest"
         assert subscribe_response["latestSequence"] == 1
+
+
+def test_subscribe_rejects_task_owned_by_other_user_from_projection(client):
+    fake_auth = FakeBackendAuthClient(user_id="owner-a")
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
+    client.app.state.backend_auth_client = fake_auth
+    client.app.state.task_projection_store = projection
+    projection.save_task_snapshot(task_for_owner("task_ws_other_owner", "owner-b"))
+
+    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+        websocket.send_json({"action": "auth", "accessToken": "valid-token"})
+        websocket.send_json({"action": "subscribe", "task_run_id": "task_ws_other_owner"})
+
+        assert websocket.receive_json() == {"type": "auth.ok", "userId": "owner-a"}
+        assert websocket.receive_json() == {
+            "type": "subscription.denied",
+            "task_run_id": "task_ws_other_owner",
+            "reason": "forbidden",
+        }
+        assert client.app.state.session_registry.get_subscriptions("user:owner-a") == set()
+        assert client.app.state.ws_manager.directory.get("task:task_ws_other_owner") == set()
+
+
+def test_subscribe_allows_owner_when_projection_snapshot_missing_but_repository_has_task(client):
+    fake_auth = FakeBackendAuthClient(user_id="owner-a")
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
+    client.app.state.backend_auth_client = fake_auth
+    client.app.state.task_projection_store = projection
+    client.app.state.repository.create_task(
+        task_for_owner("task_ws_repo_fallback", "owner-a")
+    )
+
+    with client.websocket_connect("/api/v1/gateway/ws") as websocket:
+        websocket.send_json({"action": "auth", "accessToken": "valid-token"})
+        websocket.send_json({"action": "subscribe", "task_run_id": "task_ws_repo_fallback"})
+
+        assert websocket.receive_json() == {"type": "auth.ok", "userId": "owner-a"}
+        assert websocket.receive_json() == {"type": "subscribed", "task_run_id": "task_ws_repo_fallback"}
+        assert client.app.state.session_registry.get_subscriptions("user:owner-a") == {
+            "task:task_ws_repo_fallback"
+        }
 
 
 def test_auth_success_registers_random_connection_for_backend_user(client):
@@ -319,6 +375,7 @@ def test_authenticated_session_cleanup_runs_on_disconnect(client):
     fake_registry = FakeConnectionRegistry()
     client.app.state.backend_auth_client = fake_auth
     client.app.state.connection_registry = fake_registry
+    client.app.state.repository.create_task(task_for_owner("task_cleanup", "77"))
 
     with client.websocket_connect("/api/v1/gateway/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
@@ -341,6 +398,7 @@ def test_unregister_failure_still_cleans_local_websocket_directory(client):
     fake_registry = FakeConnectionRegistry(fail_unregister=True)
     client.app.state.backend_auth_client = fake_auth
     client.app.state.connection_registry = fake_registry
+    client.app.state.repository.create_task(task_for_owner("task_cleanup", "77"))
 
     with client.websocket_connect("/api/v1/gateway/ws") as websocket:
         websocket.send_json({"action": "auth", "accessToken": "valid-token"})
