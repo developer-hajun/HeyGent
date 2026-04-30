@@ -1,13 +1,30 @@
 package com.ssafy.heygent.domain.iot.gateway;
 
-public class SpringIntegrationMqttDisplayGateway {
+import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.integration.mqtt.support.MqttHeaders;
+import org.springframework.messaging.Message;
+import org.springframework.messaging.MessageChannel;
+import org.springframework.messaging.support.MessageBuilder;
+import org.springframework.stereotype.Component;
 
-    /*
-     * 나중에 MqttDisplayGateway의 실제 Spring Integration 기반 구현체로 바꿀 클래스다.
-     *
-     * 예상 구현:
-     * - MessageChannel mqttOutboundChannel 주입
-     * - MqttHeaders.TOPIC, MqttHeaders.QOS를 세팅해 publish
-     * - IOT_MQTT_ENABLED=true일 때만 Bean으로 등록
-     */
+@Component
+@RequiredArgsConstructor
+@ConditionalOnProperty(prefix = "iot.mqtt", name = "enabled", havingValue = "true")
+public class SpringIntegrationMqttDisplayGateway implements MqttDisplayGateway {
+
+    private final MessageChannel mqttOutboundChannel;
+
+    @Override
+    public void publish(String topic, String payload, int qos) {
+        Message<String> message = MessageBuilder.withPayload(payload)
+            .setHeader(MqttHeaders.TOPIC, topic)
+            .setHeader(MqttHeaders.QOS, qos)
+            .build();
+
+        boolean sent = mqttOutboundChannel.send(message);
+        if (!sent) {
+            throw new IllegalStateException("Failed to send MQTT display message to outbound channel.");
+        }
+    }
 }
