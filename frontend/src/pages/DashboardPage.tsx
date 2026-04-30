@@ -400,8 +400,7 @@ function CalendarWidget({ onClose }: { onClose: () => void }) {
         <button
           onClick={handleSubmit}
           disabled={!eventTitle.trim()}
-          className="flex-1 rounded-md px-3 py-1.5 text-[10px] font-medium text-white transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-          style={{ backgroundColor: eventColor.bg }}
+          className="flex-1 rounded-md bg-[#111111] px-3 py-1.5 text-[10px] font-medium text-white transition-colors hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-50"
         >
           등록
         </button>
@@ -625,7 +624,7 @@ const healthInsights = [
 ]
 
 export function DashboardPage() {
-  const { setSelectedAgent } = useSessionStore()
+  const { addAgentPanel } = useSessionStore()
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [reminderView, setReminderView] = useState<'list' | 'calendar'>('list')
 
@@ -634,7 +633,7 @@ export function DashboardPage() {
     currentHour < 12 ? '좋은 아침입니다' : currentHour < 17 ? '좋은 오후입니다' : '좋은 저녁입니다'
 
   const handleAgentClick = (agent: (typeof agents)[0]) => {
-    setSelectedAgent(agent)
+    addAgentPanel(agent)
   }
 
   return (
@@ -700,7 +699,7 @@ export function DashboardPage() {
                   </div>
                   <button
                     onClick={() => setCalendarOpen(true)}
-                    className="bg-primary hover:bg-primary/90 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors"
+                    className="flex items-center gap-1.5 rounded-lg bg-[#111111] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-black/80"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     등록
