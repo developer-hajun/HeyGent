@@ -12,7 +12,6 @@ import org.springframework.util.StringUtils;
 import com.ssafy.heygent.domain.ai.dto.request.AiAuthValidateRequest;
 import com.ssafy.heygent.domain.ai.dto.response.AiAuthValidateResponse;
 import com.ssafy.heygent.domain.user.repository.UserRepository;
-import com.ssafy.heygent.domain.workspace.service.WorkspaceAccessService;
 import com.ssafy.heygent.global.config.jwt.JwtProvider;
 import com.ssafy.heygent.global.exception.CustomException;
 import com.ssafy.heygent.global.exception.ErrorCode;
@@ -29,7 +28,6 @@ public class AiInternalAuthService {
 
     private final JwtProvider jwtProvider;
     private final UserRepository userRepository;
-    private final WorkspaceAccessService workspaceAccessService;
 
     public AiAuthValidateResponse validate(AiAuthValidateRequest request) {
         String accessToken = request.getAccessToken().trim();
@@ -44,7 +42,9 @@ public class AiInternalAuthService {
 
         LocalDateTime jwtExpiresAt = toLocalDateTime(jwtProvider.getExpiration(accessToken));
         LocalDateTime verifiedAt = LocalDateTime.now();
-        String workspaceKey = resolveWorkspaceKey(userId, request.getWorkspaceKey());
+        String workspaceKey = StringUtils.hasText(request.getWorkspaceKey())
+            ? request.getWorkspaceKey()
+            : null;
 
         return AiAuthValidateResponse.builder()
             .userId(userId)
@@ -53,13 +53,6 @@ public class AiInternalAuthService {
             .jwtExpiresAt(jwtExpiresAt)
             .scopeExpiresAt(verifiedAt.plusMinutes(DEFAULT_SCOPE_TTL_MINUTES))
             .build();
-    }
-
-    private String resolveWorkspaceKey(Long userId, String workspaceKey) {
-        if (!StringUtils.hasText(workspaceKey)) {
-            return null;
-        }
-        return workspaceAccessService.validateAccess(userId, workspaceKey);
     }
 
     private LocalDateTime toLocalDateTime(Date date) {
