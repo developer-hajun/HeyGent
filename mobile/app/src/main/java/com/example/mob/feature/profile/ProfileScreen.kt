@@ -26,7 +26,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import com.example.mob.common.AppTopBar
+import com.heygents.mob.feature.health.HealthViewModel
 import com.example.mob.ui.theme.*
 
 @Composable
@@ -35,8 +37,12 @@ fun ProfileScreen(
     bottomPadding: Dp = 0.dp,
     onLogout: () -> Unit = {},
     agentName: String = "Jarvis",
-    onAgentNameChange: (String) -> Unit = {}
+    onAgentNameChange: (String) -> Unit = {},
+    healthViewModel: HealthViewModel? = null
 ) {
+    val context = LocalContext.current
+    val activity = context as? android.app.Activity
+    
     var showSettings by remember { mutableStateOf(false) }
     var agentCallName by remember { mutableStateOf("James Anderson") }
     var isEditingName by remember { mutableStateOf(false) }
@@ -240,7 +246,15 @@ fun ProfileScreen(
                         }
                         Switch(
                             checked = syncEnabled,
-                            onCheckedChange = { syncEnabled = it },
+                            onCheckedChange = { 
+                                syncEnabled = it 
+                                if (it) {
+                                    healthViewModel?.startPeriodicSync()
+                                    activity?.let { act -> healthViewModel?.requestPermissions(act) }
+                                } else {
+                                    healthViewModel?.stopPeriodicSync()
+                                }
+                            },
                             colors =
                                 SwitchDefaults.colors(
                                     checkedThumbColor = Color.White,
@@ -250,7 +264,7 @@ fun ProfileScreen(
                     }
                     if (syncEnabled) {
                         Text(
-                            "마지막 동기화: 2분 전",
+                            "마지막 동기화: 방금 전",
                             fontSize = 12.sp,
                             color = TextSecondary,
                             modifier = Modifier.padding(start = 16.dp, bottom = 14.dp),
