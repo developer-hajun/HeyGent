@@ -30,8 +30,13 @@ const TAB_H = 96
 const TAB_GAP = 12
 const MIN_SPACING = TAB_H + TAB_GAP
 
-/** 모든 탭이 겹치지 않도록 정렬. 드래그 종료 후 호출. */
-function resolveAll(offsets: Map<string, number>, ids: string[]): Map<string, number> {
+/** 모든 탭이 겹치지 않도록 정렬. 드래그 종료 후 호출.
+ *  pinnedId: 드래그한 탭 — 위치를 고정하고 나머지만 밀어냄. */
+function resolveAll(
+  offsets: Map<string, number>,
+  ids: string[],
+  pinnedId?: string,
+): Map<string, number> {
   const result = new Map(offsets)
   const halfH = window.innerHeight / 2
 
@@ -43,9 +48,20 @@ function resolveAll(offsets: Map<string, number>, ids: string[]): Map<string, nu
       const below = sorted[i]
       const gap = (result.get(below) ?? 0) - (result.get(above) ?? 0)
       if (gap < MIN_SPACING) {
-        const mid = ((result.get(above) ?? 0) + (result.get(below) ?? 0)) / 2
-        result.set(above, mid - MIN_SPACING / 2)
-        result.set(below, mid + MIN_SPACING / 2)
+        const abovePinned = above === pinnedId
+        const belowPinned = below === pinnedId
+        if (abovePinned) {
+          // above 고정 → below만 밀어냄
+          result.set(below, (result.get(above) ?? 0) + MIN_SPACING)
+        } else if (belowPinned) {
+          // below 고정 → above만 밀어냄
+          result.set(above, (result.get(below) ?? 0) - MIN_SPACING)
+        } else {
+          // 둘 다 비고정 → 중간점 기준 분리
+          const mid = ((result.get(above) ?? 0) + (result.get(below) ?? 0)) / 2
+          result.set(above, mid - MIN_SPACING / 2)
+          result.set(below, mid + MIN_SPACING / 2)
+        }
         changed = true
       }
     }
@@ -72,28 +88,31 @@ interface AgentTabProps {
 function AgentTab({ item, offsetY, onDragMove, onDragEnd }: AgentTabProps) {
   const { removeAgentPanel, toggleAgentPanel } = useSessionStore()
   const dragStartY = useRef(0)
-  const isDragging = useRef(false)
+  const hasDragged = useRef(false)
   const [active, setActive] = useState(false)
 
   const startDrag = (e: React.MouseEvent) => {
     e.preventDefault()
-    isDragging.current = false
+    hasDragged.current = false
     dragStartY.current = e.clientY - offsetY
     const halfH = window.innerHeight / 2
     const onMove = (ev: MouseEvent) => {
-      if (!isDragging.current) {
-        isDragging.current = true
+      if (!hasDragged.current) {
+        hasDragged.current = true
         setActive(true)
       }
       const next = ev.clientY - dragStartY.current
       onDragMove(item.id, Math.max(-halfH + TAB_H / 2, Math.min(halfH - TAB_H / 2, next)))
     }
     const onUp = () => {
-      isDragging.current = false
       setActive(false)
       onDragEnd()
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
+      // hasDragged는 onClick 이후 리셋 (setTimeout으로 onClick보다 늦게 실행)
+      setTimeout(() => {
+        hasDragged.current = false
+      }, 0)
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
@@ -171,7 +190,7 @@ function AgentTab({ item, offsetY, onDragMove, onDragEnd }: AgentTabProps) {
       <button
         onMouseDown={startDrag}
         onClick={() => {
-          if (!isDragging.current) toggleAgentPanel(item.id)
+          if (!hasDragged.current) toggleAgentPanel(item.id)
         }}
         className={`relative flex h-24 w-9 cursor-grab flex-col items-center justify-center gap-1.5 rounded-l-xl border border-r-0 shadow-md transition-all duration-150 active:cursor-grabbing ${
           item.panelOpen
@@ -206,29 +225,31 @@ interface ScheduleTabProps {
 function ScheduleTab({ offsetY, onDragMove, onDragEnd }: ScheduleTabProps) {
   const { rightPanelType, toggleRightPanel, setRightPanelType } = useUIStore()
   const dragStartY = useRef(0)
-  const isDragging = useRef(false)
+  const hasDragged = useRef(false)
   const [active, setActive] = useState(false)
   const urgentCount = upcomingReminders.filter((r) => r.urgent).length
 
   const startDrag = (e: React.MouseEvent) => {
     e.preventDefault()
-    isDragging.current = false
+    hasDragged.current = false
     dragStartY.current = e.clientY - offsetY
     const halfH = window.innerHeight / 2
     const onMove = (ev: MouseEvent) => {
-      if (!isDragging.current) {
-        isDragging.current = true
+      if (!hasDragged.current) {
+        hasDragged.current = true
         setActive(true)
       }
       const next = ev.clientY - dragStartY.current
       onDragMove('schedule', Math.max(-halfH + TAB_H / 2, Math.min(halfH - TAB_H / 2, next)))
     }
     const onUp = () => {
-      isDragging.current = false
       setActive(false)
       onDragEnd()
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
+      setTimeout(() => {
+        hasDragged.current = false
+      }, 0)
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
@@ -311,7 +332,7 @@ function ScheduleTab({ offsetY, onDragMove, onDragEnd }: ScheduleTabProps) {
       <button
         onMouseDown={startDrag}
         onClick={() => {
-          if (!isDragging.current) toggleRightPanel('schedule')
+          if (!hasDragged.current) toggleRightPanel('schedule')
         }}
         className={`relative flex h-24 w-9 cursor-grab flex-col items-center justify-center gap-1.5 rounded-l-xl border border-r-0 shadow-md transition-all duration-150 active:cursor-grabbing ${
           rightPanelType === 'schedule'
@@ -366,14 +387,17 @@ export function RightPanel() {
     if (!allIds.includes(id)) offsets.delete(id)
   }
 
+  const lastDraggedId = useRef<string | undefined>(undefined)
+
   // 드래그 중: 겹침 허용하고 raw 위치만 업데이트
   const handleDragMove = useCallback((draggedId: string, nextY: number) => {
+    lastDraggedId.current = draggedId
     setOffsets((prev) => new Map(prev).set(draggedId, nextY))
   }, [])
 
-  // 드래그 종료: 겹침 해소 + 화면 경계 클램핑
+  // 드래그 종료: 겹침 해소 + 화면 경계 클램핑 (드래그한 탭 위치 고정)
   const handleDragEnd = useCallback(() => {
-    setOffsets((prev) => resolveAll(prev, allIds))
+    setOffsets((prev) => resolveAll(prev, allIds, lastDraggedId.current))
   }, [allIds])
 
   return (
