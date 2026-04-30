@@ -15,4 +15,8 @@ public record DisplayPublishResult(
     public static DisplayPublishResult skipped(String reason, DisplayEventPayload payload) {
         return new DisplayPublishResult(false, null, 0, payload, reason);
     }
+
+    public static DisplayPublishResult skipped(String reason, String topic, int qos, DisplayEventPayload payload) {
+        return new DisplayPublishResult(false, topic, qos, payload, reason);
+    }
 }
