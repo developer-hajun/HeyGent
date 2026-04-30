@@ -1,9 +1,11 @@
 package com.example.mob.data.remote
 
-import com.example.mob.data.health.WatchHealthDataBatchRequest
-import com.example.mob.data.health.WatchHealthDataResponse
+import com.heygents.mob.data.health.SamsungHealthRequest
+import com.heygents.mob.data.health.WatchHealthDataBatchRequest
+import com.heygents.mob.data.health.WatchHealthDataResponse
 import retrofit2.http.Body
 import retrofit2.http.GET
+import retrofit2.http.Header
 import retrofit2.http.POST
 
 data class ServerResponse<T>(
@@ -18,6 +20,12 @@ interface HealthApiService {
     suspend fun saveWatchData(
         @Body request: WatchHealthDataBatchRequest
     ): ServerResponse<List<WatchHealthDataResponse>>
+
+    @POST("api/v1/health/samsung")
+    suspend fun sendSamsungHealthData(
+        @Header("Authorization") token: String,
+        @Body request: SamsungHealthRequest
+    ): ServerResponse<Unit>
 
     @GET("api/v1/health/watch")
     suspend fun getMyWatchData(): ServerResponse<List<WatchHealthDataResponse>>

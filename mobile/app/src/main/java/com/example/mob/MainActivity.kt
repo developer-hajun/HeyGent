@@ -1,4 +1,4 @@
-package com.example.mob
+package com.heygents.mob
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -31,8 +31,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.mob.common.AppDrawer
 import com.example.mob.feature.auth.LoginScreen
 import com.example.mob.feature.chat.ChatScreen
-import com.example.mob.feature.health.HealthSyncState
-import com.example.mob.feature.health.HealthViewModel
+import com.heygents.mob.feature.health.HealthViewModel
 import com.example.mob.feature.home.HomeScreen
 import com.example.mob.feature.profile.ProfileScreen
 import com.example.mob.ui.theme.MOBTheme
@@ -99,7 +98,7 @@ private fun SplashScreen() {
 private fun MainApp(onLogout: () -> Unit) {
     val context = LocalContext.current
     val healthViewModel = remember { HealthViewModel(context) }
-    
+
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -108,7 +107,7 @@ private fun MainApp(onLogout: () -> Unit) {
     LaunchedEffect(Unit) {
         healthViewModel.startPeriodicSync()
         // 권한이 없으면 요청 (최초 1회)
-        if (!healthViewModel.syncState.value.let { it is HealthSyncState.Success }) {
+        if (!healthViewModel.syncState.value.let { it is HealthViewModel.HealthSyncState.Success }) {
             (context as? Activity)?.let { healthViewModel.requestPermissions(it) }
         }
     }

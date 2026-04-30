@@ -1,25 +1,25 @@
-package com.example.mob.feature.health
+package com.heygents.mob.feature.health
 
 import android.app.Activity
 import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.mob.data.repository.HealthRepository
+import com.heygents.mob.data.repository.HealthRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-sealed interface HealthSyncState {
-    data object Idle : HealthSyncState
-    data object Loading : HealthSyncState
-    data object Success : HealthSyncState
-    data class Error(val message: String) : HealthSyncState
-}
-
 class HealthViewModel(context: Context) : ViewModel() {
+
+    sealed interface HealthSyncState {
+        data object Idle : HealthSyncState
+        data object Loading : HealthSyncState
+        data object Success : HealthSyncState
+        data class Error(val message: String) : HealthSyncState
+    }
 
     private val repository = HealthRepository(context)
 

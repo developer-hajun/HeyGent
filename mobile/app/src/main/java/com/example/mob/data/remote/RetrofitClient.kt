@@ -9,7 +9,7 @@ import java.util.concurrent.TimeUnit
 object RetrofitClient {
 
     // TODO: BuildConfig 또는 환경변수로 교체 필요
-    private const val BASE_URL = "http://10.0.2.2:8080/"
+    private const val BASE_URL = "http://192.168.30.120:8080/"
 
     private var accessToken: String = ""
 

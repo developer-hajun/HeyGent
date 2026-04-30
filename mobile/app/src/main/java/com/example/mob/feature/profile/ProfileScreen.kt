@@ -28,7 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import com.example.mob.common.AppTopBar
-import com.example.mob.feature.health.HealthViewModel
+import com.heygents.mob.feature.health.HealthViewModel
 import com.example.mob.ui.theme.*
 
 @Composable

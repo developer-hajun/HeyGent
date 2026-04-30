@@ -1,4 +1,4 @@
-package com.example.mob.data.health
+package com.heygents.mob.data.health
 
 import java.time.LocalDateTime
 
@@ -66,4 +66,21 @@ data class WatchHealthDataBatchRequest(
 data class WatchHealthDataResponse(
     val status: Int,
     val message: String
+)
+
+data class SamsungHealthRequest(
+    val heartRate: Int?,
+    val steps: Int?,
+    val floors: Int?,
+    val energyScore: Int?,
+    val activeTimeMinutes: Int?,
+    val caloriesBurned: Double?,
+    val activeCalories: Double?,
+    val sleepScore: Int?,
+    val sleepDurationMinutes: Int?,
+    val bodyFat: Double?,
+    val skeletalMuscle: Double?,
+    val bloodPressureSystolic: Double?,
+    val bloodPressureDiastolic: Double?,
+    val bloodGlucose: Double?
 )

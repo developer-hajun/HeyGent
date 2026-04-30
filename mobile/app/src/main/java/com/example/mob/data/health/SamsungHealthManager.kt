@@ -1,8 +1,9 @@
-package com.example.mob.data.health
+package com.heygents.mob.data.health
 
 import android.app.Activity
 import android.content.Context
 import android.util.Log
+import com.example.mob.data.remote.RetrofitClient
 import com.samsung.android.sdk.health.data.HealthDataService
 import com.samsung.android.sdk.health.data.HealthDataStore
 import com.samsung.android.sdk.health.data.permission.AccessType
@@ -166,6 +167,43 @@ class SamsungHealthManager(private val context: Context) {
             ===========================================
         """.trimIndent())
 
+
+        sendDataToServer(snapshot)
+
         return snapshot
     }
+
+    private suspend fun sendDataToServer(snapshot: WatchHealthSnapshot) {
+        try {
+            val request = SamsungHealthRequest(
+                heartRate = snapshot.heartRate,
+                steps = snapshot.steps,
+                floors = snapshot.floors,
+                energyScore = snapshot.energyScore,
+                activeTimeMinutes = snapshot.activeTimeMinutes,
+                caloriesBurned = snapshot.caloriesBurned,
+                activeCalories = snapshot.activeCalories,
+                sleepScore = snapshot.sleepScore,
+                sleepDurationMinutes = snapshot.sleepDurationMinutes,
+                bodyFat = snapshot.bodyFat,
+                skeletalMuscle = snapshot.skeletalMuscle,
+                bloodPressureSystolic = snapshot.bloodPressureSystolic,
+                bloodPressureDiastolic = snapshot.bloodPressureDiastolic,
+                bloodGlucose = snapshot.bloodGlucose
+            )
+
+            val response = RetrofitClient.healthApiService.sendSamsungHealthData(
+                "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIiwiZXhwIjoxNzc3NDQ1NDc3fQ.nh81Tab99RrJptEEydc0tbyQ7nyEUiPDnHf0kgCRqXY",
+                request
+            )
+            if (response.status == 200) {
+                Log.d("SamsungHealth", "서버 전송 성공: ${response.message}")
+            } else {
+                Log.e("SamsungHealth", "서버 전송 실패: ${response.message}")
+            }
+        } catch (e: Exception) {
+            Log.e("SamsungHealth", "서버 전송 중 오류 발생", e)
+        }
+    }
+
 }
