@@ -5,12 +5,18 @@ import type { AgentRuntime } from './types'
 const MAP_WIDTH = 1600
 const MAP_HEIGHT = 900
 
+const CEO_SPRITES = {
+  desk: { src: '/assets/agents/ceo/ceo_desk.png', x: 310, y: 215, size: 230 },
+  explain: { src: '/assets/agents/ceo/ceo_explain.png', x: 383, y: 493, size: 210 },
+}
+
 interface OfficeMapProps {
   agents: AgentRuntime[]
   onAgentArrived: (agentId: string) => void
+  ceoMode: 'desk' | 'explain' | null
 }
 
-export function OfficeMap({ agents, onAgentArrived }: OfficeMapProps) {
+export function OfficeMap({ agents, onAgentArrived, ceoMode }: OfficeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
@@ -78,6 +84,31 @@ export function OfficeMap({ agents, onAgentArrived }: OfficeMapProps) {
         {agents.map((agent) => (
           <AgentSprite key={agent.config.id} agent={agent} onArrived={onAgentArrived} />
         ))}
+        {ceoMode &&
+          (() => {
+            const sprite = CEO_SPRITES[ceoMode]
+            return (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: sprite.size,
+                  height: sprite.size,
+                  transform: `translate(${sprite.x - sprite.size / 2}px, ${sprite.y - sprite.size / 2}px)`,
+                  zIndex: 10,
+                  pointerEvents: 'none',
+                }}
+              >
+                <img
+                  src={sprite.src}
+                  alt="CEO"
+                  draggable={false}
+                  style={{ width: '100%', height: '100%', userSelect: 'none' }}
+                />
+              </div>
+            )
+          })()}
       </div>
 
       {/* 클릭 좌표 디버그 오버레이 */}
