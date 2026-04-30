@@ -1,11 +1,11 @@
-package com.heygents.mob.feature.health
+package com.example.mob.feature.health
 
 import android.app.Activity
 import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.heygents.mob.data.repository.HealthRepository
+import com.example.mob.data.repository.HealthRepository
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
