@@ -93,36 +93,45 @@ export function LeftSidebar() {
         {collapsed && (
           <div className="flex h-full flex-col items-center gap-1 py-3">
             {/* Expand button */}
-            <button
-              onClick={() => setSidebarCollapsed(false)}
-              title="Expand sidebar"
-              className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
+            <CollapsedTooltip label="사이드바 열기">
+              <button
+                onClick={() => setSidebarCollapsed(false)}
+                className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </CollapsedTooltip>
 
             <div className="bg-sidebar-border my-1 h-px w-6" />
 
             {/* New Chat button */}
-            <button
-              onClick={handleNewChat}
-              title="새 채팅"
-              className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
-            >
-              <Plus className="h-4 w-4" />
-            </button>
+            <CollapsedTooltip label="새 채팅">
+              <button
+                onClick={handleNewChat}
+                className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </CollapsedTooltip>
 
-            {/* Sessions icon */}
+            {/* Sessions icon — hover로 팝오버 */}
             <Popover open={sessionsPopoverOpen} onOpenChange={setSessionsPopoverOpen}>
               <PopoverTrigger asChild>
                 <button
-                  title="대화 세션"
-                  className="hover:bg-sidebar-accent text-muted-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+                  onMouseEnter={() => setSessionsPopoverOpen(true)}
+                  onMouseLeave={() => setSessionsPopoverOpen(false)}
+                  className="hover:bg-sidebar-accent text-muted-foreground relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
                 >
                   <MessageSquare className="h-4 w-4" />
                 </button>
               </PopoverTrigger>
-              <PopoverContent side="right" align="start" className="w-72 rounded-2xl p-3">
+              <PopoverContent
+                side="right"
+                align="start"
+                className="w-72 rounded-2xl p-3"
+                onMouseEnter={() => setSessionsPopoverOpen(true)}
+                onMouseLeave={() => setSessionsPopoverOpen(false)}
+              >
                 <div className="mb-2">
                   <h3 className="text-foreground mb-1 text-sm font-semibold">대화 세션</h3>
                   <p className="text-muted-foreground text-xs">최근 대화 세션</p>
@@ -171,18 +180,34 @@ export function LeftSidebar() {
               </PopoverContent>
             </Popover>
 
+            {/* Running session loading indicators */}
+            {sessions
+              .filter((s) => runningSessionIds.has(s.id))
+              .map((s) => (
+                <CollapsedTooltip key={s.id} label={s.title}>
+                  <button
+                    onClick={() => {
+                      setSelectedSessionId(s.id)
+                      navigate('/agent-status')
+                    }}
+                    className="hover:bg-sidebar-accent text-primary flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+                  >
+                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.5} />
+                  </button>
+                </CollapsedTooltip>
+              ))}
+
             <div className="flex-1" />
 
             {/* Profile icon (collapsed) */}
             <div className="bg-sidebar-border my-1 h-px w-6" />
             <Popover open={profileOpen} onOpenChange={setProfileOpen}>
               <PopoverTrigger asChild>
-                <button
-                  title="프로필"
-                  className="hover:bg-sidebar-accent flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
-                >
-                  <ProfileAvatar size={32} />
-                </button>
+                <CollapsedTooltip label="프로필">
+                  <button className="hover:bg-sidebar-accent flex h-9 w-9 items-center justify-center rounded-lg transition-colors">
+                    <ProfileAvatar size={32} />
+                  </button>
+                </CollapsedTooltip>
               </PopoverTrigger>
               <PopoverContent side="right" align="end" className="w-52 rounded-2xl p-1.5">
                 <ProfileMenu
@@ -311,6 +336,36 @@ export function LeftSidebar() {
         )}
       </div>
     </>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Collapsed tooltip
+// ────────────────────────────────────────────────────────────────────────────
+function CollapsedTooltip({ label, children }: { label: string; children: React.ReactNode }) {
+  const [visible, setVisible] = useState(false)
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => setVisible(false)}
+    >
+      {children}
+      {visible && (
+        <div className="bg-foreground text-background pointer-events-none absolute top-1/2 left-full z-100 ml-2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap shadow-lg">
+          {label}
+          <div
+            className="pointer-events-none absolute top-1/2 -left-1.5 -translate-y-1/2"
+            style={{
+              borderWidth: '4px',
+              borderStyle: 'solid',
+              borderColor: 'transparent',
+              borderRightColor: 'var(--foreground)',
+            }}
+          />
+        </div>
+      )}
+    </div>
   )
 }
 
