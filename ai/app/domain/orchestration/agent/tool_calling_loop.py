@@ -18,7 +18,7 @@ from app.domain.orchestration.runtime_planning.todo_state import (
 )
 
 
-class ToolCallingLoopExecutor:
+class ToolCallingLoopHandler:
     """현재 provider 위에서 native tool call(모델이 구조화된 도구 호출을 직접 반환하는 방식) loop를 실행한다."""
 
     def __init__(
@@ -322,7 +322,7 @@ class ToolCallingLoopExecutor:
             return None
         explicit_session_id = self._optional_text(task_input.get("transcript_session_id"))
         if explicit_session_id and self.session_store.get_session(explicit_session_id) is not None:
-            # worker 실행은 parent product session_key를 공유해도 transcript는 별도 agent_session을 사용한다.
+            # worker 실행은 parent session_key를 공유해도 transcript는 별도 agent_session을 사용한다.
             return explicit_session_id
         session_key = str(getattr(task, "session_key", "") or getattr(task, "task_run_id", "")).strip()
         if not session_key:

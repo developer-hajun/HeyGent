@@ -59,8 +59,8 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
         task_run_id TEXT PRIMARY KEY,
         session_id TEXT REFERENCES agent_sessions(session_id) ON DELETE SET NULL,
         owner_key TEXT NOT NULL,
-        product_session_id TEXT,
-        entry_executor_key TEXT,
+        session_key TEXT,
+        entry_handler_key TEXT,
         current_step_run_id TEXT,
         durable_status TEXT NOT NULL DEFAULT 'OPEN' CHECK (durable_status IN ('OPEN', 'WAITING', 'TERMINAL')),
         anchor_generation BIGINT NOT NULL DEFAULT 1,
@@ -83,7 +83,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
         worker_session_id TEXT REFERENCES agent_sessions(session_id) ON DELETE SET NULL,
         step_order INTEGER NOT NULL,
         step_type TEXT NOT NULL,
-        executor_key TEXT,
+        handler_key TEXT,
         durable_status TEXT NOT NULL DEFAULT 'OPEN' CHECK (durable_status IN ('OPEN', 'WAITING', 'TERMINAL')),
         anchor_generation BIGINT NOT NULL DEFAULT 1,
         revision BIGINT NOT NULL DEFAULT 0,
@@ -110,7 +110,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     );
     """,
     """
-    CREATE TABLE IF NOT EXISTS agent_profiles (
+    CREATE TABLE IF NOT EXISTS ai_agent_profiles (
         profile_id TEXT PRIMARY KEY,
         owner_key TEXT NOT NULL,
         profile_key TEXT NOT NULL,
@@ -126,7 +126,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     );
     """,
     """
-    CREATE TABLE IF NOT EXISTS agent_templates (
+    CREATE TABLE IF NOT EXISTS ai_agent_templates (
         template_id TEXT PRIMARY KEY,
         owner_key TEXT NOT NULL,
         template_key TEXT NOT NULL,
@@ -175,6 +175,10 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     ON agent_messages(session_id, created_at);
     """,
     """
+    CREATE INDEX IF NOT EXISTS idx_run_anchors_owner_session
+    ON run_anchors(owner_key, session_key);
+    """,
+    """
     CREATE INDEX IF NOT EXISTS idx_approval_requests_task_pending
     ON approval_requests(task_run_id, created_at)
     WHERE status = 'PENDING';
@@ -188,7 +192,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     ON worker_handoffs(parent_step_run_id, created_at);
     """,
     """
-    INSERT INTO agent_profiles (
+    INSERT INTO ai_agent_profiles (
         profile_id,
         owner_key,
         profile_key,

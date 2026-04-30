@@ -12,6 +12,14 @@ class FakeRedis:
         self._strings: dict[str, str] = {}
         self._ttls: dict[str, int] = {}
         self._zsets: dict[str, dict[str, float]] = defaultdict(dict)
+        self._published: list[tuple[str, str]] = []
+
+    def publish(self, channel: str, message: str) -> int:
+        self._published.append((channel, message))
+        return 0
+
+    def pubsub(self):
+        return _FakePubSub()
 
     def set(self, name: str, value: str, ex: int | None = None, nx: bool = False) -> bool:
         if nx and name in self._strings:
@@ -102,3 +110,14 @@ class FakeRedis:
         if end == -1:
             return items[start:]
         return items[start : end + 1]
+
+
+class _FakePubSub:
+    def psubscribe(self, *_patterns: str) -> None:
+        return None
+
+    def get_message(self, *, ignore_subscribe_messages: bool = True, timeout: float = 0.0):
+        return None
+
+    def close(self) -> None:
+        return None

@@ -9,7 +9,7 @@ from app.contracts.task.task_status import TaskStatus
 from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.orchestration.agent.loop import TaskEngine
 from app.domain.orchestration.delegation.spec import ChildSessionLaunchResult, ChildSessionSpec
-from app.domain.orchestration.policies import decide_executor_step_boundary, normalize_executor_outcome
+from app.domain.orchestration.policies import decide_handler_step_boundary, normalize_handler_outcome
 from app.domain.orchestration.runtime_planning import Planner
 from app.domain.orchestration.resume import ResumeTargetResolver
 from app.domain.tasks.repository import TaskRepository
@@ -34,17 +34,17 @@ class AgentLoopRunner:
         self.resume_target_resolver = ResumeTargetResolver()
 
     async def start(self, request: OrchestrationRequest) -> TaskRun:
-        executor = self.tool_registry.resolve(
+        handler = self.tool_registry.resolve(
             intent_type=request.intent_type,
-            entry_executor_key=request.entry_executor_key,
+            entry_handler_key=request.entry_handler_key,
         )
         task = self.planner.materialize_task(
             owner_key=request.owner_key,
             session_key=request.session_key,
             input_payload=request.input_payload,
-            executor=executor,
+            handler=handler,
         )
-        return await self.task_engine.run(task=task, executor=executor)
+        return await self.task_engine.run(task=task, handler=handler)
 
     async def resume(self, *, task: TaskRun, approval_id: str, payload: dict) -> TaskRun:
         open_approval = self.repository.get_open_approval(task.task_run_id)
@@ -54,20 +54,20 @@ class AgentLoopRunner:
         if step is None:
             raise KeyError(step_run_id)
 
-        executor_key = step.executor_key or task.entry_executor_key
-        if not executor_key:
-            raise ValueError("step executor key is missing")
+        handler_key = step.handler_key or task.entry_handler_key
+        if not handler_key:
+            raise ValueError("step handler key is missing")
 
-        executor = self.tool_registry.get(executor_key)
-        boundary = decide_executor_step_boundary(
+        handler = self.tool_registry.get(handler_key)
+        boundary = decide_handler_step_boundary(
             current_detail=step.detail_json,
-            next_semantic_key=executor.spec.semantic_key or step.step_type,
+            next_semantic_key=handler.spec.semantic_key or step.step_type,
             is_resume=True,
         )
         if boundary.action != "reuse_for_resume":
             raise ValueError(f"unexpected resume boundary decision: {boundary.reason}")
-        self.planner.materialize_resume_step(task=task, step=step, executor=executor)
-        return await self.task_engine.resume(task=task, executor=executor, approval_id=approval_id, payload=payload)
+        self.planner.materialize_resume_step(task=task, step=step, handler=handler)
+        return await self.task_engine.resume(task=task, handler=handler, approval_id=approval_id, payload=payload)
 
     async def cancel_waiting(self, *, task: TaskRun) -> TaskRun:
         return await self.task_engine.cancel_waiting(task=task)
@@ -80,20 +80,20 @@ class AgentLoopRunner:
         session_key: str | None,
         input_payload: dict,
         intent_type: str,
-        entry_executor_key: str,
+        entry_handler_key: str,
     ) -> ChildSessionLaunchResult:
-        executor = self.tool_registry.resolve(
+        handler = self.tool_registry.resolve(
             intent_type=intent_type,
-            entry_executor_key=entry_executor_key,
+            entry_handler_key=entry_handler_key,
         )
         task = self.planner.materialize_task(
             owner_key=owner_key,
             session_key=session_key,
             input_payload=input_payload,
-            executor=executor,
+            handler=handler,
         )
         started_at = monotonic()
-        outcome = normalize_executor_outcome(executor.execute(task=task, step=None, resume_payload=None))
+        outcome = normalize_handler_outcome(handler.execute(task=task, step=None, resume_payload=None))
         status = str(outcome.get("task_status") or TaskStatus.COMPLETED)
         return ChildSessionLaunchResult(
             agent_id=self._worker_agent_id(spec=spec, input_payload=input_payload),
@@ -110,7 +110,7 @@ class AgentLoopRunner:
         for value in (input_payload.get("agent_id"), metadata.get("agent_id")):
             if isinstance(value, str) and value.strip():
                 return value.strip()
-        return f"{spec.parent_step_run_id}:{spec.child_entry_executor_key}"
+        return f"{spec.parent_step_run_id}:{spec.child_entry_handler_key}"
 
     @staticmethod
     def _worker_summary(*, outcome: dict[str, Any], summary_prompt: str | None) -> str | None:

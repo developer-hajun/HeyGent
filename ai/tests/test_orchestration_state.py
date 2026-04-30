@@ -5,7 +5,7 @@ import pytest
 from app.contracts.task.task_status import TaskStatus
 from app.domain.orchestration.policies import (
     InvalidTransitionError,
-    decide_executor_step_boundary,
+    decide_handler_step_boundary,
     ensure_step_transition,
     ensure_task_transition,
     semantic_lifecycle_for_status,
@@ -51,26 +51,26 @@ def test_step_transition_allows_waiting_resume_and_rejects_backward_moves():
         ensure_step_transition(StepStatus.FAILED, StepStatus.RUNNING)
 
 
-def test_executor_step_boundary_follows_steprun_anchor_rules():
-    start_decision = decide_executor_step_boundary(
+def test_handler_step_boundary_follows_steprun_anchor_rules():
+    start_decision = decide_handler_step_boundary(
         current_detail=None,
         next_semantic_key="response.compose",
     )
     assert start_decision.action == "create_new_step"
 
-    reuse_decision = decide_executor_step_boundary(
+    reuse_decision = decide_handler_step_boundary(
         current_detail={"semanticDetail": {"semanticKey": "response.compose"}},
         next_semantic_key="response.compose",
     )
     assert reuse_decision.action == "reuse_existing_step"
 
-    changed_decision = decide_executor_step_boundary(
+    changed_decision = decide_handler_step_boundary(
         current_detail={"semanticDetail": {"semanticKey": "response.compose"}},
         next_semantic_key="agent.publish",
     )
     assert changed_decision.action == "create_new_step"
 
-    resume_decision = decide_executor_step_boundary(
+    resume_decision = decide_handler_step_boundary(
         current_detail={"semanticDetail": {"semanticKey": "response.compose"}},
         next_semantic_key="response.compose",
         is_resume=True,
