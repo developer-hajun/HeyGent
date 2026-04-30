@@ -23,6 +23,7 @@ public enum ErrorCode {
 
     // 409 CONFLICT
     CONFLICT(HttpStatus.CONFLICT, "요청을 처리하는 중 충돌이 발생했습니다."),
+    DEVICE_INACTIVE(HttpStatus.CONFLICT, "비활성화된 IoT 디바이스입니다."),
 
     // 502 BAD_GATEWAY
     EXTERNAL_AUTH_FAILED(HttpStatus.BAD_GATEWAY, "외부 인증 처리 중 오류가 발생했습니다."),

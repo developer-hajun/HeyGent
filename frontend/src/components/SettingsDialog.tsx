@@ -11,6 +11,7 @@ import {
   Eye,
   EyeOff,
   Search,
+  Globe,
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog'
 import { Switch } from './ui/switch'
@@ -22,7 +23,14 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void
 }
 
-type SettingsTab = 'general' | 'skills' | 'models' | 'personalization' | 'apiKeys' | 'channels'
+type SettingsTab =
+  | 'general'
+  | 'skills'
+  | 'models'
+  | 'personalization'
+  | 'apiKeys'
+  | 'channels'
+  | 'external'
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
@@ -34,6 +42,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     { id: 'personalization' as const, label: '개인 맞춤 설정', icon: Palette },
     { id: 'apiKeys' as const, label: 'API 키', icon: Key },
     { id: 'channels' as const, label: '채널 연결', icon: MessageSquare },
+    { id: 'external' as const, label: '외부 서비스', icon: Globe },
   ]
 
   return (
@@ -87,6 +96,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 {activeTab === 'personalization' && <PersonalizationContent />}
                 {activeTab === 'apiKeys' && <ApiKeysContent />}
                 {activeTab === 'channels' && <ChannelsContent />}
+                {activeTab === 'external' && <ExternalServicesContent />}
               </motion.div>
             </AnimatePresence>
           </div>
@@ -604,6 +614,69 @@ function ChannelsContent() {
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// External Services Content
+// ────────────────────────────────────────────────────────────────────────────
+function ExternalServicesContent() {
+  const [notionConnected, setNotionConnected] = useState(false)
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-foreground mb-2 text-xl font-semibold">외부 서비스</h3>
+        <p className="text-muted-foreground text-sm">외부 서비스를 연결하여 기능을 확장합니다</p>
+      </div>
+
+      <div className="space-y-3">
+        <div
+          className={`rounded-xl border p-4 transition-all ${
+            notionConnected ? 'bg-primary/5 border-primary/20' : 'bg-muted/30 border-border'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-black">
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-5 w-5 fill-white"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z" />
+                </svg>
+              </div>
+              <div>
+                <h4 className="text-foreground text-sm font-medium">Notion</h4>
+                <span
+                  className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${
+                    notionConnected ? 'text-emerald-600' : 'text-muted-foreground'
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      notionConnected ? 'bg-emerald-500' : 'bg-muted-foreground'
+                    }`}
+                  />
+                  {notionConnected ? '연결됨' : '미연결'}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={() => setNotionConnected((prev) => !prev)}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                notionConnected
+                  ? 'bg-muted text-muted-foreground hover:bg-muted/80'
+                  : 'bg-primary hover:bg-primary/90 text-white'
+              }`}
+            >
+              {notionConnected ? '연결 해제' : '연결하기'}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )

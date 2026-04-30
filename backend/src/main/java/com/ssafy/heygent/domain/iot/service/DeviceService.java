@@ -2,6 +2,9 @@ package com.ssafy.heygent.domain.iot.service;
 
 import com.ssafy.heygent.domain.iot.dto.DeviceRegisterRequest;
 import com.ssafy.heygent.domain.iot.dto.DeviceResponse;
+import com.ssafy.heygent.domain.iot.dto.DisplayEventPayload;
+import com.ssafy.heygent.domain.iot.dto.DisplayPublishResult;
+import com.ssafy.heygent.domain.iot.dto.DisplayPublishTestRequest;
 import com.ssafy.heygent.domain.iot.entity.IotDevice;
 import com.ssafy.heygent.domain.iot.entity.IotDeviceStatus;
 import com.ssafy.heygent.domain.iot.repository.IotDeviceRepository;
@@ -22,6 +25,8 @@ public class DeviceService {
 
     private final IotDeviceRepository iotDeviceRepository;
     private final UserRepository userRepository;
+    private final DisplayEventMapper displayEventMapper;
+    private final MqttDisplayPublisher mqttDisplayPublisher;
 
     @Transactional
     public DeviceResponse register(Long userId, DeviceRegisterRequest request) {
@@ -55,6 +60,24 @@ public class DeviceService {
         IotDevice device = findOwnedDevice(userId, deviceId);
         device.updateStatus(status);
         return DeviceResponse.from(device);
+    }
+
+    @Transactional(readOnly = true)
+    public DisplayPublishResult publishTest(Long userId, String deviceId, DisplayPublishTestRequest request) {
+        IotDevice device = findOwnedDevice(userId, deviceId);
+        if (!device.isActive()) {
+            throw new CustomException(ErrorCode.DEVICE_INACTIVE);
+        }
+
+        DisplayEventPayload payload = displayEventMapper.toPayload(
+            request.type(),
+            request.icon(),
+            request.sessionId(),
+            request.stepRunId(),
+            request.text()
+        );
+
+        return mqttDisplayPublisher.publish(device.getDeviceId(), payload);
     }
 
     private IotDevice findOwnedDevice(Long userId, String deviceId) {
