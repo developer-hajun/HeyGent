@@ -7,6 +7,9 @@ import type {
   SittingState,
 } from '@/components/office/types'
 
+// 버튼으로 조작 가능한 에이전트 (API 연결 전 임시)
+const CONTROLLABLE_AGENTS = new Set(['agent01', 'agent02', 'agent05'])
+
 // 새 에이전트 추가 시 이 배열에 항목만 추가하면 됩니다.
 const AGENT_CONFIGS: AgentConfig[] = [
   {
@@ -19,6 +22,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       sofa: { x: 1157, y: 257 },
       floorLean: { x: 1440, y: 260 },
       meeting: { x: 904, y: 95 },
+      calling: { x: 1111, y: 658 },
     },
   },
   {
@@ -31,6 +35,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       sofa: { x: 1200, y: 290 },
       floorLean: { x: 1390, y: 300 },
       meeting: { x: 950, y: 130 },
+      calling: { x: 1111, y: 658 },
     },
   },
   {
@@ -43,6 +48,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       sofa: { x: 1110, y: 290 },
       floorLean: { x: 1390, y: 260 },
       meeting: { x: 860, y: 130 },
+      calling: { x: 1111, y: 658 },
     },
   },
   {
@@ -55,6 +61,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       sofa: { x: 1157, y: 310 },
       floorLean: { x: 1440, y: 310 },
       meeting: { x: 950, y: 95 },
+      calling: { x: 1111, y: 658 },
     },
   },
   {
@@ -67,6 +74,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       sofa: { x: 1110, y: 310 },
       floorLean: { x: 1340, y: 300 },
       meeting: { x: 860, y: 95 },
+      calling: { x: 1111, y: 658 },
     },
   },
 ]
@@ -79,6 +87,7 @@ const DESTINATION_MAP: Record<Destination, { targetState: SittingState; label: s
   sofa: { targetState: 'sitting_sofa', label: '쇼파' },
   floorLean: { targetState: 'sitting_floor_lean', label: '벽' },
   meeting: { targetState: 'sitting_meeting', label: '회의' },
+  calling: { targetState: 'sitting_calling', label: '전화' },
 }
 
 const STATE_LABELS: Record<string, string> = {
@@ -88,9 +97,11 @@ const STATE_LABELS: Record<string, string> = {
   sitting_sofa: '휴식 중',
   sitting_floor_lean: '휴식 중',
   sitting_meeting: '회의 중',
+  sitting_calling: '통화 중',
 }
 
 function stateColor(state: string) {
+  if (state === 'sitting_calling') return 'bg-blue-400'
   if (state.startsWith('sitting')) return 'bg-green-400'
   if (state === 'walking') return 'bg-yellow-400'
   return 'bg-slate-500'
@@ -103,19 +114,23 @@ function calcDuration(from: { x: number; y: number }, to: { x: number; y: number
 }
 
 function initAgents(): AgentRuntime[] {
-  return AGENT_CONFIGS.map((config) => ({
-    config,
-    position: { ...config.initialPosition },
-    state: 'idle' as const,
-    targetState: 'sitting_desk' as const,
-    walkFrame: 0 as const,
-    transitionDuration: 3,
-  }))
+  return AGENT_CONFIGS.map((config) => {
+    const isFixed = !CONTROLLABLE_AGENTS.has(config.id)
+    return {
+      config,
+      position: isFixed ? { ...config.destinations.floorLean } : { ...config.initialPosition },
+      state: isFixed ? ('sitting_floor_lean' as const) : ('idle' as const),
+      targetState: 'sitting_desk' as const,
+      walkFrame: 0 as const,
+      transitionDuration: 3,
+    }
+  })
 }
 
 export function AgentStatusPage() {
   const [agents, setAgents] = useState<AgentRuntime[]>(initAgents)
   const [selectedId, setSelectedId] = useState<string>('agent01')
+  const [ceoMode, setCeoMode] = useState<'desk' | 'explain' | null>(null)
   const walkTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({})
 
   const clearWalkTimer = (agentId: string) => {
@@ -188,12 +203,12 @@ export function AgentStatusPage() {
 
   return (
     <div className="relative flex flex-1 overflow-hidden">
-      <OfficeMap agents={agents} onAgentArrived={handleAgentArrived} />
+      <OfficeMap agents={agents} onAgentArrived={handleAgentArrived} ceoMode={ceoMode} />
 
       <div className="absolute bottom-6 left-1/2 z-20 -translate-x-1/2">
         <div className="flex flex-col gap-2.5 rounded-2xl border border-white/20 bg-black/60 px-5 py-3 shadow-2xl backdrop-blur-md">
           {/* 에이전트 탭 */}
-          <div className="flex gap-1.5">
+          <div className="flex items-center gap-1.5">
             {agents.map((agent) => (
               <button
                 key={agent.config.id}
@@ -210,6 +225,20 @@ export function AgentStatusPage() {
                 />
               </button>
             ))}
+            <div className="mx-0.5 h-4 w-px bg-white/20" />
+            {(['desk', 'explain'] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setCeoMode((prev) => (prev === mode ? null : mode))}
+                className={`rounded-lg px-3 py-1 text-xs font-bold transition-colors ${
+                  ceoMode === mode
+                    ? 'bg-amber-400 text-gray-900'
+                    : 'bg-white/10 text-white/40 hover:bg-white/20 hover:text-white'
+                }`}
+              >
+                {mode === 'desk' ? 'CEO 책상' : 'CEO 화이트보드'}
+              </button>
+            ))}
           </div>
 
           {/* 선택된 에이전트 컨트롤 */}
@@ -219,25 +248,27 @@ export function AgentStatusPage() {
                 <span className="text-sm font-medium text-white">{selectedAgent.config.name}</span>
                 <span className="text-xs text-white/50">{STATE_LABELS[selectedAgent.state]}</span>
               </div>
-              <div className="flex gap-1.5">
-                {(Object.keys(DESTINATION_MAP) as Destination[]).map((dest) => (
+              {CONTROLLABLE_AGENTS.has(selectedAgent.config.id) && (
+                <div className="flex gap-1.5">
+                  {(Object.keys(DESTINATION_MAP) as Destination[]).map((dest) => (
+                    <button
+                      key={dest}
+                      onClick={() => handleMove(selectedAgent.config.id, dest)}
+                      disabled={selectedAgent.state !== 'idle'}
+                      className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-gray-900 shadow-sm transition-opacity hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {DESTINATION_MAP[dest].label}으로
+                    </button>
+                  ))}
                   <button
-                    key={dest}
-                    onClick={() => handleMove(selectedAgent.config.id, dest)}
-                    disabled={selectedAgent.state !== 'idle'}
-                    className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-gray-900 shadow-sm transition-opacity hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => handleReset(selectedAgent.config.id)}
+                    disabled={selectedAgent.state === 'idle'}
+                    className="rounded-lg border border-white/30 px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {DESTINATION_MAP[dest].label}으로
+                    초기화
                   </button>
-                ))}
-                <button
-                  onClick={() => handleReset(selectedAgent.config.id)}
-                  disabled={selectedAgent.state === 'idle'}
-                  className="rounded-lg border border-white/30 px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  초기화
-                </button>
-              </div>
+                </div>
+              )}
             </div>
           )}
         </div>

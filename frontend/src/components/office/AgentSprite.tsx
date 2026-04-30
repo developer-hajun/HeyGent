@@ -8,6 +8,7 @@ const SITTING_SPRITES: Record<string, string> = {
   sitting_sofa: 'sit_sofa',
   sitting_floor_lean: 'sit_floor_lean',
   sitting_meeting: 'meeting',
+  sitting_calling: 'calling',
 }
 
 const WALK_FRAMES = ['walk_side_01', 'walk_side_stand', 'walk_side_02', 'walk_side_stand'] as const
