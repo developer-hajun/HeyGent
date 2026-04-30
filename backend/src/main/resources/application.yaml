@@ -40,10 +40,6 @@ jwt:
 cors:
   allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
 
-ai:
-  internal:
-    token: ${AI_INTERNAL_TOKEN:}
-
 memory:
   embedding:
     enabled: ${MEMORY_EMBEDDING_ENABLED:true}
