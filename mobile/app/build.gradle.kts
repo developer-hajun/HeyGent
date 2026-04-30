@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.heygents.mob"
+    namespace = "com.example.mob"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -13,13 +13,18 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.heygents.mob"
+        applicationId = "com.example.mob"
         minSdk = 29
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildFeatures {
+        buildConfig = true
+        compose = true
     }
 
     buildTypes {
@@ -34,9 +39,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
-    }
-    buildFeatures {
-        compose = true
     }
 }
 
@@ -59,6 +61,7 @@ dependencies {
     implementation(libs.okhttp.logging)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.lifecycle.viewmodel.ktx)
+    implementation(libs.kakao.user)
     implementation("org.jetbrains.kotlin:kotlin-parcelize-runtime:2.2.10")
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

@@ -1,11 +1,11 @@
-package com.heygents.mob.data.repository
+package com.example.mob.data.repository
 
 import android.app.Activity
 import android.content.Context
 import com.example.mob.data.remote.RetrofitClient
-import com.heygents.mob.data.health.SamsungHealthManager
-import com.heygents.mob.data.health.WatchHealthDataBatchRequest
-import com.heygents.mob.data.health.WatchHealthDataItemRequest
+import com.example.mob.data.health.SamsungHealthManager
+import com.example.mob.data.health.WatchHealthDataBatchRequest
+import com.example.mob.data.health.WatchHealthDataItemRequest
 import java.time.format.DateTimeFormatter
 
 class HealthRepository(context: Context) {

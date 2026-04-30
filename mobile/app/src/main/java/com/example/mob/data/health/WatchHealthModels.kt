@@ -1,4 +1,4 @@
-package com.heygents.mob.data.health
+package com.example.mob.data.health
 
 import java.time.LocalDateTime
 

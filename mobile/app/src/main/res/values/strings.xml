@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">MOB</string>
-    <!-- 카카오 개발자 콘솔에서 발급받은 네이티브 앱 키로 교체하세요 -->
-    <string name="kakao_app_key" translatable="false">YOUR_KAKAO_APP_KEY</string>
+    <string name="kakao_app_key">ed2a13b48dc4fd8711608a552ca7a91e</string>
+    <string name="kakao_redirect_scheme">kakaoed2a13b48dc4fd8711608a552ca7a91e</string>
 </resources>

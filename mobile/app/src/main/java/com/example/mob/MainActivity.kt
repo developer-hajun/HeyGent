@@ -1,4 +1,4 @@
-package com.heygents.mob
+package com.example.mob
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -31,7 +31,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.mob.common.AppDrawer
 import com.example.mob.feature.auth.LoginScreen
 import com.example.mob.feature.chat.ChatScreen
-import com.heygents.mob.feature.health.HealthViewModel
+import com.example.mob.feature.health.HealthViewModel
 import com.example.mob.feature.home.HomeScreen
 import com.example.mob.feature.profile.ProfileScreen
 import com.example.mob.ui.theme.MOBTheme
@@ -42,6 +42,9 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
 import android.app.Activity
 import androidx.compose.runtime.LaunchedEffect
+import android.util.Log
+import com.kakao.sdk.common.KakaoSdk
+import com.kakao.sdk.common.util.Utility
 
 private sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     data object Chat    : Screen("chat",    "Chat",    Icons.AutoMirrored.Filled.Chat)
@@ -55,11 +58,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        KakaoSdk.init(this, getString(R.string.kakao_app_key))
+        Log.d("KAKAO_KEY_HASH", Utility.getKeyHash(this))
         enableEdgeToEdge()
         setContent {
             MOBTheme {
                 var splashDone by remember { mutableStateOf(false) }
-                var isLoggedIn by remember { mutableStateOf(true) }
+                var isLoggedIn by remember { mutableStateOf(false) }
 
                 LaunchedEffect(Unit) {
                     delay(1800)

@@ -1,8 +1,8 @@
 package com.example.mob.data.remote
 
-import com.heygents.mob.data.health.SamsungHealthRequest
-import com.heygents.mob.data.health.WatchHealthDataBatchRequest
-import com.heygents.mob.data.health.WatchHealthDataResponse
+import com.example.mob.data.health.SamsungHealthRequest
+import com.example.mob.data.health.WatchHealthDataBatchRequest
+import com.example.mob.data.health.WatchHealthDataResponse
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.Header
