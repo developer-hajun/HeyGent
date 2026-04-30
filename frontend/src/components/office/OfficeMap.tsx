@@ -6,10 +6,9 @@ const MAP_WIDTH = 1600
 const MAP_HEIGHT = 900
 
 const CEO_SPRITES = {
-  desk: { src: '/assets/agents/ceo/ceo_desk.png', x: 310, y: 215 },
-  explain: { src: '/assets/agents/ceo/ceo_explain.png', x: 383, y: 493 },
+  desk: { src: '/assets/agents/ceo/ceo_desk.png', x: 310, y: 215, size: 230 },
+  explain: { src: '/assets/agents/ceo/ceo_explain.png', x: 383, y: 493, size: 210 },
 }
-const CEO_SIZE = 220
 
 interface OfficeMapProps {
   agents: AgentRuntime[]
@@ -94,9 +93,9 @@ export function OfficeMap({ agents, onAgentArrived, ceoMode }: OfficeMapProps) {
                   position: 'absolute',
                   top: 0,
                   left: 0,
-                  width: CEO_SIZE,
-                  height: CEO_SIZE,
-                  transform: `translate(${sprite.x - CEO_SIZE / 2}px, ${sprite.y - CEO_SIZE / 2}px)`,
+                  width: sprite.size,
+                  height: sprite.size,
+                  transform: `translate(${sprite.x - sprite.size / 2}px, ${sprite.y - sprite.size / 2}px)`,
                   zIndex: 10,
                   pointerEvents: 'none',
                 }}
