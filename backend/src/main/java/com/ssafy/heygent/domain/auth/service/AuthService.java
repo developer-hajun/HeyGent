@@ -40,8 +40,21 @@ public class AuthService {
         String kakaoToken = kakaoOAuthService.getAccessToken(code);
         KakaoUserInfo userInfo = kakaoOAuthService.getUserInfo(kakaoToken);
 
+        return loginWithKakaoUserInfo(userInfo);
+    }
+
+    @Transactional
+    public TokenResponse kakaoMobileLogin(String accessToken) {
+
+        KakaoUserInfo userInfo = kakaoOAuthService.getUserInfo(accessToken);
+
+        return loginWithKakaoUserInfo(userInfo);
+    }
+
+    private TokenResponse loginWithKakaoUserInfo(KakaoUserInfo userInfo) {
+
         User user = userRepository.findByKakaoId(userInfo.getKakaoId())
-                .orElseGet(()->userRepository.save(
+                .orElseGet(() -> userRepository.save(
                         User.builder()
                                 .kakaoId(userInfo.getKakaoId())
                                 .nickname(userInfo.getNickname())
@@ -100,7 +113,6 @@ public class AuthService {
 
         redisTemplate.delete(refreshToken);
     }
-
 
     public TokenResponse refresh(String refreshToken) {
 
