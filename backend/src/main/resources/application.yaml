@@ -40,6 +40,19 @@ jwt:
 cors:
   allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
 
+iot:
+  mqtt:
+    enabled: ${IOT_MQTT_ENABLED:false}
+    host: ${IOT_MQTT_HOST:localhost}
+    port: ${IOT_MQTT_PORT:1883}
+    username: ${IOT_MQTT_USERNAME:}
+    password: ${IOT_MQTT_PASSWORD:}
+    client-id: ${IOT_MQTT_CLIENT_ID:heygent-backend}
+    connection-timeout-seconds: ${IOT_MQTT_CONNECTION_TIMEOUT_SECONDS:5}
+    publish-timeout-seconds: ${IOT_MQTT_PUBLISH_TIMEOUT_SECONDS:3}
+    default-qos: ${IOT_MQTT_DEFAULT_QOS:0}
+    topic-prefix: ${IOT_MQTT_TOPIC_PREFIX:devices}
+
 memory:
   embedding:
     enabled: ${MEMORY_EMBEDDING_ENABLED:true}
