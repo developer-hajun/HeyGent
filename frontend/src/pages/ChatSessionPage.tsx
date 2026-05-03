@@ -227,6 +227,9 @@ export function ChatSessionPage() {
       }
 
       hydratingTaskRunIdsRef.current.add(taskRunId)
+      // snapshot/replay merge는 store를 갱신해서 이 effect를 다시 실행시킬 수 있다.
+      // 그래서 요청 성공 뒤가 아니라 시작 시점에 먼저 표시해 같은 taskRunId 중복 조회를 막는다.
+      hydratedTaskRunIdsRef.current.add(taskRunId)
       void (async () => {
         try {
           const snapshot = await fetchSnapshot(taskRunId)
@@ -261,6 +264,7 @@ export function ChatSessionPage() {
             return
           }
           console.error(error)
+          hydratedTaskRunIdsRef.current.delete(taskRunId)
           setErrorMessage('답변 진행 상태를 불러오지 못했습니다.')
         } finally {
           hydratingTaskRunIdsRef.current.delete(taskRunId)

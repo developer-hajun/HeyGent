@@ -78,7 +78,12 @@ async def lifespan(app: FastAPI):
     fanout_publisher = RedisFanoutPublisher(task_projection_store.redis, topic_router)
     redis_fanout_pubsub = task_projection_store.redis.pubsub()
     # Redis Pub/Sub subscriber가 현재 프로세스의 local WebSocketManager로 live event를 fan-out한다.
-    redis_fanout_task = asyncio.create_task(RedisFanoutSubscriber(ws_manager).run_forever(redis_fanout_pubsub))
+    redis_fanout_task = asyncio.create_task(
+        RedisFanoutSubscriber(
+            ws_manager,
+            ignored_publisher_id=fanout_publisher.publisher_id,
+        ).run_forever(redis_fanout_pubsub)
+    )
     broadcaster = EventBroadcaster(ws_manager, topic_router, fanout_publisher=fanout_publisher)
     backend_auth_client = BackendAuthClient(settings=settings)
     approval_service = ApprovalService(repository, ApprovalQueue())
