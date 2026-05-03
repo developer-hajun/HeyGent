@@ -1,0 +1,150 @@
+import { X } from 'lucide-react'
+import { useEffect, useMemo } from 'react'
+import { useChatStore } from '@/store/useChatStore'
+import { useTaskRunStore } from '@/store/useTaskRunStore'
+import { toActivityItemView, toTaskRunSummaryView } from '@/utils/taskRunStatusView'
+import { findPromptForTaskRun, getTime } from './activityPanelText'
+import { SelectedTaskRunView } from './SelectedTaskRunView'
+import { TaskRunSummaryList } from './TaskRunSummaryList'
+
+const EMPTY_MESSAGES: never[] = []
+
+export function StepRunActivityPanelBody({
+  sessionId,
+  selectedTaskRunId,
+  onSelectTaskRun,
+  onClose,
+}: {
+  sessionId: string
+  selectedTaskRunId?: string
+  onSelectTaskRun: (taskRunId: string | undefined) => void
+  onClose: () => void
+}) {
+  const messages = useChatStore((state) =>
+    sessionId === '' ? EMPTY_MESSAGES : (state.messagesBySessionId[sessionId] ?? EMPTY_MESSAGES),
+  )
+  const taskRunsById = useTaskRunStore((state) => state.taskRunsById)
+  const stepRunsById = useTaskRunStore((state) => state.stepRunsById)
+  const approvalsById = useTaskRunStore((state) => state.approvalsById)
+  const eventsByTaskRunId = useTaskRunStore((state) => state.eventsByTaskRunId)
+  const replayNeededByTaskRunId = useTaskRunStore((state) => state.replayNeededByTaskRunId)
+  const fetchSnapshot = useTaskRunStore((state) => state.fetchSnapshot)
+  const replayEvents = useTaskRunStore((state) => state.replayEvents)
+
+  const taskRunIds = useMemo(() => {
+    const ids = new Set<string>()
+
+    messages.forEach((message) => {
+      if (message.taskRunId !== undefined) {
+        ids.add(message.taskRunId)
+      }
+    })
+
+    Object.values(taskRunsById).forEach((taskRun) => {
+      if (taskRun.session_id === sessionId) {
+        ids.add(taskRun.task_run_id)
+      }
+    })
+
+    return [...ids]
+  }, [messages, sessionId, taskRunsById])
+
+  const taskRunSummaries = useMemo(
+    () =>
+      taskRunIds
+        .map((taskRunId) =>
+          toTaskRunSummaryView(taskRunsById[taskRunId], eventsByTaskRunId[taskRunId] ?? []),
+        )
+        .sort((first, second) => (second.lastSequence ?? 0) - (first.lastSequence ?? 0)),
+    [eventsByTaskRunId, taskRunIds, taskRunsById],
+  )
+
+  const resolvedSelectedTaskRunId =
+    selectedTaskRunId !== undefined && taskRunIds.includes(selectedTaskRunId)
+      ? selectedTaskRunId
+      : taskRunSummaries[0]?.id
+  const selectedTaskRun =
+    resolvedSelectedTaskRunId === undefined ? undefined : taskRunsById[resolvedSelectedTaskRunId]
+  const selectedEvents = useMemo(
+    () =>
+      resolvedSelectedTaskRunId === undefined
+        ? []
+        : (eventsByTaskRunId[resolvedSelectedTaskRunId] ?? []),
+    [eventsByTaskRunId, resolvedSelectedTaskRunId],
+  )
+  const selectedActivities = useMemo(() => selectedEvents.map(toActivityItemView), [selectedEvents])
+  const selectedStepRuns = useMemo(
+    () =>
+      Object.values(stepRunsById)
+        .filter((stepRun) => stepRun.task_run_id === resolvedSelectedTaskRunId)
+        .sort((first, second) => (first.sequence ?? 0) - (second.sequence ?? 0)),
+    [resolvedSelectedTaskRunId, stepRunsById],
+  )
+  const selectedApprovals = useMemo(
+    () =>
+      Object.values(approvalsById)
+        .filter((approval) => approval.task_run_id === resolvedSelectedTaskRunId)
+        .sort((first, second) => getTime(first.created_at) - getTime(second.created_at)),
+    [approvalsById, resolvedSelectedTaskRunId],
+  )
+  const selectedPrompt = useMemo(
+    () => findPromptForTaskRun(messages, resolvedSelectedTaskRunId),
+    [messages, resolvedSelectedTaskRunId],
+  )
+
+  useEffect(() => {
+    if (selectedTaskRunId === undefined && resolvedSelectedTaskRunId !== undefined) {
+      onSelectTaskRun(resolvedSelectedTaskRunId)
+    }
+  }, [onSelectTaskRun, resolvedSelectedTaskRunId, selectedTaskRunId])
+
+  useEffect(() => {
+    if (resolvedSelectedTaskRunId === undefined) return
+
+    void fetchSnapshot(resolvedSelectedTaskRunId).catch(() => undefined)
+    void replayEvents(resolvedSelectedTaskRunId).catch(() => undefined)
+  }, [fetchSnapshot, replayEvents, resolvedSelectedTaskRunId])
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="border-border border-b p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-muted-foreground truncate text-xs">세션 {sessionId}</p>
+            <h2 className="text-foreground mt-1 text-sm font-semibold">진행 상황</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="활동 패널 닫기"
+            className="hover:bg-muted text-muted-foreground hover:text-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+      <div className="border-border min-h-0 border-b p-3">
+        <TaskRunSummaryList
+          summaries={taskRunSummaries}
+          selectedTaskRunId={resolvedSelectedTaskRunId}
+          onSelectTaskRun={onSelectTaskRun}
+        />
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {resolvedSelectedTaskRunId === undefined ? (
+          <div className="text-muted-foreground text-sm">선택할 진행 기록이 없습니다.</div>
+        ) : (
+          <SelectedTaskRunView
+            taskRunId={resolvedSelectedTaskRunId}
+            taskRun={selectedTaskRun}
+            prompt={selectedPrompt}
+            steps={selectedStepRuns}
+            approvals={selectedApprovals}
+            activities={selectedActivities}
+            replayNeeded={replayNeededByTaskRunId[resolvedSelectedTaskRunId] === true}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
