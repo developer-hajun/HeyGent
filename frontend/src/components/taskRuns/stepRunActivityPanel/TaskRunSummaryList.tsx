@@ -33,7 +33,7 @@ export function TaskRunSummaryList({
         >
           <TaskRunStatusIcon tone={summary.tone} />
           <span className="min-w-0 flex-1">
-            <span className="text-foreground block truncate text-sm font-medium">
+            <span className="text-foreground block text-sm font-medium [overflow-wrap:anywhere] break-words">
               {toUserFacingTaskTitle(summary.title)}
             </span>
             <span className="text-muted-foreground mt-1 block text-xs">{summary.statusText}</span>

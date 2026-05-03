@@ -29,12 +29,14 @@ export function ChatMessageItem({
         <div
           className={
             isUser
-              ? 'bg-primary text-primary-foreground rounded-2xl px-4 py-3 text-sm leading-6'
-              : 'text-foreground rounded-2xl py-2 text-sm leading-7'
+              ? 'bg-primary text-primary-foreground rounded-2xl px-4 py-3 text-sm leading-6 [overflow-wrap:anywhere] break-words'
+              : 'text-foreground rounded-2xl py-2 text-sm leading-7 [overflow-wrap:anywhere] break-words'
           }
         >
           {message.content ? (
-            <p className="whitespace-pre-wrap">{message.content}</p>
+            <p className="[overflow-wrap:anywhere] break-words whitespace-pre-wrap">
+              {message.content}
+            </p>
           ) : (
             <div className="text-muted-foreground flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />

@@ -59,9 +59,15 @@ export function StepRunActivityPanelBody({
   const taskRunSummaries = useMemo(
     () =>
       taskRunIds
-        .map((taskRunId) =>
-          toTaskRunSummaryView(taskRunsById[taskRunId], eventsByTaskRunId[taskRunId] ?? []),
-        )
+        .map((taskRunId) => {
+          const summary = toTaskRunSummaryView(
+            taskRunsById[taskRunId],
+            eventsByTaskRunId[taskRunId] ?? [],
+          )
+          // 새로고침 직후에는 메시지에 taskRunId만 있고 snapshot은 아직 없을 수 있다.
+          // 이때 summary id를 unknown으로 두면 panel lazy load가 잘못된 taskRunId로 요청된다.
+          return summary.id === 'unknown' ? { ...summary, id: taskRunId } : summary
+        })
         .sort((first, second) => (second.lastSequence ?? 0) - (first.lastSequence ?? 0)),
     [eventsByTaskRunId, taskRunIds, taskRunsById],
   )
@@ -118,10 +124,14 @@ export function StepRunActivityPanelBody({
     }
 
     loadedTaskRunIdsRef.current.add(resolvedSelectedTaskRunId)
-    // snapshot은 현재 TaskRun/StepRun/approval 상태를 채우고,
-    // replay는 중간에 놓쳤을 수 있는 raw event 흐름을 sequence 기준으로 다시 맞춘다.
-    void fetchSnapshot(resolvedSelectedTaskRunId).catch(() => undefined)
-    void replayEvents(resolvedSelectedTaskRunId).catch(() => undefined)
+    // snapshot은 현재 TaskRun/StepRun/approval 상태를 채운다.
+    // snapshot에 event가 없을 때만 replay로 누락 raw event를 보강한다.
+    void (async () => {
+      const snapshot = await fetchSnapshot(resolvedSelectedTaskRunId)
+      if (!Array.isArray(snapshot?.events) || snapshot.events.length === 0) {
+        await replayEvents(resolvedSelectedTaskRunId)
+      }
+    })().catch(() => undefined)
   }, [
     fetchSnapshot,
     replayEvents,

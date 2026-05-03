@@ -7,9 +7,11 @@ import { TaskRunStatusIcon } from './TaskRunStatusIcon'
 export function StepProgressItem({
   step,
   activities,
+  taskRunFinished = false,
 }: {
   step: RawStepRun
   activities: ActivityItemView[]
+  taskRunFinished?: boolean
 }) {
   return (
     <li className="bg-card border-border rounded-lg border">
@@ -17,7 +19,7 @@ export function StepProgressItem({
         <summary className="hover:bg-muted/60 flex cursor-pointer list-none items-start gap-3 rounded-lg p-3 transition-colors">
           <TaskRunStatusIcon tone={toTaskRunStatusTone(step.status)} />
           <span className="min-w-0 flex-1">
-            <span className="text-foreground block truncate text-sm font-medium">
+            <span className="text-foreground block text-sm font-medium [overflow-wrap:anywhere] break-words">
               {toUserFacingTaskTitle(step.title ?? step.goal ?? '답변 준비')}
             </span>
             <span className="text-muted-foreground mt-1 block text-xs">
@@ -32,7 +34,11 @@ export function StepProgressItem({
           ) : (
             <ol className="space-y-2">
               {activities.map((activity) => (
-                <ActivityEventItem key={activity.id} activity={activity} />
+                <ActivityEventItem
+                  key={activity.id}
+                  activity={activity}
+                  taskRunFinished={taskRunFinished || step.status === 'COMPLETED'}
+                />
               ))}
             </ol>
           )}

@@ -26,7 +26,8 @@ export function SelectedTaskRunView({
 }) {
   // snapshot이 아직 도착하지 않은 순간에는 raw event의 마지막 상태를 대표 상태로 쓴다.
   const status =
-    taskRun?.status ?? activities.at(-1)?.raw.status ?? activities.at(-1)?.raw.event_type
+    activities.at(-1)?.raw.status ?? activities.at(-1)?.raw.event_type ?? taskRun?.status
+  const taskRunFinished = status === 'COMPLETED' || status === 'task.completed'
   // 패널이 길어지지 않도록 세부 기록 본문에는 최신 raw event 5개만 펼쳐 보여준다.
   const recentActivities = activities.slice(-5).reverse()
 
@@ -36,10 +37,14 @@ export function SelectedTaskRunView({
         <div className="flex items-start gap-3">
           <TaskRunStatusIcon tone={toTaskRunStatusTone(status)} />
           <div className="min-w-0 flex-1">
-            <h3 className="text-foreground truncate text-sm font-semibold">
+            <h3 className="text-foreground text-sm font-semibold [overflow-wrap:anywhere] break-words">
               {getAnswerProgressTitle(taskRun, prompt)}
             </h3>
-            {prompt && <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">{prompt}</p>}
+            {prompt && (
+              <p className="text-muted-foreground mt-1 line-clamp-2 text-xs [overflow-wrap:anywhere] break-words">
+                {prompt}
+              </p>
+            )}
             <p className="text-muted-foreground mt-2 text-sm">{toProgressSentence(status)}</p>
           </div>
         </div>
@@ -71,6 +76,7 @@ export function SelectedTaskRunView({
                 activities={activities.filter(
                   (activity) => activity.stepRunId === step.step_run_id,
                 )}
+                taskRunFinished={taskRunFinished}
               />
             ))}
           </ol>
@@ -90,7 +96,11 @@ export function SelectedTaskRunView({
           ) : (
             <ol className="mt-2 space-y-2">
               {recentActivities.map((activity) => (
-                <ActivityEventItem key={activity.id} activity={activity} />
+                <ActivityEventItem
+                  key={activity.id}
+                  activity={activity}
+                  taskRunFinished={taskRunFinished}
+                />
               ))}
             </ol>
           )}

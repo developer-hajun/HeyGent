@@ -75,7 +75,7 @@ async def test_redis_fanout_subscriber_delivers_message_to_local_websocket_manag
     assert manager.broadcasts[0][0]["type"] == "task.event"
 
 
-async def test_event_broadcaster_uses_redis_fanout_without_local_duplicate():
+async def test_event_broadcaster_uses_local_broadcast_before_redis_fanout():
     redis = FakeRedisPubSubClient()
     manager = FakeWebSocketManager()
     publisher = RedisFanoutPublisher(redis)
@@ -91,7 +91,8 @@ async def test_event_broadcaster_uses_redis_fanout_without_local_duplicate():
     await broadcaster.publish(event)
 
     assert len(redis.published) == 1
-    assert manager.broadcasts == []
+    assert manager.broadcasts[0][1] == "task:task_broadcast"
+    assert manager.broadcasts[0][0]["type"] == "task.event"
 
 
 async def test_redis_fanout_subscriber_loop_reads_pubsub_messages_until_stopped():

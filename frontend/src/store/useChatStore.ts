@@ -639,8 +639,7 @@ const upsertAssistantMessage = (
       message.id === update.id ||
       (update.taskRunId !== undefined &&
         message.role === 'assistant' &&
-        message.taskRunId === update.taskRunId &&
-        message.status === 'streaming'),
+        message.taskRunId === update.taskRunId),
   )
   if (index === -1) {
     return [

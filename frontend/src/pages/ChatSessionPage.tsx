@@ -207,6 +207,14 @@ export function ChatSessionPage() {
           message.role === 'assistant' &&
           message.status === 'streaming',
       )
+      const hasRuntimeState =
+        taskRun !== undefined || taskRunEvents.length > 0 || hasStreamingMessage
+
+      if (!hasRuntimeState) {
+        // 과거 완료 메시지까지 모두 snapshot/replay 하면 WebSocket command가 폭주해서
+        // 현재 답변의 step event가 뒤로 밀린다. 완료 이력은 활동 패널을 열 때 lazy load한다.
+        return
+      }
 
       if (hasStreamingMessage || isLiveTaskRunStatus(latestTaskRunStatus)) {
         try {
@@ -221,7 +229,7 @@ export function ChatSessionPage() {
       hydratingTaskRunIdsRef.current.add(taskRunId)
       void (async () => {
         try {
-          await fetchSnapshot(taskRunId)
+          const snapshot = await fetchSnapshot(taskRunId)
           const hydratedTaskRun = useTaskRunStore.getState().taskRunsById[taskRunId]
           if (
             cancelled ||
@@ -230,7 +238,12 @@ export function ChatSessionPage() {
           ) {
             return
           }
-          await replayEvents(taskRunId, lastSequenceByTaskRunId[taskRunId])
+          const snapshotHasEvents = Array.isArray(snapshot?.events) && snapshot.events.length > 0
+          if (!snapshotHasEvents) {
+            // snapshot이 event 목록을 함께 주는 경우에는 replay를 한 번 더 호출하지 않는다.
+            // 완료 직후 agent loop가 아직 정리 중이면 replay command 응답이 늦어져 콘솔 timeout이 생길 수 있다.
+            await replayEvents(taskRunId, lastSequenceByTaskRunId[taskRunId])
+          }
           if (
             cancelled ||
             hydrationGeneration !== hydrationGenerationRef.current ||
