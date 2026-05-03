@@ -1,219 +1,216 @@
 import { AlertCircle, Loader2, RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router'
 import { ChatComposer } from '@/components/chat/ChatComposer'
 import { ChatEmptyState } from '@/components/chat/ChatEmptyState'
 import { ChatMessageList } from '@/components/chat/ChatMessageList'
 import { ChatSessionHeader } from '@/components/chat/ChatSessionHeader'
-import { listSessionMessages, sendSessionMessageCreate } from '@/components/chat/aiChatCommands'
-import type {
-  ActivityItemView,
-  ChatConnectionState,
-  ChatMessageView,
-} from '@/components/chat/chatTypes'
+import type { ChatConnectionState } from '@/components/chat/chatTypes'
 import { StepRunActivityPanel } from '@/components/taskRuns/StepRunActivityPanel'
+import type { AiRealtimeAuthStatus, AiRealtimeConnectionStatus } from '@/realtime/aiRealtimeTypes'
+import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
+import { useChatStore } from '@/store/useChatStore'
+import { useTaskRunStore } from '@/store/useTaskRunStore'
+import { toActivityItemView, toTaskRunSummaryView } from '@/utils/taskRunStatusView'
 
 type LoadState = 'loading' | 'ready' | 'error'
 
+const EMPTY_MESSAGES: never[] = []
+
 export function ChatSessionPage() {
   const { sessionId = '' } = useParams()
-  const [messages, setMessages] = useState<ChatMessageView[]>([])
-  const [activities, setActivities] = useState<ActivityItemView[]>([])
   const [activityOpen, setActivityOpen] = useState(false)
+  const [selectedTaskRunId, setSelectedTaskRunId] = useState<string | undefined>()
   const [loadState, setLoadState] = useState<LoadState>('loading')
-  const [connectionState, setConnectionState] = useState<ChatConnectionState>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isSending, setIsSending] = useState(false)
+  const hydratedTaskRunIdsRef = useRef<Set<string>>(new Set())
+
+  const commandClient = useAiRealtimeStore((state) => state.commandClient)
+  const socketClient = useAiRealtimeStore((state) => state.socketClient)
+  const connectionStatus = useAiRealtimeStore((state) => state.connectionStatus)
+  const authStatus = useAiRealtimeStore((state) => state.authStatus)
+  const realtimeError = useAiRealtimeStore((state) => state.lastError)
+  const subscribeTask = useAiRealtimeStore((state) => state.subscribeTask)
+
+  const storeMessages = useChatStore((state) =>
+    sessionId === '' ? EMPTY_MESSAGES : (state.messagesBySessionId[sessionId] ?? EMPTY_MESSAGES),
+  )
+  const isLoadingMessages = useChatStore((state) =>
+    sessionId === '' ? false : state.loadingSessionIds[sessionId] === true,
+  )
+  const chatError = useChatStore((state) => state.lastError)
+  const fetchMessages = useChatStore((state) => state.fetchMessages)
+  const sendMessage = useChatStore((state) => state.sendMessage)
+
+  const taskRunsById = useTaskRunStore((state) => state.taskRunsById)
+  const eventsByTaskRunId = useTaskRunStore((state) => state.eventsByTaskRunId)
+  const lastSequenceByTaskRunId = useTaskRunStore((state) => state.lastSequenceByTaskRunId)
+  const taskRunError = useTaskRunStore((state) => state.lastError)
+  const fetchActiveTaskRuns = useTaskRunStore((state) => state.fetchActiveTaskRuns)
+  const fetchSnapshot = useTaskRunStore((state) => state.fetchSnapshot)
+  const replayEvents = useTaskRunStore((state) => state.replayEvents)
 
   const title = useMemo(() => `세션 ${sessionId}`, [sessionId])
-  const latestActivity = activities[0] ?? null
+  const connectionState = useMemo(
+    () => toChatConnectionState(connectionStatus, authStatus),
+    [authStatus, connectionStatus],
+  )
+  const messages = useMemo(
+    () =>
+      storeMessages.filter((message) => message.role === 'user' || message.role === 'assistant'),
+    [storeMessages],
+  )
+  const taskRunIds = useMemo(() => {
+    const ids = new Set<string>()
 
-  const loadMessages = useCallback(async () => {
+    messages.forEach((message) => {
+      if (message.taskRunId !== undefined) {
+        ids.add(message.taskRunId)
+      }
+    })
+
+    Object.values(taskRunsById).forEach((taskRun) => {
+      if (taskRun.session_id === sessionId) {
+        ids.add(taskRun.task_run_id)
+      }
+    })
+
+    return [...ids]
+  }, [messages, sessionId, taskRunsById])
+  const taskRunIdKey = taskRunIds.join('|')
+  const activitiesByTaskRunId = useMemo(
+    () =>
+      Object.fromEntries(
+        taskRunIds.map((taskRunId) => [
+          taskRunId,
+          (eventsByTaskRunId[taskRunId] ?? []).map(toActivityItemView),
+        ]),
+      ),
+    [eventsByTaskRunId, taskRunIds],
+  )
+  const taskRunSummariesById = useMemo(
+    () =>
+      Object.fromEntries(
+        taskRunIds.map((taskRunId) => [
+          taskRunId,
+          toTaskRunSummaryView(taskRunsById[taskRunId], eventsByTaskRunId[taskRunId] ?? []),
+        ]),
+      ),
+    [eventsByTaskRunId, taskRunIds, taskRunsById],
+  )
+
+  const loadSessionData = useCallback(async () => {
     if (!sessionId) return
+
+    if (commandClient === null) {
+      setLoadState(isRealtimePending(connectionStatus) ? 'loading' : 'error')
+      setErrorMessage(getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError))
+      return
+    }
+
     setLoadState('loading')
-    setConnectionState('connecting')
     setErrorMessage(null)
     setActivityOpen(false)
 
     try {
-      const loaded = await listSessionMessages(sessionId)
-      setMessages(loaded)
-      setConnectionState('connected')
+      await Promise.all([fetchMessages(sessionId), fetchActiveTaskRuns(sessionId)])
       setLoadState('ready')
     } catch (error) {
-      setMessages([])
-      setConnectionState('error')
       setLoadState('error')
       setErrorMessage(error instanceof Error ? error.message : '세션 메시지를 불러오지 못했습니다.')
     }
-  }, [sessionId])
+  }, [
+    authStatus,
+    commandClient,
+    connectionStatus,
+    fetchActiveTaskRuns,
+    fetchMessages,
+    realtimeError,
+    sessionId,
+  ])
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
-      void loadMessages()
+      void loadSessionData()
     }, 0)
 
     return () => window.clearTimeout(timeoutId)
-  }, [loadMessages])
+  }, [loadSessionData])
+
+  useEffect(() => {
+    hydratedTaskRunIdsRef.current.clear()
+  }, [sessionId])
+
+  useEffect(() => {
+    if (commandClient === null || taskRunIds.length === 0) return
+
+    taskRunIds.forEach((taskRunId) => {
+      if (hydratedTaskRunIdsRef.current.has(taskRunId)) {
+        return
+      }
+
+      hydratedTaskRunIdsRef.current.add(taskRunId)
+      void fetchSnapshot(taskRunId).catch((error) => {
+        setErrorMessage(
+          error instanceof Error ? error.message : 'TaskRun 스냅샷 조회에 실패했습니다.',
+        )
+      })
+      void replayEvents(taskRunId, lastSequenceByTaskRunId[taskRunId]).catch((error) => {
+        setErrorMessage(
+          error instanceof Error ? error.message : 'TaskRun 이벤트 조회에 실패했습니다.',
+        )
+      })
+
+      if (socketClient !== null) {
+        try {
+          subscribeTask(taskRunId, lastSequenceByTaskRunId[taskRunId])
+        } catch (error) {
+          setErrorMessage(error instanceof Error ? error.message : 'TaskRun 구독에 실패했습니다.')
+        }
+      }
+    })
+  }, [
+    commandClient,
+    fetchSnapshot,
+    lastSequenceByTaskRunId,
+    replayEvents,
+    socketClient,
+    subscribeTask,
+    taskRunIdKey,
+    taskRunIds,
+  ])
 
   const handleSend = async (content: string) => {
     if (!sessionId || isSending) return
+
+    if (commandClient === null) {
+      setLoadState(isRealtimePending(connectionStatus) ? 'loading' : 'error')
+      setErrorMessage(getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError))
+      return
+    }
+
     setIsSending(true)
-    setConnectionState((state) => (state === 'error' ? 'reconnecting' : 'connected'))
-
-    const clientMessageId = `pending_${Date.now()}`
-    const assistantPlaceholderId = `assistant_${clientMessageId}`
-
-    // optimistic 병합 지점: 서버 accepted가 오기 전에도 사용자 입력과 assistant placeholder를 먼저 그린다.
-    setMessages((current) => [
-      ...current,
-      {
-        id: clientMessageId,
-        role: 'user',
-        content,
-        createdAt: new Date().toISOString(),
-        status: 'optimistic',
-        clientMessageId,
-      },
-      {
-        id: assistantPlaceholderId,
-        role: 'assistant',
-        content: '',
-        createdAt: new Date().toISOString(),
-        status: 'streaming',
-      },
-    ])
-    setActivities((current) => [
-      {
-        id: `activity_${clientMessageId}`,
-        title: '요청 접수 중',
-        statusText: '서버 accepted 응답을 기다리는 중입니다.',
-        tone: 'running',
-        occurredAt: new Date().toLocaleTimeString('ko-KR'),
-      },
-      ...current,
-    ])
-
+    setErrorMessage(null)
     try {
-      await sendSessionMessageCreate({
-        sessionId,
-        content,
-        callbacks: {
-          onAccepted: (accepted) => {
-            // accepted 병합 지점: 이후 화면 key는 서버/DB ID를 우선 사용한다.
-            setMessages((current) =>
-              current.map((message) => {
-                if (message.id === clientMessageId) {
-                  return {
-                    ...message,
-                    id: accepted.userMessageId ?? message.id,
-                    status: 'accepted',
-                  }
-                }
-                if (message.id === assistantPlaceholderId) {
-                  return {
-                    ...message,
-                    id: accepted.assistantMessageId ?? message.id,
-                    taskRunId: accepted.taskRunId,
-                    status: 'streaming',
-                  }
-                }
-                return message
-              }),
-            )
-            setActivities((current) => [
-              {
-                id: accepted.taskRunId ?? `accepted_${clientMessageId}`,
-                title: '작업 시작',
-                statusText: '요청이 접수되어 assistant가 응답을 준비하고 있습니다.',
-                tone: 'running',
-                occurredAt: new Date().toLocaleTimeString('ko-KR'),
-              },
-              ...current,
-            ])
-          },
-          onDelta: (delta) => {
-            setMessages((current) =>
-              current.map((message) =>
-                message.id === assistantPlaceholderId || message.status === 'streaming'
-                  ? { ...message, content: `${message.content}${delta}`, status: 'streaming' }
-                  : message,
-              ),
-            )
-          },
-          onCompleted: (finalContent) => {
-            setMessages((current) =>
-              current.map((message) =>
-                message.id === assistantPlaceholderId || message.status === 'streaming'
-                  ? {
-                      ...message,
-                      content: finalContent || message.content,
-                      status: 'completed',
-                    }
-                  : message,
-              ),
-            )
-            setActivities((current) => [
-              {
-                id: `completed_${clientMessageId}`,
-                title: '응답 완료',
-                statusText: 'assistant 응답이 완료되었습니다.',
-                tone: 'completed',
-                occurredAt: new Date().toLocaleTimeString('ko-KR'),
-              },
-              ...current,
-            ])
-          },
-          onTaskEvent: (event) => {
-            // 활동 패널은 raw event 이름을 그대로 노출하지 않고 사용자가 이해하는 상태 문구로 축약한다.
-            setActivities((current) => [
-              {
-                id: event.event_id,
-                title: event.summary_message ?? '작업 진행',
-                statusText: event.status ?? event.event_type,
-                tone:
-                  event.status === 'FAILED'
-                    ? 'failed'
-                    : event.status === 'COMPLETED'
-                      ? 'completed'
-                      : 'running',
-                occurredAt: event.occurred_at ?? undefined,
-              },
-              ...current,
-            ])
-          },
-        },
-      })
-      setConnectionState('connected')
+      await sendMessage({ sessionId, content })
+      setLoadState('ready')
     } catch (error) {
-      setConnectionState('error')
       setErrorMessage(error instanceof Error ? error.message : '메시지 전송에 실패했습니다.')
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === clientMessageId || message.id === assistantPlaceholderId
-            ? {
-                ...message,
-                status: 'failed',
-                content:
-                  message.role === 'assistant' ? '응답을 시작하지 못했습니다.' : message.content,
-              }
-            : message,
-        ),
-      )
-      setActivities((current) => [
-        {
-          id: `failed_${clientMessageId}`,
-          title: '전송 실패',
-          statusText: '연결 상태를 확인한 뒤 다시 시도해 주세요.',
-          tone: 'failed',
-          occurredAt: new Date().toLocaleTimeString('ko-KR'),
-        },
-        ...current,
-      ])
     } finally {
       setIsSending(false)
     }
   }
+
+  const handleOpenTaskRun = (taskRunId: string) => {
+    setSelectedTaskRunId(taskRunId)
+    setActivityOpen(true)
+  }
+
+  const isComposerDisabled = connectionState === 'auth-expired' || commandClient === null
+  const loading = loadState === 'loading' || isLoadingMessages
+  const displayErrorMessage =
+    errorMessage ?? (loadState === 'error' ? null : (chatError ?? taskRunError))
 
   return (
     <main className="bg-background flex min-w-0 flex-1 overflow-hidden">
@@ -223,17 +220,18 @@ export function ChatSessionPage() {
           connectionState={connectionState}
           onOpenActivity={() => setActivityOpen(true)}
         />
-        {errorMessage && loadState !== 'error' && (
+        {displayErrorMessage && loadState !== 'error' && (
           <button
             type="button"
             onClick={() => setActivityOpen(true)}
+            aria-label="오류 상세를 활동 패널에서 확인"
             className="border-border bg-muted/40 text-muted-foreground hover:text-foreground flex items-center justify-center gap-2 border-b px-4 py-2 text-xs transition-colors"
           >
             <AlertCircle className="h-3.5 w-3.5" />
-            <span>{errorMessage}</span>
+            <span>{displayErrorMessage}</span>
           </button>
         )}
-        {loadState === 'loading' ? (
+        {loading ? (
           <div className="text-muted-foreground flex min-h-0 flex-1 items-center justify-center gap-2 text-sm">
             <Loader2 className="h-4 w-4 animate-spin" />
             메시지를 불러오는 중입니다.
@@ -248,7 +246,8 @@ export function ChatSessionPage() {
               <p className="text-muted-foreground mt-2 text-sm leading-6">{errorMessage}</p>
               <button
                 type="button"
-                onClick={() => void loadMessages()}
+                onClick={() => void loadSessionData()}
+                aria-label="세션 메시지 다시 불러오기"
                 className="bg-primary text-primary-foreground hover:bg-primary/90 mt-4 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"
               >
                 <RefreshCw className="h-4 w-4" />
@@ -261,22 +260,70 @@ export function ChatSessionPage() {
         ) : (
           <ChatMessageList
             messages={messages}
-            latestActivity={latestActivity}
-            onOpenActivity={() => setActivityOpen(true)}
+            activitiesByTaskRunId={activitiesByTaskRunId}
+            taskRunSummariesById={taskRunSummariesById}
+            onOpenTaskRun={handleOpenTaskRun}
           />
         )}
-        <ChatComposer
-          disabled={connectionState === 'auth-expired'}
-          isSending={isSending}
-          onSend={handleSend}
-        />
+        <ChatComposer disabled={isComposerDisabled} isSending={isSending} onSend={handleSend} />
       </section>
       <StepRunActivityPanel
         open={activityOpen}
         onOpenChange={setActivityOpen}
         sessionId={sessionId}
-        items={activities}
+        selectedTaskRunId={selectedTaskRunId}
+        onSelectTaskRun={setSelectedTaskRunId}
       />
     </main>
   )
+}
+
+function toChatConnectionState(
+  connectionStatus: AiRealtimeConnectionStatus,
+  authStatus: AiRealtimeAuthStatus,
+): ChatConnectionState {
+  if (authStatus === 'failed') {
+    return 'auth-expired'
+  }
+
+  switch (connectionStatus) {
+    case 'authenticated':
+      return 'connected'
+    case 'connecting':
+    case 'open':
+      return 'connecting'
+    case 'reconnecting':
+      return 'reconnecting'
+    case 'error':
+    case 'closed':
+      return 'error'
+    case 'idle':
+    default:
+      return 'idle'
+  }
+}
+
+function isRealtimePending(connectionStatus: AiRealtimeConnectionStatus) {
+  return (
+    connectionStatus === 'connecting' ||
+    connectionStatus === 'open' ||
+    connectionStatus === 'reconnecting'
+  )
+}
+
+function getRealtimeUnavailableMessage(
+  connectionStatus: AiRealtimeConnectionStatus,
+  authStatus: AiRealtimeAuthStatus,
+  realtimeError: string | null,
+) {
+  if (realtimeError !== null) {
+    return realtimeError
+  }
+  if (authStatus === 'failed') {
+    return 'AI WebSocket 인증이 만료되었거나 실패했습니다.'
+  }
+  if (isRealtimePending(connectionStatus)) {
+    return 'AI realtime provider가 연결을 준비 중입니다.'
+  }
+  return 'AI realtime provider가 준비되지 않았습니다.'
 }

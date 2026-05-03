@@ -1,14 +1,24 @@
-import { Bot, CheckCircle2, Loader2, UserRound } from 'lucide-react'
-import type { ActivityItemView, ChatMessageView } from './chatTypes'
+import { Bot, CheckCircle2, Clock3, Loader2, UserRound, XCircle } from 'lucide-react'
+import type { ChatMessageView } from '@/types/aiChat'
+import type { ActivityItemView, TaskRunSummaryView, TaskRunStatusTone } from '@/types/taskRuns'
 
 type ChatMessageItemProps = {
   message: ChatMessageView
-  activity?: ActivityItemView | null
-  onOpenActivity?: () => void
+  activities?: ActivityItemView[]
+  taskRunSummary?: TaskRunSummaryView
+  onOpenTaskRun?: (taskRunId: string) => void
 }
 
-export function ChatMessageItem({ message, activity, onOpenActivity }: ChatMessageItemProps) {
+export function ChatMessageItem({
+  message,
+  activities = [],
+  taskRunSummary,
+  onOpenTaskRun,
+}: ChatMessageItemProps) {
   const isUser = message.role === 'user'
+  const latestActivity = activities.at(-1)
+  const chipText = latestActivity?.statusText ?? taskRunSummary?.statusText
+  const chipTone = latestActivity?.tone ?? taskRunSummary?.tone ?? 'idle'
 
   return (
     <article className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -34,18 +44,15 @@ export function ChatMessageItem({ message, activity, onOpenActivity }: ChatMessa
             </div>
           )}
         </div>
-        {message.role === 'assistant' && activity && (
+        {message.taskRunId && chipText && (
           <button
             type="button"
-            onClick={onOpenActivity}
+            onClick={() => onOpenTaskRun?.(message.taskRunId as string)}
+            aria-label={`TaskRun ${message.taskRunId} 활동 열기`}
             className="text-muted-foreground hover:text-foreground hover:bg-muted inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs transition-colors"
           >
-            {activity.tone === 'completed' ? (
-              <CheckCircle2 className="h-3.5 w-3.5" />
-            ) : (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            )}
-            <span>{activity.statusText}</span>
+            <TaskRunChipIcon tone={chipTone} />
+            <span>{chipText}</span>
           </button>
         )}
       </div>
@@ -56,4 +63,12 @@ export function ChatMessageItem({ message, activity, onOpenActivity }: ChatMessa
       )}
     </article>
   )
+}
+
+function TaskRunChipIcon({ tone }: { tone: TaskRunStatusTone }) {
+  if (tone === 'completed') return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+  if (tone === 'failed') return <XCircle className="text-destructive h-3.5 w-3.5" />
+  if (tone === 'waiting') return <Clock3 className="h-3.5 w-3.5 text-amber-500" />
+  if (tone === 'running') return <Loader2 className="text-primary h-3.5 w-3.5 animate-spin" />
+  return <Clock3 className="h-3.5 w-3.5" />
 }
