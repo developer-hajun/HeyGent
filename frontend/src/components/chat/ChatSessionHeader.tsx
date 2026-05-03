@@ -4,7 +4,6 @@ import type { ChatConnectionState } from './chatTypes'
 type ChatSessionHeaderProps = {
   title: string
   connectionState: ChatConnectionState
-  activityAvailable: boolean
   onOpenActivity: () => void
 }
 
@@ -20,7 +19,6 @@ const connectionText: Record<ChatConnectionState, string> = {
 export function ChatSessionHeader({
   title,
   connectionState,
-  activityAvailable,
   onOpenActivity,
 }: ChatSessionHeaderProps) {
   const isBusy = connectionState === 'connecting' || connectionState === 'reconnecting'
@@ -53,8 +51,7 @@ export function ChatSessionHeader({
       <button
         type="button"
         onClick={onOpenActivity}
-        disabled={!activityAvailable}
-        className="hover:bg-muted text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors disabled:opacity-40"
+        className="hover:bg-muted text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
         aria-label="활동 패널 열기"
       >
         <PanelRightOpen className="h-4 w-4" />

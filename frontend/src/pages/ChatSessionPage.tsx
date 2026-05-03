@@ -12,7 +12,6 @@ import type {
   ChatMessageView,
 } from '@/components/chat/chatTypes'
 import { StepRunActivityPanel } from '@/components/taskRuns/StepRunActivityPanel'
-import { sessions } from '@/data/sessions'
 
 type LoadState = 'loading' | 'ready' | 'error'
 
@@ -26,11 +25,7 @@ export function ChatSessionPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isSending, setIsSending] = useState(false)
 
-  const mockSession = useMemo(
-    () => sessions.find((session) => session.id === sessionId),
-    [sessionId],
-  )
-  const title = mockSession?.title ?? `세션 ${sessionId}`
+  const title = useMemo(() => `세션 ${sessionId}`, [sessionId])
   const latestActivity = activities[0] ?? null
 
   const loadMessages = useCallback(async () => {
@@ -46,29 +41,12 @@ export function ChatSessionPage() {
       setConnectionState('connected')
       setLoadState('ready')
     } catch (error) {
-      const fallbackMessages = mockSession?.messages.map((message) => ({
-        id: message.id,
-        role: message.role === 'user' ? 'user' : 'assistant',
-        content: message.text,
-        createdAt: message.time,
-        status: 'completed',
-      })) satisfies ChatMessageView[] | undefined
-
-      if (fallbackMessages) {
-        setMessages(fallbackMessages)
-        setConnectionState('reconnecting')
-        setLoadState('ready')
-        setErrorMessage('WebSocket 조회가 실패해 임시 세션 데이터를 표시 중입니다.')
-      } else {
-        setMessages([])
-        setConnectionState('error')
-        setLoadState('error')
-        setErrorMessage(
-          error instanceof Error ? error.message : '세션 메시지를 불러오지 못했습니다.',
-        )
-      }
+      setMessages([])
+      setConnectionState('error')
+      setLoadState('error')
+      setErrorMessage(error instanceof Error ? error.message : '세션 메시지를 불러오지 못했습니다.')
     }
-  }, [mockSession, sessionId])
+  }, [sessionId])
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -243,7 +221,6 @@ export function ChatSessionPage() {
         <ChatSessionHeader
           title={title}
           connectionState={connectionState}
-          activityAvailable={activities.length > 0}
           onOpenActivity={() => setActivityOpen(true)}
         />
         {errorMessage && loadState !== 'error' && (
