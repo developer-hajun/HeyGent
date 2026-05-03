@@ -1,5 +1,4 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { useRef } from 'react'
 import type { TaskRunSummaryView } from '@/types/taskRuns'
 import { toUserFacingTaskTitle } from './activityPanelText'
 import { TaskRunStatusIcon } from './TaskRunStatusIcon'
@@ -15,8 +14,6 @@ export function TaskRunSummaryList({
   onSelectTaskRun: (taskRunId: string) => void
   onFocusTaskRunMessage?: (taskRunId: string) => void
 }) {
-  const scrollRef = useRef<HTMLDivElement | null>(null)
-
   if (summaries.length === 0) {
     return (
       <div className="text-muted-foreground border-border rounded-lg border border-dashed p-4 text-sm leading-6">
@@ -25,59 +22,72 @@ export function TaskRunSummaryList({
     )
   }
 
-  const scrollByCard = (direction: 'left' | 'right') => {
-    scrollRef.current?.scrollBy({
-      left: direction === 'left' ? -280 : 280,
-      behavior: 'smooth',
-    })
+  const selectedIndex = Math.max(
+    0,
+    summaries.findIndex((summary) => summary.id === selectedTaskRunId),
+  )
+  const selectedSummary = summaries[selectedIndex] ?? summaries[0]
+  const hasPrevious = selectedIndex > 0
+  const hasNext = selectedIndex < summaries.length - 1
+
+  const selectByIndex = (index: number) => {
+    const nextSummary = summaries[index]
+    if (nextSummary !== undefined) {
+      onSelectTaskRun(nextSummary.id)
+    }
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="grid grid-cols-[2rem_minmax(0,1fr)_2rem] items-center gap-2">
+      {hasPrevious ? (
+        <button
+          type="button"
+          onClick={() => selectByIndex(selectedIndex - 1)}
+          aria-label="이전 답변 활동 보기"
+          className="border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground flex h-8 w-8 items-center justify-center rounded-lg border transition-colors"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+      ) : (
+        <div aria-hidden="true" />
+      )}
       <button
+        key={selectedSummary.id}
         type="button"
-        onClick={() => scrollByCard('left')}
-        aria-label="이전 답변 활동 보기"
-        className="border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:opacity-40"
-        disabled={summaries.length <= 1}
+        onClick={() => onFocusTaskRunMessage?.(selectedSummary.id)}
+        aria-label="해당 답변 위치로 이동"
+        className="border-border bg-card hover:bg-muted/60 ring-ring flex h-20 min-w-0 items-center gap-3 rounded-lg border p-3 text-left ring-2 transition-colors"
       >
-        <ChevronLeft className="h-4 w-4" />
+        <TaskRunStatusIcon tone={selectedSummary.tone} />
+        <span className="flex min-w-0 flex-1 flex-col justify-center">
+          <span className="text-foreground line-clamp-2 block text-sm leading-5 font-medium [overflow-wrap:anywhere] break-words">
+            {toAlbumCardTitle(selectedSummary.title)}
+          </span>
+          <span className="text-muted-foreground mt-1 truncate text-xs">
+            {selectedSummary.statusText}
+          </span>
+        </span>
       </button>
-      <div ref={scrollRef} className="flex min-w-0 flex-1 snap-x gap-2 overflow-hidden py-1">
-        {summaries.map((summary) => (
-          <button
-            key={summary.id}
-            type="button"
-            onClick={() => {
-              onSelectTaskRun(summary.id)
-              onFocusTaskRunMessage?.(summary.id)
-            }}
-            aria-label="해당 답변 위치로 이동"
-            className={`border-border bg-card hover:bg-muted/60 flex h-20 w-60 shrink-0 snap-start items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
-              selectedTaskRunId === summary.id ? 'ring-ring ring-2' : ''
-            }`}
-          >
-            <TaskRunStatusIcon tone={summary.tone} />
-            <span className="flex min-w-0 flex-1 flex-col justify-center">
-              <span className="text-foreground line-clamp-2 block text-sm font-medium [overflow-wrap:anywhere] break-words">
-                {toUserFacingTaskTitle(summary.title)}
-              </span>
-              <span className="text-muted-foreground mt-1 line-clamp-1 block text-xs">
-                {summary.statusText}
-              </span>
-            </span>
-          </button>
-        ))}
-      </div>
-      <button
-        type="button"
-        onClick={() => scrollByCard('right')}
-        aria-label="다음 답변 활동 보기"
-        className="border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:opacity-40"
-        disabled={summaries.length <= 1}
-      >
-        <ChevronRight className="h-4 w-4" />
-      </button>
+      {hasNext ? (
+        <button
+          type="button"
+          onClick={() => selectByIndex(selectedIndex + 1)}
+          aria-label="다음 답변 활동 보기"
+          className="border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground flex h-8 w-8 items-center justify-center rounded-lg border transition-colors"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      ) : (
+        <div aria-hidden="true" />
+      )}
     </div>
   )
+}
+
+function toAlbumCardTitle(title: string) {
+  const normalizedTitle = toUserFacingTaskTitle(title).replace(/\s+/g, ' ').trim()
+  if (normalizedTitle.length <= 46) {
+    return normalizedTitle
+  }
+  return `${normalizedTitle.slice(0, 46).trimEnd()}...`
 }
