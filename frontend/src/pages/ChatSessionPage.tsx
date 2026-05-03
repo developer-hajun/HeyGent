@@ -29,6 +29,10 @@ export function ChatSessionPage() {
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isSending, setIsSending] = useState(false)
+  const [focusedTaskRunTarget, setFocusedTaskRunTarget] = useState<
+    { taskRunId: string; requestId: number } | undefined
+  >()
+  const focusRequestIdRef = useRef(0)
   const hydratedTaskRunIdsRef = useRef<Set<string>>(new Set())
   const hydratingTaskRunIdsRef = useRef<Set<string>>(new Set())
   const hydrationGenerationRef = useRef(0)
@@ -323,6 +327,11 @@ export function ChatSessionPage() {
     setActivityOpen(true)
   }
 
+  const handleFocusTaskRunMessage = (taskRunId: string) => {
+    focusRequestIdRef.current += 1
+    setFocusedTaskRunTarget({ taskRunId, requestId: focusRequestIdRef.current })
+  }
+
   const isComposerDisabled =
     connectionState === 'auth-expired' || !authenticatedReady || commandClient === null
   const loading = (loadState === 'loading' || isLoadingMessages) && messages.length === 0
@@ -380,6 +389,7 @@ export function ChatSessionPage() {
             activitiesByTaskRunId={activitiesByTaskRunId}
             taskRunSummariesById={taskRunSummariesById}
             onOpenTaskRun={handleOpenTaskRun}
+            focusedTaskRunTarget={focusedTaskRunTarget}
           />
         )}
         <ChatComposer disabled={isComposerDisabled} isSending={isSending} onSend={handleSend} />
@@ -390,6 +400,7 @@ export function ChatSessionPage() {
         sessionId={sessionId}
         selectedTaskRunId={selectedTaskRunId}
         onSelectTaskRun={setSelectedTaskRunId}
+        onFocusTaskRunMessage={handleFocusTaskRunMessage}
       />
     </main>
   )

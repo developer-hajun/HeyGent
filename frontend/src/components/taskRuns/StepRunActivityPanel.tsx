@@ -14,6 +14,7 @@ type StepRunActivityPanelProps = {
   sessionId: string
   selectedTaskRunId?: string
   onSelectTaskRun: (taskRunId: string | undefined) => void
+  onFocusTaskRunMessage?: (taskRunId: string) => void
 }
 
 export function StepRunActivityPanel({
@@ -22,6 +23,7 @@ export function StepRunActivityPanel({
   sessionId,
   selectedTaskRunId,
   onSelectTaskRun,
+  onFocusTaskRunMessage,
 }: StepRunActivityPanelProps) {
   const isDesktop = useIsDesktopViewport()
 
@@ -35,6 +37,7 @@ export function StepRunActivityPanel({
             sessionId={sessionId}
             selectedTaskRunId={selectedTaskRunId}
             onSelectTaskRun={onSelectTaskRun}
+            onFocusTaskRunMessage={onFocusTaskRunMessage}
             onClose={() => onOpenChange(false)}
           />
         </aside>
@@ -50,6 +53,7 @@ export function StepRunActivityPanel({
               sessionId={sessionId}
               selectedTaskRunId={selectedTaskRunId}
               onSelectTaskRun={onSelectTaskRun}
+              onFocusTaskRunMessage={onFocusTaskRunMessage}
               onClose={() => onOpenChange(false)}
             />
           </DrawerContent>

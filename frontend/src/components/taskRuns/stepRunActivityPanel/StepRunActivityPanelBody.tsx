@@ -17,11 +17,13 @@ export function StepRunActivityPanelBody({
   sessionId,
   selectedTaskRunId,
   onSelectTaskRun,
+  onFocusTaskRunMessage,
   onClose,
 }: {
   sessionId: string
   selectedTaskRunId?: string
   onSelectTaskRun: (taskRunId: string | undefined) => void
+  onFocusTaskRunMessage?: (taskRunId: string) => void
   onClose: () => void
 }) {
   const loadedTaskRunIdsRef = useRef<Set<string>>(new Set())
@@ -170,6 +172,7 @@ export function StepRunActivityPanelBody({
           summaries={taskRunSummaries}
           selectedTaskRunId={resolvedSelectedTaskRunId}
           onSelectTaskRun={onSelectTaskRun}
+          onFocusTaskRunMessage={onFocusTaskRunMessage}
         />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">

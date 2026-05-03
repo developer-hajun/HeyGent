@@ -8,10 +8,12 @@ export function TaskRunSummaryList({
   summaries,
   selectedTaskRunId,
   onSelectTaskRun,
+  onFocusTaskRunMessage,
 }: {
   summaries: TaskRunSummaryView[]
   selectedTaskRunId?: string
   onSelectTaskRun: (taskRunId: string) => void
+  onFocusTaskRunMessage?: (taskRunId: string) => void
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
@@ -41,22 +43,22 @@ export function TaskRunSummaryList({
       >
         <ChevronLeft className="h-4 w-4" />
       </button>
-      <div
-        ref={scrollRef}
-        className="scrollbar-thin flex min-w-0 flex-1 snap-x gap-2 overflow-x-auto py-1"
-      >
+      <div ref={scrollRef} className="flex min-w-0 flex-1 snap-x gap-2 overflow-hidden py-1">
         {summaries.map((summary) => (
           <button
             key={summary.id}
             type="button"
-            onClick={() => onSelectTaskRun(summary.id)}
-            aria-label="답변 진행 상태 보기"
-            className={`border-border bg-card hover:bg-muted/60 flex min-h-20 w-64 shrink-0 snap-start items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
+            onClick={() => {
+              onSelectTaskRun(summary.id)
+              onFocusTaskRunMessage?.(summary.id)
+            }}
+            aria-label="해당 답변 위치로 이동"
+            className={`border-border bg-card hover:bg-muted/60 flex h-20 w-60 shrink-0 snap-start items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
               selectedTaskRunId === summary.id ? 'ring-ring ring-2' : ''
             }`}
           >
             <TaskRunStatusIcon tone={summary.tone} />
-            <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 flex-1 flex-col justify-center">
               <span className="text-foreground line-clamp-2 block text-sm font-medium [overflow-wrap:anywhere] break-words">
                 {toUserFacingTaskTitle(summary.title)}
               </span>
