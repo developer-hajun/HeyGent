@@ -12,8 +12,19 @@ import { getLastTaskRunSequence, sortTaskRunEvents } from './taskRunEvents'
 
 const EVENT_STATUS_TEXT: Record<string, string> = {
   accepted: '요청 접수됨',
-  'step.started': '작업 중',
-  'step.completed': '단계 완료',
+  'task.created': '요청 확인 중',
+  'task.started': '답변 준비 중',
+  'task.updated': '진행 상황 갱신됨',
+  'task.completed': '답변 완료',
+  'task.failed': '답변 실패',
+  'task.canceled': '요청 취소됨',
+  'task.waiting': '확인 대기 중',
+  'step.created': '진행 단계 준비',
+  'step.started': '진행 단계 실행 중',
+  'step.completed': '진행 단계 완료',
+  'step.failed': '진행 단계 실패',
+  'step.canceled': '진행 단계 취소됨',
+  'step.waiting': '진행 단계 확인 대기',
   'tool.started': '도구 실행 중',
   'tool.completed': '도구 실행 완료',
   'search.started': '자료 확인 중',
@@ -69,11 +80,8 @@ export const toTaskRunStatusText = (status?: string | null) => {
 
 export const toActivityItemView = (event: RawTaskEventPayload): ActivityItemView => {
   const statusKey = event.status ?? event.event_type
-  const title =
-    event.summary_message ??
-    (typeof event.detail_json === 'object' && event.detail_json !== null
-      ? '세부 작업 진행 중'
-      : toTaskRunStatusText(statusKey))
+  const eventTitle = toTaskRunEventTitle(event.event_type)
+  const title = event.summary_message ?? eventTitle ?? toTaskRunStatusText(statusKey)
 
   return {
     id: event.event_id,
@@ -95,7 +103,7 @@ export const toTaskRunSummaryView = (
   const sortedEvents = sortTaskRunEvents(events)
   const lastEvent = sortedEvents.at(-1)
   const status = taskRun?.status ?? lastEvent?.status ?? lastEvent?.event_type
-  const title = taskRun?.title ?? taskRun?.goal ?? lastEvent?.summary_message ?? '작업'
+  const title = getTaskRunDisplayTitle(taskRun) ?? lastEvent?.summary_message ?? '답변 진행'
 
   return {
     id: taskRun?.task_run_id ?? lastEvent?.task_run_id ?? 'unknown',
@@ -191,6 +199,54 @@ const getTaskRunLastSequence = (taskRun: RawTaskRun | undefined) => {
   return typeof taskRun?.lastSequence === 'number' && Number.isFinite(taskRun.lastSequence)
     ? taskRun.lastSequence
     : undefined
+}
+
+const getTaskRunDisplayTitle = (taskRun: RawTaskRun | undefined) => {
+  // 서버가 저장한 입력값이 있으면 디버깅할 때 바로 질문 원문을 볼 수 있게 우선 표시한다.
+  const prompt =
+    typeof taskRun?.input_payload === 'object' &&
+    taskRun.input_payload !== null &&
+    'prompt' in taskRun.input_payload &&
+    typeof taskRun.input_payload.prompt === 'string'
+      ? taskRun.input_payload.prompt.trim()
+      : ''
+
+  if (prompt !== '') {
+    return prompt
+  }
+
+  return taskRun?.title ?? taskRun?.goal
+}
+
+const toTaskRunEventTitle = (eventType?: string | null) => {
+  // 같은 RUNNING 상태라도 이벤트 타입별로 사용자가 보는 진행 문구는 다르게 보여준다.
+  switch (eventType) {
+    case 'task.created':
+      return '요청 내용을 확인했습니다.'
+    case 'task.started':
+      return '답변 준비를 시작했습니다.'
+    case 'step.created':
+      return '진행 단계를 준비했습니다.'
+    case 'step.started':
+      return '필요한 내용을 처리하는 중입니다.'
+    case 'step.completed':
+      return '진행 단계를 마쳤습니다.'
+    case 'task.completed':
+      return '답변을 마쳤습니다.'
+    case 'task.updated':
+      return '진행 상황이 업데이트되었습니다.'
+    case 'task.waiting':
+    case 'step.waiting':
+      return '추가 확인을 기다리고 있습니다.'
+    case 'task.failed':
+    case 'step.failed':
+      return '처리 중 문제가 발생했습니다.'
+    case 'task.canceled':
+    case 'step.canceled':
+      return '요청이 취소되었습니다.'
+    default:
+      return undefined
+  }
 }
 
 const getComparableTime = (value?: string | null) => {
