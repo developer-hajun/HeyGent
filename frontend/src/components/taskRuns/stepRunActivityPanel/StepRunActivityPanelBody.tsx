@@ -31,6 +31,8 @@ export function StepRunActivityPanelBody({
   const fetchSnapshot = useTaskRunStore((state) => state.fetchSnapshot)
   const replayEvents = useTaskRunStore((state) => state.replayEvents)
 
+  // 메시지에 먼저 붙은 taskRunId와 snapshot/replay로 뒤늦게 들어온 TaskRun을 함께 모은다.
+  // 이렇게 해야 첫 응답 직후와 새로고침 복구 직후가 같은 목록 규칙을 쓴다.
   const taskRunIds = useMemo(() => {
     const ids = new Set<string>()
 
@@ -59,6 +61,7 @@ export function StepRunActivityPanelBody({
     [eventsByTaskRunId, taskRunIds, taskRunsById],
   )
 
+  // 외부에서 선택된 값이 현재 대화의 진행 기록이 아니면, 가장 최근 sequence의 기록을 기본 선택한다.
   const resolvedSelectedTaskRunId =
     selectedTaskRunId !== undefined && taskRunIds.includes(selectedTaskRunId)
       ? selectedTaskRunId
@@ -101,6 +104,8 @@ export function StepRunActivityPanelBody({
   useEffect(() => {
     if (resolvedSelectedTaskRunId === undefined) return
 
+    // snapshot은 현재 TaskRun/StepRun/approval 상태를 채우고,
+    // replay는 중간에 놓쳤을 수 있는 raw event 흐름을 sequence 기준으로 다시 맞춘다.
     void fetchSnapshot(resolvedSelectedTaskRunId).catch(() => undefined)
     void replayEvents(resolvedSelectedTaskRunId).catch(() => undefined)
   }, [fetchSnapshot, replayEvents, resolvedSelectedTaskRunId])
@@ -110,7 +115,7 @@ export function StepRunActivityPanelBody({
       <div className="border-border border-b p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-muted-foreground truncate text-xs">세션 {sessionId}</p>
+            <p className="text-muted-foreground truncate text-xs">현재 대화</p>
             <h2 className="text-foreground mt-1 text-sm font-semibold">진행 상황</h2>
           </div>
           <button

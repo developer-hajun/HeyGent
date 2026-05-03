@@ -117,6 +117,7 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
       mergeReplayResult(taskRunId, events, payload, set)
 
       if (retentionExceeded) {
+        // replay 보관 구간을 벗어난 경우에는 event 전체 복구가 불가능하므로 snapshot으로 현재 상태를 맞춘다.
         await get().fetchSnapshot(taskRunId)
       }
     } catch (error) {
@@ -149,6 +150,7 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
     const approvalResponseId = getApprovalResponseId(input.approvalId, get, set)
 
     try {
+      // approvalResponseId는 같은 확인 요청을 여러 번 눌러도 서버가 중복 처리하지 않게 하는 키다.
       return await useAiRealtimeStore.getState().sendCommand<AiRealtimeRawFrame>('taskRun.resume', {
         taskRunId: input.taskRunId,
         approvalId: input.approvalId,
@@ -215,6 +217,8 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
       const currentEvents = state.eventsByTaskRunId[event.task_run_id] ?? []
       const mergeResult = mergeTaskRunEvents(currentEvents, [event])
 
+      // raw event는 화면 표시와 디버깅의 기준이므로 서버 필드명을 유지한 채 저장한다.
+      // sequence gap이 보이면 replayNeeded를 세워 provider가 복구를 시도하게 한다.
       return {
         eventsByTaskRunId: {
           ...state.eventsByTaskRunId,

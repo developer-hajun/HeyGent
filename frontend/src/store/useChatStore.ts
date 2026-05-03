@@ -90,6 +90,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const clientMessageId = createClientMessageId()
     const optimisticSessionId = sessionId ?? `pending_session_${clientMessageId}`
+    // 서버 accepted가 오기 전에도 사용자가 보낸 문장을 즉시 보여 주기 위한 임시 메시지다.
+    // accepted를 받으면 서버/DB message id와 실제 session id로 치환한다.
     const optimisticMessage: ChatMessageView = {
       id: `pending_message_${clientMessageId}`,
       sessionId: optimisticSessionId,
@@ -312,6 +314,8 @@ const mergeAcceptedMessage = (
     )
     const placeholderId =
       assistantMessageId ?? (taskRunId === undefined ? undefined : `assistant_${taskRunId}`)
+    // accepted는 "작업을 시작했다"는 응답이고 자연어 답변은 뒤이어 온다.
+    // 그래서 completed/delta가 오기 전까지 빈 assistant placeholder를 만들어 진행 중 상태를 보여 준다.
     const assistantPlaceholder =
       placeholderId === undefined || hasAssistantPlaceholder
         ? []

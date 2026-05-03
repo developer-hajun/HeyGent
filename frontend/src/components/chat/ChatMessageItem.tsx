@@ -48,7 +48,7 @@ export function ChatMessageItem({
           <button
             type="button"
             onClick={() => onOpenTaskRun?.(message.taskRunId as string)}
-            aria-label={`TaskRun ${message.taskRunId} 활동 열기`}
+            aria-label="답변 진행 상황 열기"
             className="text-muted-foreground hover:text-foreground hover:bg-muted inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs transition-colors"
           >
             <TaskRunChipIcon tone={chipTone} />

@@ -24,8 +24,10 @@ export function SelectedTaskRunView({
   activities: ActivityItemView[]
   replayNeeded: boolean
 }) {
+  // snapshot이 아직 도착하지 않은 순간에는 raw event의 마지막 상태를 대표 상태로 쓴다.
   const status =
     taskRun?.status ?? activities.at(-1)?.raw.status ?? activities.at(-1)?.raw.event_type
+  // 패널이 길어지지 않도록 세부 기록 본문에는 최신 raw event 5개만 펼쳐 보여준다.
   const recentActivities = activities.slice(-5).reverse()
 
   return (
@@ -44,7 +46,7 @@ export function SelectedTaskRunView({
         {replayNeeded && (
           <div className="border-border bg-muted/40 text-muted-foreground mt-3 flex items-center gap-2 rounded-md border px-2.5 py-2 text-xs">
             <RotateCcw className="h-3.5 w-3.5" />
-            이벤트 중간 구간 재조회가 필요합니다.
+            진행 기록 일부를 다시 불러와야 합니다.
           </div>
         )}
       </section>
@@ -65,6 +67,7 @@ export function SelectedTaskRunView({
               <StepProgressItem
                 key={step.step_run_id}
                 step={step}
+                // step_run_id가 있는 event만 해당 단계 아래에 묶고, 전체 진행 event는 아래 세부 기록에서 본다.
                 activities={activities.filter(
                   (activity) => activity.stepRunId === step.step_run_id,
                 )}
@@ -82,7 +85,7 @@ export function SelectedTaskRunView({
           </summary>
           {activities.length === 0 ? (
             <div className="text-muted-foreground border-border rounded-lg border border-dashed p-3 text-xs">
-              아직 이벤트가 없습니다.
+              아직 세부 기록이 없습니다.
             </div>
           ) : (
             <ol className="mt-2 space-y-2">

@@ -122,6 +122,8 @@ async def _authenticate_first_message(websocket: WebSocket) -> WebSocketAuthCont
 
         payload = message.get("payload")
         payload_dict = payload if isinstance(payload, dict) else {}
+        # 브라우저 WebSocket은 Authorization header를 못 붙이므로 첫 frame payload로 토큰을 보낸다.
+        # 전환기에는 기존 top-level 필드와 문서화된 payload 필드를 모두 허용한다.
         access_token = message.get("accessToken") or payload_dict.get("accessToken") or payload_dict.get("access_token")
         if not isinstance(access_token, str) or not access_token:
             await websocket.send_json({"type": "auth.failed"})

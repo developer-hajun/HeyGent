@@ -25,6 +25,8 @@ export function StepRunActivityPanel({
 }: StepRunActivityPanelProps) {
   const isDesktop = useIsDesktopViewport()
 
+  // 같은 진행 상황 본문을 화면 크기에 따라 다른 껍데기로 보여준다.
+  // 데스크톱은 대화 옆 고정 패널, 모바일은 하단에서 올라오는 Drawer가 자연스럽다.
   return (
     <>
       {open && isDesktop && (

@@ -181,6 +181,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
       try {
         let activeTaskRunIds: string[] = []
         try {
+          // 새로고침/재연결 직후 서버가 아직 진행 중이라고 아는 TaskRun을 먼저 가져온다.
           activeTaskRunIds = (await useTaskRunStore.getState().fetchActiveTaskRuns()).map(
             (taskRun) => taskRun.task_run_id,
           )
@@ -201,6 +202,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
 
         for (const taskRunId of taskRunIds) {
           try {
+            // recoverTaskRun은 놓친 event를 replay하고, 보관 구간이 부족하면 snapshot으로 현재 상태를 채운다.
             await useTaskRunStore.getState().recoverTaskRun(taskRunId)
 
             if (socketRef.current !== socketClient || !socketClient.isAuthenticated()) {
@@ -237,6 +239,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         return
       }
 
+      // sequence gap을 감지한 TaskRun은 다음 live event를 받는 즉시 복구를 시도한다.
       void useTaskRunStore
         .getState()
         .recoverTaskRun(taskRunId)

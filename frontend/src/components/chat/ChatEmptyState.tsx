@@ -1,10 +1,6 @@
 import { Bot, MessageCircle } from 'lucide-react'
 
-type ChatEmptyStateProps = {
-  sessionId: string
-}
-
-export function ChatEmptyState({ sessionId }: ChatEmptyStateProps) {
+export function ChatEmptyState() {
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center px-6">
       <div className="max-w-md space-y-4 text-center">
@@ -14,8 +10,8 @@ export function ChatEmptyState({ sessionId }: ChatEmptyStateProps) {
         <div className="space-y-2">
           <h2 className="text-foreground text-lg font-semibold">대화를 이어갈 수 있습니다</h2>
           <p className="text-muted-foreground text-sm leading-6">
-            세션 {sessionId}의 기존 메시지가 아직 없거나 조회되지 않았습니다. 아래 입력창에서 새
-            메시지를 보내면 같은 세션으로 이어집니다.
+            기존 메시지가 아직 없거나 조회되지 않았습니다. 아래 입력창에서 새 메시지를 보내면 현재
+            대화로 이어집니다.
           </p>
         </div>
         <div className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">

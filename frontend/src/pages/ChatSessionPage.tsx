@@ -53,7 +53,7 @@ export function ChatSessionPage() {
   const fetchSnapshot = useTaskRunStore((state) => state.fetchSnapshot)
   const replayEvents = useTaskRunStore((state) => state.replayEvents)
 
-  const title = useMemo(() => `세션 ${sessionId}`, [sessionId])
+  const title = useMemo(() => '현재 대화', [])
   const connectionState = useMemo(
     () => toChatConnectionState(connectionStatus, authStatus),
     [authStatus, connectionStatus],
@@ -161,21 +161,20 @@ export function ChatSessionPage() {
 
       hydratedTaskRunIdsRef.current.add(taskRunId)
       void fetchSnapshot(taskRunId).catch((error) => {
-        setErrorMessage(
-          error instanceof Error ? error.message : 'TaskRun 스냅샷 조회에 실패했습니다.',
-        )
+        console.error(error)
+        setErrorMessage('답변 진행 상태를 불러오지 못했습니다.')
       })
       void replayEvents(taskRunId, lastSequenceByTaskRunId[taskRunId]).catch((error) => {
-        setErrorMessage(
-          error instanceof Error ? error.message : 'TaskRun 이벤트 조회에 실패했습니다.',
-        )
+        console.error(error)
+        setErrorMessage('답변 세부 기록을 불러오지 못했습니다.')
       })
 
       if (socketClient !== null) {
         try {
           subscribeTask(taskRunId, lastSequenceByTaskRunId[taskRunId])
         } catch (error) {
-          setErrorMessage(error instanceof Error ? error.message : 'TaskRun 구독에 실패했습니다.')
+          console.error(error)
+          setErrorMessage('답변 진행 상황 연결에 실패했습니다.')
         }
       }
     })
@@ -256,13 +255,13 @@ export function ChatSessionPage() {
             <div className="border-border bg-card max-w-md rounded-lg border p-5 text-center shadow-sm">
               <AlertCircle className="text-destructive mx-auto h-6 w-6" />
               <h2 className="text-foreground mt-3 text-sm font-semibold">
-                세션을 불러오지 못했습니다
+                대화를 불러오지 못했습니다
               </h2>
               <p className="text-muted-foreground mt-2 text-sm leading-6">{errorMessage}</p>
               <button
                 type="button"
                 onClick={() => void loadSessionData()}
-                aria-label="세션 메시지 다시 불러오기"
+                aria-label="대화 메시지 다시 불러오기"
                 className="bg-primary text-primary-foreground hover:bg-primary/90 mt-4 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm"
               >
                 <RefreshCw className="h-4 w-4" />
@@ -271,7 +270,7 @@ export function ChatSessionPage() {
             </div>
           </div>
         ) : messages.length === 0 ? (
-          <ChatEmptyState sessionId={sessionId} />
+          <ChatEmptyState />
         ) : (
           <ChatMessageList
             messages={messages}

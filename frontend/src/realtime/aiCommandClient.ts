@@ -154,6 +154,8 @@ export const createAiCommandClient = (
     payload: AiRealtimeCommandPayloadMap[TType],
     options: SendCommandOptions = {},
   ): Promise<TResult> => {
+    // message 생성, approval 응답, 취소처럼 서버 상태를 바꾸는 명령은 재전송될 수 있다.
+    // 그래서 requestId와 별개로 서버가 중복 처리하지 않을 idempotency key를 반드시 보낸다.
     assertCommandIdempotencyKey(type, payload)
 
     if (!transport.isOpen()) {

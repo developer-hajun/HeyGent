@@ -193,6 +193,8 @@ class WebSocketCommandRouter:
         existing = self._accepted_messages.get(idempotency_key)
         if existing is not None:
             return "session.message.accepted", dict(existing)
+        # 프로세스 메모리가 비어도 같은 clientMessageId로 이미 저장된 메시지가 있으면
+        # 새 TaskRun을 만들지 않고 기존 accepted 응답을 재구성한다.
         durable_existing = _find_accepted_message_by_client_id(
             context,
             session_id=session_id,
@@ -372,6 +374,8 @@ class WebSocketCommandRouter:
         retention_exceeded = False
         events: list[dict[str, Any]] = []
         if projection is not None:
+            # Redis projection은 빠르지만 최근 구간만 보관한다.
+            # afterSequence보다 앞 구간이 잘렸으면 durable event 저장소로 fallback해야 한다.
             events = projection.list_recent_events(task_run_id)
             if after_sequence is not None:
                 events = [event for event in events if int(event.get("sequence") or 0) > after_sequence]
@@ -386,6 +390,7 @@ class WebSocketCommandRouter:
                 )
 
         if not events or retention_exceeded:
+            # projection에서 못 찾은 구간은 DB에 저장된 canonical event로 복구한다.
             stored_events = repository.list_events(task_run_id)
             if after_sequence is not None:
                 stored_events = [event for event in stored_events if int(event.sequence or 0) > after_sequence]

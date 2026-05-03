@@ -19,10 +19,12 @@ export function ApprovalCard({
   )
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  // 서버 payload에서 status가 비어 오면 아직 응답하지 않은 확인 요청으로 본다.
   const isActionable =
     approval.status === undefined || approval.status === null || approval.status === 'PENDING'
   const isButtonDisabled = isSubmitting || isApprovalSubmitting
 
+  // 승인/거절은 TaskRun을 다시 진행시키는 resume 명령이고, 작업 취소는 실행 자체를 중단한다.
   const handleResume = async () => {
     if (!isActionable || isButtonDisabled) return
     setIsSubmitting(true)
@@ -35,7 +37,8 @@ export function ApprovalCard({
         response: { approved: true },
       })
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '승인 응답 전송에 실패했습니다.')
+      console.error(error)
+      setErrorMessage('확인 응답을 보내지 못했습니다. 잠시 후 다시 시도해 주세요.')
     } finally {
       setIsSubmitting(false)
     }
@@ -53,7 +56,8 @@ export function ApprovalCard({
         response: { approved: false },
       })
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '거절 응답 전송에 실패했습니다.')
+      console.error(error)
+      setErrorMessage('확인 응답을 보내지 못했습니다. 잠시 후 다시 시도해 주세요.')
     } finally {
       setIsSubmitting(false)
     }
@@ -66,7 +70,8 @@ export function ApprovalCard({
     try {
       await cancelTaskRun(taskRunId, 'approval cancelled from UI')
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'TaskRun 취소에 실패했습니다.')
+      console.error(error)
+      setErrorMessage('답변 준비를 취소하지 못했습니다. 잠시 후 다시 시도해 주세요.')
     } finally {
       setIsSubmitting(false)
     }
@@ -84,7 +89,7 @@ export function ApprovalCard({
             <p className="text-muted-foreground mt-1 text-xs leading-5">{approval.description}</p>
           )}
           <p className="text-muted-foreground mt-2 text-[11px]">
-            approval {approval.approval_id} · {toApprovalStatusText(approval.status)}
+            확인 요청 · {toApprovalStatusText(approval.status)}
           </p>
         </div>
       </div>
@@ -96,7 +101,7 @@ export function ApprovalCard({
             size="sm"
             onClick={handleResume}
             disabled={isButtonDisabled}
-            aria-label={`Approval ${approval.approval_id} 승인 후 TaskRun 재개`}
+            aria-label="확인 요청 승인"
           >
             {isButtonDisabled ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
             승인
@@ -107,7 +112,7 @@ export function ApprovalCard({
             variant="outline"
             onClick={handleReject}
             disabled={isButtonDisabled}
-            aria-label={`Approval ${approval.approval_id} 거절 후 TaskRun 재개`}
+            aria-label="확인 요청 거절"
           >
             거절
           </Button>
@@ -117,7 +122,7 @@ export function ApprovalCard({
             variant="outline"
             onClick={handleCancel}
             disabled={isButtonDisabled}
-            aria-label={`TaskRun ${taskRunId} 취소`}
+            aria-label="답변 준비 취소"
           >
             작업 취소
           </Button>

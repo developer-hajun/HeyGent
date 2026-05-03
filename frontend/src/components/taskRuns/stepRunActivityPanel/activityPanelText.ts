@@ -23,7 +23,7 @@ export function toApprovalStatusText(status?: string | null) {
     case null:
       return '대기 중'
     default:
-      return status
+      return '상태 확인 중'
   }
 }
 
@@ -44,22 +44,27 @@ export function getAnswerProgressTitle(taskRun?: RawTaskRun, prompt?: string) {
   return toUserFacingTaskTitle(taskRun?.title ?? taskRun?.goal ?? '답변 준비')
 }
 
+// backend/raw payload의 agent loop, TaskRun, StepRun 같은 내부 이름을 사용자용 진행 문구로 숨긴다.
 export function toUserFacingTaskTitle(value?: string | null) {
   const text = typeof value === 'string' ? value.trim() : ''
   if (!text) {
     return '답변 준비'
   }
 
-  const normalized = text.toLowerCase()
-  if (normalized.includes('agent.loop') || normalized.includes('agent loop')) {
+  const normalized = text.toLowerCase().replaceAll(/[\s_-]+/g, '.')
+  if (normalized.includes('agent.loop')) {
     return '질문에 대한 답변'
   }
-  if (normalized.includes('taskrun') || normalized.includes('steprun')) {
+  if (normalized.includes('taskrun') || normalized.includes('task.run')) {
+    return '답변 진행'
+  }
+  if (normalized.includes('steprun') || normalized.includes('step.run')) {
     return '답변 진행'
   }
   return text
 }
 
+// TaskRun 상태값과 raw event_type이 섞여 들어와도 한곳에서 자연스러운 설명 문장으로 바꾼다.
 export function toProgressSentence(status?: string | null) {
   switch (status) {
     case 'PENDING':
