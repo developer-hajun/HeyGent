@@ -9,6 +9,7 @@ import type { ChatConnectionState } from '@/components/chat/chatTypes'
 import { StepRunActivityPanel } from '@/components/taskRuns/StepRunActivityPanel'
 import type { AiRealtimeAuthStatus, AiRealtimeConnectionStatus } from '@/realtime/aiRealtimeTypes'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
+import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import { toActivityItemView, toTaskRunSummaryView } from '@/utils/taskRunStatusView'
@@ -32,6 +33,7 @@ export function ChatSessionPage() {
   const authStatus = useAiRealtimeStore((state) => state.authStatus)
   const realtimeError = useAiRealtimeStore((state) => state.lastError)
   const subscribeTask = useAiRealtimeStore((state) => state.subscribeTask)
+  const accessToken = useAuthStore((state) => state.accessToken)
 
   const storeMessages = useChatStore((state) =>
     sessionId === '' ? EMPTY_MESSAGES : (state.messagesBySessionId[sessionId] ?? EMPTY_MESSAGES),
@@ -104,8 +106,14 @@ export function ChatSessionPage() {
     if (!sessionId) return
 
     if (commandClient === null) {
-      setLoadState(isRealtimePending(connectionStatus) ? 'loading' : 'error')
-      setErrorMessage(getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError))
+      setLoadState(
+        shouldWaitForRealtime(connectionStatus, authStatus, realtimeError, accessToken)
+          ? 'loading'
+          : 'error',
+      )
+      setErrorMessage(
+        getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError, accessToken),
+      )
       return
     }
 
@@ -124,6 +132,7 @@ export function ChatSessionPage() {
     authStatus,
     commandClient,
     connectionStatus,
+    accessToken,
     fetchActiveTaskRuns,
     fetchMessages,
     realtimeError,
@@ -185,8 +194,14 @@ export function ChatSessionPage() {
     if (!sessionId || isSending) return
 
     if (commandClient === null) {
-      setLoadState(isRealtimePending(connectionStatus) ? 'loading' : 'error')
-      setErrorMessage(getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError))
+      setLoadState(
+        shouldWaitForRealtime(connectionStatus, authStatus, realtimeError, accessToken)
+          ? 'loading'
+          : 'error',
+      )
+      setErrorMessage(
+        getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError, accessToken),
+      )
       return
     }
 
@@ -315,15 +330,38 @@ function getRealtimeUnavailableMessage(
   connectionStatus: AiRealtimeConnectionStatus,
   authStatus: AiRealtimeAuthStatus,
   realtimeError: string | null,
+  accessToken: string | null,
 ) {
   if (realtimeError !== null) {
     return realtimeError
   }
   if (authStatus === 'failed') {
-    return 'AI WebSocket 인증이 만료되었거나 실패했습니다.'
+    return '서버 인증이 만료되었거나 실패했습니다.'
   }
-  if (isRealtimePending(connectionStatus)) {
-    return 'AI realtime provider가 연결을 준비 중입니다.'
+  if (accessToken === null || accessToken.trim() === '') {
+    return '로그인이 필요합니다.'
   }
-  return 'AI realtime provider가 준비되지 않았습니다.'
+  if (shouldWaitForRealtime(connectionStatus, authStatus, realtimeError, accessToken)) {
+    return '서버와 연결 중입니다. 잠시 후 다시 시도해 주세요.'
+  }
+  return '서버 연결을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.'
+}
+
+function shouldWaitForRealtime(
+  connectionStatus: AiRealtimeConnectionStatus,
+  authStatus: AiRealtimeAuthStatus,
+  realtimeError: string | null,
+  accessToken: string | null,
+) {
+  if (realtimeError !== null || authStatus === 'failed') {
+    return false
+  }
+  if (accessToken === null || accessToken.trim() === '') {
+    return false
+  }
+  return (
+    isRealtimePending(connectionStatus) ||
+    connectionStatus === 'idle' ||
+    connectionStatus === 'closed'
+  )
 }

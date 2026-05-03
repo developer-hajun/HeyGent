@@ -9,6 +9,7 @@ import {
   getStringField,
 } from '@/realtime/aiRealtimeTypes'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
+import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 
 const suggestedPrompts = [
@@ -44,12 +45,15 @@ export function NewChatPage() {
   const connectionStatus = useAiRealtimeStore((state) => state.connectionStatus)
   const authStatus = useAiRealtimeStore((state) => state.authStatus)
   const realtimeError = useAiRealtimeStore((state) => state.lastError)
+  const accessToken = useAuthStore((state) => state.accessToken)
   const sendMessage = useChatStore((state) => state.sendMessage)
   const providerMessage =
     commandClient === null
-      ? getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError)
+      ? getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError, accessToken)
       : null
-  const providerPending = commandClient === null && isRealtimePending(connectionStatus)
+  const providerPending =
+    commandClient === null &&
+    shouldWaitForRealtime(connectionStatus, authStatus, realtimeError, accessToken)
 
   const handleVoiceInput = () => {
     setIsRecording(!isRecording)
@@ -59,7 +63,9 @@ export function NewChatPage() {
     const content = inputValue.trim()
     if (!content || isSending) return
     if (commandClient === null) {
-      setSendError(getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError))
+      setSendError(
+        getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError, accessToken),
+      )
       return
     }
 
@@ -202,15 +208,38 @@ function getRealtimeUnavailableMessage(
   connectionStatus: AiRealtimeConnectionStatus,
   authStatus: AiRealtimeAuthStatus,
   realtimeError: string | null,
+  accessToken: string | null,
 ) {
   if (realtimeError !== null) {
     return realtimeError
   }
   if (authStatus === 'failed') {
-    return 'AI WebSocket 인증이 만료되었거나 실패했습니다.'
+    return '서버 인증이 만료되었거나 실패했습니다.'
   }
-  if (isRealtimePending(connectionStatus)) {
-    return 'AI realtime 연결을 준비 중입니다.'
+  if (accessToken === null || accessToken.trim() === '') {
+    return '로그인이 필요합니다.'
   }
-  return 'AI realtime provider가 준비되지 않았습니다.'
+  if (shouldWaitForRealtime(connectionStatus, authStatus, realtimeError, accessToken)) {
+    return '서버와 연결 중입니다. 잠시 후 다시 시도해 주세요.'
+  }
+  return '서버 연결을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.'
+}
+
+function shouldWaitForRealtime(
+  connectionStatus: AiRealtimeConnectionStatus,
+  authStatus: AiRealtimeAuthStatus,
+  realtimeError: string | null,
+  accessToken: string | null,
+) {
+  if (realtimeError !== null || authStatus === 'failed') {
+    return false
+  }
+  if (accessToken === null || accessToken.trim() === '') {
+    return false
+  }
+  return (
+    isRealtimePending(connectionStatus) ||
+    connectionStatus === 'idle' ||
+    connectionStatus === 'closed'
+  )
 }
