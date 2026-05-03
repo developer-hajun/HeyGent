@@ -1,11 +1,14 @@
 import type { RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
 import type {
   ActivityItemView,
+  RawApproval,
+  RawStepRun,
   RawTaskRun,
+  TaskRunDetailSummaryView,
   TaskRunStatusTone,
   TaskRunSummaryView,
 } from '@/types/taskRuns'
-import { getLastTaskRunSequence } from './taskRunEvents'
+import { getLastTaskRunSequence, sortTaskRunEvents } from './taskRunEvents'
 
 const EVENT_STATUS_TEXT: Record<string, string> = {
   accepted: '요청 접수됨',
@@ -89,7 +92,8 @@ export const toTaskRunSummaryView = (
   taskRun: RawTaskRun | undefined,
   events: RawTaskEventPayload[] = [],
 ): TaskRunSummaryView => {
-  const lastEvent = events.at(-1)
+  const sortedEvents = sortTaskRunEvents(events)
+  const lastEvent = sortedEvents.at(-1)
   const status = taskRun?.status ?? lastEvent?.status ?? lastEvent?.event_type
   const title = taskRun?.title ?? taskRun?.goal ?? lastEvent?.summary_message ?? '작업'
 
@@ -98,7 +102,101 @@ export const toTaskRunSummaryView = (
     title,
     statusText: toTaskRunStatusText(status),
     tone: toTaskRunStatusTone(status),
-    lastSequence: getLastTaskRunSequence(events),
+    lastSequence: getLastTaskRunSequence(events) ?? getTaskRunLastSequence(taskRun),
     raw: taskRun,
   }
+}
+
+export type TaskRunDetailSummaryInput = {
+  taskRun?: RawTaskRun
+  stepRuns?: RawStepRun[]
+  approvals?: RawApproval[]
+  events?: RawTaskEventPayload[]
+  replayNeeded?: boolean
+  recovering?: boolean
+  recoveryAfterSequence?: number
+}
+
+export const toTaskRunDetailSummaryView = ({
+  taskRun,
+  stepRuns = [],
+  approvals = [],
+  events = [],
+  replayNeeded = false,
+  recovering = false,
+  recoveryAfterSequence,
+}: TaskRunDetailSummaryInput): TaskRunDetailSummaryView => {
+  const sortedEvents = sortTaskRunEvents(events)
+  const latestEvent = sortedEvents.at(-1)
+  const latestStepRun = selectLatestStepRun(taskRun, stepRuns)
+  const pendingApproval = selectPendingApproval(approvals)
+  const summary = toTaskRunSummaryView(taskRun, sortedEvents)
+
+  return {
+    ...summary,
+    latestStepRun,
+    latestEvent,
+    pendingApproval,
+    activityItems: sortedEvents.map(toActivityItemView),
+    replayNeeded,
+    recovering,
+    recoveryAfterSequence,
+  }
+}
+
+const selectLatestStepRun = (taskRun: RawTaskRun | undefined, stepRuns: RawStepRun[]) => {
+  const currentStepRunId =
+    typeof taskRun?.current_step_run_id === 'string'
+      ? taskRun.current_step_run_id
+      : typeof taskRun?.currentStepRunId === 'string'
+        ? taskRun.currentStepRunId
+        : undefined
+
+  if (currentStepRunId !== undefined) {
+    const currentStepRun = stepRuns.find((stepRun) => stepRun.step_run_id === currentStepRunId)
+    if (currentStepRun !== undefined) {
+      return currentStepRun
+    }
+  }
+
+  return [...stepRuns].sort(compareStepRuns).at(-1)
+}
+
+const selectPendingApproval = (approvals: RawApproval[]) =>
+  [...approvals].sort(compareApprovals).find((approval) => approval.status === 'PENDING') ??
+  [...approvals].sort(compareApprovals).at(-1)
+
+const compareStepRuns = (first: RawStepRun, second: RawStepRun) => {
+  const firstSequence = typeof first.sequence === 'number' ? first.sequence : undefined
+  const secondSequence = typeof second.sequence === 'number' ? second.sequence : undefined
+
+  if (firstSequence !== undefined && secondSequence !== undefined) {
+    return firstSequence - secondSequence
+  }
+
+  return (
+    getComparableTime(first.started_at ?? first.completed_at) -
+    getComparableTime(second.started_at ?? second.completed_at)
+  )
+}
+
+const compareApprovals = (first: RawApproval, second: RawApproval) =>
+  getComparableTime(first.created_at) - getComparableTime(second.created_at)
+
+const getTaskRunLastSequence = (taskRun: RawTaskRun | undefined) => {
+  if (typeof taskRun?.last_sequence === 'number' && Number.isFinite(taskRun.last_sequence)) {
+    return taskRun.last_sequence
+  }
+
+  return typeof taskRun?.lastSequence === 'number' && Number.isFinite(taskRun.lastSequence)
+    ? taskRun.lastSequence
+    : undefined
+}
+
+const getComparableTime = (value?: string | null) => {
+  if (typeof value !== 'string') {
+    return 0
+  }
+  const time = Date.parse(value)
+  return Number.isFinite(time) ? time : 0
 }

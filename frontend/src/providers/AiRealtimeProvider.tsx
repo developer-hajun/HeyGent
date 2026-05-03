@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react'
 import { refreshAccessToken } from '@/apis/auth'
 import { createAiCommandClient } from '@/realtime/aiCommandClient'
 import type { AiCommandClient } from '@/realtime/aiCommandClient'
+import { getFramePayload, getStringField, isJsonObject } from '@/realtime/aiRealtimeTypes'
 import { createTaskRunSocket, type TaskRunSocketClient } from '@/realtime/taskRunSocket'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -14,6 +15,9 @@ type AiRealtimeProviderProps = {
 
 const PING_INTERVAL_MS = 25_000
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 30_000]
+
+const getRecoveryLastSequence = (taskRunId: string) =>
+  useTaskRunStore.getState().lastSequenceByTaskRunId[taskRunId]
 
 export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
   const accessToken = useAuthStore((state) => state.accessToken)
@@ -32,6 +36,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
   const reconnectAttemptRef = useRef(0)
   const manuallyClosedRef = useRef(false)
   const refreshAttemptedRef = useRef(false)
+  const activeRecoveryInFlightRef = useRef(false)
 
   useEffect(() => {
     const clearPingInterval = () => {
@@ -90,6 +95,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         recordRawFrame(frame)
         useChatStore.getState().handleRealtimeFrame(frame)
         useTaskRunStore.getState().handleRealtimeFrame(frame)
+        recoverTaskRunAfterGap(frame)
       })
 
       socketClient.onMessage((event) => {
@@ -98,7 +104,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
           reconnectAttemptRef.current = 0
           setAuthStatus('authenticated')
           setConnectionStatus('authenticated')
-          resubscribeTasks(socketClient)
+          void recoverAndResubscribeTasks(socketClient)
           return
         }
 
@@ -157,17 +163,87 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
       }, delay)
     }
 
-    const resubscribeTasks = (socketClient: TaskRunSocketClient) => {
-      const subscriptions = Object.values(useAiRealtimeStore.getState().subscriptionsByTaskRunId)
-      subscriptions.forEach((subscription) => {
+    const recoverAndResubscribeTasks = async (socketClient: TaskRunSocketClient) => {
+      if (activeRecoveryInFlightRef.current) {
+        return
+      }
+
+      activeRecoveryInFlightRef.current = true
+
+      try {
+        let activeTaskRunIds: string[] = []
         try {
-          socketClient.subscribeTask(subscription.task_run_id, {
-            lastSequence: subscription.last_sequence,
-          })
+          activeTaskRunIds = (await useTaskRunStore.getState().fetchActiveTaskRuns()).map(
+            (taskRun) => taskRun.task_run_id,
+          )
         } catch (error) {
-          setLastError(error instanceof Error ? error.message : 'TaskRun 재구독에 실패했습니다.')
+          setLastError(
+            error instanceof Error ? error.message : '활성 TaskRun 목록 복구에 실패했습니다.',
+          )
         }
-      })
+
+        if (socketRef.current !== socketClient || !socketClient.isAuthenticated()) {
+          return
+        }
+
+        const subscriptionIds = Object.values(
+          useAiRealtimeStore.getState().subscriptionsByTaskRunId,
+        ).map((subscription) => subscription.task_run_id)
+        const taskRunIds = Array.from(new Set([...subscriptionIds, ...activeTaskRunIds]))
+
+        for (const taskRunId of taskRunIds) {
+          try {
+            await useTaskRunStore.getState().recoverTaskRun(taskRunId)
+
+            if (socketRef.current !== socketClient || !socketClient.isAuthenticated()) {
+              return
+            }
+
+            useAiRealtimeStore
+              .getState()
+              .subscribeTask(taskRunId, getRecoveryLastSequence(taskRunId), { force: true })
+          } catch (error) {
+            setLastError(error instanceof Error ? error.message : 'TaskRun 재구독에 실패했습니다.')
+          }
+        }
+      } finally {
+        activeRecoveryInFlightRef.current = false
+      }
+    }
+
+    const recoverTaskRunAfterGap = (frame: { type: string; payload?: unknown; data?: unknown }) => {
+      if (frame.type !== 'task.event') {
+        return
+      }
+
+      const payload = getFramePayload(frame)
+      if (!isJsonObject(payload)) {
+        return
+      }
+
+      const taskRunId = getStringField(payload, 'task_run_id', 'taskRunId')
+      if (
+        taskRunId === undefined ||
+        useTaskRunStore.getState().replayNeededByTaskRunId[taskRunId] !== true
+      ) {
+        return
+      }
+
+      void useTaskRunStore
+        .getState()
+        .recoverTaskRun(taskRunId)
+        .then(() => {
+          const currentSocketClient = socketRef.current
+          if (currentSocketClient === null || !currentSocketClient.isAuthenticated()) {
+            return
+          }
+          useAiRealtimeStore.getState().subscribeTask(taskRunId, getRecoveryLastSequence(taskRunId))
+        })
+        .catch((error) => {
+          setLastError(
+            error instanceof Error ? error.message : 'TaskRun 이벤트 복구에 실패했습니다.',
+          )
+        })
     }
 
     manuallyClosedRef.current = false

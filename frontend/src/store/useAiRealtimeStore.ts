@@ -33,7 +33,7 @@ type AiRealtimeState = {
     type: TType,
     payload: AiRealtimeCommandPayloadMap[TType],
   ) => Promise<TResult>
-  subscribeTask: (taskRunId: string, lastSequence?: number) => void
+  subscribeTask: (taskRunId: string, lastSequence?: number, options?: { force?: boolean }) => void
   resetRealtimeState: () => void
 }
 
@@ -63,14 +63,14 @@ export const useAiRealtimeStore = create<AiRealtimeState>((set, get) => ({
     }
     return commandClient.sendCommand(type, payload)
   },
-  subscribeTask: (taskRunId, lastSequence) => {
+  subscribeTask: (taskRunId, lastSequence, options = {}) => {
     const socketClient = get().socketClient
     if (socketClient === null) {
       throw new Error('AI WebSocket client가 아직 준비되지 않았습니다.')
     }
 
     const current = get().subscriptionsByTaskRunId[taskRunId]
-    if (current !== undefined && current.last_sequence === lastSequence) {
+    if (options.force !== true && current !== undefined && current.last_sequence === lastSequence) {
       return
     }
 

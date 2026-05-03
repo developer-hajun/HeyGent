@@ -47,10 +47,14 @@ export type RawApproval = {
 }
 
 export type RawTaskRunSnapshot = {
+  task?: RawTaskRun
   task_run?: RawTaskRun
   taskRun?: RawTaskRun
+  steps?: RawStepRun[]
   step_runs?: RawStepRun[]
   stepRuns?: RawStepRun[]
+  pending_approval?: RawApproval | null
+  pendingApproval?: RawApproval | null
   approvals?: RawApproval[]
   events?: RawTaskEventPayload[]
   [key: string]: unknown
@@ -77,6 +81,16 @@ export type TaskRunSummaryView = {
   tone: TaskRunStatusTone
   lastSequence?: number
   raw?: RawTaskRun
+}
+
+export type TaskRunDetailSummaryView = TaskRunSummaryView & {
+  latestStepRun?: RawStepRun
+  latestEvent?: RawTaskEventPayload
+  pendingApproval?: RawApproval
+  activityItems: ActivityItemView[]
+  replayNeeded: boolean
+  recovering: boolean
+  recoveryAfterSequence?: number
 }
 
 export type TaskRunsActiveListResultPayload = {

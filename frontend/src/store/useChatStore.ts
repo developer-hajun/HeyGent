@@ -130,6 +130,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         mergeSessionList(frame, set)
         return
       case 'session.messages.list.result':
+      case 'session.messages.result':
         mergeMessageList(frame, set)
         return
       case 'session.message.accepted':
@@ -180,7 +181,7 @@ const getRawMessageList = (payload: SessionMessagesListResultPayload | unknown):
       ? payload.items
       : []
 
-  return list.filter(isRawAiMessage)
+  return list.map(normalizeRawAiMessage).filter((message) => message !== null)
 }
 
 const toChatMessageView = (message: RawAiMessage): ChatMessageView => ({
@@ -388,9 +389,41 @@ const upsertAssistantMessage = (
 const isRawAiSession = (value: unknown): value is RawAiSession =>
   isJsonObject(value) && typeof value.session_id === 'string'
 
-const isRawAiMessage = (value: unknown): value is RawAiMessage =>
-  isJsonObject(value) &&
-  typeof value.message_id === 'string' &&
-  typeof value.session_id === 'string' &&
-  typeof value.role === 'string' &&
-  typeof value.content === 'string'
+const normalizeRawAiMessage = (value: unknown): RawAiMessage | null => {
+  if (!isJsonObject(value)) {
+    return null
+  }
+
+  const messageId = getStringField(value, 'message_id', 'messageId') ?? getStringField(value, 'id')
+  const sessionId = getStringField(value, 'session_id', 'sessionId')
+  const role = getStringField(value, 'role')
+  const content =
+    typeof value.content === 'string'
+      ? value.content
+      : typeof value.text === 'string'
+        ? value.text
+        : undefined
+
+  if (
+    messageId === undefined ||
+    sessionId === undefined ||
+    role === undefined ||
+    content === undefined
+  ) {
+    return null
+  }
+
+  return {
+    ...value,
+    message_id: messageId,
+    session_id: sessionId,
+    role,
+    content,
+    task_run_id:
+      getStringField(value, 'task_run_id', 'taskRunId') ??
+      (typeof value.task_run_id === 'string' ? value.task_run_id : undefined),
+    client_message_id:
+      getStringField(value, 'client_message_id', 'clientMessageId') ??
+      (typeof value.client_message_id === 'string' ? value.client_message_id : undefined),
+  }
+}
