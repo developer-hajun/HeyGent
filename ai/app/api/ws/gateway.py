@@ -97,6 +97,23 @@ def _client_task_run_id(message: dict) -> str | None:
     return None
 
 
+def _client_last_sequence(message: dict) -> int | None:
+    """구독 재개 시 client가 마지막으로 본 TaskRun sequence를 읽는다."""
+
+    payload = message.get("payload")
+    payload_dict = payload if isinstance(payload, dict) else {}
+    value = message.get("lastSequence")
+    if value is None:
+        value = payload_dict.get("lastSequence", payload_dict.get("last_sequence"))
+    if value is None:
+        return None
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        return None
+    return result if result >= 0 else None
+
+
 async def _authenticate_first_message(websocket: WebSocket) -> WebSocketAuthContext | None:
     """인증 완료 전 상태 전이를 처리한다."""
 
@@ -220,6 +237,7 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
             message = await websocket.receive_json()
             action = _client_message_action(message)
             task_run_id = _client_task_run_id(message)
+            last_sequence = _client_last_sequence(message)
             if action == "subscribe" and task_run_id:
                 await handle_subscription(
                     websocket,
@@ -227,6 +245,7 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
                     session_id=session_id,
                     authenticated_user_id=user_id,
                     task_run_id=task_run_id,
+                    last_sequence=last_sequence,
                     request_id=message.get("requestId"),
                     send_json=send_json,
                 )

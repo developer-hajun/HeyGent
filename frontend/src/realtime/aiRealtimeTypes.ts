@@ -42,6 +42,7 @@ export type AiRealtimeServerFrameType =
   | 'session.message.accepted'
   | 'session.message.delta'
   | 'session.message.completed'
+  | 'session.message.failed'
   | 'taskRuns.active.list.result'
   | 'taskRun.snapshot.result'
   | 'taskRun.events.replay.result'
@@ -227,6 +228,20 @@ export type RawSessionMessageCompletedPayload = {
   task_run_id?: string
   taskRunId?: string
   content?: string
+  [key: string]: unknown
+}
+
+export type RawSessionMessageFailedPayload = {
+  session_id?: string
+  sessionId?: string
+  message_id?: string
+  messageId?: string
+  user_message_id?: string
+  userMessageId?: string
+  task_run_id?: string
+  taskRunId?: string
+  status?: string
+  error?: unknown
   [key: string]: unknown
 }
 

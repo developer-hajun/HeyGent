@@ -4,6 +4,7 @@ import {
   type RawSessionMessageAcceptedPayload,
   type RawSessionMessageCompletedPayload,
   type RawSessionMessageDeltaPayload,
+  type RawSessionMessageFailedPayload,
   getFramePayload,
   getStringField,
   isJsonObject,
@@ -161,6 +162,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return
       case 'session.message.completed':
         mergeAssistantCompleted(frame, set)
+        return
+      case 'session.message.failed':
+        mergeAssistantFailed(frame, set)
         return
       case 'task.event':
         mergeTaskEventCompletionPayload(getFramePayload(frame), set)
@@ -443,6 +447,43 @@ const mergeAssistantCompleted = (
       }),
     }
   })
+}
+
+const mergeAssistantFailed = (
+  frame: AiRealtimeRawFrame,
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
+) => {
+  const payload = getFramePayload(frame) as RawSessionMessageFailedPayload
+  const sessionId = getStringField(payload, 'session_id', 'sessionId')
+  const messageId =
+    getStringField(payload, 'message_id', 'messageId') ??
+    getStringField(payload, 'user_message_id', 'userMessageId')
+  const taskRunId = getStringField(payload, 'task_run_id', 'taskRunId')
+  const errorPayload = isJsonObject(payload.error) ? payload.error : undefined
+  const content = getStringField(errorPayload, 'message') ?? 'AI 응답 생성 중 오류가 발생했습니다.'
+
+  if (sessionId === undefined || (messageId === undefined && taskRunId === undefined)) {
+    return
+  }
+
+  set((state) => ({
+    messagesBySessionId: {
+      ...state.messagesBySessionId,
+      [sessionId]: upsertAssistantMessage(state.messagesBySessionId[sessionId] ?? [], {
+        id: messageId ?? `failed:${taskRunId}`,
+        sessionId,
+        content,
+        status: 'failed',
+        taskRunId,
+      }),
+    },
+    sessionsById: upsertSessionPreview(state, {
+      sessionId,
+      lastMessage: content,
+      activeTaskRunId: null,
+      lastTaskRunStatus: 'FAILED',
+    }),
+  }))
 }
 
 const mergeTaskEventCompletionPayload = (

@@ -518,6 +518,28 @@ class WebSocketCommandRouter:
             )
         except Exception:
             logger.exception("session.message.create background 실행에 실패했습니다.")
+            # accepted 이후 background 실행이 실패해도 client가 placeholder를 무기한 기다리면 안 된다.
+            # 실패 frame은 durable TaskRun event와 별개로 현재 대화 UI의 pending assistant 상태를 닫는 역할을 한다.
+            try:
+                await context.send_json(
+                    _event_frame(
+                        "session.message.failed",
+                        {
+                            "session_id": session_id,
+                            "message_id": f"failed:{task.task_run_id}",
+                            "user_message_id": str(user_message_id),
+                            "task_run_id": task.task_run_id,
+                            "status": "FAILED",
+                            "error": {
+                                "code": "background_task_failed",
+                                "message": "AI 응답 생성 중 오류가 발생했습니다.",
+                                "retryable": True,
+                            },
+                        },
+                    )
+                )
+            except Exception:
+                logger.exception("session.message.failed frame 전송에 실패했습니다.")
 
     async def _run_resume_task(self, *, context: WebSocketBackgroundContext, task_run_id: str, approval_id: str, payload: dict[str, Any]) -> None:
         try:

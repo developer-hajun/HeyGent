@@ -29,6 +29,13 @@ def _patch_respond(monkeypatch, text: str = "WS_COMMAND_DONE") -> None:
     monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.respond", fake_respond)
 
 
+def _patch_respond_failure(monkeypatch) -> None:
+    async def fake_execute_initial(self, *, task, handler, resume_payload):
+        raise RuntimeError("테스트용 background 실패")
+
+    monkeypatch.setattr("app.domain.orchestration.agent.loop.TaskEngine._execute_initial", fake_execute_initial)
+
+
 def _authenticated_socket(client, *, user_id: str = "ws-user"):
     client.app.state.backend_auth_client = FakeBackendAuthClient(user_id=user_id)
     websocket_context = client.websocket_connect("/ai/api/v1/realtime/user/ws")
@@ -105,6 +112,37 @@ def test_ws_session_message_create_returns_accepted_before_completed_and_stores_
         assert "token-secret" not in str(task.input_payload)
         messages = client.app.state.session_store.list_messages(accepted["payload"]["session_id"])
         assert [message["role"] for message in messages] == ["user", "assistant"]
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_session_message_create_sends_failed_frame_after_background_error(client, monkeypatch):
+    _patch_respond_failure(monkeypatch)
+    context, websocket = _authenticated_socket(client, user_id="ws-fail-owner")
+    try:
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.create",
+                "requestId": "req_create_fail",
+                "payload": {
+                    "content": "실패 frame 테스트",
+                    "clientMessageId": "client_msg_ws_fail",
+                    "model": "gpt-test",
+                },
+            }
+        )
+
+        accepted = websocket.receive_json()
+        failed = _receive_until(websocket, "session.message.failed")
+
+        assert accepted["type"] == "session.message.accepted"
+        assert failed["payload"]["session_id"] == accepted["payload"]["session_id"]
+        assert failed["payload"]["message_id"] != str(accepted["payload"]["user_message_id"])
+        assert failed["payload"]["message_id"] == f"failed:{accepted['payload']['task_run_id']}"
+        assert failed["payload"]["task_run_id"] == accepted["payload"]["task_run_id"]
+        assert failed["payload"]["status"] == "FAILED"
+        assert failed["payload"]["error"]["code"] == "background_task_failed"
     finally:
         context.__exit__(None, None, None)
 
