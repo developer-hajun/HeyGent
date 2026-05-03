@@ -1,5 +1,5 @@
 import { Loader2, Send, Sparkles } from 'lucide-react'
-import { useState, type KeyboardEvent } from 'react'
+import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 
 type ChatComposerProps = {
   disabled?: boolean
@@ -15,6 +15,16 @@ export function ChatComposer({
   onSend,
 }: ChatComposerProps) {
   const [value, setValue] = useState('')
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current
+    if (textarea === null) return
+
+    // textarea는 CSS만으로 내용 높이에 맞춰 줄어들지 않아서 실제 scrollHeight로 맞춘다.
+    textarea.style.height = '0px'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 144)}px`
+  }, [value])
 
   const submit = () => {
     const trimmed = value.trim()
@@ -36,6 +46,7 @@ export function ChatComposer({
         <div className="border-border bg-card focus-within:ring-ring/20 flex min-h-12 flex-1 items-end gap-2 rounded-2xl border px-3 py-2 shadow-sm focus-within:ring-2">
           <Sparkles className="text-primary/70 mt-1 h-4 w-4 shrink-0" />
           <textarea
+            ref={textareaRef}
             value={value}
             onChange={(event) => setValue(event.target.value)}
             onKeyDown={handleKeyDown}

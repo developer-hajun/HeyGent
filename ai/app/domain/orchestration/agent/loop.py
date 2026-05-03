@@ -110,12 +110,43 @@ class TaskEngine:
         self.repository.update_task(task)
         await self._emit("task.started", task)
 
+        provisional_step: StepRun | None = None
+        if handler.spec.handler_key == "agent.loop":
+            provisional_step = self.planner.materialize_step(
+                task=task,
+                handler=handler,
+                input_payload=task.input_payload,
+                step_order=1,
+            )
+            # agent.loop는 첫 모델 응답 뒤에 의미 단계를 더 잘 추론할 수 있지만,
+            # 사용자는 provider/tool 호출이 시작되자마자 현재 단계가 보여야 한다.
+            provisional_step.status = StepStatus.RUNNING
+            provisional_step.started_at = provisional_step.started_at or task.started_at or utc_now()
+            task.current_step_run_id = provisional_step.step_run_id
+            self.repository.update_task(task)
+            self.repository.create_step(provisional_step)
+            await self._emit("step.created", task, provisional_step)
+            self.repository.update_step(provisional_step)
+            await self._emit("step.started", task, provisional_step)
+
         try:
             outcome = normalize_handler_outcome(
-                self.step_handler.execute(handler=handler, task=task, step=None, resume_payload=resume_payload)
+                self.step_handler.execute(
+                    handler=handler,
+                    task=task,
+                    step=provisional_step,
+                    resume_payload=resume_payload,
+                )
             )
         except Exception as error:
             outcome = self._build_handler_failure_outcome(error)
+            if provisional_step is not None:
+                return await self._apply_outcome(
+                    task=task,
+                    step=provisional_step,
+                    handler=handler,
+                    outcome=outcome,
+                )
             step = self.planner.materialize_step(
                 task=task,
                 handler=handler,
@@ -132,6 +163,20 @@ class TaskEngine:
             await self._emit("step.created", task, step)
             await self._emit("step.started", task, step)
             return await self._apply_outcome(task=task, step=step, handler=handler, outcome=outcome)
+
+        if provisional_step is not None:
+            observed_step = await self._materialize_initial_observed_steps(
+                task=task,
+                handler=handler,
+                outcome=outcome,
+                existing_first_step=provisional_step,
+            )
+            return await self._apply_outcome(
+                task=task,
+                step=observed_step or provisional_step,
+                handler=handler,
+                outcome=outcome,
+            )
 
         step = await self._materialize_initial_observed_steps(task=task, handler=handler, outcome=outcome)
         if step is None:
@@ -153,7 +198,14 @@ class TaskEngine:
 
         return await self._apply_outcome(task=task, step=step, handler=handler, outcome=outcome)
 
-    async def _materialize_initial_observed_steps(self, *, task: TaskRun, handler, outcome: dict) -> StepRun | None:
+    async def _materialize_initial_observed_steps(
+        self,
+        *,
+        task: TaskRun,
+        handler,
+        outcome: dict,
+        existing_first_step: StepRun | None = None,
+    ) -> StepRun | None:
         observed_steps = [item for item in outcome.get("observed_steps") or [] if isinstance(item, dict)]
         if not observed_steps:
             return None
@@ -162,7 +214,7 @@ class TaskEngine:
         now = utc_now()
         active_step: StepRun | None = None
         for index, candidate in enumerate(self._observed_steps_to_materialize(observed_steps, observed_step), start=1):
-            step = self.planner.materialize_observed_semantic_step(
+            materialized_step = self.planner.materialize_observed_semantic_step(
                 task=task,
                 handler=handler,
                 input_payload=task.input_payload,
@@ -171,13 +223,19 @@ class TaskEngine:
                 outcome=outcome,
                 include_outcome_detail=candidate is observed_step,
             )
-            self.repository.create_step(step)
-            await self._emit("step.created", task, step)
+            if index == 1 and existing_first_step is not None:
+                step = self._reuse_observed_step_anchor(existing_first_step, materialized_step)
+                self.repository.update_step(step)
+            else:
+                step = materialized_step
+                self.repository.create_step(step)
+                await self._emit("step.created", task, step)
 
             step.status = StepStatus.RUNNING
             step.started_at = step.started_at or task.started_at or now
             self.repository.update_step(step)
-            await self._emit("step.started", task, step)
+            if not (index == 1 and existing_first_step is step):
+                await self._emit("step.started", task, step)
 
             if candidate is observed_step:
                 active_step = step
@@ -210,6 +268,45 @@ class TaskEngine:
         task.current_step_run_id = active_step.step_run_id
         self.repository.update_task(task)
         return active_step
+
+    @staticmethod
+    def _reuse_observed_step_anchor(existing_step: StepRun, materialized_step: StepRun) -> StepRun:
+        # provider 호출 전에 먼저 보여준 StepRun(사용자에게 보이는 의미 단계)을
+        # 모델이 나중에 선언한 첫 의미 단계로 갱신해, UI 실시간성과 단계 개수를 함께 지킨다.
+        existing_step.step_order = materialized_step.step_order
+        existing_step.step_type = materialized_step.step_type
+        existing_step.handler_key = materialized_step.handler_key
+        existing_step.title = materialized_step.title
+        existing_step.input_payload = materialized_step.input_payload
+        existing_step.detail_json = TaskEngine._replace_step_anchor_id(
+            materialized_step.detail_json,
+            old_step_run_id=materialized_step.step_run_id,
+            new_step_run_id=existing_step.step_run_id,
+        )
+        existing_step.summary_message = materialized_step.summary_message
+        return existing_step
+
+    @staticmethod
+    def _replace_step_anchor_id(value, *, old_step_run_id: str, new_step_run_id: str):
+        if isinstance(value, dict):
+            return {
+                key: TaskEngine._replace_step_anchor_id(
+                    item,
+                    old_step_run_id=old_step_run_id,
+                    new_step_run_id=new_step_run_id,
+                )
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [
+                TaskEngine._replace_step_anchor_id(
+                    item,
+                    old_step_run_id=old_step_run_id,
+                    new_step_run_id=new_step_run_id,
+                )
+                for item in value
+            ]
+        return new_step_run_id if value == old_step_run_id else value
 
     @staticmethod
     def _current_observed_step(observed_steps: list[dict]) -> dict:

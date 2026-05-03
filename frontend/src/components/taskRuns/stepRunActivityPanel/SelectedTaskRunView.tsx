@@ -1,16 +1,12 @@
 import { RotateCcw } from 'lucide-react'
 import type { ActivityItemView, RawApproval, RawStepRun, RawTaskRun } from '@/types/taskRuns'
-import { toTaskRunStatusTone } from '@/utils/taskRunStatusView'
 import { ActivityEventItem } from './ActivityEventItem'
 import { ApprovalCard } from './ApprovalCard'
-import { getAnswerProgressTitle, toProgressSentence } from './activityPanelText'
 import { StepProgressItem } from './StepProgressItem'
-import { TaskRunStatusIcon } from './TaskRunStatusIcon'
 
 export function SelectedTaskRunView({
   taskRunId,
   taskRun,
-  prompt,
   steps,
   approvals,
   activities,
@@ -33,28 +29,12 @@ export function SelectedTaskRunView({
 
   return (
     <div className="space-y-5">
-      <section className="bg-card border-border rounded-lg border p-3">
-        <div className="flex items-start gap-3">
-          <TaskRunStatusIcon tone={toTaskRunStatusTone(status)} />
-          <div className="min-w-0 flex-1">
-            <h3 className="text-foreground text-sm font-semibold [overflow-wrap:anywhere] break-words">
-              {getAnswerProgressTitle(taskRun, prompt)}
-            </h3>
-            {prompt && (
-              <p className="text-muted-foreground mt-1 line-clamp-2 text-xs [overflow-wrap:anywhere] break-words">
-                {prompt}
-              </p>
-            )}
-            <p className="text-muted-foreground mt-2 text-sm">{toProgressSentence(status)}</p>
-          </div>
-        </div>
-        {replayNeeded && (
-          <div className="border-border bg-muted/40 text-muted-foreground mt-3 flex items-center gap-2 rounded-md border px-2.5 py-2 text-xs">
-            <RotateCcw className="h-3.5 w-3.5" />
-            진행 기록 일부를 다시 불러와야 합니다.
-          </div>
-        )}
-      </section>
+      {replayNeeded && (
+        <section className="border-border bg-muted/40 text-muted-foreground flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
+          <RotateCcw className="h-3.5 w-3.5" />
+          진행 기록 일부를 다시 불러와야 합니다.
+        </section>
+      )}
 
       {approvals.map((approval) => (
         <ApprovalCard key={approval.approval_id} approval={approval} taskRunId={taskRunId} />

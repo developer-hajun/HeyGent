@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react'
 import type { ActivityItemView, RawStepRun } from '@/types/taskRuns'
 import { toTaskRunStatusTone } from '@/utils/taskRunStatusView'
 import { ActivityEventItem } from './ActivityEventItem'
@@ -15,18 +16,19 @@ export function StepProgressItem({
 }) {
   return (
     <li className="bg-card border-border rounded-lg border">
-      <details>
-        <summary className="hover:bg-muted/60 flex cursor-pointer list-none items-start gap-3 rounded-lg p-3 transition-colors">
+      <details className="group">
+        <summary className="hover:bg-muted/60 flex min-h-20 cursor-pointer list-none items-center gap-3 rounded-lg p-3 transition-colors">
           <TaskRunStatusIcon tone={toTaskRunStatusTone(step.status)} />
           <span className="min-w-0 flex-1">
-            <span className="text-foreground block text-sm font-medium [overflow-wrap:anywhere] break-words">
+            <span className="text-foreground line-clamp-2 block text-sm font-medium [overflow-wrap:anywhere] break-words">
               {toUserFacingTaskTitle(step.title ?? step.goal ?? '답변 준비')}
             </span>
-            <span className="text-muted-foreground mt-1 block text-xs">
+            <span className="text-muted-foreground mt-1 line-clamp-1 block text-xs">
               {toProgressSentence(step.status)}
             </span>
           </span>
           <span className="text-muted-foreground text-[11px]">{activities.length}개</span>
+          <ChevronDown className="text-muted-foreground h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
         </summary>
         <div className="border-border border-t p-3">
           {activities.length === 0 ? (
