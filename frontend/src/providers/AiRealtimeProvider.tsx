@@ -104,6 +104,14 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
           reconnectAttemptRef.current = 0
           setAuthStatus('authenticated')
           setConnectionStatus('authenticated')
+          void useChatStore
+            .getState()
+            .fetchSessions()
+            .catch((error) => {
+              setLastError(
+                error instanceof Error ? error.message : '세션 목록 조회에 실패했습니다.',
+              )
+            })
           void recoverAndResubscribeTasks(socketClient)
           return
         }

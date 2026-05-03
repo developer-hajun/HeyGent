@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect } from 'react'
+import { useRef, useCallback, useEffect, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router'
 import {
   ChevronLeft,
@@ -17,16 +17,25 @@ import {
   Edit3,
 } from 'lucide-react'
 import { useState } from 'react'
-import { sessions } from '@/data/sessions'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { useUIStore } from '@/store/useUIStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useAuthStore } from '@/store/useAuthStore'
+import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
+import { useChatStore } from '@/store/useChatStore'
 import { logout } from '@/apis/auth'
 import { updateMyInfo } from '@/apis/users'
+import type { RawAiSession } from '@/types/aiChat'
 
-const runningSessionIds = new Set(['S-1', 'S-3'])
+type SidebarSession = {
+  id: string
+  title: string
+  preview: string
+  time: string
+  isRunning: boolean
+  raw: RawAiSession
+}
 
 export function LeftSidebar() {
   const {
@@ -40,11 +49,35 @@ export function LeftSidebar() {
   const { selectedSessionId, setSelectedSessionId } = useSessionStore()
   const [profileOpen, setProfileOpen] = useState(false)
   const [sessionsPopoverOpen, setSessionsPopoverOpen] = useState(false)
+  const commandClient = useAiRealtimeStore((state) => state.commandClient)
+  const realtimeStatus = useAiRealtimeStore((state) => state.connectionStatus)
+  const sessionsById = useChatStore((state) => state.sessionsById)
+  const chatError = useChatStore((state) => state.lastError)
+  const fetchSessions = useChatStore((state) => state.fetchSessions)
   const isResizing = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
   const navigate = useNavigate()
   const location = useLocation()
+  const sidebarSessions = useMemo(
+    () =>
+      Object.values(sessionsById)
+        .map(toSidebarSession)
+        .sort((first, second) => getSessionTime(second.raw) - getSessionTime(first.raw)),
+    [sessionsById],
+  )
+  const runningSessions = useMemo(
+    () => sidebarSessions.filter((session) => session.isRunning),
+    [sidebarSessions],
+  )
+
+  useEffect(() => {
+    if (commandClient === null) {
+      return
+    }
+
+    void fetchSessions().catch(() => undefined)
+  }, [commandClient, fetchSessions])
 
   const handleNewChat = () => {
     navigate('/new-chat')
@@ -143,7 +176,7 @@ export function LeftSidebar() {
                   <p className="text-muted-foreground text-xs">최근 대화 세션</p>
                 </div>
                 <div className="space-y-1.5">
-                  {sessions.slice(0, 3).map((session) => {
+                  {sidebarSessions.slice(0, 3).map((session) => {
                     const isActive =
                       location.pathname === '/agent-status' && selectedSessionId === session.id
                     const isChatActive = location.pathname === `/session/${session.id}`
@@ -180,7 +213,7 @@ export function LeftSidebar() {
                                 : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                             }`}
                           >
-                            {runningSessionIds.has(session.id) && (
+                            {session.isRunning && (
                               <Loader2 className="text-primary absolute -top-0.5 -right-0.5 h-3 w-3 animate-spin" />
                             )}
                             <MessageCircle className="h-4 w-4" />
@@ -194,29 +227,30 @@ export function LeftSidebar() {
                       </div>
                     )
                   })}
+                  {sidebarSessions.length === 0 && (
+                    <EmptySessionNotice realtimeStatus={realtimeStatus} error={chatError} />
+                  )}
                 </div>
               </PopoverContent>
             </Popover>
 
             {/* Running session loading indicators */}
-            {sessions
-              .filter((s) => runningSessionIds.has(s.id))
-              .map((s) => (
-                <CollapsedTooltip key={s.id} label={s.title}>
-                  <button
-                    onClick={(event) => handleOpenChatSession(s.id, event)}
-                    aria-label="채팅 열기"
-                    className={`hover:bg-sidebar-accent relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
-                      location.pathname === `/session/${s.id}`
-                        ? 'text-primary'
-                        : 'text-muted-foreground'
-                    }`}
-                  >
-                    <Loader2 className="text-primary absolute top-1 right-1 h-3 w-3 animate-spin" />
-                    <MessageCircle className="h-4 w-4" strokeWidth={2.5} />
-                  </button>
-                </CollapsedTooltip>
-              ))}
+            {runningSessions.map((session) => (
+              <CollapsedTooltip key={session.id} label={session.title}>
+                <button
+                  onClick={(event) => handleOpenChatSession(session.id, event)}
+                  aria-label="채팅 열기"
+                  className={`hover:bg-sidebar-accent relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+                    location.pathname === `/session/${session.id}`
+                      ? 'text-primary'
+                      : 'text-muted-foreground'
+                  }`}
+                >
+                  <Loader2 className="text-primary absolute top-1 right-1 h-3 w-3 animate-spin" />
+                  <MessageCircle className="h-4 w-4" strokeWidth={2.5} />
+                </button>
+              </CollapsedTooltip>
+            ))}
 
             <div className="flex-1" />
 
@@ -274,11 +308,10 @@ export function LeftSidebar() {
                     <span className="text-muted-foreground text-sm">새 채팅 시작</span>
                   </button>
 
-                  {sessions.map((session) => {
+                  {sidebarSessions.map((session) => {
                     const isActive =
                       location.pathname === '/agent-status' && selectedSessionId === session.id
                     const isChatActive = location.pathname === `/session/${session.id}`
-                    const isRunning = runningSessionIds.has(session.id)
                     return (
                       <div
                         key={session.id}
@@ -316,7 +349,7 @@ export function LeftSidebar() {
                               : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
                           }`}
                         >
-                          {isRunning && (
+                          {session.isRunning && (
                             <Loader2 className="text-primary absolute -top-0.5 -right-0.5 h-3 w-3 animate-spin" />
                           )}
                           <MessageCircle className="h-4 w-4" />
@@ -324,6 +357,9 @@ export function LeftSidebar() {
                       </div>
                     )
                   })}
+                  {sidebarSessions.length === 0 && (
+                    <EmptySessionNotice realtimeStatus={realtimeStatus} error={chatError} />
+                  )}
                 </div>
               </section>
             </div>
@@ -367,6 +403,91 @@ export function LeftSidebar() {
       </div>
     </>
   )
+}
+
+function EmptySessionNotice({
+  realtimeStatus,
+  error,
+}: {
+  realtimeStatus: string
+  error: string | null
+}) {
+  const message =
+    error ??
+    (realtimeStatus === 'authenticated' ? '아직 표시할 대화 세션이 없습니다.' : 'AI 연결 준비 중')
+
+  return (
+    <div className="border-sidebar-border text-muted-foreground rounded-lg border border-dashed p-3 text-xs leading-5">
+      {message}
+    </div>
+  )
+}
+
+function toSidebarSession(session: RawAiSession): SidebarSession {
+  const title =
+    getStringValue(session.title) ??
+    getStringValue(session.session_key) ??
+    `세션 ${session.session_id}`
+  const preview =
+    getStringValue(session.last_message) ??
+    getStringValue(session.preview) ??
+    getMessageCountPreview(session) ??
+    '대화 내용 없음'
+  const activeTaskRunId =
+    getStringValue(session.active_task_run_id) ?? getStringValue(session.activeTaskRunId)
+  const taskRunStatus =
+    getStringValue(session.last_task_run_status) ?? getStringValue(session.lastTaskRunStatus)
+
+  return {
+    id: session.session_id,
+    title,
+    preview,
+    time: formatSessionTime(session),
+    isRunning: activeTaskRunId !== undefined || isRunningTaskRunStatus(taskRunStatus),
+    raw: session,
+  }
+}
+
+function getStringValue(value: unknown) {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined
+}
+
+function getMessageCountPreview(session: RawAiSession) {
+  const count = typeof session.message_count === 'number' ? session.message_count : undefined
+  if (count === undefined) {
+    return undefined
+  }
+  return `${count}개 메시지`
+}
+
+function getSessionTime(session: RawAiSession) {
+  const rawTime =
+    getStringValue(session.last_message_at) ??
+    getStringValue(session.updated_at) ??
+    getStringValue(session.created_at)
+  if (rawTime === undefined) {
+    return 0
+  }
+  const time = new Date(rawTime).getTime()
+  return Number.isFinite(time) ? time : 0
+}
+
+function formatSessionTime(session: RawAiSession) {
+  const time = getSessionTime(session)
+  if (time === 0) {
+    return '시간 정보 없음'
+  }
+
+  return new Intl.DateTimeFormat('ko-KR', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(new Date(time))
+}
+
+function isRunningTaskRunStatus(status: string | undefined) {
+  return status === 'PENDING' || status === 'RUNNING' || status === 'WAITING'
 }
 
 // ────────────────────────────────────────────────────────────────────────────
