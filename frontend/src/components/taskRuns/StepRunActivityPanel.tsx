@@ -5,6 +5,7 @@ import {
   Loader2,
   RotateCcw,
   ShieldCheck,
+  X,
   XCircle,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
@@ -51,6 +52,7 @@ export function StepRunActivityPanel({
             sessionId={sessionId}
             selectedTaskRunId={selectedTaskRunId}
             onSelectTaskRun={onSelectTaskRun}
+            onClose={() => onOpenChange(false)}
           />
         </aside>
       )}
@@ -67,6 +69,7 @@ export function StepRunActivityPanel({
               sessionId={sessionId}
               selectedTaskRunId={selectedTaskRunId}
               onSelectTaskRun={onSelectTaskRun}
+              onClose={() => onOpenChange(false)}
             />
           </DrawerContent>
         </Drawer>
@@ -79,10 +82,12 @@ function PanelBody({
   sessionId,
   selectedTaskRunId,
   onSelectTaskRun,
+  onClose,
 }: {
   sessionId: string
   selectedTaskRunId?: string
   onSelectTaskRun: (taskRunId: string | undefined) => void
+  onClose: () => void
 }) {
   const messages = useChatStore((state) =>
     sessionId === '' ? EMPTY_MESSAGES : (state.messagesBySessionId[sessionId] ?? EMPTY_MESSAGES),
@@ -166,8 +171,20 @@ function PanelBody({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-border border-b p-4">
-        <p className="text-muted-foreground text-xs">세션 {sessionId}</p>
-        <h2 className="text-foreground mt-1 text-sm font-semibold">TaskRun 추적</h2>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-muted-foreground truncate text-xs">세션 {sessionId}</p>
+            <h2 className="text-foreground mt-1 text-sm font-semibold">TaskRun 추적</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="활동 패널 닫기"
+            className="hover:bg-muted text-muted-foreground hover:text-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       </div>
       <div className="border-border min-h-0 border-b p-3">
         {taskRunSummaries.length === 0 ? (
