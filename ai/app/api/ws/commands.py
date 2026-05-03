@@ -55,6 +55,7 @@ class WebSocketCommandContext:
     session_service: Any
     send_json: Callable[[dict[str, Any]], Awaitable[None]]
     background_tasks: set[asyncio.Task]
+    after_response_callbacks: list[Callable[[], None]]
 
 
 @dataclass(slots=True)
@@ -105,6 +106,7 @@ class WebSocketCommandRouter:
             await self._send_error(context, request_id, "invalid_payload", "payload must be an object")
             return True
 
+        callback_start_index = len(context.after_response_callbacks)
         try:
             response_type, response_payload = await handler(payload, context)
         except WebSocketCommandError as error:
@@ -116,6 +118,10 @@ class WebSocketCommandRouter:
             return True
 
         await self._send_result(context, response_type, request_id, response_payload)
+        callbacks = context.after_response_callbacks[callback_start_index:]
+        del context.after_response_callbacks[callback_start_index:]
+        for callback in callbacks:
+            callback()
         return True
 
     async def send_unknown_command_error(self, message: dict[str, Any], context: WebSocketCommandContext) -> None:
@@ -142,7 +148,7 @@ class WebSocketCommandRouter:
         return (
             "session.list.result",
             {
-                "items": [_public_session_payload(session) for session in selected],
+                "items": [_public_session_payload(session, context=context) for session in selected],
                 "page": page,
                 "page_size": page_size,
                 "total_count": len(sessions),
@@ -187,6 +193,14 @@ class WebSocketCommandRouter:
         existing = self._accepted_messages.get(idempotency_key)
         if existing is not None:
             return "session.message.accepted", dict(existing)
+        durable_existing = _find_accepted_message_by_client_id(
+            context,
+            session_id=session_id,
+            client_message_id=client_message_id,
+        )
+        if durable_existing is not None:
+            self._accepted_messages[idempotency_key] = durable_existing
+            return "session.message.accepted", dict(durable_existing)
 
         if session_id:
             session = _get_public_session(context, session_id)
@@ -196,17 +210,6 @@ class WebSocketCommandRouter:
             session_id = str(session["id"])
 
         session_store = context.websocket.app.state.session_store
-        user_message_id = session_store.append_message(
-            session_id=session_id,
-            role="user",
-            content=content,
-            metadata={
-                "source": _PUBLIC_SESSION_SOURCE,
-                # clientMessageId는 재전송/낙관적 UI 병합을 추적하기 위한 idempotency 키다.
-                # accessToken과 달리 비밀값이 아니며, durable 저장되어도 보안 경계가 흔들리지 않는다.
-                "client_message_id": client_message_id,
-            },
-        )
         transcript_session_id = _create_task_transcript_session(
             session_store,
             session_id=session_id,
@@ -230,6 +233,18 @@ class WebSocketCommandRouter:
             handler=handler,
         )
         context.websocket.app.state.repository.create_task(task)
+        user_message_ref = session_store.append_message(
+            session_id=session_id,
+            role="user",
+            content=content,
+            metadata={
+                "source": _PUBLIC_SESSION_SOURCE,
+                # clientMessageId는 재전송/낙관적 UI 병합을 추적하기 위한 idempotency 키다.
+                # accessToken과 달리 비밀값이 아니며, durable 저장되어도 보안 경계가 흔들리지 않는다.
+                "client_message_id": client_message_id,
+                "task_run_id": task.task_run_id,
+            },
+        )
         context.session_service.subscribe_task(
             session_id=context.gateway_session_id,
             websocket=context.websocket,
@@ -238,7 +253,7 @@ class WebSocketCommandRouter:
 
         accepted = {
             "session_id": session_id,
-            "user_message_id": str(user_message_id),
+            "user_message_id": _stored_message_id(session_store, session_id=session_id, stored_ref=user_message_ref),
             "assistant_message_id": None,
             "task_run_id": task.task_run_id,
             "status": task.status,
@@ -246,18 +261,22 @@ class WebSocketCommandRouter:
         }
         self._accepted_messages[idempotency_key] = accepted
 
-        background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
-        background_task = asyncio.create_task(
-            self._run_created_message_task(
-                context=background_context,
-                session_id=session_id,
-                user_message_id=user_message_id,
-                task=task,
-                handler=handler,
+        def start_background_task() -> None:
+            background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
+            background_task = asyncio.create_task(
+                self._run_created_message_task(
+                    context=background_context,
+                    session_id=session_id,
+                    user_message_id=user_message_ref,
+                    task=task,
+                    handler=handler,
+                )
             )
-        )
-        context.background_tasks.add(background_task)
-        background_task.add_done_callback(context.background_tasks.discard)
+            context.background_tasks.add(background_task)
+            background_task.add_done_callback(context.background_tasks.discard)
+
+        # accepted frame을 먼저 보낸 뒤 agent.loop/task.event fan-out을 시작한다.
+        context.after_response_callbacks.append(start_background_task)
         return "session.message.accepted", dict(accepted)
 
     async def _task_runs_active_list(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
@@ -357,14 +376,22 @@ class WebSocketCommandRouter:
             if after_sequence is not None:
                 events = [event for event in events if int(event.get("sequence") or 0) > after_sequence]
             events = events[:limit]
-            if after_sequence is not None and not events and projection.get_latest_sequence(task_run_id) is not None:
-                retention_exceeded = projection.get_latest_sequence(task_run_id) > after_sequence
+            if after_sequence is not None:
+                latest_sequence = projection.get_latest_sequence(task_run_id)
+                min_returned_sequence = min((int(event.get("sequence") or 0) for event in events), default=None)
+                retention_exceeded = bool(
+                    latest_sequence is not None
+                    and latest_sequence > after_sequence
+                    and (not events or (min_returned_sequence is not None and min_returned_sequence > after_sequence + 1))
+                )
 
-        if not events:
+        if not events or retention_exceeded:
             stored_events = repository.list_events(task_run_id)
             if after_sequence is not None:
                 stored_events = [event for event in stored_events if int(event.sequence or 0) > after_sequence]
-            events = [_jsonable(event) for event in stored_events[:limit]]
+            durable_events = [_jsonable(event) for event in stored_events[:limit]]
+            if durable_events:
+                events = durable_events
 
         latest_sequence = max((int(event.get("sequence") or 0) for event in events), default=None)
         return (
@@ -384,6 +411,7 @@ class WebSocketCommandRouter:
         resume_payload = payload.get("payload") or {}
         if not isinstance(resume_payload, dict):
             raise WebSocketCommandError("invalid_payload", "payload.payload must be an object")
+        resume_payload = _normalize_resume_payload(resume_payload)
         accepted_key = (task_run_id, command_id)
         existing = self._accepted_resumes.get(accepted_key)
         if existing is not None:
@@ -452,7 +480,7 @@ class WebSocketCommandRouter:
                 resume_payload=None,
             )
             content = _assistant_content_from_task(completed_task)
-            assistant_message_id = context.websocket.app.state.session_store.append_message(
+            assistant_message_ref = context.websocket.app.state.session_store.append_message(
                 session_id=session_id,
                 role="assistant",
                 content=content,
@@ -471,7 +499,11 @@ class WebSocketCommandRouter:
                     "session.message.completed",
                     {
                         "session_id": session_id,
-                        "message_id": str(assistant_message_id),
+                        "message_id": _stored_message_id(
+                            context.websocket.app.state.session_store,
+                            session_id=session_id,
+                            stored_ref=assistant_message_ref,
+                        ),
                         "content": content,
                         "task_run_id": completed_task.task_run_id,
                         "status": completed_task.status,
@@ -582,8 +614,8 @@ def _is_public_session(session: dict[str, Any]) -> bool:
     return session.get("source") == _PUBLIC_SESSION_SOURCE or metadata.get("source") == _PUBLIC_SESSION_SOURCE
 
 
-def _public_session_payload(session: dict[str, Any]) -> dict[str, Any]:
-    return {
+def _public_session_payload(session: dict[str, Any], *, context: WebSocketCommandContext | None = None) -> dict[str, Any]:
+    payload = {
         "session_id": str(session["id"]),
         "session_key": session.get("session_key"),
         "title": session.get("title"),
@@ -597,14 +629,51 @@ def _public_session_payload(session: dict[str, Any]) -> dict[str, Any]:
         "updated_at": session.get("updated_at"),
         "ended_at": session.get("ended_at"),
     }
+    if context is not None:
+        payload.update(_session_list_preview_payload(context, session_id=str(session["id"])))
+    return payload
+
+
+def _session_list_preview_payload(context: WebSocketCommandContext, *, session_id: str) -> dict[str, Any]:
+    """세션 목록만으로 사이드바를 복구할 수 있게 최근 메시지와 TaskRun 상태를 붙인다.
+
+    상세 화면은 별도 messages/snapshot query를 다시 호출하지만, 목록은 이 값만으로
+    mock preview나 임의 spinner 없이 실제 DB 상태를 표시한다.
+    """
+
+    result: dict[str, Any] = {
+        "last_message": None,
+        "last_message_at": None,
+        "active_task_run_id": None,
+        "last_task_run_status": None,
+    }
+
+    messages = context.websocket.app.state.session_store.list_messages(session_id)
+    if messages:
+        last_message = messages[-1]
+        result["last_message"] = last_message.get("content")
+        result["last_message_at"] = last_message.get("timestamp")
+
+    tasks = context.websocket.app.state.repository.list_tasks(session_key=session_id, limit=50, offset=0)
+    if not tasks:
+        return result
+
+    active_task = next((task for task in tasks if task.status in _ACTIVE_TASK_STATUSES), None)
+    latest_task = active_task or tasks[0]
+    result["last_task_run_status"] = latest_task.status
+    if active_task is not None:
+        result["active_task_run_id"] = active_task.task_run_id
+    return result
 
 
 def _message_payload(message: dict[str, Any]) -> dict[str, Any]:
     metadata = dict(message.get("metadata") or {})
-    message_id = int(message["id"])
+    sequence = int(message["id"])
+    durable_message_id = message.get("message_id") or message.get("messageId") or sequence
     return {
-        "id": message_id,
-        "message_id": str(message_id),
+        "id": sequence,
+        "message_id": str(durable_message_id),
+        "message_sequence": sequence,
         "session_id": str(message["session_id"]),
         "role": str(message["role"]),
         "content": message.get("content"),
@@ -615,6 +684,71 @@ def _message_payload(message: dict[str, Any]) -> dict[str, Any]:
         "created_at": message.get("timestamp"),
         "finish_reason": message.get("finish_reason"),
     }
+
+
+def _stored_message_id(session_store: Any, *, session_id: str, stored_ref: Any) -> str:
+    """append_message 반환값을 WebSocket용 durable message_id로 정규화한다.
+
+    Postgres 저장소는 HTTP 증분 조회 호환성을 위해 append_message에서 세션 내 sequence를
+    돌려줄 수 있다. WebSocket 채팅 store의 최종 key는 DB message_id가 기준이므로,
+    저장 직후 row를 다시 읽어 실제 message_id가 있으면 그 값을 우선 사용한다.
+    """
+
+    stored_ref_text = str(stored_ref)
+    for message in session_store.list_messages(session_id):
+        message_payload = _message_payload(message)
+        if str(message_payload["id"]) == stored_ref_text or str(message_payload["message_id"]) == stored_ref_text:
+            return str(message_payload["message_id"])
+    return stored_ref_text
+
+
+def _find_accepted_message_by_client_id(
+    context: WebSocketCommandContext,
+    *,
+    session_id: str | None,
+    client_message_id: str,
+) -> dict[str, Any] | None:
+    """durable 저장소에서 clientMessageId 재전송 여부를 찾는다."""
+
+    session_store = context.websocket.app.state.session_store
+    candidate_sessions = [session_store.get_session(session_id)] if session_id else session_store.list_sessions(user_id=context.auth.user_id, limit=10_000, offset=0)
+    for session in candidate_sessions:
+        if session is None or not _is_public_session(session):
+            continue
+        if str(session.get("user_id") or "") != str(context.auth.user_id):
+            continue
+        public_session_id = str(session["id"])
+        for message in session_store.list_messages(public_session_id):
+            metadata = dict(message.get("metadata") or {})
+            if metadata.get("client_message_id") != client_message_id and metadata.get("clientMessageId") != client_message_id:
+                continue
+            task_run_id = metadata.get("task_run_id") or metadata.get("taskRunId")
+            if not task_run_id:
+                continue
+            return {
+                "session_id": public_session_id,
+                "user_message_id": str(_message_payload(message)["message_id"]),
+                "assistant_message_id": _find_assistant_message_id_for_task(session_store, public_session_id, str(task_run_id)),
+                "task_run_id": str(task_run_id),
+                "status": _task_status_for_payload(context, str(task_run_id)),
+                "client_message_id": client_message_id,
+            }
+    return None
+
+
+def _find_assistant_message_id_for_task(session_store: Any, session_id: str, task_run_id: str) -> str | None:
+    for message in session_store.list_messages(session_id):
+        if str(message.get("role") or "") != "assistant":
+            continue
+        metadata = dict(message.get("metadata") or {})
+        if str(metadata.get("task_run_id") or metadata.get("taskRunId") or "") == task_run_id:
+            return str(_message_payload(message)["message_id"])
+    return None
+
+
+def _task_status_for_payload(context: WebSocketCommandContext, task_run_id: str) -> str | None:
+    task = context.websocket.app.state.repository.get_task(task_run_id)
+    return str(task.status) if task is not None else None
 
 
 def _active_task_payload(task: Any, steps: list[Any], *, source: str, repository: Any) -> dict[str, Any]:
@@ -687,6 +821,26 @@ def _pending_approval_payload(approval: dict[str, Any] | None) -> dict[str, Any]
         "can_approve": bool(approval.get("can_approve", approval.get("status") == "PENDING")),
         "can_reject": bool(approval.get("can_reject", approval.get("status") == "PENDING")),
     }
+
+
+def _normalize_resume_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """프론트 승인 command shape를 agent.loop resume shape로 맞춘다.
+
+    UI는 디버깅을 위해 decision/response를 함께 보내지만, 실제 tool resume 로직은
+    top-level approved/reason/message 값을 읽는다. 서버 경계에서 한 번만 펴서 저장/실행한다.
+    """
+
+    normalized = dict(payload)
+    response = normalized.get("response")
+    if isinstance(response, dict):
+        normalized.update(response)
+
+    decision = str(normalized.get("decision") or "").strip().upper()
+    if "approved" not in normalized and decision:
+        normalized["approved"] = decision in {"APPROVED", "APPROVE", "ACCEPTED", "YES"}
+    if normalized.get("approved") is False and not normalized.get("reason"):
+        normalized["reason"] = normalized.get("message") or "사용자가 도구 실행을 거절했습니다"
+    return normalized
 
 
 def _ensure_owner(context: WebSocketCommandContext, owner_key: Any) -> None:

@@ -156,6 +156,7 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
     user_id: str | None = None
     send_lock = asyncio.Lock()
     background_tasks: set[asyncio.Task] = set()
+    after_response_callbacks: list[Callable[[], None]] = []
     client_key = _websocket_client_key(websocket)
     rate_limiter = getattr(websocket.app.state, "ws_auth_rate_limiter", None)
     if not _websocket_origin_allowed(websocket):
@@ -207,6 +208,7 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
             session_service=session_service,
             send_json=send_json,
             background_tasks=background_tasks,
+            after_response_callbacks=after_response_callbacks,
         )
         while True:
             message = await websocket.receive_json()

@@ -443,7 +443,9 @@ function toSidebarSession(session: RawAiSession): SidebarSession {
     title,
     preview,
     time: formatSessionTime(session),
-    isRunning: activeTaskRunId !== undefined || isRunningTaskRunStatus(taskRunStatus),
+    isRunning:
+      isRunningTaskRunStatus(taskRunStatus) ||
+      (activeTaskRunId !== undefined && taskRunStatus === undefined),
     raw: session,
   }
 }
