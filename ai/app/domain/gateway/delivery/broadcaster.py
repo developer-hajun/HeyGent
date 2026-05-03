@@ -13,10 +13,13 @@ class EventBroadcaster:
         self.fanout_publisher = fanout_publisher
 
     async def publish(self, event) -> None:
-        if self.fanout_publisher is not None:
-            # Redis Pub/Sub subscriber가 local socket 전송을 담당하므로 같은 인스턴스 중복 전송을 피한다.
-            await self.fanout_publisher.publish(event)
-            return
         topic = self.topic_router.topic_for_event(event)
         payload = build_websocket_event(event)
+        if self.fanout_publisher is not None:
+            # 같은 프로세스의 WebSocket에는 즉시 보낸다. Redis Pub/Sub subscriber는 agent loop가
+            # 긴 provider/tool 호출 중일 때 같은 event loop에서 늦게 돌 수 있어서, Pub/Sub만 의존하면
+            # step.created/step.started가 최종 답변 뒤에 한꺼번에 보인다.
+            await self.manager.broadcast(payload, topic)
+            await self.fanout_publisher.publish(event)
+            return
         await self.manager.broadcast(payload, topic)
