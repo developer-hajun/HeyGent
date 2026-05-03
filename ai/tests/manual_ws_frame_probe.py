@@ -10,6 +10,7 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 from urllib import request as urllib_request
+from uuid import uuid4
 
 import websockets
 
@@ -123,18 +124,20 @@ async def run_basic_scenario(socket, args: argparse.Namespace) -> None:
 
 
 async def run_chat_contract_scenario(socket, args: argparse.Namespace) -> None:
-    await send_json(socket, build_command("session.list", "req_manual_session_list_001"))
-    await receive_until_quiet(socket, args.timeout, args.max_frames)
+    run_id = args.run_id
+    await send_json(socket, build_command("session.list", f"req_manual_session_list_{run_id}"))
+    await receive_json(socket, args.timeout)
 
     await send_json(
         socket,
         build_command(
             "session.message.create",
-            "req_manual_message_001",
+            f"req_manual_message_{run_id}",
             {
                 "sessionId": args.session_id,
                 "content": args.content,
-                "clientMessageId": "client_msg_manual_001",
+                # 매 실행마다 고유한 clientMessageId를 써야 idempotency 재사용 때문에 완료 이벤트를 놓치지 않는다.
+                "clientMessageId": f"client_msg_manual_{run_id}",
             },
         ),
     )
@@ -175,6 +178,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dev-login-url", default=DEFAULT_DEV_LOGIN_URL)
     parser.add_argument("--access-token-env", default="HEYGENT_MANUAL_ACCESS_TOKEN")
     parser.add_argument("--scenario", choices=["basic", "chat-contract"], default="basic")
+    parser.add_argument("--run-id", default=uuid4().hex[:12], help="manual frame request/client id suffix")
     parser.add_argument("--task-run-id", help="basic scenario에서 subscribe.task까지 확인할 TaskRun ID")
     parser.add_argument("--last-sequence", type=int, default=0)
     parser.add_argument("--session-id", help="chat-contract scenario에서 사용할 기존 sessionId")
