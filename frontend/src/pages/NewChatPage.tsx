@@ -2,46 +2,97 @@ import { Sparkles, Send, Code, Calendar, Apple, Activity, Mic, Bot } from 'lucid
 import { motion } from 'motion/react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
+import {
+  type AiRealtimeAuthStatus,
+  type AiRealtimeConnectionStatus,
+  getFramePayload,
+  getStringField,
+} from '@/realtime/aiRealtimeTypes'
+import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
+import { useAuthStore } from '@/store/useAuthStore'
+import { useChatStore } from '@/store/useChatStore'
 
 const suggestedPrompts = [
   {
     text: '이 PR 검토해줘',
     icon: Code,
-    bg: 'hover:bg-blue-50 hover:border-blue-200 hover:text-blue-600',
+    bg: 'hover:bg-accent hover:border-border hover:text-accent-foreground',
   },
   {
     text: '오후 5시에 알려줘',
     icon: Calendar,
-    bg: 'hover:bg-violet-50 hover:border-violet-200 hover:text-violet-600',
+    bg: 'hover:bg-accent hover:border-border hover:text-accent-foreground',
   },
   {
     text: '저녁 메뉴 추천해줘',
     icon: Apple,
-    bg: 'hover:bg-emerald-50 hover:border-emerald-200 hover:text-emerald-600',
+    bg: 'hover:bg-accent hover:border-border hover:text-accent-foreground',
   },
   {
     text: '운동 끝나면 알려줘',
     icon: Activity,
-    bg: 'hover:bg-orange-50 hover:border-orange-200 hover:text-orange-600',
+    bg: 'hover:bg-accent hover:border-border hover:text-accent-foreground',
   },
 ]
 
 export function NewChatPage() {
   const [inputValue, setInputValue] = useState('')
   const [isRecording, setIsRecording] = useState(false)
+  const [isSending, setIsSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
   const navigate = useNavigate()
+  const commandClient = useAiRealtimeStore((state) => state.commandClient)
+  const connectionStatus = useAiRealtimeStore((state) => state.connectionStatus)
+  const authStatus = useAiRealtimeStore((state) => state.authStatus)
+  const realtimeError = useAiRealtimeStore((state) => state.lastError)
+  const accessToken = useAuthStore((state) => state.accessToken)
+  const sendMessage = useChatStore((state) => state.sendMessage)
+  const providerMessage =
+    commandClient === null
+      ? getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError, accessToken)
+      : null
+  const providerPending =
+    commandClient === null &&
+    shouldWaitForRealtime(connectionStatus, authStatus, realtimeError, accessToken)
 
   const handleVoiceInput = () => {
     setIsRecording(!isRecording)
   }
 
-  const handleSend = () => {
-    if (!inputValue.trim()) return
-    navigate('/agent-status')
+  const handleSend = async () => {
+    const content = inputValue.trim()
+    if (!content || isSending) return
+    if (commandClient === null) {
+      setSendError(
+        getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError, accessToken),
+      )
+      return
+    }
+
+    setIsSending(true)
+    setSendError(null)
+
+    try {
+      const acceptedFrame = await sendMessage({ content })
+      const payload = getFramePayload(acceptedFrame)
+      const acceptedSessionId =
+        getStringField(payload, 'session_id', 'sessionId') ??
+        getStringField(acceptedFrame, 'session_id', 'sessionId')
+
+      if (acceptedSessionId === undefined) {
+        throw new Error('accepted 응답에 sessionId가 없습니다.')
+      }
+
+      navigate(`/session/${acceptedSessionId}`)
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : '새 채팅을 시작하지 못했습니다.')
+    } finally {
+      setIsSending(false)
+    }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') handleSend()
+    if (e.key === 'Enter') void handleSend()
   }
 
   return (
@@ -71,7 +122,7 @@ export function NewChatPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35, delay: 0.08 }}
         >
-          <div className="border-border overflow-hidden rounded-2xl border bg-white shadow-sm transition-shadow duration-200 hover:shadow-md">
+          <div className="border-border bg-card overflow-hidden rounded-2xl border shadow-sm transition-shadow duration-200 hover:shadow-md">
             {/* Input row */}
             <div className="flex items-center gap-3 px-5 py-4">
               <Sparkles className="text-primary/60 h-5 w-5 shrink-0" />
@@ -86,7 +137,9 @@ export function NewChatPage() {
                 autoFocus
               />
               <button
+                type="button"
                 onClick={handleVoiceInput}
+                aria-label={isRecording ? '음성 입력 중지' : '음성 입력 시작'}
                 className={`shrink-0 rounded-xl p-2.5 transition-colors ${
                   isRecording
                     ? 'animate-pulse bg-red-500 text-white'
@@ -97,13 +150,25 @@ export function NewChatPage() {
                 <Mic className="h-4 w-4" />
               </button>
               <button
-                onClick={handleSend}
+                type="button"
+                onClick={() => void handleSend()}
+                aria-label="새 대화 메시지 보내기"
                 className="bg-primary hover:bg-primary/90 shrink-0 rounded-xl p-2 text-white transition-colors disabled:opacity-40"
-                disabled={!inputValue.trim()}
+                disabled={!inputValue.trim() || isSending || commandClient === null}
               >
-                <Send className="h-4 w-4" />
+                <Send className={`h-4 w-4 ${isSending ? 'animate-pulse' : ''}`} />
               </button>
             </div>
+            {sendError && <p className="text-destructive px-5 pb-2 text-xs">{sendError}</p>}
+            {!sendError && providerMessage && (
+              <p
+                className={`px-5 pb-2 text-xs ${
+                  providerPending ? 'text-muted-foreground' : 'text-destructive'
+                }`}
+              >
+                {providerMessage}
+              </p>
+            )}
 
             {/* Divider */}
             <div className="border-border/60 mx-5 border-t" />
@@ -113,7 +178,9 @@ export function NewChatPage() {
               {suggestedPrompts.map((prompt, i) => (
                 <button
                   key={i}
+                  type="button"
                   onClick={() => setInputValue(prompt.text)}
+                  aria-label={`추천 프롬프트 선택: ${prompt.text}`}
                   className={`bg-muted text-muted-foreground flex items-center gap-1.5 rounded-lg border border-transparent px-3 py-1.5 transition-all duration-150 ${prompt.bg}`}
                   style={{ fontSize: '13px' }}
                 >
@@ -126,5 +193,53 @@ export function NewChatPage() {
         </motion.div>
       </div>
     </div>
+  )
+}
+
+function isRealtimePending(connectionStatus: AiRealtimeConnectionStatus) {
+  return (
+    connectionStatus === 'connecting' ||
+    connectionStatus === 'open' ||
+    connectionStatus === 'reconnecting'
+  )
+}
+
+function getRealtimeUnavailableMessage(
+  connectionStatus: AiRealtimeConnectionStatus,
+  authStatus: AiRealtimeAuthStatus,
+  realtimeError: string | null,
+  accessToken: string | null,
+) {
+  if (realtimeError !== null) {
+    return realtimeError
+  }
+  if (authStatus === 'failed') {
+    return '서버 인증이 만료되었거나 실패했습니다.'
+  }
+  if (accessToken === null || accessToken.trim() === '') {
+    return '로그인이 필요합니다.'
+  }
+  if (shouldWaitForRealtime(connectionStatus, authStatus, realtimeError, accessToken)) {
+    return '서버와 연결 중입니다. 잠시 후 다시 시도해 주세요.'
+  }
+  return '서버 연결을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요.'
+}
+
+function shouldWaitForRealtime(
+  connectionStatus: AiRealtimeConnectionStatus,
+  authStatus: AiRealtimeAuthStatus,
+  realtimeError: string | null,
+  accessToken: string | null,
+) {
+  if (realtimeError !== null || authStatus === 'failed') {
+    return false
+  }
+  if (accessToken === null || accessToken.trim() === '') {
+    return false
+  }
+  return (
+    isRealtimePending(connectionStatus) ||
+    connectionStatus === 'idle' ||
+    connectionStatus === 'closed'
   )
 }

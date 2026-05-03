@@ -336,6 +336,102 @@ def test_subscribe_ack_includes_latest_sequence_when_projection_exists(client):
         assert subscribe_response["latestSequence"] == 1
 
 
+def test_subscribe_task_replays_events_after_client_last_sequence(client):
+    fake_auth = FakeBackendAuthClient(user_id="42")
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
+    client.app.state.backend_auth_client = fake_auth
+    client.app.state.task_projection_store = projection
+    projection.save_task_snapshot(task_for_owner("task_ws_replay", "42"))
+    projection.append_event(
+        TaskEventEnvelope(
+            event_id="event_ws_replay_1",
+            event_type="step.started",
+            task_run_id="task_ws_replay",
+            producer="test",
+            occurred_at="2026-04-29T00:00:00+00:00",
+        )
+    )
+    projection.append_event(
+        TaskEventEnvelope(
+            event_id="event_ws_replay_2",
+            event_type="step.completed",
+            task_run_id="task_ws_replay",
+            producer="test",
+            occurred_at="2026-04-29T00:00:01+00:00",
+        )
+    )
+
+    with client.websocket_connect("/ai/api/v1/realtime/user/ws") as websocket:
+        websocket.send_json({"type": "auth.start", "accessToken": "valid-token"})
+        websocket.send_json(
+            {
+                "type": "subscribe.task",
+                "requestId": "req_subscribe_replay",
+                "taskRunId": "task_ws_replay",
+                "lastSequence": 1,
+            }
+        )
+
+        assert websocket.receive_json() == {"type": "auth.ok", "userId": "42"}
+        subscribe_response = websocket.receive_json()
+        replay_response = websocket.receive_json()
+
+        assert subscribe_response["type"] == "subscribed"
+        assert subscribe_response["requestId"] == "req_subscribe_replay"
+        assert subscribe_response["latestSequence"] == 2
+        assert replay_response["type"] == "taskRun.events.replay.result"
+        assert "requestId" not in replay_response
+        assert replay_response["payload"]["task_run_id"] == "task_ws_replay"
+        assert [event["event_id"] for event in replay_response["payload"]["events"]] == ["event_ws_replay_2"]
+        assert replay_response["payload"]["latest_sequence"] == 2
+
+
+def test_subscribe_task_replay_marks_retention_gap_when_projection_trimmed(client):
+    fake_auth = FakeBackendAuthClient(user_id="42")
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60, max_events=1)
+    client.app.state.backend_auth_client = fake_auth
+    client.app.state.task_projection_store = projection
+    projection.save_task_snapshot(task_for_owner("task_ws_gap", "42"))
+    projection.append_event(
+        TaskEventEnvelope(
+            event_id="event_ws_gap_1",
+            event_type="step.started",
+            task_run_id="task_ws_gap",
+            producer="test",
+            occurred_at="2026-04-29T00:00:00+00:00",
+        )
+    )
+    projection.append_event(
+        TaskEventEnvelope(
+            event_id="event_ws_gap_2",
+            event_type="step.completed",
+            task_run_id="task_ws_gap",
+            producer="test",
+            occurred_at="2026-04-29T00:00:01+00:00",
+        )
+    )
+    projection.trim_recent_events("task_ws_gap")
+
+    with client.websocket_connect("/ai/api/v1/realtime/user/ws") as websocket:
+        websocket.send_json({"type": "auth.start", "accessToken": "valid-token"})
+        websocket.send_json(
+            {
+                "type": "subscribe.task",
+                "taskRunId": "task_ws_gap",
+                "lastSequence": 0,
+            }
+        )
+
+        assert websocket.receive_json() == {"type": "auth.ok", "userId": "42"}
+        subscribe_response = websocket.receive_json()
+        replay_response = websocket.receive_json()
+
+        assert subscribe_response["latestSequence"] == 2
+        assert replay_response["type"] == "taskRun.events.replay.result"
+        assert replay_response["payload"]["retention_exceeded"] is True
+        assert replay_response["payload"]["events"][0]["event_id"] == "event_ws_gap_2"
+
+
 def test_subscribe_rejects_task_owned_by_other_user_from_projection(client):
     fake_auth = FakeBackendAuthClient(user_id="owner-a")
     projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)

@@ -1,13 +1,20 @@
 package com.ssafy.heygent.domain.auth.controller;
 
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
 import com.ssafy.heygent.domain.auth.dto.request.KakaoLoginRequest;
+import com.ssafy.heygent.domain.auth.dto.request.KakaoMobileLoginRequest;
 import com.ssafy.heygent.domain.auth.dto.response.TokenResponse;
 import com.ssafy.heygent.domain.auth.service.AuthService;
 import com.ssafy.heygent.global.exception.ApiResponse;
+
 import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequiredArgsConstructor
@@ -22,6 +29,15 @@ public class AuthController {
             @Valid @RequestBody KakaoLoginRequest request
     ) {
         TokenResponse response = authService.kakaoLogin(request.getCode());
+        return ApiResponse.success(response);
+    }
+
+    @Operation(summary = "카카오 모바일 로그인", description = "카카오 액세스 토큰을 받아 소셜 로그인을 진행하고 JWT 토큰을 발급합니다.")
+    @PostMapping("/kakao/mobile")
+    public ApiResponse<TokenResponse> kakaoMobileLogin(
+            @Valid @RequestBody KakaoMobileLoginRequest request
+    ) {
+        TokenResponse response = authService.kakaoMobileLogin(request.getAccessToken());
         return ApiResponse.success(response);
     }
 
