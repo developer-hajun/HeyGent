@@ -203,6 +203,9 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
         }
         return
       }
+      case 'session.message.completed':
+        mergeCompletedMessageTaskRun(frame, set)
+        return
       default:
         return
     }
@@ -460,6 +463,39 @@ const mergeReplayResult = (
         [taskRunId]: replayNeeded,
       },
       recoveryAfterSequenceByTaskRunId,
+    }
+  })
+}
+
+const mergeCompletedMessageTaskRun = (
+  frame: AiRealtimeRawFrame,
+  set: (partial: Partial<TaskRunState> | ((state: TaskRunState) => Partial<TaskRunState>)) => void,
+) => {
+  const payload = getFramePayload(frame)
+  const taskRunId = getStringField(payload, 'task_run_id', 'taskRunId')
+  const status = getStringField(payload, 'status') ?? 'COMPLETED'
+
+  if (taskRunId === undefined) {
+    return
+  }
+
+  set((state) => {
+    const currentTaskRun = state.taskRunsById[taskRunId]
+    const now = new Date().toISOString()
+
+    return {
+      taskRunsById: {
+        ...state.taskRunsById,
+        [taskRunId]: {
+          ...(currentTaskRun ?? { task_run_id: taskRunId }),
+          status,
+          updated_at: now,
+          completed_at:
+            status === 'COMPLETED'
+              ? (currentTaskRun?.completed_at ?? now)
+              : currentTaskRun?.completed_at,
+        },
+      },
     }
   })
 }
