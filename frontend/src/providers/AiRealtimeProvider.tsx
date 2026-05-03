@@ -34,9 +34,11 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
   const pingIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null)
   const reconnectTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const reconnectAttemptRef = useRef(0)
-  const manuallyClosedRef = useRef(false)
+  const clientGenerationRef = useRef(0)
+  const suppressedCloseGenerationsRef = useRef<Set<number>>(new Set())
   const refreshAttemptedRef = useRef(false)
   const activeRecoveryInFlightRef = useRef(false)
+  const pendingRecoveryClientRef = useRef<TaskRunSocketClient | null>(null)
 
   useEffect(() => {
     const clearPingInterval = () => {
@@ -53,21 +55,46 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
       }
     }
 
-    const cleanupClient = (closeSocket: boolean) => {
-      clearPingInterval()
-      commandClientRef.current?.destroy()
-      commandClientRef.current = null
-      setCommandClient(null)
+    const clearExposedClient = (
+      socketClient: TaskRunSocketClient | null,
+      commandClient: AiCommandClient | null,
+    ) => {
+      const realtimeState = useAiRealtimeStore.getState()
 
-      if (closeSocket) {
-        socketRef.current?.close(1000, 'AI realtime provider cleanup')
+      if (realtimeState.socketClient === socketClient) {
+        setSocketClient(null)
       }
-      socketRef.current = null
-      setSocketClient(null)
+      if (realtimeState.commandClient === commandClient) {
+        setCommandClient(null)
+      }
+    }
+
+    const cleanupClient = (closeSocket: boolean) => {
+      const socketClient = socketRef.current
+      const commandClient = commandClientRef.current
+      const generation = clientGenerationRef.current
+
+      clearPingInterval()
+      commandClient?.destroy()
+
+      if (commandClientRef.current === commandClient) {
+        commandClientRef.current = null
+      }
+
+      if (closeSocket && socketClient !== null) {
+        suppressedCloseGenerationsRef.current.add(generation)
+        socketClient.close(1000, 'AI realtime provider cleanup')
+      }
+      if (socketRef.current === socketClient) {
+        socketRef.current = null
+      }
+      clearExposedClient(socketClient, commandClient)
     }
 
     const connect = (token: string) => {
       cleanupClient(true)
+      const generation = clientGenerationRef.current + 1
+      clientGenerationRef.current = generation
       setConnectionStatus(reconnectAttemptRef.current > 0 ? 'reconnecting' : 'connecting')
       setAuthStatus('authenticating')
       setLastError(null)
@@ -76,10 +103,11 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
       const commandClient = createAiCommandClient(socketClient)
       socketRef.current = socketClient
       commandClientRef.current = commandClient
-      setSocketClient(socketClient)
-      setCommandClient(commandClient)
 
       socketClient.onOpen(() => {
+        if (generation !== clientGenerationRef.current) {
+          return
+        }
         setConnectionStatus('open')
         clearPingInterval()
         pingIntervalRef.current = window.setInterval(() => {
@@ -92,6 +120,9 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
       })
 
       socketClient.onRawMessage((frame) => {
+        if (generation !== clientGenerationRef.current) {
+          return
+        }
         recordRawFrame(frame)
         useChatStore.getState().handleRealtimeFrame(frame)
         useTaskRunStore.getState().handleRealtimeFrame(frame)
@@ -99,9 +130,15 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
       })
 
       socketClient.onMessage((event) => {
+        if (generation !== clientGenerationRef.current) {
+          return
+        }
+
         if (event.type === 'auth.ok') {
           refreshAttemptedRef.current = false
           reconnectAttemptRef.current = 0
+          setSocketClient(socketClient)
+          setCommandClient(commandClient)
           setAuthStatus('authenticated')
           setConnectionStatus('authenticated')
           void useChatStore
@@ -123,16 +160,43 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
       })
 
       socketClient.onClose(() => {
-        clearPingInterval()
+        if (generation === clientGenerationRef.current) {
+          clearPingInterval()
+        }
         commandClient.clearPending('AI WebSocket 연결이 닫혔습니다.')
-        if (manuallyClosedRef.current) {
+
+        if (commandClientRef.current === commandClient) {
+          commandClientRef.current = null
+        }
+        if (socketRef.current === socketClient) {
+          socketRef.current = null
+        }
+        clearExposedClient(socketClient, commandClient)
+
+        // cleanup이나 교체가 의도적으로 닫은 이전 세대 소켓은 재연결 대상이 아니다.
+        if (suppressedCloseGenerationsRef.current.delete(generation)) {
+          return
+        }
+
+        // 오래된 close 이벤트가 최신 소켓 세대를 덮어쓰거나 재연결 타이머를 만들지 않게 막는다.
+        if (generation !== clientGenerationRef.current) {
+          return
+        }
+
+        const currentAccessToken = useAuthStore.getState().accessToken
+        if (currentAccessToken === null || currentAccessToken.trim() === '') {
           setConnectionStatus('closed')
           return
         }
-        scheduleReconnect()
+
+        setAuthStatus('authenticating')
+        scheduleReconnect(generation, currentAccessToken)
       })
 
       socketClient.onError(() => {
+        if (generation !== clientGenerationRef.current) {
+          return
+        }
         setConnectionStatus('error')
         setLastError('AI WebSocket 연결 오류가 발생했습니다.')
       })
@@ -140,6 +204,11 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
 
     const refreshAndReconnect = async () => {
       if (refreshToken === null || refreshAttemptedRef.current) {
+        const currentGeneration = clientGenerationRef.current
+        if (socketRef.current !== null) {
+          suppressedCloseGenerationsRef.current.add(currentGeneration)
+        }
+        setConnectionStatus('closed')
         socketRef.current?.close(4001, 'AI auth failed')
         return
       }
@@ -151,12 +220,17 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         connect(response.data.accessToken)
       } catch (error) {
         setLastError(error instanceof Error ? error.message : 'AI WebSocket 재인증에 실패했습니다.')
+        const currentGeneration = clientGenerationRef.current
+        if (socketRef.current !== null) {
+          suppressedCloseGenerationsRef.current.add(currentGeneration)
+        }
+        setConnectionStatus('closed')
         socketRef.current?.close(4001, 'AI auth refresh failed')
       }
     }
 
-    const scheduleReconnect = () => {
-      if (accessToken === null || accessToken.trim() === '') {
+    const scheduleReconnect = (generation: number, token: string) => {
+      if (token.trim() === '') {
         setConnectionStatus('closed')
         return
       }
@@ -167,16 +241,29 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
       reconnectAttemptRef.current += 1
       clearReconnectTimeout()
       reconnectTimeoutRef.current = window.setTimeout(() => {
-        connect(accessToken)
+        // 타이머가 실행될 때 세대가 바뀌어 있으면 이미 새 소켓이 담당 중인 상태다.
+        if (generation !== clientGenerationRef.current) {
+          return
+        }
+
+        const currentAccessToken = useAuthStore.getState().accessToken
+        if (currentAccessToken !== token) {
+          return
+        }
+
+        connect(token)
       }, delay)
     }
 
     const recoverAndResubscribeTasks = async (socketClient: TaskRunSocketClient) => {
       if (activeRecoveryInFlightRef.current) {
+        // 이전 소켓 복구가 진행 중이면 최신 소켓을 기억했다가 finally에서 다시 돌린다.
+        pendingRecoveryClientRef.current = socketClient
         return
       }
 
       activeRecoveryInFlightRef.current = true
+      pendingRecoveryClientRef.current = null
 
       try {
         let activeTaskRunIds: string[] = []
@@ -218,6 +305,15 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         }
       } finally {
         activeRecoveryInFlightRef.current = false
+        const pendingSocketClient: TaskRunSocketClient | null = pendingRecoveryClientRef.current
+        pendingRecoveryClientRef.current = null
+        if (
+          pendingSocketClient !== null &&
+          socketRef.current === pendingSocketClient &&
+          (pendingSocketClient as TaskRunSocketClient).isAuthenticated()
+        ) {
+          void recoverAndResubscribeTasks(pendingSocketClient)
+        }
       }
     }
 
@@ -257,11 +353,9 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         })
     }
 
-    manuallyClosedRef.current = false
     clearReconnectTimeout()
 
     if (accessToken === null || accessToken.trim() === '') {
-      manuallyClosedRef.current = true
       cleanupClient(true)
       setConnectionStatus('idle')
       setAuthStatus('anonymous')
@@ -274,7 +368,6 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
     connect(accessToken)
 
     return () => {
-      manuallyClosedRef.current = true
       clearReconnectTimeout()
       cleanupClient(true)
     }

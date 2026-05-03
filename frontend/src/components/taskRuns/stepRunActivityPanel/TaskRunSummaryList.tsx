@@ -36,10 +36,7 @@ export function TaskRunSummaryList({
             <span className="text-foreground block truncate text-sm font-medium">
               {toUserFacingTaskTitle(summary.title)}
             </span>
-            <span className="text-muted-foreground mt-1 block text-xs">
-              {summary.statusText}
-              {summary.lastSequence !== undefined ? ` · #${summary.lastSequence}` : ''}
-            </span>
+            <span className="text-muted-foreground mt-1 block text-xs">{summary.statusText}</span>
           </span>
         </button>
       ))}

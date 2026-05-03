@@ -49,6 +49,9 @@ export const toTaskRunStatusTone = (status?: string | null): TaskRunStatusTone =
     case 'RUNNING':
     case 'PENDING':
     case 'accepted':
+    case 'task.created':
+    case 'task.started':
+    case 'step.created':
     case 'step.started':
     case 'tool.started':
     case 'search.started':
@@ -56,8 +59,11 @@ export const toTaskRunStatusTone = (status?: string | null): TaskRunStatusTone =
       return 'running'
     case 'WAITING':
     case 'approval.required':
+    case 'task.waiting':
+    case 'step.waiting':
       return 'waiting'
     case 'COMPLETED':
+    case 'task.completed':
     case 'step.completed':
     case 'tool.completed':
     case 'search.completed':
@@ -65,6 +71,11 @@ export const toTaskRunStatusTone = (status?: string | null): TaskRunStatusTone =
       return 'completed'
     case 'FAILED':
     case 'CANCELLED':
+    case 'CANCELED':
+    case 'task.failed':
+    case 'task.canceled':
+    case 'step.failed':
+    case 'step.canceled':
       return 'failed'
     default:
       return 'idle'
@@ -78,10 +89,30 @@ export const toTaskRunStatusText = (status?: string | null) => {
   return STATUS_TEXT[status] ?? EVENT_STATUS_TEXT[status] ?? '작업 중'
 }
 
+export const isLiveTaskRunStatus = (status?: string | null) =>
+  status === 'PENDING' ||
+  status === 'RUNNING' ||
+  status === 'WAITING' ||
+  status === 'accepted' ||
+  status === 'task.created' ||
+  status === 'task.started' ||
+  status === 'task.updated' ||
+  status === 'task.waiting' ||
+  status === 'step.created' ||
+  status === 'step.started' ||
+  status === 'step.waiting' ||
+  status === 'tool.started' ||
+  status === 'search.started' ||
+  status === 'session.message.delta'
+
 export const toActivityItemView = (event: RawTaskEventPayload): ActivityItemView => {
   const statusKey = event.status ?? event.event_type
   const eventTitle = toTaskRunEventTitle(event.event_type)
-  const title = event.summary_message ?? eventTitle ?? toTaskRunStatusText(statusKey)
+  const title =
+    getMeaningfulTaskEventSummary(event.summary_message) ??
+    getTaskRunEventPayloadTitle(event) ??
+    eventTitle ??
+    toTaskRunStatusText(statusKey)
 
   return {
     id: event.event_id,
@@ -212,10 +243,19 @@ const getTaskRunDisplayTitle = (taskRun: RawTaskRun | undefined) => {
       : ''
 
   if (prompt !== '') {
-    return prompt
+    return extractOriginalPrompt(prompt)
   }
 
   return taskRun?.title ?? taskRun?.goal
+}
+
+const extractOriginalPrompt = (prompt: string) => {
+  const marker = '원래 사용자 요청:'
+  if (!prompt.includes(marker)) {
+    return prompt
+  }
+
+  return prompt.split(marker).at(-1)?.trim() || prompt
 }
 
 const toTaskRunEventTitle = (eventType?: string | null) => {
@@ -226,13 +266,25 @@ const toTaskRunEventTitle = (eventType?: string | null) => {
     case 'task.started':
       return '답변 준비를 시작했습니다.'
     case 'step.created':
-      return '진행 단계를 준비했습니다.'
+      return '진행 단계 준비'
     case 'step.started':
-      return '필요한 내용을 처리하는 중입니다.'
+      return '진행 단계 실행 중'
     case 'step.completed':
-      return '진행 단계를 마쳤습니다.'
+      return '진행 단계 완료'
+    case 'tool.started':
+      return '도구 실행 중'
+    case 'tool.completed':
+      return '도구 실행 완료'
+    case 'search.started':
+      return '자료 확인 중'
+    case 'search.completed':
+      return '자료 확인 완료'
     case 'task.completed':
-      return '답변을 마쳤습니다.'
+      return '답변 완료'
+    case 'session.message.delta':
+      return '답변 작성 중'
+    case 'session.message.completed':
+      return '답변 작성 완료'
     case 'task.updated':
       return '진행 상황이 업데이트되었습니다.'
     case 'task.waiting':
@@ -247,6 +299,59 @@ const toTaskRunEventTitle = (eventType?: string | null) => {
     default:
       return undefined
   }
+}
+
+const getMeaningfulTaskEventSummary = (value?: string | null) => {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (
+    text === '' ||
+    text === '답변을 준비하는 중입니다.' ||
+    text === '답변 준비 중' ||
+    text === '작업 중'
+  ) {
+    return undefined
+  }
+  return text
+}
+
+const getTaskRunEventPayloadTitle = (event: RawTaskEventPayload) =>
+  pickTaskRunEventString(event.payload, [
+    'step_title',
+    'stepTitle',
+    'title',
+    'goal',
+    'name',
+    'label',
+    'tool_name',
+    'toolName',
+    'query',
+  ]) ??
+  pickTaskRunEventString(event.detail_json, [
+    'step_title',
+    'stepTitle',
+    'title',
+    'goal',
+    'name',
+    'label',
+    'tool_name',
+    'toolName',
+    'query',
+  ])
+
+const pickTaskRunEventString = (value: unknown, keys: string[]) => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined
+  }
+
+  const payload = value as Record<string, unknown>
+  for (const key of keys) {
+    const candidate = payload[key]
+    if (typeof candidate === 'string' && candidate.trim() !== '') {
+      return candidate.trim()
+    }
+  }
+
+  return undefined
 }
 
 const getComparableTime = (value?: string | null) => {

@@ -1,8 +1,12 @@
 import { X } from 'lucide-react'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
-import { toActivityItemView, toTaskRunSummaryView } from '@/utils/taskRunStatusView'
+import {
+  isLiveTaskRunStatus,
+  toActivityItemView,
+  toTaskRunSummaryView,
+} from '@/utils/taskRunStatusView'
 import { findPromptForTaskRun, getTime } from './activityPanelText'
 import { SelectedTaskRunView } from './SelectedTaskRunView'
 import { TaskRunSummaryList } from './TaskRunSummaryList'
@@ -20,6 +24,7 @@ export function StepRunActivityPanelBody({
   onSelectTaskRun: (taskRunId: string | undefined) => void
   onClose: () => void
 }) {
+  const loadedTaskRunIdsRef = useRef<Set<string>>(new Set())
   const messages = useChatStore((state) =>
     sessionId === '' ? EMPTY_MESSAGES : (state.messagesBySessionId[sessionId] ?? EMPTY_MESSAGES),
   )
@@ -103,20 +108,42 @@ export function StepRunActivityPanelBody({
 
   useEffect(() => {
     if (resolvedSelectedTaskRunId === undefined) return
+    if (loadedTaskRunIdsRef.current.has(resolvedSelectedTaskRunId)) return
 
+    const latestEvent = selectedEvents.at(-1)
+    const latestStatus = latestEvent?.status ?? latestEvent?.event_type ?? selectedTaskRun?.status
+
+    if (isLiveTaskRunStatus(latestStatus)) {
+      return
+    }
+
+    loadedTaskRunIdsRef.current.add(resolvedSelectedTaskRunId)
     // snapshot은 현재 TaskRun/StepRun/approval 상태를 채우고,
     // replay는 중간에 놓쳤을 수 있는 raw event 흐름을 sequence 기준으로 다시 맞춘다.
     void fetchSnapshot(resolvedSelectedTaskRunId).catch(() => undefined)
     void replayEvents(resolvedSelectedTaskRunId).catch(() => undefined)
-  }, [fetchSnapshot, replayEvents, resolvedSelectedTaskRunId])
+  }, [
+    fetchSnapshot,
+    replayEvents,
+    resolvedSelectedTaskRunId,
+    selectedEvents,
+    selectedTaskRun?.status,
+  ])
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-border border-b p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-muted-foreground truncate text-xs">현재 대화</p>
-            <h2 className="text-foreground mt-1 text-sm font-semibold">진행 상황</h2>
+            <p className="text-muted-foreground truncate text-xs">이 세션의 답변 기록</p>
+            <h2 className="text-foreground mt-1 flex items-center gap-2 text-sm font-semibold">
+              <span>답변 활동</span>
+              {taskRunSummaries.length > 0 && (
+                <span className="text-muted-foreground text-xs font-normal">
+                  {taskRunSummaries.length}개
+                </span>
+              )}
+            </h2>
           </div>
           <button
             type="button"

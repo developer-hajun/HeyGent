@@ -16,9 +16,7 @@ export function ChatMessageItem({
   onOpenTaskRun,
 }: ChatMessageItemProps) {
   const isUser = message.role === 'user'
-  const latestActivity = activities.at(-1)
-  const chipText = latestActivity?.statusText ?? taskRunSummary?.statusText
-  const chipTone = latestActivity?.tone ?? taskRunSummary?.tone ?? 'idle'
+  const taskRunChip = isUser ? undefined : getAssistantTaskRunChip(activities, taskRunSummary)
 
   return (
     <article className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -44,15 +42,15 @@ export function ChatMessageItem({
             </div>
           )}
         </div>
-        {message.taskRunId && chipText && (
+        {message.taskRunId && taskRunChip && (
           <button
             type="button"
             onClick={() => onOpenTaskRun?.(message.taskRunId as string)}
             aria-label="답변 진행 상황 열기"
             className="text-muted-foreground hover:text-foreground hover:bg-muted inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-xs transition-colors"
           >
-            <TaskRunChipIcon tone={chipTone} />
-            <span>{chipText}</span>
+            <TaskRunChipIcon tone={taskRunChip.tone} />
+            <span>{taskRunChip.text}</span>
           </button>
         )}
       </div>
@@ -63,6 +61,42 @@ export function ChatMessageItem({
       )}
     </article>
   )
+}
+
+function getAssistantTaskRunChip(
+  activities: ActivityItemView[],
+  taskRunSummary?: TaskRunSummaryView,
+): { text: string; tone: TaskRunStatusTone } | undefined {
+  const latestActivity = activities.at(-1)
+  const taskStatus =
+    typeof taskRunSummary?.raw?.status === 'string' ? taskRunSummary.raw.status : undefined
+  const latestEventType = latestActivity?.raw.event_type
+
+  if (taskStatus === 'COMPLETED' || isAnswerCompletionEvent(latestEventType)) {
+    return { text: '답변 완료', tone: 'completed' }
+  }
+
+  if (
+    latestActivity !== undefined &&
+    latestActivity.tone === 'completed' &&
+    !isAnswerCompletionEvent(latestEventType)
+  ) {
+    return { text: '답변 진행 중', tone: 'running' }
+  }
+
+  if (latestActivity !== undefined) {
+    return { text: latestActivity.statusText, tone: latestActivity.tone }
+  }
+
+  if (taskRunSummary !== undefined) {
+    return { text: taskRunSummary.statusText, tone: taskRunSummary.tone }
+  }
+
+  return undefined
+}
+
+function isAnswerCompletionEvent(eventType?: string) {
+  return eventType === 'task.completed' || eventType === 'session.message.completed'
 }
 
 function TaskRunChipIcon({ tone }: { tone: TaskRunStatusTone }) {

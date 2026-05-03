@@ -13,7 +13,6 @@ export function ActivityEventItem({ activity }: { activity: ActivityItemView }) 
           </p>
           <p className="text-muted-foreground mt-1 text-xs leading-5">
             {toProgressSentence(activity.raw.status ?? activity.raw.event_type)}
-            {activity.sequence !== undefined ? ` · #${activity.sequence}` : ''}
           </p>
           {activity.occurredAt && (
             <p className="text-muted-foreground/80 mt-2 text-[11px]">{activity.occurredAt}</p>

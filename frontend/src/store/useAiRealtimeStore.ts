@@ -18,6 +18,7 @@ export type AiRealtimeSubscription = {
 type AiRealtimeState = {
   connectionStatus: AiRealtimeConnectionStatus
   authStatus: AiRealtimeAuthStatus
+  authenticatedReady: boolean
   socketClient: TaskRunSocketClient | null
   commandClient: AiCommandClient | null
   rawFrames: AiRealtimeRawFrame[]
@@ -39,34 +40,61 @@ type AiRealtimeState = {
 
 const MAX_RAW_FRAMES = 200
 
+const getAuthenticatedReady = (
+  state: Pick<AiRealtimeState, 'authStatus' | 'socketClient' | 'commandClient'>,
+) =>
+  state.authStatus === 'authenticated' &&
+  state.socketClient !== null &&
+  state.commandClient !== null &&
+  state.socketClient.isAuthenticated()
+
 export const useAiRealtimeStore = create<AiRealtimeState>((set, get) => ({
   connectionStatus: 'idle',
   authStatus: 'anonymous',
+  authenticatedReady: false,
   socketClient: null,
   commandClient: null,
   rawFrames: [],
   subscriptionsByTaskRunId: {},
   lastError: null,
   setConnectionStatus: (status) => set({ connectionStatus: status }),
-  setAuthStatus: (status) => set({ authStatus: status }),
-  setSocketClient: (client) => set({ socketClient: client }),
-  setCommandClient: (client) => set({ commandClient: client }),
+  setAuthStatus: (authStatus) =>
+    set((state) => ({
+      authStatus,
+      authenticatedReady: getAuthenticatedReady({ ...state, authStatus }),
+    })),
+  setSocketClient: (socketClient) =>
+    set((state) => ({
+      socketClient,
+      authenticatedReady: getAuthenticatedReady({ ...state, socketClient }),
+    })),
+  setCommandClient: (commandClient) =>
+    set((state) => ({
+      commandClient,
+      authenticatedReady: getAuthenticatedReady({ ...state, commandClient }),
+    })),
   recordRawFrame: (frame) =>
     set((state) => ({
       rawFrames: [...state.rawFrames, frame].slice(-MAX_RAW_FRAMES),
     })),
   setLastError: (message) => set({ lastError: message }),
   sendCommand: (type, payload) => {
-    const commandClient = get().commandClient
+    const { authenticatedReady, commandClient } = get()
+    if (!authenticatedReady) {
+      return Promise.reject(new Error('AI WebSocket 인증이 완료된 뒤 다시 시도해 주세요.'))
+    }
     if (commandClient === null) {
       return Promise.reject(new Error('AI realtime command client가 아직 준비되지 않았습니다.'))
     }
     return commandClient.sendCommand(type, payload)
   },
   subscribeTask: (taskRunId, lastSequence, options = {}) => {
-    const socketClient = get().socketClient
+    const { authStatus, socketClient } = get()
     if (socketClient === null) {
       throw new Error('AI WebSocket client가 아직 준비되지 않았습니다.')
+    }
+    if (authStatus !== 'authenticated' || !socketClient.isAuthenticated()) {
+      throw new Error('AI WebSocket 인증 완료 전에는 구독할 수 없습니다.')
     }
 
     const current = get().subscriptionsByTaskRunId[taskRunId]
@@ -93,6 +121,7 @@ export const useAiRealtimeStore = create<AiRealtimeState>((set, get) => ({
     set({
       connectionStatus: 'idle',
       authStatus: 'anonymous',
+      authenticatedReady: false,
       socketClient: null,
       commandClient: null,
       rawFrames: [],

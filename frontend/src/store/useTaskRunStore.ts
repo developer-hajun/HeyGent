@@ -216,14 +216,27 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
     set((state) => {
       const currentEvents = state.eventsByTaskRunId[event.task_run_id] ?? []
       const mergeResult = mergeTaskRunEvents(currentEvents, [event])
+      const stepRunId = typeof event.step_run_id === 'string' ? event.step_run_id : undefined
+      const placeholderStepRun = buildRealtimeStepRunPlaceholder(
+        event,
+        stepRunId === undefined ? undefined : state.stepRunsById[stepRunId],
+      )
 
       // raw event는 화면 표시와 디버깅의 기준이므로 서버 필드명을 유지한 채 저장한다.
       // sequence gap이 보이면 replayNeeded를 세워 provider가 복구를 시도하게 한다.
+      // snapshot 전 step_run_id만 먼저 온 경우에는 가벼운 StepRun을 만들어 실시간 도착을 보여준다.
       return {
         eventsByTaskRunId: {
           ...state.eventsByTaskRunId,
           [event.task_run_id]: mergeResult.events,
         },
+        stepRunsById:
+          placeholderStepRun === null
+            ? state.stepRunsById
+            : {
+                ...state.stepRunsById,
+                [placeholderStepRun.step_run_id]: placeholderStepRun,
+              },
         lastSequenceByTaskRunId:
           mergeResult.lastSequence === undefined
             ? state.lastSequenceByTaskRunId
@@ -406,6 +419,7 @@ const mergeSnapshot = (
     if (taskRunId !== undefined && taskRunLastSequence !== undefined) {
       nextLastSequenceByTaskRunId[taskRunId] = taskRunLastSequence
     }
+    const eventStepRuns = buildRealtimeStepRunPlaceholders(events, state.stepRunsById)
 
     return {
       taskRunsById:
@@ -414,6 +428,7 @@ const mergeSnapshot = (
           : { ...state.taskRunsById, [taskRun.task_run_id]: taskRun },
       stepRunsById: {
         ...state.stepRunsById,
+        ...eventStepRuns,
         ...Object.fromEntries(stepRuns.map((stepRun) => [stepRun.step_run_id, stepRun])),
       },
       approvalsById: {
@@ -449,8 +464,13 @@ const mergeReplayResult = (
     if (!replayNeeded) {
       delete recoveryAfterSequenceByTaskRunId[taskRunId]
     }
+    const eventStepRuns = buildRealtimeStepRunPlaceholders(mergeResult.events, state.stepRunsById)
 
     return {
+      stepRunsById: {
+        ...state.stepRunsById,
+        ...eventStepRuns,
+      },
       eventsByTaskRunId: {
         ...state.eventsByTaskRunId,
         [taskRunId]: mergeResult.events,
@@ -503,6 +523,162 @@ const mergeCompletedMessageTaskRun = (
     }
   })
 }
+
+const buildRealtimeStepRunPlaceholder = (
+  event: RawTaskEventPayload,
+  existingStepRun?: RawStepRun,
+): RawStepRun | null => {
+  if (typeof event.step_run_id !== 'string' || event.step_run_id.trim() === '') {
+    return null
+  }
+
+  const occurredAt = typeof event.occurred_at === 'string' ? event.occurred_at : undefined
+  const inferredStatus = inferRealtimeStepRunStatus(event, existingStepRun?.status)
+  const nextStatus =
+    existingStepRun?.status !== undefined &&
+    isTerminalTaskRunStatus(existingStepRun.status) &&
+    !isTerminalTaskRunStatus(inferredStatus)
+      ? existingStepRun.status
+      : inferredStatus
+
+  return {
+    ...(existingStepRun ?? {}),
+    step_run_id: event.step_run_id,
+    task_run_id: existingStepRun?.task_run_id ?? event.task_run_id,
+    title: existingStepRun?.title ?? inferRealtimeStepRunTitle(event),
+    status: nextStatus ?? existingStepRun?.status,
+    sequence: existingStepRun?.sequence ?? event.sequence,
+    started_at:
+      existingStepRun?.started_at ??
+      (isStepRunStartEvent(event.event_type) ? occurredAt : undefined),
+    completed_at:
+      existingStepRun?.completed_at ??
+      (isStepRunCompletionEvent(event.event_type) ? occurredAt : undefined),
+    updated_at: occurredAt ?? existingStepRun?.updated_at,
+    realtime_placeholder: existingStepRun?.realtime_placeholder ?? true,
+  }
+}
+
+const buildRealtimeStepRunPlaceholders = (
+  events: RawTaskEventPayload[],
+  existingStepRunsById: Record<string, RawStepRun>,
+) =>
+  events.reduce<Record<string, RawStepRun>>((stepRunsById, event) => {
+    if (typeof event.step_run_id !== 'string') {
+      return stepRunsById
+    }
+
+    const existingStepRun =
+      stepRunsById[event.step_run_id] ?? existingStepRunsById[event.step_run_id]
+    const placeholder = buildRealtimeStepRunPlaceholder(event, existingStepRun)
+    if (placeholder !== null) {
+      stepRunsById[placeholder.step_run_id] = placeholder
+    }
+    return stepRunsById
+  }, {})
+
+const inferRealtimeStepRunStatus = (
+  event: RawTaskEventPayload,
+  existingStatus?: RawStepRun['status'] | null,
+): RawStepRun['status'] | undefined => {
+  switch (event.event_type) {
+    case 'step.created':
+    case 'step.started':
+    case 'step.waiting':
+    case 'step.completed':
+    case 'step.failed':
+    case 'step.canceled':
+    case 'step.cancelled':
+      return event.event_type
+    case 'tool.started':
+    case 'search.started':
+    case 'tool.completed':
+    case 'search.completed':
+      return event.event_type
+    default:
+      return typeof event.status === 'string' ? event.status : existingStatus
+  }
+}
+
+const inferRealtimeStepRunTitle = (event: RawTaskEventPayload) =>
+  getMeaningfulTaskEventSummary(event.summary_message) ??
+  pickTaskEventString(event.payload, [
+    'step_title',
+    'stepTitle',
+    'title',
+    'goal',
+    'name',
+    'label',
+    'tool_name',
+    'toolName',
+    'query',
+  ]) ??
+  pickTaskEventString(event.detail_json, [
+    'step_title',
+    'stepTitle',
+    'title',
+    'goal',
+    'name',
+    'label',
+    'tool_name',
+    'toolName',
+    'query',
+  ]) ??
+  getRealtimeStepRunFallbackTitle(event.event_type)
+
+const getMeaningfulTaskEventSummary = (value?: string | null) => {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (
+    text === '' ||
+    text === '답변을 준비하는 중입니다.' ||
+    text === '답변 준비 중' ||
+    text === '작업 중'
+  ) {
+    return undefined
+  }
+  return text
+}
+
+const pickTaskEventString = (value: unknown, keys: string[]) => {
+  if (!isJsonObject(value)) {
+    return undefined
+  }
+
+  for (const key of keys) {
+    const candidate = value[key]
+    if (typeof candidate === 'string' && candidate.trim() !== '') {
+      return candidate.trim()
+    }
+  }
+
+  return undefined
+}
+
+const getRealtimeStepRunFallbackTitle = (eventType: string) => {
+  if (eventType.startsWith('tool.')) {
+    return '도구 실행'
+  }
+  if (eventType.startsWith('search.')) {
+    return '자료 확인'
+  }
+  return '답변 진행 단계'
+}
+
+const isStepRunStartEvent = (eventType: string) =>
+  eventType === 'step.started' || eventType === 'tool.started' || eventType === 'search.started'
+
+const isStepRunCompletionEvent = (eventType: string) =>
+  eventType === 'step.completed' || eventType === 'step.failed' || eventType === 'step.canceled'
+
+const isTerminalTaskRunStatus = (status?: string | null) =>
+  status === 'COMPLETED' ||
+  status === 'FAILED' ||
+  status === 'CANCELLED' ||
+  status === 'CANCELED' ||
+  status === 'step.completed' ||
+  status === 'step.failed' ||
+  status === 'step.canceled' ||
+  status === 'step.cancelled'
 
 const selectTaskRunSummary = (state: TaskRunState, taskRunId: string) => {
   const taskRun = state.taskRunsById[taskRunId]

@@ -72,24 +72,39 @@ export function toProgressSentence(status?: string | null) {
     case 'task.created':
       return '요청을 확인하고 있습니다.'
     case 'RUNNING':
+    case 'task.started':
+      return '답변 흐름을 진행하고 있습니다.'
     case 'step.started':
+      return '현재 단계를 처리하고 있습니다.'
     case 'tool.started':
+      return '필요한 도구를 실행하고 있습니다.'
     case 'search.started':
+      return '관련 자료를 확인하고 있습니다.'
     case 'session.message.delta':
-      return '답변을 준비하는 중입니다.'
+      return '답변을 작성하고 있습니다.'
     case 'WAITING':
+    case 'task.waiting':
+    case 'step.waiting':
     case 'approval.required':
       return '추가 확인이 필요합니다.'
     case 'COMPLETED':
-    case 'step.completed':
-    case 'tool.completed':
-    case 'search.completed':
+    case 'task.completed':
     case 'session.message.completed':
-      return '답변 준비가 완료되었습니다.'
+      return 'AI 답변이 완료되었습니다.'
+    case 'step.completed':
+      return '현재 단계를 완료했습니다.'
+    case 'tool.completed':
+      return '도구 실행을 완료했습니다.'
+    case 'search.completed':
+      return '자료 확인을 완료했습니다.'
     case 'FAILED':
+    case 'task.failed':
+    case 'step.failed':
       return '답변을 준비하는 중 문제가 발생했습니다.'
     case 'CANCELLED':
     case 'CANCELED':
+    case 'task.canceled':
+    case 'step.canceled':
       return '요청이 취소되었습니다.'
     default:
       return toTaskRunStatusText(status)

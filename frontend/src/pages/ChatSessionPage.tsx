@@ -12,7 +12,11 @@ import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
-import { toActivityItemView, toTaskRunSummaryView } from '@/utils/taskRunStatusView'
+import {
+  isLiveTaskRunStatus,
+  toActivityItemView,
+  toTaskRunSummaryView,
+} from '@/utils/taskRunStatusView'
 
 type LoadState = 'loading' | 'ready' | 'error'
 
@@ -26,11 +30,15 @@ export function ChatSessionPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isSending, setIsSending] = useState(false)
   const hydratedTaskRunIdsRef = useRef<Set<string>>(new Set())
+  const hydratingTaskRunIdsRef = useRef<Set<string>>(new Set())
+  const hydrationGenerationRef = useRef(0)
+  const loadGenerationRef = useRef(0)
 
   const commandClient = useAiRealtimeStore((state) => state.commandClient)
   const socketClient = useAiRealtimeStore((state) => state.socketClient)
   const connectionStatus = useAiRealtimeStore((state) => state.connectionStatus)
   const authStatus = useAiRealtimeStore((state) => state.authStatus)
+  const authenticatedReady = useAiRealtimeStore((state) => state.authenticatedReady)
   const realtimeError = useAiRealtimeStore((state) => state.lastError)
   const subscribeTask = useAiRealtimeStore((state) => state.subscribeTask)
   const accessToken = useAuthStore((state) => state.accessToken)
@@ -105,7 +113,7 @@ export function ChatSessionPage() {
   const loadSessionData = useCallback(async () => {
     if (!sessionId) return
 
-    if (commandClient === null) {
+    if (!authenticatedReady || commandClient === null) {
       setLoadState(
         shouldWaitForRealtime(connectionStatus, authStatus, realtimeError, accessToken)
           ? 'loading'
@@ -117,19 +125,32 @@ export function ChatSessionPage() {
       return
     }
 
+    const loadGeneration = ++loadGenerationRef.current
+    const requestedSessionId = sessionId
+
     setLoadState('loading')
     setErrorMessage(null)
     setActivityOpen(false)
 
     try {
-      await Promise.all([fetchMessages(sessionId), fetchActiveTaskRuns(sessionId)])
+      await Promise.all([
+        fetchMessages(requestedSessionId),
+        fetchActiveTaskRuns(requestedSessionId),
+      ])
+      if (loadGeneration !== loadGenerationRef.current || requestedSessionId !== sessionId) {
+        return
+      }
       setLoadState('ready')
     } catch (error) {
+      if (loadGeneration !== loadGenerationRef.current || requestedSessionId !== sessionId) {
+        return
+      }
       setLoadState('error')
       setErrorMessage(error instanceof Error ? error.message : '세션 메시지를 불러오지 못했습니다.')
     }
   }, [
     authStatus,
+    authenticatedReady,
     commandClient,
     connectionStatus,
     accessToken,
@@ -148,51 +169,115 @@ export function ChatSessionPage() {
   }, [loadSessionData])
 
   useEffect(() => {
+    loadGenerationRef.current += 1
+    hydrationGenerationRef.current += 1
     hydratedTaskRunIdsRef.current.clear()
+    hydratingTaskRunIdsRef.current.clear()
   }, [sessionId])
 
   useEffect(() => {
-    if (commandClient === null || taskRunIds.length === 0) return
+    if (
+      !authenticatedReady ||
+      commandClient === null ||
+      socketClient === null ||
+      taskRunIds.length === 0
+    ) {
+      return
+    }
+
+    const hydrationGeneration = hydrationGenerationRef.current
+    let cancelled = false
 
     taskRunIds.forEach((taskRunId) => {
-      if (hydratedTaskRunIdsRef.current.has(taskRunId)) {
+      if (
+        hydratedTaskRunIdsRef.current.has(taskRunId) ||
+        hydratingTaskRunIdsRef.current.has(taskRunId)
+      ) {
         return
       }
 
-      hydratedTaskRunIdsRef.current.add(taskRunId)
-      void fetchSnapshot(taskRunId).catch((error) => {
-        console.error(error)
-        setErrorMessage('답변 진행 상태를 불러오지 못했습니다.')
-      })
-      void replayEvents(taskRunId, lastSequenceByTaskRunId[taskRunId]).catch((error) => {
-        console.error(error)
-        setErrorMessage('답변 세부 기록을 불러오지 못했습니다.')
-      })
+      const taskRun = taskRunsById[taskRunId]
+      const taskRunEvents = eventsByTaskRunId[taskRunId] ?? []
+      const latestTaskRunEvent = taskRunEvents.at(-1)
+      const latestTaskRunStatus =
+        latestTaskRunEvent?.status ?? latestTaskRunEvent?.event_type ?? taskRun?.status
+      const hasStreamingMessage = messages.some(
+        (message) =>
+          message.taskRunId === taskRunId &&
+          message.role === 'assistant' &&
+          message.status === 'streaming',
+      )
 
-      if (socketClient !== null) {
+      if (hasStreamingMessage || isLiveTaskRunStatus(latestTaskRunStatus)) {
         try {
+          // 실행 중인 답변은 snapshot command로 UI를 막지 않고 live event 구독만 유지한다.
           subscribeTask(taskRunId, lastSequenceByTaskRunId[taskRunId])
         } catch (error) {
           console.error(error)
-          setErrorMessage('답변 진행 상황 연결에 실패했습니다.')
         }
+        return
       }
+
+      hydratingTaskRunIdsRef.current.add(taskRunId)
+      void (async () => {
+        try {
+          await fetchSnapshot(taskRunId)
+          const hydratedTaskRun = useTaskRunStore.getState().taskRunsById[taskRunId]
+          if (
+            cancelled ||
+            hydrationGeneration !== hydrationGenerationRef.current ||
+            (hydratedTaskRun?.session_id !== undefined && hydratedTaskRun.session_id !== sessionId)
+          ) {
+            return
+          }
+          await replayEvents(taskRunId, lastSequenceByTaskRunId[taskRunId])
+          if (
+            cancelled ||
+            hydrationGeneration !== hydrationGenerationRef.current ||
+            !useAiRealtimeStore.getState().authenticatedReady
+          ) {
+            return
+          }
+          // replay/snapshot merge가 끝난 뒤 store의 최신 sequence를 다시 읽어야
+          // 구독 기준점이 오래된 closure 값에 묶이지 않는다.
+          const latestSequence = useTaskRunStore.getState().lastSequenceByTaskRunId[taskRunId]
+          subscribeTask(taskRunId, latestSequence)
+          hydratedTaskRunIdsRef.current.add(taskRunId)
+        } catch (error) {
+          if (cancelled || hydrationGeneration !== hydrationGenerationRef.current) {
+            return
+          }
+          console.error(error)
+          setErrorMessage('답변 진행 상태를 불러오지 못했습니다.')
+        } finally {
+          hydratingTaskRunIdsRef.current.delete(taskRunId)
+        }
+      })()
     })
+
+    return () => {
+      cancelled = true
+    }
   }, [
+    authenticatedReady,
     commandClient,
+    eventsByTaskRunId,
     fetchSnapshot,
     lastSequenceByTaskRunId,
+    messages,
     replayEvents,
+    sessionId,
     socketClient,
     subscribeTask,
     taskRunIdKey,
     taskRunIds,
+    taskRunsById,
   ])
 
   const handleSend = async (content: string) => {
     if (!sessionId || isSending) return
 
-    if (commandClient === null) {
+    if (!authenticatedReady || commandClient === null) {
       setLoadState(
         shouldWaitForRealtime(connectionStatus, authStatus, realtimeError, accessToken)
           ? 'loading'
@@ -221,8 +306,9 @@ export function ChatSessionPage() {
     setActivityOpen(true)
   }
 
-  const isComposerDisabled = connectionState === 'auth-expired' || commandClient === null
-  const loading = loadState === 'loading' || isLoadingMessages
+  const isComposerDisabled =
+    connectionState === 'auth-expired' || !authenticatedReady || commandClient === null
+  const loading = (loadState === 'loading' || isLoadingMessages) && messages.length === 0
   const displayErrorMessage =
     errorMessage ?? (loadState === 'error' ? null : (chatError ?? taskRunError))
 
@@ -250,7 +336,7 @@ export function ChatSessionPage() {
             <Loader2 className="h-4 w-4 animate-spin" />
             메시지를 불러오는 중입니다.
           </div>
-        ) : loadState === 'error' ? (
+        ) : loadState === 'error' && messages.length === 0 ? (
           <div className="flex min-h-0 flex-1 items-center justify-center px-6">
             <div className="border-border bg-card max-w-md rounded-lg border p-5 text-center shadow-sm">
               <AlertCircle className="text-destructive mx-auto h-6 w-6" />

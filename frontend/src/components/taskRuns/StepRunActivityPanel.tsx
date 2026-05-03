@@ -43,8 +43,8 @@ export function StepRunActivityPanel({
         <Drawer open={open} onOpenChange={onOpenChange} direction="bottom">
           <DrawerContent className="bg-popover max-h-[86vh] p-0">
             <DrawerHeader className="sr-only">
-              <DrawerTitle>진행 상황</DrawerTitle>
-              <DrawerDescription>현재 답변의 진행 단계와 세부 기록입니다.</DrawerDescription>
+              <DrawerTitle>답변 활동</DrawerTitle>
+              <DrawerDescription>이 세션의 답변 진행 단계와 세부 기록입니다.</DrawerDescription>
             </DrawerHeader>
             <StepRunActivityPanelBody
               sessionId={sessionId}

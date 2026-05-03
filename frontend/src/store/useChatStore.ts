@@ -9,6 +9,7 @@ import {
   isJsonObject,
 } from '@/realtime/aiRealtimeTypes'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
+import { useTaskRunStore } from '@/store/useTaskRunStore'
 import type {
   ChatMessageView,
   ChatMessageStatus,
@@ -126,6 +127,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         })
 
       get().handleRealtimeFrame(frame)
+      const acceptedTaskRunId = getStringField(getFramePayload(frame), 'task_run_id', 'taskRunId')
+      if (acceptedTaskRunId !== undefined) {
+        // 빠른 agent 작업은 화면 effect가 돌기 전에 끝날 수 있다.
+        // accepted 응답을 받는 즉시 구독해서 step/task 완료 이벤트 유실 구간을 줄인다.
+        try {
+          useAiRealtimeStore.getState().subscribeTask(acceptedTaskRunId)
+        } catch (subscribeError) {
+          console.error(subscribeError)
+        }
+        scheduleAcceptedTaskReplay(acceptedTaskRunId, set, get)
+      }
       return frame
     } catch (error) {
       markOptimisticMessageFailed(clientMessageId, set)
@@ -149,6 +161,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return
       case 'session.message.completed':
         mergeAssistantCompleted(frame, set)
+        return
+      case 'task.event':
+        mergeTaskEventCompletionPayload(getFramePayload(frame), set)
         return
       default:
         return
@@ -428,6 +443,135 @@ const mergeAssistantCompleted = (
       }),
     }
   })
+}
+
+const mergeTaskEventCompletionPayload = (
+  payload: unknown,
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
+) => {
+  if (!isJsonObject(payload)) {
+    return
+  }
+
+  const eventType = getStringField(payload, 'event_type', 'eventType')
+  if (!isTerminalTaskEvent(eventType)) {
+    return
+  }
+
+  const taskRunId = getStringField(payload, 'task_run_id', 'taskRunId')
+  if (taskRunId === undefined) {
+    return
+  }
+
+  const content = getTaskEventCompletionContent(payload)
+  const nextStatus: ChatMessageStatus = eventType === 'task.completed' ? 'completed' : 'failed'
+
+  set((state) => {
+    const messagesBySessionId = { ...state.messagesBySessionId }
+    let updatedSessionId: string | undefined
+
+    for (const [sessionId, messages] of Object.entries(state.messagesBySessionId)) {
+      const assistantIndex = messages.findIndex(
+        (message) => message.role === 'assistant' && message.taskRunId === taskRunId,
+      )
+      const taskMessageIndex = messages.findIndex((message) => message.taskRunId === taskRunId)
+      if (assistantIndex === -1 && taskMessageIndex === -1) {
+        continue
+      }
+
+      updatedSessionId = sessionId
+      if (assistantIndex === -1) {
+        messagesBySessionId[sessionId] = [
+          ...messages,
+          {
+            id: `assistant_${taskRunId}`,
+            sessionId,
+            role: 'assistant',
+            content: content ?? '',
+            status: nextStatus,
+            taskRunId,
+          },
+        ]
+        continue
+      }
+
+      // 일부 agent.loop 경로는 session.message.completed 없이 task.completed만 먼저 온다.
+      // 이 경우 진행 placeholder를 최종 답변으로 닫아 채팅창이 계속 "작성 중"에 머물지 않게 한다.
+      messagesBySessionId[sessionId] = messages.map((message, index) =>
+        index === assistantIndex
+          ? {
+              ...message,
+              content: content ?? message.content,
+              status: nextStatus,
+            }
+          : message,
+      )
+    }
+
+    if (updatedSessionId === undefined) {
+      return { messagesBySessionId }
+    }
+
+    return {
+      messagesBySessionId,
+      sessionsById: upsertSessionPreview(state, {
+        sessionId: updatedSessionId,
+        lastMessage: content,
+        activeTaskRunId: null,
+        lastTaskRunStatus: eventType === 'task.completed' ? 'COMPLETED' : 'FAILED',
+      }),
+    }
+  })
+}
+
+const scheduleAcceptedTaskReplay = (
+  taskRunId: string,
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
+  get: () => ChatState,
+) => {
+  const replayIfStillStreaming = async () => {
+    if (!hasStreamingAssistantForTask(get(), taskRunId)) {
+      return
+    }
+
+    try {
+      const events = await useTaskRunStore.getState().replayEvents(taskRunId)
+      const terminalEvent = [...events]
+        .reverse()
+        .find((event) => isTerminalTaskEvent(event.event_type))
+      if (terminalEvent !== undefined) {
+        mergeTaskEventCompletionPayload(terminalEvent, set)
+      }
+    } catch (error) {
+      console.error(error)
+    }
+  }
+
+  window.setTimeout(() => void replayIfStillStreaming(), 2500)
+  window.setTimeout(() => void replayIfStillStreaming(), 8000)
+}
+
+const hasStreamingAssistantForTask = (state: ChatState, taskRunId: string) =>
+  Object.values(state.messagesBySessionId).some((messages) =>
+    messages.some(
+      (message) =>
+        message.role === 'assistant' &&
+        message.taskRunId === taskRunId &&
+        message.status === 'streaming',
+    ),
+  )
+
+const isTerminalTaskEvent = (eventType?: string) =>
+  eventType === 'task.completed' || eventType === 'task.failed' || eventType === 'task.canceled'
+
+const getTaskEventCompletionContent = (payload: Record<string, unknown>) => {
+  const eventPayload = isJsonObject(payload.payload) ? payload.payload : undefined
+  const content =
+    getStringField(eventPayload, 'text', 'content') ??
+    getStringField(eventPayload, 'result_text', 'resultText') ??
+    getStringField(payload, 'summary_message', 'summaryMessage')
+
+  return content?.trim() === '' ? undefined : content
 }
 
 const isTerminalSessionMessageCompletion = (status: string | undefined, taskRunId?: string) => {
