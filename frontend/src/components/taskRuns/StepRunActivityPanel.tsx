@@ -329,13 +329,17 @@ function SelectedTaskRunView({
 function ApprovalCard({ approval, taskRunId }: { approval: RawApproval; taskRunId: string }) {
   const resumeTaskRun = useTaskRunStore((state) => state.resumeTaskRun)
   const cancelTaskRun = useTaskRunStore((state) => state.cancelTaskRun)
+  const isApprovalSubmitting = useTaskRunStore((state) =>
+    state.isApprovalSubmitting(approval.approval_id),
+  )
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const isActionable =
     approval.status === undefined || approval.status === null || approval.status === 'PENDING'
+  const isButtonDisabled = isSubmitting || isApprovalSubmitting
 
   const handleResume = async () => {
-    if (!isActionable) return
+    if (!isActionable || isButtonDisabled) return
     setIsSubmitting(true)
     setErrorMessage(null)
     try {
@@ -352,8 +356,26 @@ function ApprovalCard({ approval, taskRunId }: { approval: RawApproval; taskRunI
     }
   }
 
+  const handleReject = async () => {
+    if (!isActionable || isButtonDisabled) return
+    setIsSubmitting(true)
+    setErrorMessage(null)
+    try {
+      await resumeTaskRun({
+        taskRunId,
+        approvalId: approval.approval_id,
+        decision: 'REJECTED',
+        response: { approved: false },
+      })
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '거절 응답 전송에 실패했습니다.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   const handleCancel = async () => {
-    if (!isActionable) return
+    if (!isActionable || isButtonDisabled) return
     setIsSubmitting(true)
     setErrorMessage(null)
     try {
@@ -388,21 +410,31 @@ function ApprovalCard({ approval, taskRunId }: { approval: RawApproval; taskRunI
             type="button"
             size="sm"
             onClick={handleResume}
-            disabled={isSubmitting}
+            disabled={isButtonDisabled}
             aria-label={`Approval ${approval.approval_id} 승인 후 TaskRun 재개`}
           >
-            {isSubmitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            {isButtonDisabled ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
             승인
           </Button>
           <Button
             type="button"
             size="sm"
             variant="outline"
+            onClick={handleReject}
+            disabled={isButtonDisabled}
+            aria-label={`Approval ${approval.approval_id} 거절 후 TaskRun 재개`}
+          >
+            거절
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
             onClick={handleCancel}
-            disabled={isSubmitting}
+            disabled={isButtonDisabled}
             aria-label={`TaskRun ${taskRunId} 취소`}
           >
-            취소
+            작업 취소
           </Button>
         </div>
       )}

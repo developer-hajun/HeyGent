@@ -148,8 +148,11 @@ export type TaskRunResumePayload = {
   approval_id?: string
   approvalResponseId?: string
   clientCommandId?: string
-  decision?: string
-  response?: unknown
+  payload: {
+    decision?: string
+    response?: unknown
+    [key: string]: unknown
+  }
 }
 
 export type TaskRunCancelPayload = {

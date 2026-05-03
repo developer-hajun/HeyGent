@@ -29,6 +29,7 @@ type TaskRunState = {
   replayNeededByTaskRunId: Record<string, boolean>
   recoveryAfterSequenceByTaskRunId: Record<string, number | undefined>
   recoveringByTaskRunId: Record<string, boolean>
+  approvalSubmissionIdsByApprovalId: Record<string, string>
   lastError: string | null
   fetchActiveTaskRuns: (sessionId?: string) => Promise<RawTaskRun[]>
   fetchSnapshot: (taskRunId: string) => Promise<RawTaskRunSnapshot | null>
@@ -36,6 +37,7 @@ type TaskRunState = {
   recoverTaskRun: (taskRunId: string) => Promise<void>
   selectTaskRunSummary: (taskRunId: string) => TaskRunDetailSummaryView
   selectTaskRunSummaries: (taskRunIds?: string[]) => TaskRunDetailSummaryView[]
+  isApprovalSubmitting: (approvalId: string) => boolean
   resumeTaskRun: (input: {
     taskRunId: string
     approvalId?: string
@@ -57,6 +59,7 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
   replayNeededByTaskRunId: {},
   recoveryAfterSequenceByTaskRunId: {},
   recoveringByTaskRunId: {},
+  approvalSubmissionIdsByApprovalId: {},
   lastError: null,
   fetchActiveTaskRuns: async (sessionId) => {
     const frame = await useAiRealtimeStore
@@ -128,19 +131,41 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
     }
   },
   selectTaskRunSummary: (taskRunId) => selectTaskRunSummary(get(), taskRunId),
+  isApprovalSubmitting: (approvalId) =>
+    get().approvalSubmissionIdsByApprovalId[approvalId] !== undefined,
   selectTaskRunSummaries: (taskRunIds) => {
     const state = get()
     const ids = taskRunIds ?? Object.keys(state.taskRunsById)
     return ids.map((taskRunId) => selectTaskRunSummary(state, taskRunId))
   },
-  resumeTaskRun: (input) =>
-    useAiRealtimeStore.getState().sendCommand<AiRealtimeRawFrame>('taskRun.resume', {
-      taskRunId: input.taskRunId,
-      approvalId: input.approvalId,
-      approvalResponseId: createApprovalResponseId(),
-      decision: input.decision,
-      response: input.response,
-    }),
+  resumeTaskRun: async (input) => {
+    if (
+      input.approvalId !== undefined &&
+      get().approvalSubmissionIdsByApprovalId[input.approvalId] !== undefined
+    ) {
+      throw new Error('이미 approval 응답을 전송 중입니다.')
+    }
+
+    const approvalResponseId = getApprovalResponseId(input.approvalId, get, set)
+
+    try {
+      return await useAiRealtimeStore.getState().sendCommand<AiRealtimeRawFrame>('taskRun.resume', {
+        taskRunId: input.taskRunId,
+        approvalId: input.approvalId,
+        approvalResponseId,
+        // 서버 resume 계약은 실제 승인 본문을 payload 필드에서 읽는다.
+        payload: {
+          decision: input.decision,
+          response: input.response,
+        },
+      })
+    } catch (error) {
+      if (input.approvalId !== undefined) {
+        clearApprovalSubmission(input.approvalId, set)
+      }
+      throw error
+    }
+  },
   cancelTaskRun: (taskRunId, reason) =>
     useAiRealtimeStore.getState().sendCommand<AiRealtimeRawFrame>('taskRun.cancel', {
       taskRunId,
@@ -224,9 +249,49 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
       replayNeededByTaskRunId: {},
       recoveryAfterSequenceByTaskRunId: {},
       recoveringByTaskRunId: {},
+      approvalSubmissionIdsByApprovalId: {},
       lastError: null,
     }),
 }))
+
+const getApprovalResponseId = (
+  approvalId: string | undefined,
+  get: () => TaskRunState,
+  set: (partial: Partial<TaskRunState> | ((state: TaskRunState) => Partial<TaskRunState>)) => void,
+) => {
+  if (approvalId === undefined) {
+    return createApprovalResponseId()
+  }
+
+  const existingResponseId = get().approvalSubmissionIdsByApprovalId[approvalId]
+  if (existingResponseId !== undefined) {
+    return existingResponseId
+  }
+
+  const approvalResponseId = createApprovalResponseId()
+  set((state) => ({
+    approvalSubmissionIdsByApprovalId: {
+      ...state.approvalSubmissionIdsByApprovalId,
+      [approvalId]: approvalResponseId,
+    },
+  }))
+  return approvalResponseId
+}
+
+const clearApprovalSubmission = (
+  approvalId: string,
+  set: (partial: Partial<TaskRunState> | ((state: TaskRunState) => Partial<TaskRunState>)) => void,
+) => {
+  set((state) => {
+    if (state.approvalSubmissionIdsByApprovalId[approvalId] === undefined) {
+      return { approvalSubmissionIdsByApprovalId: state.approvalSubmissionIdsByApprovalId }
+    }
+
+    const approvalSubmissionIdsByApprovalId = { ...state.approvalSubmissionIdsByApprovalId }
+    delete approvalSubmissionIdsByApprovalId[approvalId]
+    return { approvalSubmissionIdsByApprovalId }
+  })
+}
 
 const getRawTaskRunList = (payload: TaskRunsActiveListResultPayload | unknown): RawTaskRun[] => {
   if (!isJsonObject(payload)) {
@@ -279,6 +344,10 @@ const mergeTaskRuns = (
       ...state.approvalsById,
       ...Object.fromEntries(approvals.map((approval) => [approval.approval_id, approval])),
     },
+    approvalSubmissionIdsByApprovalId: clearResolvedApprovalSubmissions(
+      state.approvalSubmissionIdsByApprovalId,
+      approvals,
+    ),
   }))
 }
 
@@ -344,6 +413,10 @@ const mergeSnapshot = (
         ...state.approvalsById,
         ...Object.fromEntries(approvals.map((approval) => [approval.approval_id, approval])),
       },
+      approvalSubmissionIdsByApprovalId: clearResolvedApprovalSubmissions(
+        state.approvalSubmissionIdsByApprovalId,
+        approvals,
+      ),
       eventsByTaskRunId: nextEventsByTaskRunId,
       lastSequenceByTaskRunId: nextLastSequenceByTaskRunId,
       replayNeededByTaskRunId: nextReplayNeededByTaskRunId,
@@ -496,6 +569,22 @@ const normalizeApproval = (value: unknown, fallbackTaskRunId?: string): RawAppro
     task_run_id: taskRunId,
   }
 }
+
+const clearResolvedApprovalSubmissions = (
+  submissionIdsByApprovalId: Record<string, string>,
+  approvals: RawApproval[],
+) => {
+  const nextSubmissionIdsByApprovalId = { ...submissionIdsByApprovalId }
+  approvals.forEach((approval) => {
+    if (!isPendingApprovalStatus(approval.status)) {
+      delete nextSubmissionIdsByApprovalId[approval.approval_id]
+    }
+  })
+  return nextSubmissionIdsByApprovalId
+}
+
+const isPendingApprovalStatus = (status?: RawApproval['status'] | null) =>
+  status === undefined || status === null || status === 'PENDING'
 
 const getTaskRunLastSequence = (taskRun: RawTaskRun) => {
   if (typeof taskRun.last_sequence === 'number' && Number.isFinite(taskRun.last_sequence)) {

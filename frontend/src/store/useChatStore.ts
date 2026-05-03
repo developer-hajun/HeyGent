@@ -11,6 +11,7 @@ import {
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import type {
   ChatMessageView,
+  ChatMessageStatus,
   RawAiMessage,
   RawAiSession,
   SessionListResultPayload,
@@ -113,16 +114,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       },
     }))
 
-    const frame = await useAiRealtimeStore
-      .getState()
-      .sendCommand<AiRealtimeRawFrame>('session.message.create', {
-        sessionId,
-        content: trimmedContent,
-        clientMessageId,
-      })
+    try {
+      const frame = await useAiRealtimeStore
+        .getState()
+        .sendCommand<AiRealtimeRawFrame>('session.message.create', {
+          sessionId,
+          content: trimmedContent,
+          clientMessageId,
+        })
 
-    get().handleRealtimeFrame(frame)
-    return frame
+      get().handleRealtimeFrame(frame)
+      return frame
+    } catch (error) {
+      markOptimisticMessageFailed(clientMessageId, set)
+      throw error
+    }
   },
   handleRealtimeFrame: (frame) => {
     switch (frame.type) {
@@ -210,6 +216,41 @@ const mergeSessionList = (
   }))
 }
 
+const upsertSessionPreview = (
+  state: ChatState,
+  input: {
+    sessionId: string
+    title?: string
+    lastMessage?: string
+    activeTaskRunId?: string | null
+    lastTaskRunStatus?: string
+  },
+) => {
+  const previous = state.sessionsById[input.sessionId]
+  const now = new Date().toISOString()
+  const hasActiveTaskRunId = Object.prototype.hasOwnProperty.call(input, 'activeTaskRunId')
+
+  return {
+    ...state.sessionsById,
+    [input.sessionId]: {
+      ...(previous ?? {
+        session_id: input.sessionId,
+        status: 'ACTIVE',
+        source: 'api.session',
+        created_at: now,
+      }),
+      title: previous?.title ?? input.title,
+      last_message: input.lastMessage ?? previous?.last_message,
+      last_message_at: now,
+      active_task_run_id: hasActiveTaskRunId ? input.activeTaskRunId : previous?.active_task_run_id,
+      last_task_run_status: input.lastTaskRunStatus ?? previous?.last_task_run_status,
+      updated_at: now,
+      message_count:
+        typeof previous?.message_count === 'number' ? previous.message_count : undefined,
+    },
+  }
+}
+
 const mergeMessageList = (
   frame: AiRealtimeRawFrame,
   set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
@@ -263,14 +304,20 @@ const mergeAcceptedMessage = (
     })
 
     const hasAssistantPlaceholder = acceptedMessages.some(
-      (message) => message.id === assistantMessageId,
+      (message) =>
+        (assistantMessageId !== undefined && message.id === assistantMessageId) ||
+        (taskRunId !== undefined &&
+          message.role === 'assistant' &&
+          message.taskRunId === taskRunId),
     )
+    const placeholderId =
+      assistantMessageId ?? (taskRunId === undefined ? undefined : `assistant_${taskRunId}`)
     const assistantPlaceholder =
-      assistantMessageId === undefined || hasAssistantPlaceholder
+      placeholderId === undefined || hasAssistantPlaceholder
         ? []
         : [
             {
-              id: assistantMessageId,
+              id: placeholderId,
               sessionId,
               role: 'assistant',
               content: '',
@@ -290,7 +337,19 @@ const mergeAcceptedMessage = (
     }
     messagesBySessionId[sessionId] = [...acceptedMessages, ...assistantPlaceholder]
 
-    return { messagesBySessionId, pendingClientMessageIds }
+    return {
+      messagesBySessionId,
+      pendingClientMessageIds,
+      sessionsById: upsertSessionPreview(state, {
+        sessionId,
+        title: acceptedMessages[0]?.content,
+        lastMessage:
+          acceptedMessages.find((message) => message.clientMessageId === clientMessageId)
+            ?.content ?? acceptedMessages.find((message) => message.role === 'user')?.content,
+        activeTaskRunId: taskRunId,
+        lastTaskRunStatus: 'RUNNING',
+      }),
+    }
   })
 }
 
@@ -301,6 +360,7 @@ const mergeAssistantDelta = (
   const payload = getFramePayload(frame) as RawSessionMessageDeltaPayload
   const sessionId = getStringField(payload, 'session_id', 'sessionId')
   const messageId = getStringField(payload, 'message_id', 'messageId')
+  const taskRunId = getStringField(payload, 'task_run_id', 'taskRunId')
   const delta =
     typeof payload.delta === 'string'
       ? payload.delta
@@ -320,6 +380,7 @@ const mergeAssistantDelta = (
         sessionId,
         contentDelta: delta,
         status: 'streaming',
+        taskRunId,
       }),
     },
   }))
@@ -332,24 +393,87 @@ const mergeAssistantCompleted = (
   const payload = getFramePayload(frame) as RawSessionMessageCompletedPayload
   const sessionId = getStringField(payload, 'session_id', 'sessionId')
   const messageId = getStringField(payload, 'message_id', 'messageId')
+  const taskRunId = getStringField(payload, 'task_run_id', 'taskRunId')
   const content = typeof payload.content === 'string' ? payload.content : undefined
+  const status = getStringField(payload, 'status')
+  const shouldClearRunningState = isTerminalSessionMessageCompletion(status, taskRunId)
 
   if (sessionId === undefined || messageId === undefined) {
     return
   }
 
-  set((state) => ({
-    messagesBySessionId: {
-      ...state.messagesBySessionId,
-      [sessionId]: upsertAssistantMessage(state.messagesBySessionId[sessionId] ?? [], {
-        id: messageId,
+  set((state) => {
+    const nextMessages = upsertAssistantMessage(state.messagesBySessionId[sessionId] ?? [], {
+      id: messageId,
+      sessionId,
+      content,
+      status: 'completed',
+      taskRunId,
+    })
+
+    return {
+      messagesBySessionId: {
+        ...state.messagesBySessionId,
+        [sessionId]: nextMessages,
+      },
+      sessionsById: upsertSessionPreview(state, {
         sessionId,
-        content,
-        status: 'completed',
+        lastMessage: content,
+        activeTaskRunId: shouldClearRunningState ? null : taskRunId,
+        lastTaskRunStatus: status,
       }),
-    },
-  }))
+    }
+  })
 }
+
+const isTerminalSessionMessageCompletion = (status: string | undefined, taskRunId?: string) => {
+  if (
+    status === 'COMPLETED' ||
+    status === 'FAILED' ||
+    status === 'CANCELED' ||
+    status === 'CANCELLED'
+  ) {
+    return true
+  }
+
+  return status === undefined && taskRunId !== undefined
+}
+
+const markOptimisticMessageFailed = (
+  clientMessageId: string,
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
+) => {
+  set((state) => {
+    const pendingSessionId = state.pendingClientMessageIds[clientMessageId]
+    if (pendingSessionId === undefined) {
+      return { pendingClientMessageIds: state.pendingClientMessageIds }
+    }
+
+    const pendingClientMessageIds = { ...state.pendingClientMessageIds }
+    delete pendingClientMessageIds[clientMessageId]
+
+    return {
+      pendingClientMessageIds,
+      messagesBySessionId: {
+        ...state.messagesBySessionId,
+        [pendingSessionId]: updateMessageStatus(
+          state.messagesBySessionId[pendingSessionId] ?? [],
+          clientMessageId,
+          'failed',
+        ),
+      },
+    }
+  })
+}
+
+const updateMessageStatus = (
+  messages: ChatMessageView[],
+  clientMessageId: string,
+  status: ChatMessageStatus,
+) =>
+  messages.map((message) =>
+    message.clientMessageId === clientMessageId ? { ...message, status } : message,
+  )
 
 const upsertAssistantMessage = (
   messages: ChatMessageView[],
@@ -358,10 +482,18 @@ const upsertAssistantMessage = (
     sessionId: string
     content?: string
     contentDelta?: string
+    taskRunId?: string
     status: ChatMessageView['status']
   },
 ) => {
-  const index = messages.findIndex((message) => message.id === update.id)
+  const index = messages.findIndex(
+    (message) =>
+      message.id === update.id ||
+      (update.taskRunId !== undefined &&
+        message.role === 'assistant' &&
+        message.taskRunId === update.taskRunId &&
+        message.status === 'streaming'),
+  )
   if (index === -1) {
     return [
       ...messages,
@@ -371,16 +503,19 @@ const upsertAssistantMessage = (
         role: 'assistant',
         content: update.content ?? update.contentDelta ?? '',
         status: update.status,
+        taskRunId: update.taskRunId,
       },
     ]
   }
 
-  return messages.map((message) =>
-    message.id === update.id
+  return messages.map((message, messageIndex) =>
+    messageIndex === index
       ? {
           ...message,
+          id: update.id,
           content: update.content ?? `${message.content}${update.contentDelta ?? ''}`,
           status: update.status,
+          taskRunId: update.taskRunId ?? message.taskRunId,
         }
       : message,
   )
