@@ -38,9 +38,17 @@ def _authenticated_socket(client, *, user_id: str = "ws-user"):
     return websocket_context, websocket
 
 
-def _receive_until(websocket, frame_type: str, *, max_frames: int = 20):
+def _receive_until(
+    websocket,
+    frame_type: str,
+    *,
+    max_frames: int = 20,
+    seen_types: list[str] | None = None,
+):
     for _ in range(max_frames):
         frame = websocket.receive_json()
+        if seen_types is not None:
+            seen_types.append(frame.get("type"))
         if frame.get("type") == frame_type:
             return frame
     raise AssertionError(f"{frame_type} frame was not received")
@@ -81,10 +89,14 @@ def test_ws_session_message_create_returns_accepted_before_completed_and_stores_
         assert accepted["type"] == "session.message.accepted"
         assert accepted["requestId"] == "req_create"
         assert accepted["payload"]["session_id"].startswith("session_")
+        assert isinstance(accepted["payload"]["user_message_id"], str)
         assert accepted["payload"]["task_run_id"].startswith("task_")
         assert accepted["payload"]["assistant_message_id"] is None
 
-        completed = _receive_until(websocket, "session.message.completed")
+        seen_types: list[str] = []
+        completed = _receive_until(websocket, "session.message.completed", seen_types=seen_types)
+        assert "session.message.delta" not in seen_types
+        assert isinstance(completed["payload"]["message_id"], str)
         assert completed["payload"]["content"] == "WS_ACCEPTED_DONE"
         assert completed["payload"]["task_run_id"] == accepted["payload"]["task_run_id"]
 
@@ -129,8 +141,12 @@ def test_ws_list_snapshot_and_replay_happy_path(client, monkeypatch):
             }
         )
         messages = websocket.receive_json()
+        assert messages["type"] == "session.messages.list.result"
+        assert messages["type"] != "session.messages.result"
         assert messages["requestId"] == "req_messages"
         assert [item["role"] for item in messages["payload"]["items"]] == ["user", "assistant"]
+        assert [item["role"] for item in messages["payload"]["messages"]] == ["user", "assistant"]
+        assert all(isinstance(item["message_id"], str) for item in messages["payload"]["items"])
 
         websocket.send_json(
             {
@@ -144,7 +160,12 @@ def test_ws_list_snapshot_and_replay_happy_path(client, monkeypatch):
         assert snapshot["type"] == "taskRun.snapshot.result"
         assert snapshot["requestId"] == "req_snapshot"
         assert snapshot["payload"]["task"]["task_run_id"] == task_run_id
+        assert snapshot["payload"]["task_run"]["task_run_id"] == task_run_id
         assert snapshot["payload"]["steps"]
+        assert snapshot["payload"]["step_runs"]
+        assert snapshot["payload"]["approvals"] == []
+        assert snapshot["payload"]["events"]
+        assert snapshot["payload"]["events"][0]["task_run_id"] == task_run_id
 
         websocket.send_json(
             {
@@ -204,9 +225,11 @@ def test_ws_task_runs_active_list_filters_authenticated_owner(client):
 
         response = websocket.receive_json()
 
-    assert response["type"] == "taskRuns.active.result"
+    assert response["type"] == "taskRuns.active.list.result"
+    assert response["type"] != "taskRuns.active.result"
     assert response["requestId"] == "req_active"
     assert [item["task_run_id"] for item in response["payload"]["items"]] == ["task_active_ws_owner"]
+    assert [item["task_run_id"] for item in response["payload"]["task_runs"]] == ["task_active_ws_owner"]
 
 
 def test_ws_subscribe_task_preserves_request_id_when_provided(client):

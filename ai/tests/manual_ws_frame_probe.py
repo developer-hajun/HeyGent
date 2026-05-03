@@ -19,13 +19,18 @@ DEFAULT_WS_URL = "ws://localhost:8000/ai/api/v1/realtime/user/ws"
 DEFAULT_DEV_LOGIN_URL = "http://localhost:8080/api/v1/auth/dev-login"
 SENSITIVE_KEYS = {
     "accessToken",
+    "access_token",
     "refreshToken",
+    "refresh_token",
     "token",
     "authorization",
     "apiKey",
     "api_key",
+    "workspaceKey",
+    "workspace_key",
     "secret",
 }
+NORMALIZED_SENSITIVE_KEYS = {key.lower() for key in SENSITIVE_KEYS}
 
 
 def utc_now_iso() -> str:
@@ -36,7 +41,8 @@ def redact(value: Any) -> Any:
     if isinstance(value, Mapping):
         redacted: dict[str, Any] = {}
         for key, item in value.items():
-            if key in SENSITIVE_KEYS or key.lower() in SENSITIVE_KEYS:
+            normalized_key = str(key).lower()
+            if key in SENSITIVE_KEYS or normalized_key in NORMALIZED_SENSITIVE_KEYS:
                 redacted[str(key)] = "<redacted>"
             else:
                 redacted[str(key)] = redact(item)
@@ -115,6 +121,56 @@ async def receive_until_quiet(socket, timeout_seconds: float, max_frames: int) -
             return
 
 
+async def receive_until_request(
+    socket,
+    request_id: str,
+    expected_type: str,
+    timeout_seconds: float,
+    max_frames: int,
+) -> dict[str, Any]:
+    for _ in range(max_frames):
+        frame = await receive_json(socket, timeout_seconds)
+        if frame is None:
+            continue
+        if frame.get("requestId") == request_id:
+            if frame.get("type") != expected_type:
+                raise RuntimeError(
+                    f"{request_id} 응답 type이 다릅니다: {frame.get('type')} != {expected_type}"
+                )
+            return frame
+    raise RuntimeError(f"{request_id} 응답을 받지 못했습니다.")
+
+
+async def receive_until_type(
+    socket,
+    expected_type: str,
+    timeout_seconds: float,
+    max_frames: int,
+) -> dict[str, Any]:
+    for _ in range(max_frames):
+        frame = await receive_json(socket, timeout_seconds)
+        if frame is None:
+            continue
+        if frame.get("type") == expected_type:
+            return frame
+    raise RuntimeError(f"{expected_type} frame을 받지 못했습니다.")
+
+
+def require_payload_object(frame: dict[str, Any], label: str) -> dict[str, Any]:
+    payload = frame.get("payload")
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{label} payload가 object가 아닙니다.")
+    return payload
+
+
+def require_payload_keys(frame: dict[str, Any], keys: tuple[str, ...], label: str) -> dict[str, Any]:
+    payload = require_payload_object(frame, label)
+    missing = [key for key in keys if key not in payload]
+    if missing:
+        raise RuntimeError(f"{label} payload 누락 필드: {', '.join(missing)}")
+    return payload
+
+
 async def run_basic_scenario(socket, args: argparse.Namespace) -> None:
     await send_json(socket, {"type": "ping"})
     await receive_json(socket, args.timeout)
@@ -144,6 +200,99 @@ async def run_chat_contract_scenario(socket, args: argparse.Namespace) -> None:
     await receive_until_quiet(socket, args.timeout, args.max_frames)
 
 
+async def run_task_contract_scenario(socket, args: argparse.Namespace) -> None:
+    run_id = args.run_id
+    create_request_id = f"req_manual_task_message_{run_id}"
+    await send_json(
+        socket,
+        build_command(
+            "session.message.create",
+            create_request_id,
+            {
+                "sessionId": args.session_id,
+                "content": args.content,
+                "clientMessageId": f"client_msg_manual_task_{run_id}",
+            },
+        ),
+    )
+    accepted = await receive_until_request(
+        socket,
+        create_request_id,
+        "session.message.accepted",
+        args.timeout,
+        args.max_frames,
+    )
+    accepted_payload = require_payload_keys(
+        accepted,
+        ("session_id", "task_run_id"),
+        "session.message.accepted",
+    )
+    session_id = str(accepted_payload["session_id"])
+    task_run_id = str(accepted_payload["task_run_id"])
+
+    await receive_until_type(socket, "session.message.completed", args.timeout, args.max_frames)
+
+    snapshot_request_id = f"req_manual_task_snapshot_{run_id}"
+    await send_json(
+        socket,
+        build_command(
+            "taskRun.snapshot.get",
+            snapshot_request_id,
+            {"taskRunId": task_run_id, "includeSteps": True},
+        ),
+    )
+    snapshot = await receive_until_request(
+        socket,
+        snapshot_request_id,
+        "taskRun.snapshot.result",
+        args.timeout,
+        args.max_frames,
+    )
+    require_payload_keys(
+        snapshot,
+        ("task_run", "step_runs", "approvals", "events"),
+        "taskRun.snapshot.result",
+    )
+
+    replay_request_id = f"req_manual_task_replay_{run_id}"
+    await send_json(
+        socket,
+        build_command(
+            "taskRun.events.replay",
+            replay_request_id,
+            {"taskRunId": task_run_id, "afterSequence": 0},
+        ),
+    )
+    require_payload_keys(
+        await receive_until_request(
+            socket,
+            replay_request_id,
+            "taskRun.events.replay.result",
+            args.timeout,
+            args.max_frames,
+        ),
+        ("task_run_id", "events"),
+        "taskRun.events.replay.result",
+    )
+
+    active_request_id = f"req_manual_task_active_{run_id}"
+    await send_json(
+        socket,
+        build_command("taskRuns.active.list", active_request_id, {"sessionId": session_id}),
+    )
+    require_payload_keys(
+        await receive_until_request(
+            socket,
+            active_request_id,
+            "taskRuns.active.list.result",
+            args.timeout,
+            args.max_frames,
+        ),
+        ("items", "task_runs", "total_count"),
+        "taskRuns.active.list.result",
+    )
+
+
 async def probe(args: argparse.Namespace) -> None:
     token = resolve_access_token(args)
     async with websockets.connect(args.ws_url, origin=args.origin) as socket:
@@ -163,6 +312,8 @@ async def probe(args: argparse.Namespace) -> None:
             await run_basic_scenario(socket, args)
         elif args.scenario == "chat-contract":
             await run_chat_contract_scenario(socket, args)
+        elif args.scenario == "task-contract":
+            await run_task_contract_scenario(socket, args)
 
 
 def parse_args() -> argparse.Namespace:
@@ -177,7 +328,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dev-login", action="store_true", help="backend dev-login으로 accessToken을 받아 사용합니다.")
     parser.add_argument("--dev-login-url", default=DEFAULT_DEV_LOGIN_URL)
     parser.add_argument("--access-token-env", default="HEYGENT_MANUAL_ACCESS_TOKEN")
-    parser.add_argument("--scenario", choices=["basic", "chat-contract"], default="basic")
+    parser.add_argument("--scenario", choices=["basic", "chat-contract", "task-contract"], default="basic")
     parser.add_argument("--run-id", default=uuid4().hex[:12], help="manual frame request/client id suffix")
     parser.add_argument("--task-run-id", help="basic scenario에서 subscribe.task까지 확인할 TaskRun ID")
     parser.add_argument("--last-sequence", type=int, default=0)

@@ -17,6 +17,8 @@ _PUBLIC_SESSION_SOURCE = "api.session"
 _TASK_TRANSCRIPT_SOURCE = "agent.loop"
 _ACTIVE_TASK_STATUSES = [status.value for status in (TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.WAITING, TaskStatus.BLOCKED)]
 _TERMINAL_TASK_STATUSES = {status.value for status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED)}
+_SESSION_MESSAGES_LIST_RESULT_TYPE = "session.messages.list.result"
+_TASK_RUNS_ACTIVE_LIST_RESULT_TYPE = "taskRuns.active.list.result"
 
 
 class WebSocketCommandError(Exception):
@@ -160,7 +162,7 @@ class WebSocketCommandRouter:
             messages = [message for message in messages if int(message.get("id") or 0) > after_message_id]
         items = [_message_payload(message) for message in messages[:limit]]
         return (
-            "session.messages.result",
+            _SESSION_MESSAGES_LIST_RESULT_TYPE,
             {
                 "session_id": session_id,
                 "after_message_id": after_message_id,
@@ -168,6 +170,7 @@ class WebSocketCommandRouter:
                 "total_count": len(items),
                 "next_after_message_id": items[-1]["id"] if items else None,
                 "items": items,
+                "messages": items,
             },
         )
 
@@ -235,7 +238,7 @@ class WebSocketCommandRouter:
 
         accepted = {
             "session_id": session_id,
-            "user_message_id": user_message_id,
+            "user_message_id": str(user_message_id),
             "assistant_message_id": None,
             "task_run_id": task.task_run_id,
             "status": task.status,
@@ -281,12 +284,14 @@ class WebSocketCommandRouter:
                 source="active",
                 repository=repository,
             )
+        items = list(items_by_task_run_id.values())
         return (
-            "taskRuns.active.result",
+            _TASK_RUNS_ACTIVE_LIST_RESULT_TYPE,
             {
                 "session_id": session_id,
-                "items": list(items_by_task_run_id.values()),
-                "total_count": len(items_by_task_run_id),
+                "items": items,
+                "task_runs": items,
+                "total_count": len(items),
             },
         )
 
@@ -294,18 +299,34 @@ class WebSocketCommandRouter:
         task_run_id = _required_str(payload, "taskRunId", "task_run_id")
         include_steps = bool(payload.get("includeSteps", payload.get("include_steps", True)))
         include_flow = bool(payload.get("includeFlow", payload.get("include_flow", False)))
+        include_events = bool(payload.get("includeEvents", payload.get("include_events", True)))
         repository = context.websocket.app.state.repository
         task = repository.get_task(task_run_id)
         if task is None:
             raise WebSocketCommandError("not_found", "task not found")
         _ensure_owner(context, task.owner_key)
         steps = repository.list_steps(task_run_id) if include_steps or include_flow else []
+        pending_approval = _pending_approval_payload(repository.get_open_approval(task_run_id))
+        events = (
+            _task_events_payload(
+                repository=repository,
+                projection=getattr(context.websocket.app.state, "task_projection_store", None),
+                task_run_id=task_run_id,
+            )
+            if include_events
+            else []
+        )
         snapshot = {
             "task": _jsonable(task),
-            "pending_approval": _pending_approval_payload(repository.get_open_approval(task_run_id)),
+            "task_run": _jsonable(task),
+            "pending_approval": pending_approval,
+            "approvals": [pending_approval] if pending_approval is not None else [],
+            "events": events,
         }
         if include_steps:
-            snapshot["steps"] = [_jsonable(step) for step in steps]
+            step_payloads = [_jsonable(step) for step in steps]
+            snapshot["steps"] = step_payloads
+            snapshot["step_runs"] = step_payloads
         if include_flow:
             snapshot["flow"] = {
                 "task_run_id": task.task_run_id,
@@ -439,19 +460,22 @@ class WebSocketCommandRouter:
                     "source": _PUBLIC_SESSION_SOURCE,
                     "task_run_id": completed_task.task_run_id,
                     "status": completed_task.status,
-                    "user_message_id": user_message_id,
+                    "user_message_id": str(user_message_id),
                 },
                 finish_reason="stop" if completed_task.status in _TERMINAL_TASK_STATUSES else None,
             )
+            # 현재 Task Engine에는 토큰 단위 streaming hook이 없으므로 delta를 합성하지 않는다.
+            # 프론트에는 durable assistant 메시지가 저장된 뒤 completed frame만 보낸다.
             await context.send_json(
                 _event_frame(
                     "session.message.completed",
                     {
                         "session_id": session_id,
-                        "message_id": assistant_message_id,
+                        "message_id": str(assistant_message_id),
                         "content": content,
                         "task_run_id": completed_task.task_run_id,
                         "status": completed_task.status,
+                        "finish_reason": "stop" if completed_task.status in _TERMINAL_TASK_STATUSES else None,
                     },
                 )
             )
@@ -577,14 +601,18 @@ def _public_session_payload(session: dict[str, Any]) -> dict[str, Any]:
 
 def _message_payload(message: dict[str, Any]) -> dict[str, Any]:
     metadata = dict(message.get("metadata") or {})
+    message_id = int(message["id"])
     return {
-        "id": int(message["id"]),
+        "id": message_id,
+        "message_id": str(message_id),
         "session_id": str(message["session_id"]),
         "role": str(message["role"]),
         "content": message.get("content"),
         "task_run_id": metadata.get("task_run_id") or metadata.get("taskRunId"),
+        "client_message_id": metadata.get("client_message_id") or metadata.get("clientMessageId"),
         "metadata": metadata,
         "timestamp": message.get("timestamp"),
+        "created_at": message.get("timestamp"),
         "finish_reason": message.get("finish_reason"),
     }
 
@@ -614,6 +642,20 @@ def _projection_steps(projection: Any, task_run_id: str) -> list[Any]:
     return steps
 
 
+def _task_events_payload(
+    *,
+    repository: Any,
+    projection: Any,
+    task_run_id: str,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    if projection is not None:
+        events = projection.list_recent_events(task_run_id)
+        if events:
+            return [_jsonable(event) for event in events[:limit]]
+    return [_jsonable(event) for event in repository.list_events(task_run_id)[:limit]]
+
+
 def _select_current_step(task: Any, steps: list[Any]) -> Any | None:
     if task.current_step_run_id:
         for step in steps:
@@ -632,12 +674,16 @@ def _pending_approval_payload(approval: dict[str, Any] | None) -> dict[str, Any]
     request_payload = dict(approval.get("request_payload") or {})
     return {
         "approval_id": approval.get("approval_id"),
+        "task_run_id": approval.get("task_run_id"),
         "step_run_id": approval.get("step_run_id"),
         "status": approval.get("status"),
         "reason": request_payload.get("reason") or request_payload.get("approvalReason"),
         "tool_call_id": request_payload.get("pending_tool_call_id") or request_payload.get("tool_call_id"),
         "tool_name": request_payload.get("pending_tool_name") or request_payload.get("tool_name"),
+        "payload": request_payload,
+        "request_payload": request_payload,
         "requested_at": approval.get("created_at") or approval.get("requested_at"),
+        "created_at": approval.get("created_at") or approval.get("requested_at"),
         "can_approve": bool(approval.get("can_approve", approval.get("status") == "PENDING")),
         "can_reject": bool(approval.get("can_reject", approval.get("status") == "PENDING")),
     }
