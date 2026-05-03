@@ -89,7 +89,9 @@ def _client_message_action(message: dict) -> str | None:
 def _client_task_run_id(message: dict) -> str | None:
     """제품 WebSocket 계약의 camelCase TaskRun ID를 읽는다."""
 
-    task_run_id = message.get("taskRunId")
+    payload = message.get("payload")
+    payload_dict = payload if isinstance(payload, dict) else {}
+    task_run_id = message.get("taskRunId") or payload_dict.get("taskRunId") or payload_dict.get("task_run_id")
     if isinstance(task_run_id, str) and task_run_id:
         return task_run_id
     return None
@@ -118,13 +120,15 @@ async def _authenticate_first_message(websocket: WebSocket) -> WebSocketAuthCont
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return None
 
-        access_token = message.get("accessToken")
+        payload = message.get("payload")
+        payload_dict = payload if isinstance(payload, dict) else {}
+        access_token = message.get("accessToken") or payload_dict.get("accessToken") or payload_dict.get("access_token")
         if not isinstance(access_token, str) or not access_token:
             await websocket.send_json({"type": "auth.failed"})
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return None
 
-        workspace_key = message.get("workspaceKey")
+        workspace_key = message.get("workspaceKey") or payload_dict.get("workspaceKey") or payload_dict.get("workspace_key")
         if workspace_key is not None and not isinstance(workspace_key, str):
             await websocket.send_json({"type": "auth.failed"})
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
