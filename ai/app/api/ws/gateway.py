@@ -160,7 +160,6 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
     session_id: str | None = None
     connection_id: str | None = None
     user_id: str | None = None
-    send_lock = asyncio.Lock()
     background_tasks: set[asyncio.Task] = set()
     after_response_callbacks: list[Callable[[], None]] = []
     client_key = _websocket_client_key(websocket)
@@ -175,8 +174,9 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
     await manager.connect(websocket)
 
     async def send_json(message: dict) -> None:
-        async with send_lock:
-            await websocket.send_json(message)
+        # command 응답, pong, TaskRun 이벤트가 모두 WebSocketManager의 같은 전송 lock을 거친다.
+        # 이렇게 해야 한 브라우저 연결에 frame이 동시에 쓰이면서 순서가 꼬이는 상황을 막을 수 있다.
+        await manager.send_json(websocket, message)
 
     try:
         auth_context = await _authenticate_first_message(websocket)
