@@ -2,6 +2,7 @@ import { Sparkles, Send, Code, Calendar, Apple, Activity, Mic, Bot } from 'lucid
 import { motion } from 'motion/react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
+import { sendSessionMessageCreate } from '@/components/chat/aiChatCommands'
 
 const suggestedPrompts = [
   {
@@ -29,15 +30,30 @@ const suggestedPrompts = [
 export function NewChatPage() {
   const [inputValue, setInputValue] = useState('')
   const [isRecording, setIsRecording] = useState(false)
+  const [isSending, setIsSending] = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
   const navigate = useNavigate()
 
   const handleVoiceInput = () => {
     setIsRecording(!isRecording)
   }
 
-  const handleSend = () => {
-    if (!inputValue.trim()) return
-    navigate('/agent-status')
+  const handleSend = async () => {
+    const content = inputValue.trim()
+    if (!content || isSending) return
+    setIsSending(true)
+    setSendError(null)
+
+    try {
+      // 새 채팅의 첫 입력도 같은 WebSocket command를 사용한다.
+      // accepted 이후 서버가 확정한 sessionId로 이동해야 optimistic 세션 ID가 URL에 남지 않는다.
+      const accepted = await sendSessionMessageCreate({ content })
+      navigate(`/session/${accepted.sessionId}`)
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : '새 채팅을 시작하지 못했습니다.')
+    } finally {
+      setIsSending(false)
+    }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -71,7 +87,7 @@ export function NewChatPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35, delay: 0.08 }}
         >
-          <div className="border-border overflow-hidden rounded-2xl border bg-white shadow-sm transition-shadow duration-200 hover:shadow-md">
+          <div className="border-border bg-card overflow-hidden rounded-2xl border shadow-sm transition-shadow duration-200 hover:shadow-md">
             {/* Input row */}
             <div className="flex items-center gap-3 px-5 py-4">
               <Sparkles className="text-primary/60 h-5 w-5 shrink-0" />
@@ -99,11 +115,12 @@ export function NewChatPage() {
               <button
                 onClick={handleSend}
                 className="bg-primary hover:bg-primary/90 shrink-0 rounded-xl p-2 text-white transition-colors disabled:opacity-40"
-                disabled={!inputValue.trim()}
+                disabled={!inputValue.trim() || isSending}
               >
-                <Send className="h-4 w-4" />
+                <Send className={`h-4 w-4 ${isSending ? 'animate-pulse' : ''}`} />
               </button>
             </div>
+            {sendError && <p className="text-destructive px-5 pb-2 text-xs">{sendError}</p>}
 
             {/* Divider */}
             <div className="border-border/60 mx-5 border-t" />

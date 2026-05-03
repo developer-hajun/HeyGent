@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Loader2,
+  MessageCircle,
   MessageSquare,
   Clock,
   GripVertical,
@@ -47,6 +48,11 @@ export function LeftSidebar() {
 
   const handleNewChat = () => {
     navigate('/new-chat')
+  }
+
+  const handleOpenChatSession = (sessionId: string, event?: React.MouseEvent) => {
+    event?.stopPropagation()
+    navigate(`/session/${sessionId}`)
   }
 
   const startResize = useCallback(
@@ -140,6 +146,7 @@ export function LeftSidebar() {
                   {sessions.slice(0, 3).map((session) => {
                     const isActive =
                       location.pathname === '/agent-status' && selectedSessionId === session.id
+                    const isChatActive = location.pathname === `/session/${session.id}`
                     return (
                       <div
                         key={session.id}
@@ -160,13 +167,24 @@ export function LeftSidebar() {
                           >
                             {session.title}
                           </p>
-                          {runningSessionIds.has(session.id) && (
-                            <Loader2
-                              className="text-primary shrink-0 animate-spin"
-                              style={{ width: '16px', height: '16px' }}
-                              strokeWidth={2.5}
-                            />
-                          )}
+                          <button
+                            type="button"
+                            aria-label="채팅 열기"
+                            onClick={(event) => {
+                              handleOpenChatSession(session.id, event)
+                              setSessionsPopoverOpen(false)
+                            }}
+                            className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors ${
+                              isChatActive
+                                ? 'bg-primary/10 text-primary'
+                                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                            }`}
+                          >
+                            {runningSessionIds.has(session.id) && (
+                              <Loader2 className="text-primary absolute -top-0.5 -right-0.5 h-3 w-3 animate-spin" />
+                            )}
+                            <MessageCircle className="h-4 w-4" />
+                          </button>
                         </div>
                         <p className="text-muted-foreground truncate text-xs">{session.preview}</p>
                         <div className="mt-1 flex items-center gap-1">
@@ -186,13 +204,16 @@ export function LeftSidebar() {
               .map((s) => (
                 <CollapsedTooltip key={s.id} label={s.title}>
                   <button
-                    onClick={() => {
-                      setSelectedSessionId(s.id)
-                      navigate('/agent-status')
-                    }}
-                    className="hover:bg-sidebar-accent text-primary flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+                    onClick={(event) => handleOpenChatSession(s.id, event)}
+                    aria-label="채팅 열기"
+                    className={`hover:bg-sidebar-accent relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+                      location.pathname === `/session/${s.id}`
+                        ? 'text-primary'
+                        : 'text-muted-foreground'
+                    }`}
                   >
-                    <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2.5} />
+                    <Loader2 className="text-primary absolute top-1 right-1 h-3 w-3 animate-spin" />
+                    <MessageCircle className="h-4 w-4" strokeWidth={2.5} />
                   </button>
                 </CollapsedTooltip>
               ))}
@@ -256,6 +277,7 @@ export function LeftSidebar() {
                   {sessions.map((session) => {
                     const isActive =
                       location.pathname === '/agent-status' && selectedSessionId === session.id
+                    const isChatActive = location.pathname === `/session/${session.id}`
                     const isRunning = runningSessionIds.has(session.id)
                     return (
                       <div
@@ -284,13 +306,21 @@ export function LeftSidebar() {
                             <span className="text-muted-foreground text-xs">{session.time}</span>
                           </div>
                         </div>
-                        {isRunning && (
-                          <Loader2
-                            className="text-primary shrink-0 animate-spin"
-                            style={{ width: '18px', height: '18px' }}
-                            strokeWidth={2.5}
-                          />
-                        )}
+                        <button
+                          type="button"
+                          aria-label="채팅 열기"
+                          onClick={(event) => handleOpenChatSession(session.id, event)}
+                          className={`relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                            isChatActive
+                              ? 'bg-primary/10 text-primary'
+                              : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
+                          }`}
+                        >
+                          {isRunning && (
+                            <Loader2 className="text-primary absolute -top-0.5 -right-0.5 h-3 w-3 animate-spin" />
+                          )}
+                          <MessageCircle className="h-4 w-4" />
+                        </button>
                       </div>
                     )
                   })}
@@ -438,7 +468,7 @@ function ProfileMenu({ onSettingsClick }: { onSettingsClick: () => void }) {
                 }}
                 maxLength={100}
                 disabled={isSaving}
-                className="border-border text-foreground focus:ring-primary/20 flex-1 rounded-lg border bg-white px-3 py-2 text-sm focus:ring-2 focus:outline-none disabled:opacity-60"
+                className="border-border bg-background text-foreground focus:ring-primary/20 flex-1 rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:outline-none disabled:opacity-60"
               />
               <button
                 onClick={async () => {
