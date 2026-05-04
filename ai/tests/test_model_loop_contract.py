@@ -67,6 +67,27 @@ def test_builtin_browser_web_skills_are_loaded_from_app_skills():
         assert "metadata:\n  runtime:" in loaded[name]["body"]
 
 
+def test_first_batch_k_skills_are_loaded_from_app_skills():
+    loaded = {skill["name"]: skill for skill in SkillLoader().load_builtin()}
+
+    expected = {
+        "korea-weather",
+        "fine-dust-location",
+        "han-river-water-level",
+        "seoul-subway-arrival",
+        "real-estate-search",
+        "zipcode-search",
+        "geeknews-search",
+        "korean-character-count",
+    }
+
+    assert expected <= set(loaded)
+    assert "https://k-skill-proxy.nomadamas.org" in loaded["korea-weather"]["body"]
+    assert "https://k-skill-proxy.nomadamas.org" in loaded["seoul-subway-arrival"]["body"]
+    assert "scripts/geeknews_search.py" in loaded["geeknews-search"]["body"]
+    assert "scripts/korean_character_count.js" in loaded["korean-character-count"]["body"]
+
+
 def test_worker_payload_cannot_enable_delegation_toolsets():
     requested = ToolCallingLoopHandler._requested_toolsets(
         {
