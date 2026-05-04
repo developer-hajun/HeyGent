@@ -131,11 +131,12 @@ class TaskEngine:
 
         try:
             outcome = normalize_handler_outcome(
-                self.step_handler.execute(
+                await self.step_handler.execute(
                     handler=handler,
                     task=task,
                     step=provisional_step,
                     resume_payload=resume_payload,
+                    progress_sink=self._build_progress_sink(task=task, step=provisional_step),
                 )
             )
         except Exception as error:
@@ -517,7 +518,13 @@ class TaskEngine:
 
         try:
             outcome = normalize_handler_outcome(
-                self.step_handler.execute(handler=handler, task=task, step=step, resume_payload=resume_payload)
+                await self.step_handler.execute(
+                    handler=handler,
+                    task=task,
+                    step=step,
+                    resume_payload=resume_payload,
+                    progress_sink=self._build_progress_sink(task=task, step=step),
+                )
             )
         except Exception as error:
             # 이미 materialized 된 StepRun이 있으면 같은 anchor를 FAILED로 닫아
@@ -827,19 +834,54 @@ class TaskEngine:
 
         return await self._execute(task=task, step=projected, handler=next_handler, resume_payload=None)
 
-    async def _emit(self, event_type: str, task: TaskRun, step: StepRun | None = None, payload: dict | None = None) -> None:
+    def _build_progress_sink(self, *, task: TaskRun, step: StepRun | None):
+        async def sink(*, event_type: str, summary_message: str | None = None, payload: dict | None = None) -> None:
+            await self._emit(event_type, task, step, payload=payload, summary_message=summary_message)
+
+        return sink
+
+    async def _emit(
+        self,
+        event_type: str,
+        task: TaskRun,
+        step: StepRun | None = None,
+        payload: dict | None = None,
+        summary_message: str | None = None,
+    ) -> None:
         event_status = step.status if step is not None and event_type.startswith("step.") else task.status
+        event_summary = summary_message if summary_message is not None else self._event_summary(event_type=event_type, task=task, step=step)
         event = build_task_event(
             event_type=event_type,
             task_run_id=task.task_run_id,
             step_run_id=step.step_run_id if step else None,
             producer="task_engine",
             status=event_status,
-            summary_message=task.progress_summary,
-            payload=payload or {},
+            summary_message=event_summary,
+            payload=self._event_payload(event_type=event_type, step=step, payload=payload),
         )
         saved_event = self.repository.append_event(event)
         await self.broadcaster.publish(saved_event)
+
+    @staticmethod
+    def _event_summary(*, event_type: str, task: TaskRun, step: StepRun | None = None) -> str | None:
+        if event_type.startswith("step.") and step is not None:
+            return step.summary_message or step.title or step.step_type
+        return task.progress_summary
+
+    @staticmethod
+    def _event_payload(*, event_type: str, step: StepRun | None = None, payload: dict | None = None) -> dict:
+        event_payload = dict(payload or {})
+        if step is not None and event_type.startswith("step."):
+            event_payload.setdefault("step_run_id", step.step_run_id)
+            event_payload.setdefault("stepRunId", step.step_run_id)
+            event_payload.setdefault("step_title", step.title)
+            event_payload.setdefault("stepTitle", step.title)
+            semantic_detail = (step.detail_json or {}).get("semanticDetail") or {}
+            semantic_step = semantic_detail.get("semanticStep")
+            if isinstance(semantic_step, str) and semantic_step.strip():
+                event_payload.setdefault("semantic_step", semantic_step)
+                event_payload.setdefault("semanticStep", semantic_step)
+        return event_payload
 
     async def _sync_todo_steps(self, *, task: TaskRun, handler) -> None:
         todo_state = parse_task_todo_payload(task.todo_state)

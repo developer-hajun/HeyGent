@@ -93,7 +93,12 @@ class AgentLoopRunner:
             handler=handler,
         )
         started_at = monotonic()
-        outcome = normalize_handler_outcome(handler.execute(task=task, step=None, resume_payload=None))
+        execute_async = getattr(handler, "execute_async", None)
+        if execute_async is not None:
+            raw_outcome = await execute_async(task=task, step=None, resume_payload=None, progress_sink=None)
+        else:
+            raw_outcome = handler.execute(task=task, step=None, resume_payload=None)
+        outcome = normalize_handler_outcome(raw_outcome)
         status = str(outcome.get("task_status") or TaskStatus.COMPLETED)
         return ChildSessionLaunchResult(
             agent_id=self._worker_agent_id(spec=spec, input_payload=input_payload),

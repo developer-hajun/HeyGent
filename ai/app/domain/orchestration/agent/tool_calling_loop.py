@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any
@@ -38,6 +39,9 @@ class ToolCallingLoopHandler:
         self.tool_guard = tool_guard or ToolGuard()
 
     def execute(self, *, task, step, resume_payload=None) -> dict[str, Any]:
+        return asyncio.run(self.execute_async(task=task, step=step, resume_payload=resume_payload))
+
+    async def execute_async(self, *, task, step, resume_payload=None, progress_sink=None) -> dict[str, Any]:
         task_input = dict(task.input_payload or {})
         # 요청 payload의 workspace_root는 API 호출자가 선택한 이번 실행 root로 바인딩한다.
         request_tool_runtime = self._bind_request_tool_runtime(task_input.get("workspace_root"))
@@ -46,7 +50,7 @@ class ToolCallingLoopHandler:
         operation_counters: dict[str, int] = {}
         current_todo_state = dict(task.todo_state or {})
 
-        return self._execute_native(
+        return await self._execute_native(
             task=task,
             step=step,
             task_input=task_input,
@@ -56,9 +60,10 @@ class ToolCallingLoopHandler:
             resume_payload=resume_payload,
             operation_counters=operation_counters,
             current_todo_state=current_todo_state,
+            progress_sink=progress_sink,
         )
 
-    def _execute_native(
+    async def _execute_native(
         self,
         *,
         task,
@@ -70,6 +75,7 @@ class ToolCallingLoopHandler:
         resume_payload: dict[str, Any] | None,
         operation_counters: dict[str, int],
         current_todo_state: dict[str, Any],
+        progress_sink,
     ) -> dict[str, Any]:
         """모델 응답과 runtime tool 실행을 번갈아 수행한다.
 
@@ -218,6 +224,14 @@ class ToolCallingLoopHandler:
                     # BLOCK도 전체 실패가 아니라 막힌 tool result로 transcript에 남겨 LLM이 다음 행동을 정한다.
                     result = self._blocked_tool_result(guard_result)
                 else:
+                    await self._emit_tool_progress(
+                        progress_sink=progress_sink,
+                        event_type="tool.started",
+                        tool_call_id=tool_call.id,
+                        tool_name=runtime_tool_name,
+                        args=tool_call.arguments,
+                        result=None,
+                    )
                     result = self._run_native_tool_call(
                         name=runtime_tool_name,
                         args=tool_call.arguments,
@@ -237,6 +251,14 @@ class ToolCallingLoopHandler:
                     transcript_session_id=transcript_session_id,
                     operations=operations,
                     operation_counters=operation_counters,
+                )
+                await self._emit_tool_progress(
+                    progress_sink=progress_sink,
+                    event_type="tool.completed",
+                    tool_call_id=tool_call.id,
+                    tool_name=runtime_tool_name,
+                    args=tool_call.arguments,
+                    result=result,
                 )
             current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
 
@@ -447,6 +469,137 @@ class ToolCallingLoopHandler:
             enabled_toolsets=requested_toolsets,
         )
 
+    async def _emit_tool_progress(
+        self,
+        *,
+        progress_sink,
+        event_type: str,
+        tool_call_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+        result: dict[str, Any] | None,
+    ) -> None:
+        if progress_sink is None:
+            return
+
+        await progress_sink(
+            event_type=event_type,
+            summary_message=self._tool_progress_summary(tool_name=tool_name, args=args, result=result),
+            payload=self._tool_progress_payload(
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                args=args,
+                result=result,
+            ),
+        )
+
+    @classmethod
+    def _tool_progress_summary(cls, *, tool_name: str, args: dict[str, Any], result: dict[str, Any] | None) -> str:
+        if tool_name == "todo":
+            active_title = cls._active_todo_title(args.get("todos"))
+            if active_title:
+                return active_title
+        if tool_name == "step":
+            active_title = cls._active_step_title(args.get("steps"))
+            if active_title:
+                return active_title
+        if tool_name == "write_file":
+            path = cls._optional_text(args.get("path")) or cls._optional_text((result or {}).get("path"))
+            return f"{path} 파일 작성" if path else "파일 작성"
+        if tool_name == "read_file":
+            path = cls._optional_text(args.get("path")) or cls._optional_text((result or {}).get("path"))
+            return f"{path} 파일 읽기" if path else "파일 읽기"
+        if tool_name == "search_files":
+            query = cls._optional_text(args.get("query")) or cls._optional_text(args.get("pattern"))
+            return f"{query} 검색" if query else "파일 검색"
+        if tool_name == "terminal.run":
+            command = cls._terminal_command_summary(args)
+            return f"{command} 실행" if command else "터미널 실행"
+        return f"{tool_name} 실행"
+
+    @classmethod
+    def _tool_progress_payload(
+        cls,
+        *,
+        tool_call_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+        result: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "tool_call_id": tool_call_id,
+            "toolCallId": tool_call_id,
+            "tool_name": tool_name,
+            "toolName": tool_name,
+            "title": cls._tool_progress_summary(tool_name=tool_name, args=args, result=result),
+        }
+        for key in ("path", "query", "pattern"):
+            value = cls._optional_text(args.get(key)) or cls._optional_text((result or {}).get(key))
+            if value:
+                payload[key] = value
+        if tool_name == "todo":
+            todos = [item for item in args.get("todos") or [] if isinstance(item, dict)]
+            payload["todos"] = [
+                {
+                    "id": cls._optional_text(item.get("id") or item.get("key")),
+                    "content": cls._optional_text(item.get("content") or item.get("title")),
+                    "status": cls._optional_text(item.get("status")),
+                }
+                for item in todos[:12]
+            ]
+        if isinstance(result, dict):
+            if result.get("ok") is False:
+                payload["ok"] = False
+                error = result.get("error")
+                if isinstance(error, dict):
+                    payload["error"] = {
+                        "code": cls._optional_text(error.get("code")),
+                        "message": cls._optional_text(error.get("message")),
+                    }
+            for key in ("bytes_written", "lines_written", "returncode", "total_count"):
+                value = result.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    payload[key] = value
+        return payload
+
+    @classmethod
+    def _active_todo_title(cls, value: Any) -> str | None:
+        if not isinstance(value, list):
+            return None
+        for status in ("in_progress", "pending", "completed"):
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("status") or "").strip().lower() != status:
+                    continue
+                title = cls._optional_text(item.get("content") or item.get("title"))
+                if title:
+                    return title
+        return None
+
+    @classmethod
+    def _active_step_title(cls, value: Any) -> str | None:
+        if not isinstance(value, list):
+            return None
+        for status in ("in_progress", "pending", "completed"):
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("status") or "").strip().lower() != status:
+                    continue
+                title = cls._optional_text(item.get("summary") or item.get("title"))
+                if title:
+                    return title
+        return None
+
+    @classmethod
+    def _terminal_command_summary(cls, args: dict[str, Any]) -> str | None:
+        argv = args.get("argv")
+        if isinstance(argv, list) and argv:
+            text = " ".join(str(item) for item in argv[:4])
+            return text[:80]
+        return cls._optional_text(args.get("command"))
+
     def _bind_request_tool_runtime(self, workspace_root: Any):
         binder = getattr(self.tool_runtime, "bind_workspace_root", None)
         if callable(binder):
@@ -650,6 +803,42 @@ class ToolCallingLoopHandler:
             "tool_results": tool_results,
             "approval_response": resume_payload or {},
         }
+        if self._requires_file_write(task_input) and not self._has_successful_file_write(tool_results):
+            error_message = "파일 작성 도구가 실행되지 않았습니다. 실제 파일 생성 없이 완료할 수 없습니다."
+            operations.append(
+                {
+                    "key": self._next_operation_key(
+                        operation_counters,
+                        namespace="tool",
+                        base_key="write_file.missing",
+                    ),
+                    "title": "파일 작성 확인",
+                    "kind": "tool",
+                    "status": "failed",
+                    "summary": error_message,
+                }
+            )
+            output_payload["error"] = {
+                "code": "file_write_not_executed",
+                "message": error_message,
+            }
+            return {
+                "task_status": TaskStatus.FAILED,
+                "step_status": StepStatus.FAILED,
+                "result_payload": result_payload,
+                "output_payload": output_payload,
+                "detail_json": self._build_detail_json(
+                    tool_names=tool_names,
+                    llm_call_count=llm_call_count,
+                    model_name=model_name,
+                    todo_state=todo_state,
+                ),
+                "todo_state": todo_state,
+                "observed_steps": self._observed_semantic_steps(tool_results),
+                "summary_message": error_message,
+                "error_message": error_message,
+                "operations": operations,
+            }
         detail_json = self._build_detail_json(
             tool_names=tool_names,
             llm_call_count=llm_call_count,
@@ -689,6 +878,28 @@ class ToolCallingLoopHandler:
             # parent StepRun에 worker agent_session linkage를 만든 뒤 처리해야 한다.
             outcome["child_session"] = child_session
         return outcome
+
+    @classmethod
+    def _requires_file_write(cls, task_input: dict[str, Any]) -> bool:
+        prompt = str(task_input.get("prompt") or "")
+        plan_step_key = str(task_input.get("plan_step_key") or "").strip().lower()
+        if plan_step_key and plan_step_key not in {"write", "draft", "create_file", "save_file"}:
+            return False
+        if not re.search(r"(?i)(\b[\w./\\-]+\.(md|txt|csv|json|html|py|ts|tsx)\b|파일\s*(로|에)|저장)", prompt):
+            return False
+        return any(keyword in prompt.lower() for keyword in ("작성", "파일", "write", "draft", "create", "save", "저장"))
+
+    @staticmethod
+    def _has_successful_file_write(tool_results: list[dict[str, Any]]) -> bool:
+        for tool_result in tool_results:
+            name = str(tool_result.get("name") or "").strip()
+            if name not in {"write_file", "patch"}:
+                continue
+            result = tool_result.get("result")
+            if isinstance(result, dict) and result.get("ok") is False:
+                continue
+            return True
+        return False
 
     def _build_waiting_outcome(
         self,

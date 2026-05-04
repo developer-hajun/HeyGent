@@ -114,6 +114,92 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert transcript[2]["tool_call_id"] == "call_skills"
 
 
+def test_agent_loop_emits_runtime_tool_progress_events_before_completion(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "progress-workspace"
+    workspace.mkdir()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_todo",
+                        "todo",
+                        {
+                            "todos": [
+                                {"id": "research", "content": "이승엽 기록 자료 조사", "status": "in_progress"},
+                                {"id": "write", "content": "이승엽 조사 보고서 파일 작성", "status": "pending"},
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_write",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/progress.md",
+                            "content": "progress file\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(text="파일 작성 완료"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "progress-user",
+            "input_payload": {
+                "prompt": "이승엽 보고서를 tmp/testfile/progress.md 파일로 작성해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (workspace / "tmp/testfile/progress.md").read_text(encoding="utf-8") == "progress file\n"
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    event_types = [event.event_type for event in events]
+    assert "tool.started" in event_types
+    assert "tool.completed" in event_types
+    assert event_types.index("tool.completed") < event_types.index("task.completed")
+
+    tool_completed = [event for event in events if event.event_type == "tool.completed"]
+    assert [event.payload["tool_name"] for event in tool_completed] == ["todo", "write_file"]
+    assert tool_completed[0].summary_message == "이승엽 기록 자료 조사"
+    assert tool_completed[1].payload["path"] == "tmp/testfile/progress.md"
+
+
+def test_step_events_use_step_title_as_realtime_summary(client, monkeypatch):
+    _patch_respond(monkeypatch, [_response(text="RESEARCH_DONE"), _response(text="WRITE_DONE")])
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "step-summary-user",
+            "input_payload": {
+                "prompt": "관련 자료를 조사하고 파일 초안을 작성해줘.",
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    step_created = [event for event in events if event.event_type == "step.created"]
+    step_started = [event for event in events if event.event_type == "step.started"]
+
+    assert [event.summary_message for event in step_created] == ["자료 조사", "초안 작성"]
+    assert [event.payload["step_title"] for event in step_started] == ["자료 조사", "초안 작성"]
+
+
 def test_agent_loop_declared_steps_materialize_multiple_observed_stepruns(client, monkeypatch):
     provider_calls = _patch_respond(
         monkeypatch,
@@ -432,6 +518,31 @@ def test_agent_loop_uses_input_workspace_root_for_file_and_terminal_runtime(clie
     assert server_cwd_created is False
     assert server_cwd_terminal_created is False
     assert len(provider_calls) == 2
+
+
+def test_agent_loop_rejects_file_completion_without_file_tool_execution(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "missing-file-write-workspace"
+    workspace.mkdir()
+    _patch_respond(monkeypatch, [_response(text="자료 조사 완료"), _response(text="파일 작성 완료")])
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "missing-file-write-user",
+            "input_payload": {
+                "prompt": "이승엽 조사 보고서를 tmp/testfile/missing.md 파일로 작성해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "FAILED"
+    assert "파일 작성 도구가 실행되지 않았습니다" in body["error_message"]
+    assert not (workspace / "tmp/testfile/missing.md").exists()
 
 
 def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch):
