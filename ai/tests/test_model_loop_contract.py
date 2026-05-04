@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopHandler
 from app.domain.orchestration.prompts.prompt_builder import PromptBuilder
 from app.domain.orchestration.prompts.skill_prompt import SkillLoader, SkillPromptBuilder, SkillRegistry
@@ -84,6 +86,7 @@ def test_first_batch_k_skills_are_loaded_from_app_skills():
     assert expected <= set(loaded)
     assert "https://k-skill-proxy.nomadamas.org" in loaded["korea-weather"]["body"]
     assert "https://k-skill-proxy.nomadamas.org" in loaded["seoul-subway-arrival"]["body"]
+    assert (Path(loaded["zipcode-search"]["path"]).parent / "scripts" / "zipcode_search.py").is_file()
     assert "scripts/geeknews_search.py" in loaded["geeknews-search"]["body"]
     assert "scripts/korean_character_count.js" in loaded["korean-character-count"]["body"]
 
