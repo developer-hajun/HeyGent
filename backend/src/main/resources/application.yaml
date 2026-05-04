@@ -38,6 +38,7 @@ composio:
   api-key: ${COMPOSIO_API_KEY}
   notion:
     redirect-uri: ${COMPOSIO_NOTION_REDIRECT_URI:http://localhost:5173/auth/notion/callback}
+    integration-id: ${COMPOSIO_NOTION_INTEGRATION_ID}
 
 jwt:
   secret: ${JWT_SECRET}
