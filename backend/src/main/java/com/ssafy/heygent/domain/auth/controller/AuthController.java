@@ -32,6 +32,7 @@ public class AuthController {
         return ApiResponse.success(response);
     }
 
+
     @Operation(summary = "카카오 모바일 로그인", description = "카카오 액세스 토큰을 받아 소셜 로그인을 진행하고 JWT 토큰을 발급합니다.")
     @PostMapping("/kakao/mobile")
     public ApiResponse<TokenResponse> kakaoMobileLogin(
