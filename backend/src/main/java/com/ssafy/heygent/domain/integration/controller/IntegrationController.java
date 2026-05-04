@@ -30,11 +30,12 @@ public class IntegrationController {
     private final IntegrationService integrationService;
 
     @Operation(summary = "Integration 생성", description = "로그인된 사용자 기준으로 외부 연동 대상을 생성합니다.")
-    @PostMapping
-    public ApiResponse<IntegrationResponse> createIntegration(
+    @PostMapping("/notion")
+    public ApiResponse<IntegrationResponse> notionCreateIntegration(
         @AuthenticationPrincipal CustomUserPrincipal user,
         @Valid @RequestBody CreateIntegrationRequest request
     ) {
+
         return ApiResponse.success(integrationService.create(resolveUserId(user), request));
     }
 
