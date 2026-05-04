@@ -88,6 +88,25 @@ def test_first_batch_k_skills_are_loaded_from_app_skills():
     assert "scripts/korean_character_count.js" in loaded["korean-character-count"]["body"]
 
 
+def test_second_batch_k_skills_are_loaded_from_app_skills():
+    loaded = {skill["name"]: skill for skill in SkillLoader().load_builtin()}
+
+    expected = {
+        "joseon-sillok-search",
+        "library-book-search",
+        "k-schoollunch-menu",
+        "cheap-gas-nearby",
+        "lotto-results",
+    }
+
+    assert expected <= set(loaded)
+    assert "scripts/sillok_search.py" in loaded["joseon-sillok-search"]["body"]
+    assert "/v1/data4library/book-search" in loaded["library-book-search"]["body"]
+    assert "/v1/neis/school-search" in loaded["k-schoollunch-menu"]["body"]
+    assert "/v1/opinet/around" in loaded["cheap-gas-nearby"]["body"]
+    assert "k-lotto" in loaded["lotto-results"]["body"]
+
+
 def test_skill_index_is_loaded_from_app_skills():
     loaded = {skill["name"]: skill for skill in SkillLoader().load_builtin()}
 
@@ -96,6 +115,8 @@ def test_skill_index_is_loaded_from_app_skills():
     assert "github-repo-management" in loaded["skill-index"]["body"]
     assert "korea-weather" in loaded["skill-index"]["body"]
     assert "korean-character-count" in loaded["skill-index"]["body"]
+    assert "joseon-sillok-search" in loaded["skill-index"]["body"]
+    assert "library-book-search" in loaded["skill-index"]["body"]
 
 
 def test_worker_payload_cannot_enable_delegation_toolsets():
