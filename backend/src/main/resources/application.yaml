@@ -75,6 +75,7 @@ openai:
   allowed-models: ${OPENAI_ALLOWED_MODELS:gpt-5.4,gpt-5.4-mini}
   embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
   timeout-seconds: ${OPENAI_TIMEOUT_SECONDS:60}
+  credential-encryption-key: ${OPENAI_CREDENTIAL_ENCRYPTION_KEY:}
   oauth:
     client-id: ${OPENAI_OAUTH_CLIENT_ID:}
     client-secret: ${OPENAI_OAUTH_CLIENT_SECRET:}

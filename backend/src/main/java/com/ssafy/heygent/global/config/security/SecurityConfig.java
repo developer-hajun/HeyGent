@@ -41,7 +41,8 @@ public class SecurityConfig {
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
-                                "/auth/notion/callback"
+                                "/auth/notion/callback",
+                                "/api/v1/ai/openai/oauth/callback"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )
