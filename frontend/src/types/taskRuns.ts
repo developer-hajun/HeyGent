@@ -28,6 +28,10 @@ export type RawStepRun = {
   title?: string | null
   goal?: string | null
   status?: RawTaskRunStatus | null
+  step_order?: number | null
+  stepOrder?: number | null
+  internal_step_anchor?: boolean | null
+  internalStepAnchor?: boolean | null
   sequence?: number | null
   started_at?: string | null
   completed_at?: string | null

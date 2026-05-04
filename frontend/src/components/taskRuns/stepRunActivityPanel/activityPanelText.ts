@@ -128,7 +128,7 @@ export function toProgressSentence(status?: string | null) {
 export function toStepProgressSentence(status?: string | null) {
   switch (status) {
     case 'PENDING':
-      return '단계를 준비하고 있습니다.'
+      return '이전 단계가 끝나기를 기다리고 있습니다.'
     case 'RUNNING':
       return '현재 단계를 처리하고 있습니다.'
     case 'WAITING':

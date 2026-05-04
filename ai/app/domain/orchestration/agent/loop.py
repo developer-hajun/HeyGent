@@ -85,13 +85,15 @@ class TaskEngine:
         await self._emit("task.started", task)
 
         try:
+            progress_sink = self._build_progress_sink(task=task, step=None)
             outcome = normalize_handler_outcome(
                 await self.step_handler.execute(
                     handler=handler,
                     task=task,
                     step=None,
                     resume_payload=resume_payload,
-                    progress_sink=self._build_progress_sink(task=task, step=None),
+                    progress_sink=progress_sink,
+                    delegate_executor=self._build_delegate_executor(task=task, handler=handler, progress_sink=progress_sink),
                 )
             )
         except Exception as error:
@@ -208,6 +210,15 @@ class TaskEngine:
         if (
             existing_current is not None
             and existing_current.step_run_id != active_step.step_run_id
+            and not step_is_terminal(existing_current.status)
+            and self._is_progress_fallback_step(existing_current)
+        ):
+            # LLM이 step tool 없이 먼저 실행 tool을 호출하면 화면 선행 표시용 StepRun을 만든다.
+            # 다음 턴에서 LLM이 실제 의미 단계를 선언하면 임시 StepRun을 닫고 선언된 단계로 넘긴다.
+            await self._complete_observed_step(task=task, step=existing_current, now=now)
+        if (
+            existing_current is not None
+            and existing_current.step_run_id != active_step.step_run_id
             and step_is_terminal(active_step.status)
             and not step_is_terminal(existing_current.status)
         ):
@@ -279,21 +290,33 @@ class TaskEngine:
     def _current_observed_step(observed_steps: list[dict]) -> dict:
         # 여러 observed step 중 실제 outcome을 적용할 실행 anchor 하나를 고른다.
         # 이미 완료된 선행 단계는 별도 StepRun으로 닫고, 이 단계에 최종 detail을 병합한다.
-        return next(
-            (
-                observed_step
-                for observed_step in observed_steps
-                if str(observed_step.get("status") or "").strip().lower() in {"in_progress", "pending"}
-            ),
-            observed_steps[-1],
-        )
+        for preferred_status in ("in_progress", "pending"):
+            selected = next(
+                (
+                    observed_step
+                    for observed_step in observed_steps
+                    if str(observed_step.get("status") or "").strip().lower() == preferred_status
+                ),
+                None,
+            )
+            if selected is not None:
+                return selected
+        return observed_steps[-1]
 
     @staticmethod
     def _observed_steps_to_materialize(observed_steps: list[dict], current_step: dict) -> list[dict]:
         _ = current_step
-        # LLM이 step 도구로 이미 선언한 사용자 가시 단계는 아직 실행 전이어도
-        # StepRun shell을 먼저 내려보낸다. 실제 시작 이벤트는 active 단계가 될 때만 보낸다.
-        return observed_steps
+        # LLM이 pending 단계를 active 단계보다 먼저 적는 경우가 있다. 화면은 실행 흐름을 위에서
+        # 아래로 읽어야 하므로 완료된 선행 단계, 현재 진행 단계, 대기 단계 순서로 보정한다.
+        order = {"completed": 0, "in_progress": 1, "pending": 2, "cancelled": 3}
+        indexed_steps = list(enumerate(observed_steps))
+        indexed_steps.sort(
+            key=lambda item: (
+                order.get(str(item[1].get("status") or "pending").strip().lower(), 2),
+                item[0],
+            )
+        )
+        return [step for _, step in indexed_steps]
 
     async def resume(self, *, task: TaskRun, handler, approval_id: str, payload: dict) -> TaskRun:
         approval = self.approval_service.resolve(approval_id, payload)
@@ -477,13 +500,15 @@ class TaskEngine:
         await self._emit("step.started", task, step)
 
         try:
+            progress_sink = self._build_progress_sink(task=task, step=step)
             outcome = normalize_handler_outcome(
                 await self.step_handler.execute(
                     handler=handler,
                     task=task,
                     step=step,
                     resume_payload=resume_payload,
-                    progress_sink=self._build_progress_sink(task=task, step=step),
+                    progress_sink=progress_sink,
+                    delegate_executor=self._build_delegate_executor(task=task, handler=handler, progress_sink=progress_sink),
                 )
             )
         except Exception as error:
@@ -676,19 +701,25 @@ class TaskEngine:
             return None
         return f"observed.{observed_step_key}"
 
+    @staticmethod
+    def _is_progress_fallback_step(step: StepRun) -> bool:
+        return bool((step.input_payload or {}).get("progress_fallback_step"))
+
     def _build_progress_sink(self, *, task: TaskRun, step: StepRun | None):
         current_step = step
+        handler = self.tool_registry.get(task.entry_handler_key)
 
         async def sink(*, event_type: str, summary_message: str | None = None, payload: dict | None = None) -> None:
             nonlocal current_step
             observed_step = await self._materialize_progress_step(
                 task=task,
-                handler=self.tool_registry.get(task.entry_handler_key),
+                handler=handler,
                 event_type=event_type,
                 payload=payload or {},
             )
             if observed_step is not None:
                 current_step = observed_step
+                sink.current_step = current_step
             elif event_type == "tool.started":
                 switched_step = await self._maybe_start_declared_pending_step_for_tool(
                     task=task,
@@ -697,9 +728,130 @@ class TaskEngine:
                 )
                 if switched_step is not None:
                     current_step = switched_step
+                    sink.current_step = current_step
+                else:
+                    fallback_step = await self._ensure_progress_step_for_tool(
+                        task=task,
+                        handler=handler,
+                        current_step=current_step,
+                        payload=payload or {},
+                        summary_message=summary_message,
+                    )
+                    if fallback_step is not None:
+                        current_step = fallback_step
+                        sink.current_step = current_step
             await self._emit(event_type, task, current_step, payload=payload, summary_message=summary_message)
 
+        sink.current_step = current_step
         return sink
+
+    async def _ensure_progress_step_for_tool(
+        self,
+        *,
+        task: TaskRun,
+        handler,
+        current_step: StepRun | None,
+        payload: dict,
+        summary_message: str | None,
+    ) -> StepRun | None:
+        """실제 runtime tool 이벤트보다 StepRun 생성/시작 이벤트가 먼저 나가도록 보장한다.
+
+        LLM이 `step` tool을 먼저 호출하면 그 선언을 StepRun으로 쓰고, 선언 없이 곧바로
+        `delegate_task`, `web_search`, `write_file` 같은 실행 tool을 호출하면 tool 요약을 임시
+        단계명으로 삼아 fallback StepRun을 만든다. 이렇게 해야 UI가 "도구가 먼저 실행되고 나중에
+        단계가 생기는" 흐름으로 보이지 않는다.
+        """
+
+        tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").strip()
+        if not tool_name or tool_name == "step":
+            return None
+
+        live_step = self.repository.get_step(task.current_step_run_id) if task.current_step_run_id else None
+        for candidate in (live_step, current_step):
+            if candidate is not None and not step_is_terminal(candidate.status):
+                return candidate
+
+        title = (
+            str(summary_message or "").strip()
+            or str(payload.get("title") or "").strip()
+            or f"{tool_name} 실행"
+        )
+        step = self.planner.materialize_step(
+            task=task,
+            handler=handler,
+            input_payload={
+                **dict(task.input_payload or {}),
+                "observed_step_title": title,
+                "observed_step_summary": title,
+                "observed_step_goal": title,
+                "progress_fallback_step": True,
+            },
+            step_order=len(self.repository.list_steps(task.task_run_id)) + 1,
+        )
+        step.title = title
+        step.summary_message = title
+        step.status = StepStatus.RUNNING
+        step.started_at = step.started_at or task.started_at or utc_now()
+        step.detail_json = merge_step_detail(
+            step.detail_json,
+            build_semantic_step_detail(
+                step_run_id=step.step_run_id,
+                semantic_key=semantic_key_of(step.detail_json) or step.step_type,
+                semantic_step=title,
+                semantic_goal=title,
+                lifecycle="running",
+            ),
+        )
+        task.current_step_run_id = step.step_run_id
+        self.repository.update_task(task)
+        self.repository.create_step(step)
+        await self._emit("step.created", task, step)
+        await self._emit("step.started", task, step)
+        return step
+
+    def _build_delegate_executor(self, *, task: TaskRun, handler, progress_sink):
+        async def execute_delegate(*, child_session: dict, tool_call_id: str, args: dict, accepted_result: dict) -> dict:
+            step = getattr(progress_sink, "current_step", None)
+            if step is None and task.current_step_run_id:
+                step = self.repository.get_step(task.current_step_run_id)
+            if step is None:
+                # 모델이 step tool 없이 바로 delegate_task 를 호출한 경우에도 worker 연결 anchor 는 필요하다.
+                step = self.planner.materialize_step(
+                    task=task,
+                    handler=handler,
+                    input_payload=task.input_payload,
+                    step_order=len(self.repository.list_steps(task.task_run_id)) + 1,
+                )
+                step.status = StepStatus.RUNNING
+                step.started_at = step.started_at or task.started_at or utc_now()
+                task.current_step_run_id = step.step_run_id
+                self.repository.update_task(task)
+                self.repository.create_step(step)
+                progress_sink.current_step = step
+                await self._emit("step.created", task, step)
+                await self._emit("step.started", task, step)
+            elif step.status == StepStatus.PENDING:
+                step.status = StepStatus.RUNNING
+                step.started_at = step.started_at or task.started_at or utc_now()
+                task.current_step_run_id = step.step_run_id
+                self.repository.update_task(task)
+                self.repository.update_step(step)
+                progress_sink.current_step = step
+                await self._emit("step.started", task, step)
+
+            async def emit_step_update(*, step, event_type: str, payload: dict, summary_message: str | None = None) -> None:
+                progress_sink.current_step = step
+                await self._emit(event_type, task, step, payload=payload, summary_message=summary_message)
+
+            return await self.delegate_runtime.run_child_as_tool(
+                task=task,
+                step=step,
+                child_session=child_session,
+                repository=self.repository,
+                on_step_updated=emit_step_update,
+            )
+
+        return execute_delegate
 
     async def _maybe_start_declared_pending_step_for_tool(
         self,
@@ -874,11 +1026,20 @@ class TaskEngine:
     @staticmethod
     def _event_payload(*, event_type: str, step: StepRun | None = None, payload: dict | None = None) -> dict:
         event_payload = dict(payload or {})
+        if step is not None and TaskEngine._is_progress_fallback_step(step):
+            # fallback StepRun은 tool event를 잃지 않기 위한 내부 anchor다.
+            # 화면이나 디바이스는 이 플래그가 붙은 event를 사용자 단계로 표시하지 않는다.
+            event_payload.setdefault("internal_step_anchor", True)
+            event_payload.setdefault("internalStepAnchor", True)
+            event_payload.setdefault("step_visibility", "internal")
+            event_payload.setdefault("stepVisibility", "internal")
         if step is not None and event_type.startswith("step."):
             event_payload.setdefault("step_run_id", step.step_run_id)
             event_payload.setdefault("stepRunId", step.step_run_id)
             event_payload.setdefault("step_title", step.title)
             event_payload.setdefault("stepTitle", step.title)
+            event_payload.setdefault("step_order", step.step_order)
+            event_payload.setdefault("stepOrder", step.step_order)
             semantic_detail = (step.detail_json or {}).get("semanticDetail") or {}
             semantic_step = semantic_detail.get("semanticStep")
             if isinstance(semantic_step, str) and semantic_step.strip():

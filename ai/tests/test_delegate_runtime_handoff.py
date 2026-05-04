@@ -76,6 +76,22 @@ class FakeWorkerSessionStore:
             }
         }
         self.created_sessions: list[dict] = []
+        self.ended_sessions: list[dict] = []
+
+    def get_session(self, session_id):
+        for session in self.sessions_by_key.values():
+            if session.get("id") == session_id:
+                return session
+        for session in self.created_sessions:
+            if session.get("session_id") == session_id:
+                return {
+                    "id": session["session_id"],
+                    "session_key": session["session_key"],
+                    "metadata": session.get("metadata") or {},
+                    "parent_session_id": session.get("parent_session_id"),
+                    "source": session.get("source"),
+                }
+        return None
 
     def get_latest_session_by_key(self, session_key):
         return self.sessions_by_key.get(session_key)
@@ -90,6 +106,9 @@ class FakeWorkerSessionStore:
         }
         self.sessions_by_key[payload["session_key"]] = session
         return payload["session_id"]
+
+    def end_session(self, session_id, *, end_reason=None):
+        self.ended_sessions.append({"session_id": session_id, "end_reason": end_reason})
 
 
 class FakeWorkerHandler:
@@ -340,6 +359,7 @@ async def test_delegate_runtime_creates_worker_session_and_normalizes_contract_p
     assert created_session["metadata"]["delegation_policy"]["leaf"] is True
 
     handoff = repository.created_handoffs[0]
+    assert handoff["status"] == "RUNNING"
     assert handoff["worker_session_id"] == worker_session_id
     assert handoff["input_payload"]["profile_key"] == "worker.docs"
     assert handoff["input_payload"]["agent_id"] == "agent_worker"
@@ -366,6 +386,7 @@ async def test_delegate_runtime_creates_worker_session_and_normalizes_contract_p
     assert result["output_payload"]["profileKey"] == "worker.docs"
     assert result["result_payload"]["workerSessionId"] == worker_session_id
     assert result["result_payload"]["profileKey"] == "worker.docs"
+    assert session_store.ended_sessions == [{"session_id": worker_session_id, "end_reason": TaskStatus.COMPLETED}]
     assert_legacy_task_run_id_not_exposed(result["output_payload"])
     assert_legacy_task_run_id_not_exposed(result["result_payload"])
     assert set(delegate_result["results"][0]) >= {
@@ -378,6 +399,47 @@ async def test_delegate_runtime_creates_worker_session_and_normalizes_contract_p
         "tool_trace",
         "error",
     }
+
+
+@pytest.mark.asyncio
+async def test_delegate_runtime_keeps_sibling_workers_under_main_parent_session():
+    launcher = FakeChildSessionLauncher(
+        ChildSessionLaunchResult(
+            agent_id="agent_worker",
+            status=TaskStatus.COMPLETED,
+            summary="worker summary",
+        )
+    )
+    session_store = FakeWorkerSessionStore()
+    runtime = DelegateRuntime(launcher, session_store=session_store)
+    repository = FakeHandoffRepository()
+    task = SimpleNamespace(
+        task_run_id="task_parent",
+        owner_key="user_1",
+        session_key="session_1",
+        input_payload={"transcript_session_id": "agent_session_parent"},
+    )
+    step = SimpleNamespace(step_run_id="step_parent", detail_json={})
+
+    for index in range(2):
+        await runtime.apply(
+            task=task,
+            step=step,
+            outcome={
+                "child_session": {
+                    "intent_type": "agent.loop",
+                    "entry_handler_key": "agent.loop",
+                    "goal": f"관점 {index + 1} 검토",
+                    "metadata": {"profile_key": "worker.default"},
+                }
+            },
+            repository=repository,
+        )
+
+    assert [session["parent_session_id"] for session in session_store.created_sessions] == [
+        "agent_session_parent",
+        "agent_session_parent",
+    ]
 
 
 @pytest.mark.asyncio
