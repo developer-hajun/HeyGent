@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any
@@ -38,6 +39,9 @@ class ToolCallingLoopHandler:
         self.tool_guard = tool_guard or ToolGuard()
 
     def execute(self, *, task, step, resume_payload=None) -> dict[str, Any]:
+        return asyncio.run(self.execute_async(task=task, step=step, resume_payload=resume_payload))
+
+    async def execute_async(self, *, task, step, resume_payload=None, progress_sink=None, delegate_executor=None) -> dict[str, Any]:
         task_input = dict(task.input_payload or {})
         # 요청 payload의 workspace_root는 API 호출자가 선택한 이번 실행 root로 바인딩한다.
         request_tool_runtime = self._bind_request_tool_runtime(task_input.get("workspace_root"))
@@ -46,7 +50,7 @@ class ToolCallingLoopHandler:
         operation_counters: dict[str, int] = {}
         current_todo_state = dict(task.todo_state or {})
 
-        return self._execute_native(
+        return await self._execute_native(
             task=task,
             step=step,
             task_input=task_input,
@@ -56,9 +60,11 @@ class ToolCallingLoopHandler:
             resume_payload=resume_payload,
             operation_counters=operation_counters,
             current_todo_state=current_todo_state,
+            progress_sink=progress_sink,
+            delegate_executor=delegate_executor,
         )
 
-    def _execute_native(
+    async def _execute_native(
         self,
         *,
         task,
@@ -70,6 +76,8 @@ class ToolCallingLoopHandler:
         resume_payload: dict[str, Any] | None,
         operation_counters: dict[str, int],
         current_todo_state: dict[str, Any],
+        progress_sink,
+        delegate_executor=None,
     ) -> dict[str, Any]:
         """모델 응답과 runtime tool 실행을 번갈아 수행한다.
 
@@ -159,8 +167,33 @@ class ToolCallingLoopHandler:
                     operation_counters=operation_counters,
                 )
 
+            delegate_boundary_started = False
             for tool_call_index, tool_call in enumerate(generated.tool_calls):
                 runtime_tool_name = self._runtime_tool_name(tool_call.name, provider_tool_name_map)
+                if delegate_boundary_started and runtime_tool_name != "delegate_task":
+                    # worker 결과가 돌아온 뒤 같은 assistant 응답 안의 후속 실행 도구를 바로 돌리면
+                    # "조사 worker 진행 중 -> 문서 작성" 순서가 뒤섞인다. provider tool_call 불변식은
+                    # 지키되 실제 실행은 다음 모델 turn이 worker 결과를 읽고 다시 선택하게 미룬다.
+                    for sibling_call in generated.tool_calls[tool_call_index:]:
+                        sibling_runtime_name = self._runtime_tool_name(sibling_call.name, provider_tool_name_map)
+                        sibling_result = {
+                            "tool_call_id": sibling_call.id,
+                            "name": sibling_runtime_name,
+                            "args": sibling_call.arguments,
+                            "result": self._deferred_tool_result_by_delegate(
+                                delegate_tool_name="delegate_task",
+                                deferred_tool_name=sibling_runtime_name,
+                            ),
+                        }
+                        self._append_tool_result_observation(
+                            tool_result=sibling_result,
+                            all_tool_results=all_tool_results,
+                            messages=messages,
+                            transcript_session_id=transcript_session_id,
+                            operations=operations,
+                            operation_counters=operation_counters,
+                        )
+                    break
                 guard_result = self.tool_guard.evaluate(
                     task_input=guard_task_input,
                     tool_call_id=tool_call.id,
@@ -218,12 +251,28 @@ class ToolCallingLoopHandler:
                     # BLOCK도 전체 실패가 아니라 막힌 tool result로 transcript에 남겨 LLM이 다음 행동을 정한다.
                     result = self._blocked_tool_result(guard_result)
                 else:
+                    await self._emit_tool_progress(
+                        progress_sink=progress_sink,
+                        event_type="tool.started",
+                        tool_call_id=tool_call.id,
+                        tool_name=runtime_tool_name,
+                        args=tool_call.arguments,
+                        result=None,
+                    )
                     result = self._run_native_tool_call(
                         name=runtime_tool_name,
                         args=tool_call.arguments,
                         requested_toolsets=requested_toolsets,
                         tool_runtime=tool_runtime,
                     )
+                    if runtime_tool_name == "delegate_task" and delegate_executor is not None:
+                        result = await self._execute_delegate_tool_result(
+                            delegate_executor=delegate_executor,
+                            tool_call_id=tool_call.id,
+                            args=tool_call.arguments,
+                            accepted_result=result,
+                        )
+                        delegate_boundary_started = True
                 tool_result = {
                     "tool_call_id": tool_call.id,
                     "name": runtime_tool_name,
@@ -237,6 +286,14 @@ class ToolCallingLoopHandler:
                     transcript_session_id=transcript_session_id,
                     operations=operations,
                     operation_counters=operation_counters,
+                )
+                await self._emit_tool_progress(
+                    progress_sink=progress_sink,
+                    event_type="tool.completed",
+                    tool_call_id=tool_call.id,
+                    tool_name=runtime_tool_name,
+                    args=tool_call.arguments,
+                    result=result,
                 )
             current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
 
@@ -447,6 +504,236 @@ class ToolCallingLoopHandler:
             enabled_toolsets=requested_toolsets,
         )
 
+    @staticmethod
+    async def _execute_delegate_tool_result(
+        *,
+        delegate_executor,
+        tool_call_id: str,
+        args: dict[str, Any],
+        accepted_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """delegate_task tool result 를 실제 worker 실행 결과로 바꾼다.
+
+        runtime tool 은 우선 worker 계약(child_session)을 검증해서 반환한다. 여기서 바로
+        worker 를 실행해야 parent LLM 이 결과를 본 다음 문서 작성/저장 같은 다음 도구를 판단할 수 있다.
+        """
+
+        if not isinstance(accepted_result, dict) or accepted_result.get("ok") is False:
+            return accepted_result
+        child_session = accepted_result.get("child_session")
+        if not isinstance(child_session, dict):
+            return accepted_result
+        return await delegate_executor(
+            child_session=dict(child_session),
+            tool_call_id=tool_call_id,
+            args=dict(args or {}),
+            accepted_result=dict(accepted_result),
+        )
+
+    async def _emit_tool_progress(
+        self,
+        *,
+        progress_sink,
+        event_type: str,
+        tool_call_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+        result: dict[str, Any] | None,
+    ) -> None:
+        if progress_sink is None:
+            return
+
+        await progress_sink(
+            event_type=event_type,
+            summary_message=self._tool_progress_summary(tool_name=tool_name, args=args, result=result),
+            payload=self._tool_progress_payload(
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                args=args,
+                result=result,
+            ),
+        )
+
+    @classmethod
+    def _tool_progress_summary(cls, *, tool_name: str, args: dict[str, Any], result: dict[str, Any] | None) -> str:
+        if tool_name == "todo":
+            active_title = cls._active_todo_title(args.get("todos"))
+            if active_title:
+                return active_title
+        if tool_name == "step":
+            active_title = cls._active_step_title(args.get("steps"))
+            if active_title:
+                return active_title
+        if tool_name == "write_file":
+            path = cls._optional_text(args.get("path")) or cls._optional_text((result or {}).get("path"))
+            return f"{path} 파일 작성" if path else "파일 작성"
+        if tool_name == "read_file":
+            path = cls._optional_text(args.get("path")) or cls._optional_text((result or {}).get("path"))
+            return f"{path} 파일 읽기" if path else "파일 읽기"
+        if tool_name == "search_files":
+            query = cls._optional_text(args.get("query")) or cls._optional_text(args.get("pattern"))
+            return f"{query} 검색" if query else "파일 검색"
+        if tool_name == "terminal.run":
+            command = cls._terminal_command_summary(args)
+            return f"{command} 실행" if command else "터미널 실행"
+        if tool_name == "delegate_task":
+            delegate = (result or {}).get("delegate") if isinstance(result, dict) else None
+            summary = cls._optional_text((delegate or {}).get("summary")) if isinstance(delegate, dict) else None
+            goal = cls._optional_text(args.get("goal"))
+            if summary:
+                return f"worker 결과 회수: {summary[:80]}"
+            return f"{goal} worker 실행" if goal else "worker 실행"
+        if tool_name == "web_search":
+            query = cls._optional_text(args.get("query"))
+            return f"{query} 웹 검색" if query else "웹 검색"
+        if tool_name in {"web_extract", "web_crawl"}:
+            url = cls._optional_text(args.get("url"))
+            return f"{url} 자료 확인" if url else "웹 자료 확인"
+        if tool_name.startswith("browser_"):
+            url = cls._optional_text(args.get("url"))
+            return f"{url} 브라우저 확인" if url else f"{tool_name} 실행"
+        return f"{tool_name} 실행"
+
+    @classmethod
+    def _tool_progress_payload(
+        cls,
+        *,
+        tool_call_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+        result: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "tool_call_id": tool_call_id,
+            "toolCallId": tool_call_id,
+            "tool_name": tool_name,
+            "toolName": tool_name,
+            "title": cls._tool_progress_summary(tool_name=tool_name, args=args, result=result),
+            "input": cls._compact_progress_value(args),
+        }
+        for key in ("path", "query", "pattern"):
+            value = cls._optional_text(args.get(key)) or cls._optional_text((result or {}).get(key))
+            if value:
+                payload[key] = value
+        if tool_name == "todo":
+            todos = [item for item in args.get("todos") or [] if isinstance(item, dict)]
+            payload["todos"] = [
+                {
+                    "id": cls._optional_text(item.get("id") or item.get("key")),
+                    "content": cls._optional_text(item.get("content") or item.get("title")),
+                    "status": cls._optional_text(item.get("status")),
+                }
+                for item in todos[:12]
+            ]
+        if tool_name == "step":
+            steps = [item for item in args.get("steps") or [] if isinstance(item, dict)]
+            payload["steps"] = [
+                {
+                    "id": cls._optional_text(item.get("id") or item.get("key")),
+                    "title": cls._optional_text(item.get("title") or item.get("summary")),
+                    "summary": cls._optional_text(item.get("summary") or item.get("title")),
+                    "goal": cls._optional_text(item.get("goal")),
+                    "status": cls._optional_text(item.get("status")),
+                }
+                for item in steps[:12]
+            ]
+        if isinstance(result, dict):
+            payload["result"] = cls._compact_progress_value(result)
+            if result.get("ok") is False:
+                payload["ok"] = False
+                error = result.get("error")
+                if isinstance(error, dict):
+                    payload["error"] = {
+                        "code": cls._optional_text(error.get("code")),
+                        "message": cls._optional_text(error.get("message")),
+                    }
+            for key in ("bytes_written", "lines_written", "returncode", "total_count"):
+                value = result.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    payload[key] = value
+        return payload
+
+    @classmethod
+    def _compact_progress_value(cls, value: Any, *, depth: int = 0) -> Any:
+        """세부 기록용 tool 입출력을 너무 커지지 않게 줄이고 민감값은 가린다."""
+
+        if depth >= 5:
+            return "..."
+        if isinstance(value, dict):
+            compacted: dict[str, Any] = {}
+            for index, (key, item) in enumerate(value.items()):
+                if index >= 40:
+                    compacted["..."] = "truncated"
+                    break
+                key_text = str(key)
+                if cls._looks_sensitive_key(key_text):
+                    compacted[key_text] = "[redacted]"
+                else:
+                    compacted[key_text] = cls._compact_progress_value(item, depth=depth + 1)
+            return compacted
+        if isinstance(value, list):
+            compacted_items = [cls._compact_progress_value(item, depth=depth + 1) for item in value[:20]]
+            if len(value) > 20:
+                compacted_items.append("...")
+            return compacted_items
+        if isinstance(value, str):
+            return cls._redact_progress_text(value[:4000] + ("..." if len(value) > 4000 else ""))
+        if isinstance(value, (int, float, bool)) or value is None:
+            return value
+        return cls._redact_progress_text(str(value))
+
+    @staticmethod
+    def _looks_sensitive_key(key: str) -> bool:
+        return bool(re.search(r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password|authorization)", key))
+
+    @staticmethod
+    def _redact_progress_text(value: str) -> str:
+        redacted = re.sub(r"sk-[A-Za-z0-9_-]{10,}", "[redacted]", value)
+        redacted = re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]", redacted)
+        return re.sub(
+            r"(?i)\b(api[_-]?key|token|secret|password)\s*[:=]\s*[^,\s]+",
+            r"\1=[redacted]",
+            redacted,
+        )
+
+    @classmethod
+    def _active_todo_title(cls, value: Any) -> str | None:
+        if not isinstance(value, list):
+            return None
+        for status in ("in_progress", "pending", "completed"):
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("status") or "").strip().lower() != status:
+                    continue
+                title = cls._optional_text(item.get("content") or item.get("title"))
+                if title:
+                    return title
+        return None
+
+    @classmethod
+    def _active_step_title(cls, value: Any) -> str | None:
+        if not isinstance(value, list):
+            return None
+        for status in ("in_progress", "pending", "completed"):
+            for item in value:
+                if not isinstance(item, dict):
+                    continue
+                if str(item.get("status") or "").strip().lower() != status:
+                    continue
+                title = cls._optional_text(item.get("summary") or item.get("title"))
+                if title:
+                    return title
+        return None
+
+    @classmethod
+    def _terminal_command_summary(cls, args: dict[str, Any]) -> str | None:
+        argv = args.get("argv")
+        if isinstance(argv, list) and argv:
+            text = " ".join(str(item) for item in argv[:4])
+            return text[:80]
+        return cls._optional_text(args.get("command"))
+
     def _bind_request_tool_runtime(self, workspace_root: Any):
         binder = getattr(self.tool_runtime, "bind_workspace_root", None)
         if callable(binder):
@@ -611,6 +898,29 @@ class ToolCallingLoopHandler:
         }
 
     @staticmethod
+    def _deferred_tool_result_by_delegate(
+        *,
+        delegate_tool_name: str,
+        deferred_tool_name: str,
+    ) -> dict[str, Any]:
+        message = (
+            f"{delegate_tool_name} worker 결과를 먼저 반영해야 해서 {deferred_tool_name} 호출은 이번 turn에서 실행하지 않았습니다. "
+            "worker 결과를 읽은 뒤에도 필요하면 다음 turn에서 다시 요청해야 합니다."
+        )
+        return {
+            "ok": False,
+            "content": message,
+            "error": {
+                "code": "tool_deferred_by_delegate_boundary",
+                "message": message,
+            },
+            "guard": {
+                "decision": "DEFERRED_BY_DELEGATE_BOUNDARY",
+                "pending_tool_name": delegate_tool_name,
+            },
+        }
+
+    @staticmethod
     def _tool_result_content(result: dict[str, Any]) -> str:
         if isinstance(result, dict) and isinstance(result.get("content"), str):
             return str(result["content"])
@@ -656,6 +966,11 @@ class ToolCallingLoopHandler:
             model_name=model_name,
             todo_state=todo_state,
         )
+        delegate_agent_detail = self._delegate_agent_detail_from_tool_results(tool_results)
+        if delegate_agent_detail is not None:
+            # worker 실행은 tool 호출 중간에 이미 StepRun detail 에 반영되지만,
+            # 최종 handler detail_json 이 agentDetail 기본값으로 덮어쓰지 않도록 같은 정보를 다시 싣는다.
+            detail_json["agentDetail"] = delegate_agent_detail
         observed_steps = self._observed_semantic_steps(tool_results)
         step_summary = self._observed_step_summary(observed_steps)
         if resume_payload is not None:
@@ -749,8 +1064,19 @@ class ToolCallingLoopHandler:
     def _requested_toolsets(task_input: dict[str, Any]) -> tuple[str, ...] | None:
         raw_toolsets = task_input.get("enabled_toolsets")
         if not isinstance(raw_toolsets, list):
+            if ToolCallingLoopHandler._is_worker_payload(task_input):
+                return ("skills", "terminal", "file", "web", "browser")
             return None
         normalized = tuple(str(item).strip() for item in raw_toolsets if str(item).strip())
+        if ToolCallingLoopHandler._is_worker_payload(task_input):
+            # worker는 depth1 leaf 실행 단위다. parent가 준 toolset에 실수로 delegation/all이 섞여도
+            # 하위 worker를 다시 만들 수 없게 실행 가능한 toolset만 남긴다.
+            worker_toolsets = tuple(
+                item
+                for item in normalized
+                if item not in {"all", "*", "delegate", "delegation", "delegate_task"}
+            )
+            return worker_toolsets or ("skills", "terminal", "file", "web", "browser")
         return normalized or None
 
     def _max_iterations(self, task_input: dict[str, Any]) -> int:
@@ -761,13 +1087,13 @@ class ToolCallingLoopHandler:
             value = int(raw_value) if explicit_value else default_value
         except (TypeError, ValueError):
             value = default_value
-        upper_bound = self._configured_positive_int("agent_loop_max_iterations", default=60)
+        upper_bound = self._configured_positive_int("agent_loop_max_iterations", default=120)
         return max(1, min(value, upper_bound))
 
     def _default_max_iterations(self, task_input: dict[str, Any]) -> int:
         if self._is_worker_payload(task_input):
-            return self._configured_positive_int("agent_loop_worker_default_max_iterations", default=50)
-        return self._configured_positive_int("agent_loop_default_max_iterations", default=60)
+            return self._configured_positive_int("agent_loop_worker_default_max_iterations", default=80)
+        return self._configured_positive_int("agent_loop_default_max_iterations", default=90)
 
     def _configured_positive_int(self, name: str, *, default: int) -> int:
         settings = getattr(self.provider, "settings", None)
@@ -850,6 +1176,39 @@ class ToolCallingLoopHandler:
         return None
 
     @staticmethod
+    def _delegate_agent_detail_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+        workers: list[dict[str, Any]] = []
+        for tool_result in tool_results:
+            if str(tool_result.get("name") or "") != "delegate_task":
+                continue
+            result = tool_result.get("result")
+            if not isinstance(result, dict) or result.get("ok") is False:
+                continue
+            delegate = result.get("delegate")
+            if not isinstance(delegate, dict):
+                continue
+            worker = {
+                "agentId": delegate.get("agent_id") or delegate.get("agentId"),
+                "workerSessionId": delegate.get("worker_session_id") or delegate.get("workerSessionId"),
+                "profileKey": delegate.get("profile_key") or delegate.get("profileKey"),
+                "summary": delegate.get("summary"),
+                "status": delegate.get("status"),
+            }
+            workers.append(worker)
+        if not workers:
+            return None
+        latest = workers[-1]
+        return {
+            "called": True,
+            "agentId": latest.get("agentId"),
+            "workerSessionId": latest.get("workerSessionId"),
+            "profileKey": latest.get("profileKey"),
+            "summary": latest.get("summary"),
+            "status": latest.get("status"),
+            "workers": workers,
+        }
+
+    @staticmethod
     def _normalize_observed_step(item: dict[str, Any], *, index: int) -> dict[str, str] | None:
         title = str(item.get("title") or item.get("summary") or "").strip()
         if not title:
@@ -928,7 +1287,8 @@ class ToolCallingLoopHandler:
 
     @staticmethod
     def _tool_operation_status(result: Any) -> str:
-        if isinstance(result, dict) and result.get("error", {}).get("code") == "tool_deferred_by_approval":
+        error = result.get("error") if isinstance(result, dict) else None
+        if isinstance(error, dict) and error.get("code") == "tool_deferred_by_approval":
             return "waiting"
         if isinstance(result, dict) and result.get("ok") is False:
             return "failed"

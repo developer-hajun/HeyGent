@@ -545,7 +545,7 @@ class OpenAIOAuthProvider(BaseProvider):
                 "User-Agent": "heygent-ai/0.1",
             },
             json=request_body,
-            timeout=30.0,
+            timeout=self.settings.agent_model_stream_timeout_seconds,
         ) as response:
             if not response.is_success:
                 detail = response.read().decode("utf-8", errors="replace")

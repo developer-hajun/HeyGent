@@ -6,6 +6,8 @@ import sys
 
 from app.clients.backend_auth import BackendAuthVerifyResult
 from app.contracts.event.task_events import TaskEventEnvelope
+from app.contracts.task.task_status import TaskStatus
+from app.domain.orchestration.delegation.spec import ChildSessionLaunchResult
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse, AssistantToolCall
 from app.domain.tasks.models import StepRun, TaskRun
 from app.storage.redis import FakeRedis, RedisTaskProjectionStore
@@ -114,6 +116,294 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert transcript[2]["tool_call_id"] == "call_skills"
 
 
+def test_agent_loop_emits_runtime_tool_progress_events_before_completion(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "progress-workspace"
+    workspace.mkdir()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_todo",
+                        "todo",
+                        {
+                            "todos": [
+                                {"id": "research", "content": "이승엽 기록 자료 조사", "status": "in_progress"},
+                                {"id": "write", "content": "이승엽 조사 보고서 파일 작성", "status": "pending"},
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_write",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/progress.md",
+                            "content": "progress file\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(text="파일 작성 완료"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "progress-user",
+            "input_payload": {
+                "prompt": "이승엽 보고서를 tmp/testfile/progress.md 파일로 작성해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (workspace / "tmp/testfile/progress.md").read_text(encoding="utf-8") == "progress file\n"
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    event_types = [event.event_type for event in events]
+    assert "tool.started" in event_types
+    assert "tool.completed" in event_types
+    assert event_types.index("tool.completed") < event_types.index("task.completed")
+
+    tool_completed = [event for event in events if event.event_type == "tool.completed"]
+    assert [event.payload["tool_name"] for event in tool_completed] == ["todo", "write_file"]
+    assert [event.status for event in tool_completed] == ["COMPLETED", "COMPLETED"]
+    assert tool_completed[0].summary_message == "이승엽 기록 자료 조사"
+    assert tool_completed[1].payload["path"] == "tmp/testfile/progress.md"
+
+
+def test_agent_loop_materializes_fallback_step_before_first_tool_without_step_declaration(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "fallback-step-workspace"
+    workspace.mkdir()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_write",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/fallback.md",
+                            "content": "fallback step\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(text="fallback done"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "fallback-step-user",
+            "input_payload": {
+                "prompt": "파일을 바로 작성해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert (workspace / "tmp/testfile/fallback.md").read_text(encoding="utf-8") == "fallback step\n"
+
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert len(steps) == 1
+    assert steps[0]["title"] == "tmp/testfile/fallback.md 파일 작성"
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    step_created = next(event for event in events if event.event_type == "step.created")
+    step_started = next(event for event in events if event.event_type == "step.started")
+    tool_started = next(event for event in events if event.event_type == "tool.started")
+    assert events.index(step_created) < events.index(tool_started)
+    assert events.index(step_started) < events.index(tool_started)
+    assert tool_started.step_run_id == steps[0]["step_run_id"]
+    assert step_created.payload["internal_step_anchor"] is True
+    assert tool_started.payload["internal_step_anchor"] is True
+    assert tool_started.payload["step_visibility"] == "internal"
+
+
+def test_agent_loop_closes_fallback_step_when_llm_declares_semantic_steps_later(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "fallback-to-semantic-workspace"
+    workspace.mkdir()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_probe",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/probe.md",
+                            "content": "probe\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "research",
+                                    "title": "자료 조사",
+                                    "summary": "자료 조사 완료",
+                                    "goal": "근거를 확인한다.",
+                                    "status": "completed",
+                                },
+                                {
+                                    "id": "write",
+                                    "title": "보고서 작성",
+                                    "summary": "보고서 작성 중",
+                                    "goal": "결과를 문서로 정리한다.",
+                                    "status": "in_progress",
+                                },
+                            ]
+                        },
+                    )
+                ]
+            ),
+            _response(text="semantic steps done"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "fallback-semantic-user",
+            "input_payload": {
+                "prompt": "먼저 확인한 뒤 의미 단계를 선언해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert [step["status"] for step in steps] == ["COMPLETED", "COMPLETED", "COMPLETED"]
+    assert steps[0]["input_payload"]["progress_fallback_step"] is True
+    assert [step["title"] for step in steps[1:]] == ["자료 조사", "보고서 작성"]
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    fallback_completed = next(
+        event
+        for event in events
+        if event.event_type == "step.completed" and event.step_run_id == steps[0]["step_run_id"]
+    )
+    task_completed = next(event for event in events if event.event_type == "task.completed")
+    assert events.index(fallback_completed) < events.index(task_completed)
+
+
+def test_agent_loop_does_not_create_steprun_before_first_provider_call(client, monkeypatch):
+    observed_step_counts: list[int] = []
+
+    def fake_respond(self, messages, tools, model, tool_choice=None):
+        _ = (self, messages, tools, model, tool_choice)
+        tasks = client.app.state.repository.list_tasks(limit=10)
+        assert len(tasks) == 1
+        observed_step_counts.append(len(client.app.state.repository.list_steps(tasks[0].task_run_id)))
+        return _response(text="FIRST_PROVIDER_DONE")
+
+    monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond", fake_respond)
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.respond", fake_respond)
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "first-provider-user",
+            "input_payload": {
+                "prompt": "관련 자료를 조사하고 파일 초안을 작성해줘.",
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert observed_step_counts == [0]
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    event_types = [event.event_type for event in events]
+    assert event_types.index("task.started") < event_types.index("step.created")
+    assert len(client.app.state.repository.list_steps(body["task_run_id"])) == 1
+
+
+def test_step_events_use_llm_declared_step_title_as_realtime_summary(client, monkeypatch):
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "lee-records",
+                                    "title": "이승엽 기록 근거 확인",
+                                    "summary": "이승엽 기록 근거 확인 중",
+                                    "goal": "요청한 인물 조사에 필요한 근거를 확인한다.",
+                                    "status": "in_progress",
+                                }
+                            ]
+                        },
+                    )
+                ]
+            ),
+            _response(text="STEP_DECLARED_DONE"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "step-summary-user",
+            "input_payload": {
+                "prompt": "관련 자료를 조사하고 파일 초안을 작성해줘.",
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    step_created = [event for event in events if event.event_type == "step.created"]
+    step_started = [event for event in events if event.event_type == "step.started"]
+    event_types = [event.event_type for event in events]
+
+    assert [event.summary_message for event in step_created] == ["이승엽 기록 근거 확인 중"]
+    assert [event.payload["step_title"] for event in step_started] == ["이승엽 기록 근거 확인"]
+    assert event_types.index("step.created") < event_types.index("tool.started")
+    assert event_types.index("tool.completed") < event_types.index("step.completed")
+    tool_events = [event for event in events if event.event_type.startswith("tool.")]
+    assert all(event.step_run_id == body["current_step_run_id"] for event in tool_events)
+
+
 def test_agent_loop_declared_steps_materialize_multiple_observed_stepruns(client, monkeypatch):
     provider_calls = _patch_respond(
         monkeypatch,
@@ -182,6 +472,390 @@ def test_agent_loop_declared_steps_materialize_multiple_observed_stepruns(client
     assert all(step["status"] == "COMPLETED" for step in steps)
 
 
+def test_agent_loop_switches_active_steprun_when_llm_declares_next_step(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "declared-progress-workspace"
+    workspace.mkdir()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step_research",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "research",
+                                    "title": "이승엽 기록 근거 조사",
+                                    "summary": "이승엽 기록 근거 조사 중",
+                                    "goal": "공식 기록과 주요 이력을 확인한다.",
+                                    "status": "in_progress",
+                                },
+                                {
+                                    "id": "write",
+                                    "title": "이승엽 조사 문서 작성",
+                                    "summary": "이승엽 조사 문서 작성 준비 중",
+                                    "goal": "확인한 내용을 마크다운 문서로 저장한다.",
+                                    "status": "pending",
+                                },
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_todo_research",
+                        "todo",
+                        {
+                            "todos": [
+                                {
+                                    "content": "이승엽 관련 공식 기록 확인",
+                                    "status": "in_progress",
+                                }
+                            ]
+                        },
+                    ),
+                ]
+            ),
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step_write",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "research",
+                                    "title": "이승엽 기록 근거 조사",
+                                    "summary": "이승엽 기록 근거 조사 완료",
+                                    "goal": "공식 기록과 주요 이력을 확인한다.",
+                                    "status": "completed",
+                                },
+                                {
+                                    "id": "write",
+                                    "title": "이승엽 조사 문서 작성",
+                                    "summary": "이승엽 조사 문서 작성 중",
+                                    "goal": "확인한 내용을 마크다운 문서로 저장한다.",
+                                    "status": "in_progress",
+                                },
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_write_file",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/lee.md",
+                            "content": "# 이승엽\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(text="작성 완료"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "declared-progress-user",
+            "input_payload": {
+                "prompt": "이승엽 정보를 조사하고 tmp/testfile/lee.md 파일로 작성해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert [step["title"] for step in steps] == ["이승엽 기록 근거 조사", "이승엽 조사 문서 작성"]
+    assert [step["input_payload"].get("observed_step_key") for step in steps] == ["research", "write"]
+    assert all(step["status"] == "COMPLETED" for step in steps)
+    assert body["current_step_run_id"] == steps[1]["step_run_id"]
+    assert (workspace / "tmp/testfile/lee.md").read_text(encoding="utf-8") == "# 이승엽\n"
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    step_created_events = [event for event in events if event.event_type == "step.created"]
+    step_started_events = [event for event in events if event.event_type == "step.started"]
+    todo_started_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "tool.started" and event.payload.get("tool_name") == "todo"
+    )
+    write_started_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "tool.started" and event.payload.get("tool_name") == "write_file"
+    )
+    write_step_created_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "step.created" and event.payload.get("step_title") == "이승엽 조사 문서 작성"
+    )
+    write_step_started_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "step.started" and event.payload.get("step_title") == "이승엽 조사 문서 작성"
+    )
+
+    assert [event.payload["step_title"] for event in step_created_events] == [
+        "이승엽 기록 근거 조사",
+        "이승엽 조사 문서 작성",
+    ]
+    assert [event.payload["step_title"] for event in step_started_events] == [
+        "이승엽 기록 근거 조사",
+        "이승엽 조사 문서 작성",
+    ]
+    # LLM이 선언한 다음 StepRun shell은 실제 다음 도구가 실행되기 전에 먼저 프론트로 내려가야 한다.
+    assert write_step_created_index < todo_started_index
+    # pending shell은 현재 단계의 실제 도구가 도는 동안에는 started 되면 안 된다.
+    assert todo_started_index < write_step_started_index
+    # 다음 단계가 active로 전환될 때만 running 상태가 되고, 그 뒤에 실제 파일 도구가 붙는다.
+    assert write_step_started_index < write_started_index
+
+    assert [event.summary_message for event in step_created_events] == [
+        "이승엽 기록 근거 조사 중",
+        "이승엽 조사 문서 작성 준비 중",
+    ]
+
+    write_events = [
+        event
+        for event in events
+        if event.event_type.startswith("tool.") and event.payload.get("tool_name") == "write_file"
+    ]
+    assert write_events
+    assert all(event.step_run_id == steps[1]["step_run_id"] for event in write_events)
+    assert write_events[0].payload["input"]["path"] == "tmp/testfile/lee.md"
+    assert write_events[-1].payload["result"]["path"] == "tmp/testfile/lee.md"
+    assert len({event.step_run_id for event in events if event.event_type == "step.completed"}) == 2
+
+
+def test_agent_loop_moves_tool_to_matching_pending_steprun(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "pending-tool-workspace"
+    workspace.mkdir()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "research",
+                                    "title": "이승엽 자료 조사",
+                                    "summary": "이승엽 주요 이력 조사 중",
+                                    "goal": "문서 작성 전에 이승엽 관련 근거를 확인한다.",
+                                    "status": "in_progress",
+                                },
+                                {
+                                    "id": "write",
+                                    "title": "이승엽 Markdown 문서 작성 및 저장",
+                                    "summary": "조사 내용을 Markdown 문서로 저장 준비 중",
+                                    "goal": "확인한 내용을 마크다운 파일로 작성해 저장한다.",
+                                    "status": "pending",
+                                },
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_write_file",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/lee-pending.md",
+                            "content": "# 이승엽\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(text="작성 완료"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "pending-tool-user",
+            "input_payload": {
+                "prompt": "이승엽에 대하여 조사하고 tmp/testfile 여기에 md 파일로 저장해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert [step["title"] for step in steps] == ["이승엽 자료 조사", "이승엽 Markdown 문서 작성 및 저장"]
+    assert all(step["status"] == "COMPLETED" for step in steps)
+    assert (workspace / "tmp/testfile/lee-pending.md").read_text(encoding="utf-8") == "# 이승엽\n"
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    research_completed_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "step.completed" and event.step_run_id == steps[0]["step_run_id"]
+    )
+    write_started_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "step.started" and event.step_run_id == steps[1]["step_run_id"]
+    )
+    write_tool_started = next(
+        event
+        for event in events
+        if event.event_type == "tool.started" and event.payload.get("tool_name") == "write_file"
+    )
+
+    # 모델이 step 전환을 한 번 더 선언하지 않아도, 이미 선언된 pending 단계에 맞는 tool은 그 단계에 묶는다.
+    assert research_completed_index < write_started_index
+    assert write_started_index < events.index(write_tool_started)
+    assert write_tool_started.step_run_id == steps[1]["step_run_id"]
+    assert [
+        event.step_run_id
+        for event in events
+        if event.event_type == "step.completed"
+    ] == [steps[0]["step_run_id"], steps[1]["step_run_id"]]
+
+
+def test_agent_loop_keeps_delegate_step_running_until_worker_result_before_file_write(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "delegate-order-workspace"
+    workspace.mkdir()
+
+    async def fake_worker_start(**kwargs):
+        return ChildSessionLaunchResult(
+            agent_id="agent_web_research",
+            status=TaskStatus.COMPLETED,
+            summary="웹 자료 조사, 실무 운영 관점, 아키텍처 관점, 사용자 경험 관점 검토 완료",
+            output_payload={
+                "tool_results": [
+                    {"tool_call_id": "worker_web", "name": "web_search", "result": {"ok": True}},
+                ]
+            },
+        )
+
+    client.app.state.child_session_launcher.bind_worker_start(fake_worker_start)
+    provider_calls = _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step_plan",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "write",
+                                    "title": "종합 보고서와 관점별 md 파일 작성",
+                                    "summary": "조사 결과를 파일로 저장한다.",
+                                    "goal": "최종 보고서와 관점별 요약 파일을 만든다.",
+                                    "status": "pending",
+                                },
+                                {
+                                    "id": "research",
+                                    "title": "AI 서브에이전트 depth1 설계 관점별 조사",
+                                    "summary": "worker 서브에이전트로 관점별 조사를 진행한다.",
+                                    "goal": "관점별 조사 결과를 모은다.",
+                                    "status": "in_progress",
+                                },
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_delegate",
+                        "delegate_task",
+                        {
+                            "goal": "AI 서브에이전트 depth1 설계 관점별 조사",
+                            "context": "웹 자료, 실무 운영, 아키텍처, 사용자 경험 관점을 분리해 검토한다.",
+                            "toolsets": ["web", "file"],
+                            "max_iterations": 5,
+                        },
+                    ),
+                    _tool_call(
+                        "call_write_too_early",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/depth1/report.md",
+                            "content": "# premature\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_write_after_worker",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/depth1/report.md",
+                            "content": "# AI 서브에이전트 depth1 설계\n\nworker 조사 완료 후 작성\n",
+                        },
+                    )
+                ]
+            ),
+            _response(text="보고서 저장 완료"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "delegate-order-user",
+            "input_payload": {
+                "prompt": "AI 서브에이전트를 depth1로만 두는 설계를 조사하고 tmp/testfile 아래에 md로 정리해줘.",
+                "workspace_root": str(workspace),
+                "enabled_toolsets": ["local-core", "delegation", "file", "web"],
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert (workspace / "tmp/testfile/depth1/report.md").read_text(encoding="utf-8").startswith("# AI 서브에이전트 depth1 설계")
+
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert [step["title"] for step in steps] == [
+        "AI 서브에이전트 depth1 설계 관점별 조사",
+        "종합 보고서와 관점별 md 파일 작성",
+    ]
+    research_step, write_step = steps
+    assert research_step["detail_json"]["agentDetail"]["workerSessionId"] is not None
+    assert research_step["detail_json"]["agentDetail"]["workers"][0]["status"] == TaskStatus.COMPLETED
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    delegate_update = next(
+        event
+        for event in events
+        if event.event_type == "step.updated"
+        and event.step_run_id == research_step["step_run_id"]
+        and event.payload.get("reason") == "delegate.started"
+    )
+    write_tool_started = next(
+        event
+        for event in events
+        if event.event_type == "tool.started" and event.payload.get("tool_call_id") == "call_write_after_worker"
+    )
+    assert events.index(delegate_update) < events.index(write_tool_started)
+    assert write_tool_started.step_run_id == write_step["step_run_id"]
+
+    first_turn_tool_messages = [
+        message for message in provider_calls[1]["messages"]
+        if getattr(message, "tool_call_id", None) in {"call_delegate", "call_write_too_early"}
+    ]
+    assert "관점 검토 완료" in first_turn_tool_messages[0].content
+    assert "이번 turn에서 실행하지 않았습니다" in first_turn_tool_messages[1].content
+
+
 def test_agent_loop_provider_timeout_fails_task_and_materializes_failed_step(client, monkeypatch):
     _patch_respond(monkeypatch, [TimeoutError("provider read timeout")])
 
@@ -222,13 +896,11 @@ def test_agent_loop_provider_timeout_fails_task_and_materializes_failed_step(cli
     assert steps[0]["output_payload"]["error"]["recovery"]["retry_attempted"] is False
 
 
-def test_agent_loop_explicit_task_plan_continues_across_plan_step_anchors(client, monkeypatch):
-    _patch_respond(
+def test_agent_loop_explicit_task_plan_is_reference_only_until_llm_declares_steps(client, monkeypatch):
+    provider_calls = _patch_respond(
         monkeypatch,
         [
-            _response(text="ANALYZE_DONE"),
-            _response(text="WRITE_DONE"),
-            _response(text="SHARE_DONE"),
+            _response(text="PLAN_REFERENCE_DONE"),
         ],
     )
 
@@ -254,43 +926,23 @@ def test_agent_loop_explicit_task_plan_continues_across_plan_step_anchors(client
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "COMPLETED"
-    assert body["result_payload"]["text"] == "SHARE_DONE"
+    assert body["result_payload"]["text"] == "PLAN_REFERENCE_DONE"
+    assert len(provider_calls) == 1
 
     steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
-    assert len(steps) == 3
-    assert [step["input_payload"].get("plan_step_key") for step in steps] == ["analyze", "write", "share"]
-    assert [step["input_payload"].get("plan_step_title") for step in steps] == ["요청 분석", "초안 작성", "결과 공유"]
-    assert all(step["input_payload"].get("todo_key") is None for step in steps)
+    assert len(steps) == 1
+    assert steps[0]["input_payload"].get("plan_step_key") is None
+    assert steps[0]["input_payload"].get("todo_key") is None
 
     events = client.app.state.repository.list_events(body["task_run_id"])
-    assert [event.event_type for event in events if event.event_type == "step.created"] == [
-        "step.created",
-        "step.created",
-        "step.created",
-    ]
-    for step in steps:
-        step_events = [(index, event.event_type) for index, event in enumerate(events) if event.step_run_id == step["step_run_id"]]
-        created_index = next(index for index, event_type in step_events if event_type == "step.created")
-        started_index = next(index for index, event_type in step_events if event_type == "step.started")
-        completed_index = next(index for index, event_type in step_events if event_type == "step.completed")
-        assert created_index < started_index
-        assert started_index < completed_index
-    task_completed_indexes = [
-        index for index, event in enumerate(events) if event.event_type == "task.completed"
-    ]
-    step_completed_indexes = [
-        index for index, event in enumerate(events) if event.event_type == "step.completed"
-    ]
-    assert len(task_completed_indexes) == 1
-    assert task_completed_indexes[0] > step_completed_indexes[-1]
+    assert [event.event_type for event in events if event.event_type == "step.created"] == ["step.created"]
 
 
-def test_agent_loop_prompt_plan_materializes_multiple_stepruns_before_simple_completion(client, monkeypatch):
+def test_agent_loop_does_not_inject_prompt_plan_from_keywords(client, monkeypatch):
     provider_calls = _patch_respond(
         monkeypatch,
         [
-            _response(text="RESEARCH_DONE"),
-            _response(text="WRITE_DONE"),
+            _response(text="KEYWORD_PROMPT_DONE"),
         ],
     )
 
@@ -309,18 +961,18 @@ def test_agent_loop_prompt_plan_materializes_multiple_stepruns_before_simple_com
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "COMPLETED"
-    assert body["result_payload"]["text"] == "WRITE_DONE"
-    assert len(provider_calls) == 2
+    assert body["result_payload"]["text"] == "KEYWORD_PROMPT_DONE"
+    assert len(provider_calls) == 1
     saved_task = client.app.state.repository.get_task(body["task_run_id"])
-    assert saved_task.input_payload["task_plan_source"] == "prompt_heuristic"
+    assert "task_plan" not in saved_task.input_payload
+    assert "task_plan_source" not in saved_task.input_payload
 
     steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
-    assert len(steps) == 2
-    assert [step["title"] for step in steps] == ["자료 조사", "초안 작성"]
-    assert [step["input_payload"].get("plan_step_key") for step in steps] == ["research", "write"]
+    assert len(steps) == 1
+    assert steps[0]["input_payload"].get("plan_step_key") is None
 
 
-def test_agent_loop_prompt_plan_keeps_step_boundary_when_model_completes_all_todos(client, monkeypatch):
+def test_agent_loop_todo_does_not_force_prompt_plan_step_boundary(client, monkeypatch):
     provider_calls = _patch_respond(
         monkeypatch,
         [
@@ -337,8 +989,7 @@ def test_agent_loop_prompt_plan_keeps_step_boundary_when_model_completes_all_tod
                     )
                 ]
             ),
-            _response(text="RESEARCH_DONE"),
-            _response(text="WRITE_DONE"),
+            _response(text="TODO_DONE"),
         ],
     )
 
@@ -357,16 +1008,14 @@ def test_agent_loop_prompt_plan_keeps_step_boundary_when_model_completes_all_tod
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "COMPLETED"
-    assert body["result_payload"]["text"] == "WRITE_DONE"
-    assert len(provider_calls) == 3
+    assert body["result_payload"]["text"] == "TODO_DONE"
+    assert len(provider_calls) == 2
 
     steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
-    assert [step["input_payload"].get("plan_step_key") for step in steps] == ["research", "write"]
+    assert len(steps) == 1
+    assert steps[0]["input_payload"].get("plan_step_key") is None
     events = client.app.state.repository.list_events(body["task_run_id"])
-    assert [event.event_type for event in events if event.event_type == "step.completed"] == [
-        "step.completed",
-        "step.completed",
-    ]
+    assert [event.event_type for event in events if event.event_type == "step.completed"] == ["step.completed"]
 
 
 def test_agent_loop_uses_input_workspace_root_for_file_and_terminal_runtime(client, monkeypatch, tmp_path):
@@ -432,6 +1081,32 @@ def test_agent_loop_uses_input_workspace_root_for_file_and_terminal_runtime(clie
     assert server_cwd_created is False
     assert server_cwd_terminal_created is False
     assert len(provider_calls) == 2
+
+
+def test_agent_loop_does_not_fail_file_prompt_with_static_intent_check(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "missing-file-write-workspace"
+    workspace.mkdir()
+    _patch_respond(monkeypatch, [_response(text="파일 작성 완료")])
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "missing-file-write-user",
+            "input_payload": {
+                "prompt": "이승엽 조사 보고서를 tmp/testfile/missing.md 파일로 작성해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert body["error_message"] is None
+    assert not (workspace / "tmp/testfile/missing.md").exists()
+    assert body["result_payload"]["tool_results"] == []
 
 
 def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch):

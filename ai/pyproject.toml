@@ -9,7 +9,7 @@ description = "HeyGent AI backbone prototype"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1.0",
-  "httpx>=0.27,<1.0",
+  "httpx[socks]>=0.27,<1.0",
   "uvicorn>=0.30,<1.0",
   "websockets>=12.0,<16.0",
   "pydantic>=2.7,<3.0",
@@ -17,6 +17,12 @@ dependencies = [
   "wcwidth>=0.2,<1.0",
   "redis>=5.0,<7.0",
   "psycopg[binary]>=3.2,<4.0",
+  "openai>=2.0,<3",
+  "pyyaml>=6.0,<7",
+  "requests>=2.32,<3",
+  "firecrawl-py>=4.0,<5",
+  "exa-py>=2.9,<3",
+  "parallel-web>=0.4,<1",
 ]
 
 [project.optional-dependencies]

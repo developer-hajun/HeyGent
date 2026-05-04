@@ -126,6 +126,7 @@ def test_openai_api_provider_respond_preserves_native_tool_call(monkeypatch):
         captured["url"] = url
         captured["headers"] = headers
         captured["json"] = json
+        captured["timeout"] = timeout
         return DummyHTTPResponse(
             {
                 "id": "resp_tool",
@@ -183,6 +184,7 @@ def test_openai_api_provider_respond_preserves_native_tool_call(monkeypatch):
     )
 
     assert captured["url"] == "https://api.openai.test/v1/responses"
+    assert captured["timeout"] == settings.agent_model_request_timeout_seconds
     assert captured["json"]["model"] == "gpt-agent"
     assert captured["json"]["input"] == [
         {"role": "user", "content": "할 일을 정리해줘"},
@@ -231,6 +233,7 @@ def test_openai_oauth_provider_respond_streams_agent_contract(monkeypatch, tmp_p
         captured["url"] = url
         captured["headers"] = headers
         captured["json"] = json
+        captured["timeout"] = timeout
         return DummyStreamResponse(
             [
                 'data: {"type":"response.completed","response":{"id":"resp_oauth_tool","model":"gpt-test","status":"completed","output":[{"type":"function_call","call_id":"call_1","name":"todo","arguments":"{\\"todos\\":[]}"}],"usage":{"input_tokens":5,"output_tokens":2}}}',
@@ -253,6 +256,7 @@ def test_openai_oauth_provider_respond_streams_agent_contract(monkeypatch, tmp_p
     assert auth.status == "connected"
     assert captured["method"] == "POST"
     assert captured["url"] == f"{settings.openai_api_base_url}/codex/responses"
+    assert captured["timeout"] == settings.agent_model_stream_timeout_seconds
     assert captured["json"]["stream"] is True
     assert captured["json"]["input"][1] == {
         "type": "function_call_output",

@@ -70,3 +70,37 @@ def test_cors_settings_read_environment(monkeypatch, tmp_path):
     assert settings.cors_allowed_headers == ["Authorization", "Content-Type", "X-Workspace-Key"]
     assert settings.cors_allow_credentials is False
     assert settings.cors_max_age_seconds == 1200
+
+
+def test_agent_loop_timeout_defaults_are_tolerant(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HEYGENT_AGENT_MODEL_REQUEST_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("HEYGENT_AGENT_MODEL_STREAM_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("HEYGENT_AGENT_LOOP_DEFAULT_MAX_ITERATIONS", raising=False)
+    monkeypatch.delenv("HEYGENT_AGENT_LOOP_WORKER_DEFAULT_MAX_ITERATIONS", raising=False)
+    monkeypatch.delenv("HEYGENT_AGENT_LOOP_MAX_ITERATIONS", raising=False)
+
+    settings = get_settings()
+
+    assert settings.agent_model_request_timeout_seconds == 300.0
+    assert settings.agent_model_stream_timeout_seconds == 300.0
+    assert settings.agent_loop_default_max_iterations == 90
+    assert settings.agent_loop_worker_default_max_iterations == 80
+    assert settings.agent_loop_max_iterations == 120
+
+
+def test_agent_loop_timeout_settings_read_environment(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HEYGENT_AGENT_MODEL_REQUEST_TIMEOUT_SECONDS", "600")
+    monkeypatch.setenv("HEYGENT_AGENT_MODEL_STREAM_TIMEOUT_SECONDS", "450")
+    monkeypatch.setenv("HEYGENT_AGENT_LOOP_DEFAULT_MAX_ITERATIONS", "70")
+    monkeypatch.setenv("HEYGENT_AGENT_LOOP_WORKER_DEFAULT_MAX_ITERATIONS", "75")
+    monkeypatch.setenv("HEYGENT_AGENT_LOOP_MAX_ITERATIONS", "140")
+
+    settings = get_settings()
+
+    assert settings.agent_model_request_timeout_seconds == 600.0
+    assert settings.agent_model_stream_timeout_seconds == 450.0
+    assert settings.agent_loop_default_max_iterations == 70
+    assert settings.agent_loop_worker_default_max_iterations == 75
+    assert settings.agent_loop_max_iterations == 140
