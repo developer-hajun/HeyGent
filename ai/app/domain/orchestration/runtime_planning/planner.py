@@ -4,7 +4,12 @@ from app.contracts.task.step_status import StepStatus
 from app.core.utils.ids import new_id
 from app.tools.contracts import TaskHandler
 from app.domain.orchestration.contracts import build_orchestration_detail
-from app.domain.orchestration.runtime_planning.task_plan import TaskPlanStep, build_task_plan, build_task_plan_todo_state
+from app.domain.orchestration.runtime_planning.task_plan import (
+    TaskPlanStep,
+    build_task_plan,
+    build_task_plan_todo_state,
+    inject_prompt_task_plan,
+)
 from app.domain.orchestration.runtime_planning.todo_state import TodoState, build_initial_todo_state, build_task_todo_payload, build_todo_detail_patch
 from app.domain.tasks.detail import build_default_step_detail, build_semantic_step_detail, merge_step_detail
 from app.domain.tasks.models import StepRun, TaskRun
@@ -14,6 +19,7 @@ class Planner:
     """TaskRun / StepRun의 semantic(사용자에게 보이는 의미 단계) 골격을 만든다."""
 
     def materialize_task(self, *, owner_key: str, session_key: str | None, input_payload: dict, handler: TaskHandler) -> TaskRun:
+        input_payload = self._normalized_input_payload(input_payload=input_payload, handler=handler)
         task_plan = build_task_plan(input_payload=input_payload, default_task_title=handler.spec.task_title)
         # agent.loop는 native tool call(모델이 구조화된 도구 호출을 직접 반환하는 방식)을 보고
         # 실행 중 todo projection(todo 상태를 화면/상태 detail로 투영한 값)을 갱신한다.
@@ -42,6 +48,7 @@ class Planner:
         )
 
     def materialize_step(self, *, task: TaskRun, handler: TaskHandler, input_payload: dict, step_order: int) -> StepRun:
+        input_payload = self._normalized_input_payload(input_payload=input_payload, handler=handler)
         task_plan = build_task_plan(input_payload=input_payload, default_task_title=handler.spec.task_title)
         current_step_title = task_plan.current_step.title if task_plan is not None else handler.spec.step_title
         current_semantic_key = (
@@ -103,6 +110,7 @@ class Planner:
         우선 신뢰하고 부족한 값만 handler 기본값으로 보강한다.
         """
 
+        input_payload = self._normalized_input_payload(input_payload=input_payload, handler=handler)
         task_plan = build_task_plan(input_payload=input_payload, default_task_title=handler.spec.task_title)
         plan_step = task_plan.current_step if task_plan is not None else None
         detail_json = merge_step_detail(build_default_step_detail(), outcome.get("detail_json"))
@@ -345,6 +353,12 @@ class Planner:
         payload["plan_step_key"] = plan_step.key
         payload["plan_step_title"] = plan_step.title
         return payload
+
+    @staticmethod
+    def _normalized_input_payload(*, input_payload: dict, handler: TaskHandler) -> dict:
+        if handler.spec.handler_key != "agent.loop":
+            return input_payload
+        return inject_prompt_task_plan(input_payload=input_payload, default_task_title=handler.spec.task_title)
 
     @staticmethod
     def _handler_semantic_key(handler: TaskHandler, *, fallback: str | None = None) -> str:

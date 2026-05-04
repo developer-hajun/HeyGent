@@ -1,0 +1,831 @@
+import { create } from 'zustand'
+import {
+  type AiRealtimeRawFrame,
+  type RawTaskEventPayload,
+  getFramePayload,
+  getStringField,
+  isJsonObject,
+} from '@/realtime/aiRealtimeTypes'
+import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
+import type {
+  RawApproval,
+  RawStepRun,
+  RawTaskRun,
+  RawTaskRunSnapshot,
+  TaskRunDetailSummaryView,
+  TaskRunEventsReplayResultPayload,
+  TaskRunsActiveListResultPayload,
+} from '@/types/taskRuns'
+import { createApprovalResponseId, createClientCommandId } from '@/utils/requestId'
+import { getLastTaskRunSequence, mergeTaskRunEvents } from '@/utils/taskRunEvents'
+import { toTaskRunDetailSummaryView } from '@/utils/taskRunStatusView'
+
+type TaskRunState = {
+  taskRunsById: Record<string, RawTaskRun>
+  stepRunsById: Record<string, RawStepRun>
+  approvalsById: Record<string, RawApproval>
+  eventsByTaskRunId: Record<string, RawTaskEventPayload[]>
+  lastSequenceByTaskRunId: Record<string, number>
+  replayNeededByTaskRunId: Record<string, boolean>
+  recoveryAfterSequenceByTaskRunId: Record<string, number | undefined>
+  recoveringByTaskRunId: Record<string, boolean>
+  approvalSubmissionIdsByApprovalId: Record<string, string>
+  lastError: string | null
+  fetchActiveTaskRuns: (sessionId?: string) => Promise<RawTaskRun[]>
+  fetchSnapshot: (taskRunId: string) => Promise<RawTaskRunSnapshot | null>
+  replayEvents: (taskRunId: string, afterSequence?: number) => Promise<RawTaskEventPayload[]>
+  recoverTaskRun: (taskRunId: string) => Promise<void>
+  selectTaskRunSummary: (taskRunId: string) => TaskRunDetailSummaryView
+  selectTaskRunSummaries: (taskRunIds?: string[]) => TaskRunDetailSummaryView[]
+  isApprovalSubmitting: (approvalId: string) => boolean
+  resumeTaskRun: (input: {
+    taskRunId: string
+    approvalId?: string
+    decision?: string
+    response?: unknown
+  }) => Promise<AiRealtimeRawFrame>
+  cancelTaskRun: (taskRunId: string, reason?: string) => Promise<AiRealtimeRawFrame>
+  handleRealtimeFrame: (frame: AiRealtimeRawFrame) => void
+  mergeTaskEvent: (event: RawTaskEventPayload) => void
+  clearTaskRunState: () => void
+}
+
+export const useTaskRunStore = create<TaskRunState>((set, get) => ({
+  taskRunsById: {},
+  stepRunsById: {},
+  approvalsById: {},
+  eventsByTaskRunId: {},
+  lastSequenceByTaskRunId: {},
+  replayNeededByTaskRunId: {},
+  recoveryAfterSequenceByTaskRunId: {},
+  recoveringByTaskRunId: {},
+  approvalSubmissionIdsByApprovalId: {},
+  lastError: null,
+  fetchActiveTaskRuns: async (sessionId) => {
+    const frame = await useAiRealtimeStore
+      .getState()
+      .sendCommand<AiRealtimeRawFrame>('taskRuns.active.list', { sessionId })
+    const taskRuns = getRawTaskRunList(getFramePayload(frame))
+    mergeTaskRuns(taskRuns, set)
+    return taskRuns
+  },
+  fetchSnapshot: async (taskRunId) => {
+    const frame = await useAiRealtimeStore
+      .getState()
+      .sendCommand<AiRealtimeRawFrame>('taskRun.snapshot.get', { taskRunId })
+    const snapshot = getFramePayload(frame) as RawTaskRunSnapshot | undefined
+    if (!isJsonObject(snapshot)) {
+      return null
+    }
+
+    mergeSnapshot(snapshot, set)
+    return snapshot
+  },
+  replayEvents: async (taskRunId, afterSequence) => {
+    const frame = await useAiRealtimeStore
+      .getState()
+      .sendCommand<AiRealtimeRawFrame>('taskRun.events.replay', { taskRunId, afterSequence })
+    const payload = getFramePayload(frame) as TaskRunEventsReplayResultPayload
+    const events = getRawTaskEventList(payload)
+
+    mergeReplayResult(taskRunId, events, payload, set)
+
+    return events
+  },
+  recoverTaskRun: async (taskRunId) => {
+    const state = get()
+    if (state.recoveringByTaskRunId[taskRunId] === true) {
+      return
+    }
+
+    const afterSequence =
+      state.recoveryAfterSequenceByTaskRunId[taskRunId] ?? state.lastSequenceByTaskRunId[taskRunId]
+
+    set((current) => ({
+      recoveringByTaskRunId: { ...current.recoveringByTaskRunId, [taskRunId]: true },
+      lastError: null,
+    }))
+
+    try {
+      const frame = await useAiRealtimeStore
+        .getState()
+        .sendCommand<AiRealtimeRawFrame>('taskRun.events.replay', { taskRunId, afterSequence })
+      const payload = getFramePayload(frame) as TaskRunEventsReplayResultPayload
+      const events = getRawTaskEventList(payload)
+      const retentionExceeded = getBooleanField(payload, 'retention_exceeded', 'retentionExceeded')
+
+      mergeReplayResult(taskRunId, events, payload, set)
+
+      if (retentionExceeded) {
+        // replay 보관 구간을 벗어난 경우에는 event 전체 복구가 불가능하므로 snapshot으로 현재 상태를 맞춘다.
+        await get().fetchSnapshot(taskRunId)
+      }
+    } catch (error) {
+      set({
+        lastError: error instanceof Error ? error.message : 'TaskRun 이벤트 복구에 실패했습니다.',
+      })
+      throw error
+    } finally {
+      set((current) => ({
+        recoveringByTaskRunId: { ...current.recoveringByTaskRunId, [taskRunId]: false },
+      }))
+    }
+  },
+  selectTaskRunSummary: (taskRunId) => selectTaskRunSummary(get(), taskRunId),
+  isApprovalSubmitting: (approvalId) =>
+    get().approvalSubmissionIdsByApprovalId[approvalId] !== undefined,
+  selectTaskRunSummaries: (taskRunIds) => {
+    const state = get()
+    const ids = taskRunIds ?? Object.keys(state.taskRunsById)
+    return ids.map((taskRunId) => selectTaskRunSummary(state, taskRunId))
+  },
+  resumeTaskRun: async (input) => {
+    if (
+      input.approvalId !== undefined &&
+      get().approvalSubmissionIdsByApprovalId[input.approvalId] !== undefined
+    ) {
+      throw new Error('이미 approval 응답을 전송 중입니다.')
+    }
+
+    const approvalResponseId = getApprovalResponseId(input.approvalId, get, set)
+
+    try {
+      // approvalResponseId는 같은 확인 요청을 여러 번 눌러도 서버가 중복 처리하지 않게 하는 키다.
+      return await useAiRealtimeStore.getState().sendCommand<AiRealtimeRawFrame>('taskRun.resume', {
+        taskRunId: input.taskRunId,
+        approvalId: input.approvalId,
+        approvalResponseId,
+        // 서버 resume 계약은 실제 승인 본문을 payload 필드에서 읽는다.
+        payload: {
+          decision: input.decision,
+          response: input.response,
+        },
+      })
+    } catch (error) {
+      if (input.approvalId !== undefined) {
+        clearApprovalSubmission(input.approvalId, set)
+      }
+      throw error
+    }
+  },
+  cancelTaskRun: (taskRunId, reason) =>
+    useAiRealtimeStore.getState().sendCommand<AiRealtimeRawFrame>('taskRun.cancel', {
+      taskRunId,
+      clientCommandId: createClientCommandId(),
+      reason,
+    }),
+  handleRealtimeFrame: (frame) => {
+    switch (frame.type) {
+      case 'task.event': {
+        const payload = getFramePayload(frame)
+        if (isRawTaskEventPayload(payload)) {
+          get().mergeTaskEvent(payload)
+        }
+        return
+      }
+      case 'taskRuns.active.list.result':
+      case 'taskRuns.active.result':
+        mergeTaskRuns(getRawTaskRunList(getFramePayload(frame)), set)
+        return
+      case 'taskRun.snapshot.result': {
+        const snapshot = getFramePayload(frame)
+        if (isJsonObject(snapshot)) {
+          mergeSnapshot(snapshot, set)
+        }
+        return
+      }
+      case 'taskRun.events.replay.result': {
+        const payload = getFramePayload(frame)
+        if (isJsonObject(payload)) {
+          const taskRunId = getStringField(payload, 'task_run_id', 'taskRunId')
+          const events = getRawTaskEventList(payload)
+          if (taskRunId !== undefined) {
+            mergeReplayResult(taskRunId, events, payload, set)
+          }
+        }
+        return
+      }
+      case 'session.message.completed':
+        mergeCompletedMessageTaskRun(frame, set)
+        return
+      default:
+        return
+    }
+  },
+  mergeTaskEvent: (event) => {
+    set((state) => {
+      const currentEvents = state.eventsByTaskRunId[event.task_run_id] ?? []
+      const mergeResult = mergeTaskRunEvents(currentEvents, [event])
+      const stepRunId = typeof event.step_run_id === 'string' ? event.step_run_id : undefined
+      const placeholderStepRun = buildRealtimeStepRunPlaceholder(
+        event,
+        stepRunId === undefined ? undefined : state.stepRunsById[stepRunId],
+      )
+
+      // raw event는 화면 표시와 디버깅의 기준이므로 서버 필드명을 유지한 채 저장한다.
+      // sequence gap이 보이면 replayNeeded를 세워 provider가 복구를 시도하게 한다.
+      // snapshot 전 step_run_id만 먼저 온 경우에는 가벼운 StepRun을 만들어 실시간 도착을 보여준다.
+      return {
+        eventsByTaskRunId: {
+          ...state.eventsByTaskRunId,
+          [event.task_run_id]: mergeResult.events,
+        },
+        stepRunsById:
+          placeholderStepRun === null
+            ? state.stepRunsById
+            : {
+                ...state.stepRunsById,
+                [placeholderStepRun.step_run_id]: placeholderStepRun,
+              },
+        lastSequenceByTaskRunId:
+          mergeResult.lastSequence === undefined
+            ? state.lastSequenceByTaskRunId
+            : {
+                ...state.lastSequenceByTaskRunId,
+                [event.task_run_id]: mergeResult.lastSequence,
+              },
+        replayNeededByTaskRunId: {
+          ...state.replayNeededByTaskRunId,
+          [event.task_run_id]:
+            state.replayNeededByTaskRunId[event.task_run_id] === true || mergeResult.hasGap,
+        },
+        recoveryAfterSequenceByTaskRunId:
+          mergeResult.hasGap && mergeResult.expectedSequence !== undefined
+            ? {
+                ...state.recoveryAfterSequenceByTaskRunId,
+                [event.task_run_id]: mergeResult.expectedSequence - 1,
+              }
+            : state.recoveryAfterSequenceByTaskRunId,
+      }
+    })
+  },
+  clearTaskRunState: () =>
+    set({
+      taskRunsById: {},
+      stepRunsById: {},
+      approvalsById: {},
+      eventsByTaskRunId: {},
+      lastSequenceByTaskRunId: {},
+      replayNeededByTaskRunId: {},
+      recoveryAfterSequenceByTaskRunId: {},
+      recoveringByTaskRunId: {},
+      approvalSubmissionIdsByApprovalId: {},
+      lastError: null,
+    }),
+}))
+
+const getApprovalResponseId = (
+  approvalId: string | undefined,
+  get: () => TaskRunState,
+  set: (partial: Partial<TaskRunState> | ((state: TaskRunState) => Partial<TaskRunState>)) => void,
+) => {
+  if (approvalId === undefined) {
+    return createApprovalResponseId()
+  }
+
+  const existingResponseId = get().approvalSubmissionIdsByApprovalId[approvalId]
+  if (existingResponseId !== undefined) {
+    return existingResponseId
+  }
+
+  const approvalResponseId = createApprovalResponseId()
+  set((state) => ({
+    approvalSubmissionIdsByApprovalId: {
+      ...state.approvalSubmissionIdsByApprovalId,
+      [approvalId]: approvalResponseId,
+    },
+  }))
+  return approvalResponseId
+}
+
+const clearApprovalSubmission = (
+  approvalId: string,
+  set: (partial: Partial<TaskRunState> | ((state: TaskRunState) => Partial<TaskRunState>)) => void,
+) => {
+  set((state) => {
+    if (state.approvalSubmissionIdsByApprovalId[approvalId] === undefined) {
+      return { approvalSubmissionIdsByApprovalId: state.approvalSubmissionIdsByApprovalId }
+    }
+
+    const approvalSubmissionIdsByApprovalId = { ...state.approvalSubmissionIdsByApprovalId }
+    delete approvalSubmissionIdsByApprovalId[approvalId]
+    return { approvalSubmissionIdsByApprovalId }
+  })
+}
+
+const getRawTaskRunList = (payload: TaskRunsActiveListResultPayload | unknown): RawTaskRun[] => {
+  if (!isJsonObject(payload)) {
+    return []
+  }
+
+  const list = Array.isArray(payload.task_runs)
+    ? payload.task_runs
+    : Array.isArray(payload.taskRuns)
+      ? payload.taskRuns
+      : Array.isArray(payload.items)
+        ? payload.items
+        : []
+
+  return list.map(normalizeTaskRun).filter((taskRun) => taskRun !== null)
+}
+
+const getRawTaskEventList = (payload: TaskRunEventsReplayResultPayload | unknown) => {
+  if (!isJsonObject(payload) || !Array.isArray(payload.events)) {
+    return []
+  }
+  return payload.events.filter(isRawTaskEventPayload)
+}
+
+const mergeTaskRuns = (
+  taskRuns: RawTaskRun[],
+  set: (partial: Partial<TaskRunState> | ((state: TaskRunState) => Partial<TaskRunState>)) => void,
+) => {
+  const stepRuns = taskRuns.flatMap(getTaskRunEmbeddedStepRuns)
+  const approvals = taskRuns.flatMap(getTaskRunEmbeddedApprovals)
+
+  set((state) => ({
+    taskRunsById: {
+      ...state.taskRunsById,
+      ...Object.fromEntries(taskRuns.map((taskRun) => [taskRun.task_run_id, taskRun])),
+    },
+    lastSequenceByTaskRunId: {
+      ...state.lastSequenceByTaskRunId,
+      ...Object.fromEntries(
+        taskRuns
+          .map((taskRun) => [taskRun.task_run_id, getTaskRunLastSequence(taskRun)] as const)
+          .filter((entry): entry is readonly [string, number] => entry[1] !== undefined),
+      ),
+    },
+    stepRunsById: {
+      ...state.stepRunsById,
+      ...Object.fromEntries(stepRuns.map((stepRun) => [stepRun.step_run_id, stepRun])),
+    },
+    approvalsById: {
+      ...state.approvalsById,
+      ...Object.fromEntries(approvals.map((approval) => [approval.approval_id, approval])),
+    },
+    approvalSubmissionIdsByApprovalId: clearResolvedApprovalSubmissions(
+      state.approvalSubmissionIdsByApprovalId,
+      approvals,
+    ),
+  }))
+}
+
+const mergeSnapshot = (
+  snapshot: RawTaskRunSnapshot,
+  set: (partial: Partial<TaskRunState> | ((state: TaskRunState) => Partial<TaskRunState>)) => void,
+) => {
+  const taskRun = normalizeTaskRun(snapshot.task ?? snapshot.task_run ?? snapshot.taskRun)
+  const taskRunId = taskRun?.task_run_id ?? getStringField(snapshot, 'task_run_id', 'taskRunId')
+  const stepCandidates = snapshot.steps ?? snapshot.step_runs ?? snapshot.stepRuns ?? []
+  const approvalCandidates = [
+    ...(snapshot.approvals ?? []),
+    snapshot.pending_approval,
+    snapshot.pendingApproval,
+  ]
+  const stepRuns = stepCandidates
+    .map((stepRun) => normalizeStepRun(stepRun, taskRunId))
+    .filter((stepRun) => stepRun !== null)
+  const approvals = approvalCandidates
+    .map((approval) => normalizeApproval(approval, taskRunId))
+    .filter((approval) => approval !== null)
+  const events = (snapshot.events ?? []).filter(isRawTaskEventPayload)
+
+  set((state) => {
+    const nextEventsByTaskRunId = { ...state.eventsByTaskRunId }
+    const nextLastSequenceByTaskRunId = { ...state.lastSequenceByTaskRunId }
+    const nextReplayNeededByTaskRunId = { ...state.replayNeededByTaskRunId }
+    const nextRecoveryAfterSequenceByTaskRunId = { ...state.recoveryAfterSequenceByTaskRunId }
+
+    events.forEach((event) => {
+      const mergeResult = mergeTaskRunEvents(nextEventsByTaskRunId[event.task_run_id] ?? [], [
+        event,
+      ])
+      nextEventsByTaskRunId[event.task_run_id] = mergeResult.events
+      const lastSequence = getLastTaskRunSequence(mergeResult.events)
+      if (lastSequence !== undefined) {
+        nextLastSequenceByTaskRunId[event.task_run_id] = lastSequence
+      }
+      nextReplayNeededByTaskRunId[event.task_run_id] = false
+      delete nextRecoveryAfterSequenceByTaskRunId[event.task_run_id]
+    })
+
+    if (taskRunId !== undefined) {
+      nextReplayNeededByTaskRunId[taskRunId] = false
+      delete nextRecoveryAfterSequenceByTaskRunId[taskRunId]
+    }
+
+    const taskRunLastSequence = taskRun === null ? undefined : getTaskRunLastSequence(taskRun)
+    if (taskRunId !== undefined && taskRunLastSequence !== undefined) {
+      nextLastSequenceByTaskRunId[taskRunId] = taskRunLastSequence
+    }
+    const eventStepRuns = buildRealtimeStepRunPlaceholders(events, state.stepRunsById)
+
+    return {
+      taskRunsById:
+        taskRun === null
+          ? state.taskRunsById
+          : { ...state.taskRunsById, [taskRun.task_run_id]: taskRun },
+      stepRunsById: {
+        ...state.stepRunsById,
+        ...eventStepRuns,
+        ...Object.fromEntries(stepRuns.map((stepRun) => [stepRun.step_run_id, stepRun])),
+      },
+      approvalsById: {
+        ...state.approvalsById,
+        ...Object.fromEntries(approvals.map((approval) => [approval.approval_id, approval])),
+      },
+      approvalSubmissionIdsByApprovalId: clearResolvedApprovalSubmissions(
+        state.approvalSubmissionIdsByApprovalId,
+        approvals,
+      ),
+      eventsByTaskRunId: nextEventsByTaskRunId,
+      lastSequenceByTaskRunId: nextLastSequenceByTaskRunId,
+      replayNeededByTaskRunId: nextReplayNeededByTaskRunId,
+      recoveryAfterSequenceByTaskRunId: nextRecoveryAfterSequenceByTaskRunId,
+    }
+  })
+}
+
+const mergeReplayResult = (
+  taskRunId: string,
+  events: RawTaskEventPayload[],
+  payload: Record<string, unknown>,
+  set: (partial: Partial<TaskRunState> | ((state: TaskRunState) => Partial<TaskRunState>)) => void,
+) => {
+  set((state) => {
+    const mergeResult = mergeTaskRunEvents(state.eventsByTaskRunId[taskRunId] ?? [], events)
+    const retentionExceeded = getBooleanField(payload, 'retention_exceeded', 'retentionExceeded')
+    const replayNeeded = retentionExceeded || mergeResult.hasGap
+    const recoveryAfterSequenceByTaskRunId = { ...state.recoveryAfterSequenceByTaskRunId }
+    if (replayNeeded && mergeResult.expectedSequence !== undefined) {
+      recoveryAfterSequenceByTaskRunId[taskRunId] = mergeResult.expectedSequence - 1
+    }
+    if (!replayNeeded) {
+      delete recoveryAfterSequenceByTaskRunId[taskRunId]
+    }
+    const eventStepRuns = buildRealtimeStepRunPlaceholders(mergeResult.events, state.stepRunsById)
+
+    return {
+      stepRunsById: {
+        ...state.stepRunsById,
+        ...eventStepRuns,
+      },
+      eventsByTaskRunId: {
+        ...state.eventsByTaskRunId,
+        [taskRunId]: mergeResult.events,
+      },
+      lastSequenceByTaskRunId:
+        mergeResult.lastSequence === undefined
+          ? state.lastSequenceByTaskRunId
+          : {
+              ...state.lastSequenceByTaskRunId,
+              [taskRunId]: mergeResult.lastSequence,
+            },
+      replayNeededByTaskRunId: {
+        ...state.replayNeededByTaskRunId,
+        [taskRunId]: replayNeeded,
+      },
+      recoveryAfterSequenceByTaskRunId,
+    }
+  })
+}
+
+const mergeCompletedMessageTaskRun = (
+  frame: AiRealtimeRawFrame,
+  set: (partial: Partial<TaskRunState> | ((state: TaskRunState) => Partial<TaskRunState>)) => void,
+) => {
+  const payload = getFramePayload(frame)
+  const taskRunId = getStringField(payload, 'task_run_id', 'taskRunId')
+  const status = getStringField(payload, 'status') ?? 'COMPLETED'
+
+  if (taskRunId === undefined) {
+    return
+  }
+
+  set((state) => {
+    const currentTaskRun = state.taskRunsById[taskRunId]
+    const now = new Date().toISOString()
+
+    return {
+      taskRunsById: {
+        ...state.taskRunsById,
+        [taskRunId]: {
+          ...(currentTaskRun ?? { task_run_id: taskRunId }),
+          status,
+          updated_at: now,
+          completed_at:
+            status === 'COMPLETED'
+              ? (currentTaskRun?.completed_at ?? now)
+              : currentTaskRun?.completed_at,
+        },
+      },
+    }
+  })
+}
+
+const buildRealtimeStepRunPlaceholder = (
+  event: RawTaskEventPayload,
+  existingStepRun?: RawStepRun,
+): RawStepRun | null => {
+  if (typeof event.step_run_id !== 'string' || event.step_run_id.trim() === '') {
+    return null
+  }
+
+  const occurredAt = typeof event.occurred_at === 'string' ? event.occurred_at : undefined
+  const inferredStatus = inferRealtimeStepRunStatus(event, existingStepRun?.status)
+  const nextStatus =
+    existingStepRun?.status !== undefined &&
+    isTerminalTaskRunStatus(existingStepRun.status) &&
+    !isTerminalTaskRunStatus(inferredStatus)
+      ? existingStepRun.status
+      : inferredStatus
+
+  return {
+    ...(existingStepRun ?? {}),
+    step_run_id: event.step_run_id,
+    task_run_id: existingStepRun?.task_run_id ?? event.task_run_id,
+    title: existingStepRun?.title ?? inferRealtimeStepRunTitle(event),
+    status: nextStatus ?? existingStepRun?.status,
+    sequence: existingStepRun?.sequence ?? event.sequence,
+    started_at:
+      existingStepRun?.started_at ??
+      (isStepRunStartEvent(event.event_type) ? occurredAt : undefined),
+    completed_at:
+      existingStepRun?.completed_at ??
+      (isStepRunCompletionEvent(event.event_type) ? occurredAt : undefined),
+    updated_at: occurredAt ?? existingStepRun?.updated_at,
+    realtime_placeholder: existingStepRun?.realtime_placeholder ?? true,
+  }
+}
+
+const buildRealtimeStepRunPlaceholders = (
+  events: RawTaskEventPayload[],
+  existingStepRunsById: Record<string, RawStepRun>,
+) =>
+  events.reduce<Record<string, RawStepRun>>((stepRunsById, event) => {
+    if (typeof event.step_run_id !== 'string') {
+      return stepRunsById
+    }
+
+    const existingStepRun =
+      stepRunsById[event.step_run_id] ?? existingStepRunsById[event.step_run_id]
+    const placeholder = buildRealtimeStepRunPlaceholder(event, existingStepRun)
+    if (placeholder !== null) {
+      stepRunsById[placeholder.step_run_id] = placeholder
+    }
+    return stepRunsById
+  }, {})
+
+const inferRealtimeStepRunStatus = (
+  event: RawTaskEventPayload,
+  existingStatus?: RawStepRun['status'] | null,
+): RawStepRun['status'] | undefined => {
+  switch (event.event_type) {
+    case 'step.created':
+    case 'step.started':
+    case 'step.waiting':
+    case 'step.completed':
+    case 'step.failed':
+    case 'step.canceled':
+    case 'step.cancelled':
+      return event.event_type
+    case 'tool.started':
+    case 'search.started':
+    case 'tool.completed':
+    case 'search.completed':
+      return event.event_type
+    default:
+      return typeof event.status === 'string' ? event.status : existingStatus
+  }
+}
+
+const inferRealtimeStepRunTitle = (event: RawTaskEventPayload) =>
+  getMeaningfulTaskEventSummary(event.summary_message) ??
+  pickTaskEventString(event.payload, [
+    'step_title',
+    'stepTitle',
+    'title',
+    'goal',
+    'name',
+    'label',
+    'tool_name',
+    'toolName',
+    'query',
+  ]) ??
+  pickTaskEventString(event.detail_json, [
+    'step_title',
+    'stepTitle',
+    'title',
+    'goal',
+    'name',
+    'label',
+    'tool_name',
+    'toolName',
+    'query',
+  ]) ??
+  getRealtimeStepRunFallbackTitle(event.event_type)
+
+const getMeaningfulTaskEventSummary = (value?: string | null) => {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (
+    text === '' ||
+    text === '답변을 준비하는 중입니다.' ||
+    text === '답변 준비 중' ||
+    text === '작업 중'
+  ) {
+    return undefined
+  }
+  return text
+}
+
+const pickTaskEventString = (value: unknown, keys: string[]) => {
+  if (!isJsonObject(value)) {
+    return undefined
+  }
+
+  for (const key of keys) {
+    const candidate = value[key]
+    if (typeof candidate === 'string' && candidate.trim() !== '') {
+      return candidate.trim()
+    }
+  }
+
+  return undefined
+}
+
+const getRealtimeStepRunFallbackTitle = (eventType: string) => {
+  if (eventType.startsWith('tool.')) {
+    return '도구 실행'
+  }
+  if (eventType.startsWith('search.')) {
+    return '자료 확인'
+  }
+  return '답변 진행 단계'
+}
+
+const isStepRunStartEvent = (eventType: string) =>
+  eventType === 'step.started' || eventType === 'tool.started' || eventType === 'search.started'
+
+const isStepRunCompletionEvent = (eventType: string) =>
+  eventType === 'step.completed' || eventType === 'step.failed' || eventType === 'step.canceled'
+
+const isTerminalTaskRunStatus = (status?: string | null) =>
+  status === 'COMPLETED' ||
+  status === 'FAILED' ||
+  status === 'CANCELLED' ||
+  status === 'CANCELED' ||
+  status === 'step.completed' ||
+  status === 'step.failed' ||
+  status === 'step.canceled' ||
+  status === 'step.cancelled'
+
+const selectTaskRunSummary = (state: TaskRunState, taskRunId: string) => {
+  const taskRun = state.taskRunsById[taskRunId]
+  const stepRuns = Object.values(state.stepRunsById).filter(
+    (stepRun) => stepRun.task_run_id === taskRunId,
+  )
+  const approvals = Object.values(state.approvalsById).filter(
+    (approval) => approval.task_run_id === taskRunId,
+  )
+
+  return toTaskRunDetailSummaryView({
+    taskRun,
+    stepRuns,
+    approvals,
+    events: state.eventsByTaskRunId[taskRunId] ?? [],
+    replayNeeded: state.replayNeededByTaskRunId[taskRunId] === true,
+    recovering: state.recoveringByTaskRunId[taskRunId] === true,
+    recoveryAfterSequence: state.recoveryAfterSequenceByTaskRunId[taskRunId],
+  })
+}
+
+const getTaskRunEmbeddedStepRuns = (taskRun: RawTaskRun) => {
+  const candidates = [
+    taskRun.current_step,
+    taskRun.currentStep,
+    ...(Array.isArray(taskRun.steps) ? taskRun.steps : []),
+    ...(Array.isArray(taskRun.step_runs) ? taskRun.step_runs : []),
+    ...(Array.isArray(taskRun.stepRuns) ? taskRun.stepRuns : []),
+  ]
+
+  return candidates
+    .map((stepRun) => normalizeStepRun(stepRun, taskRun.task_run_id))
+    .filter((stepRun) => stepRun !== null)
+}
+
+const getTaskRunEmbeddedApprovals = (taskRun: RawTaskRun) => {
+  const candidates = [
+    taskRun.pending_approval,
+    taskRun.pendingApproval,
+    ...(Array.isArray(taskRun.approvals) ? taskRun.approvals : []),
+  ]
+
+  return candidates
+    .map((approval) => normalizeApproval(approval, taskRun.task_run_id))
+    .filter((approval) => approval !== null)
+}
+
+const normalizeTaskRun = (value: unknown): RawTaskRun | null => {
+  if (!isJsonObject(value)) {
+    return null
+  }
+
+  const taskRunId = getStringField(value, 'task_run_id', 'taskRunId') ?? getStringField(value, 'id')
+  if (taskRunId === undefined) {
+    return null
+  }
+
+  const sessionId =
+    getStringField(value, 'session_id', 'sessionId') ??
+    getStringField(value, 'session_key', 'sessionKey')
+
+  return {
+    ...value,
+    task_run_id: taskRunId,
+    session_id: sessionId ?? (typeof value.session_id === 'string' ? value.session_id : undefined),
+  }
+}
+
+const normalizeStepRun = (value: unknown, fallbackTaskRunId?: string): RawStepRun | null => {
+  if (!isJsonObject(value)) {
+    return null
+  }
+
+  const stepRunId = getStringField(value, 'step_run_id', 'stepRunId') ?? getStringField(value, 'id')
+  const taskRunId = getStringField(value, 'task_run_id', 'taskRunId') ?? fallbackTaskRunId
+
+  if (stepRunId === undefined || taskRunId === undefined) {
+    return null
+  }
+
+  return {
+    ...value,
+    step_run_id: stepRunId,
+    task_run_id: taskRunId,
+  }
+}
+
+const normalizeApproval = (value: unknown, fallbackTaskRunId?: string): RawApproval | null => {
+  if (!isJsonObject(value)) {
+    return null
+  }
+
+  const approvalId =
+    getStringField(value, 'approval_id', 'approvalId') ?? getStringField(value, 'id')
+  const taskRunId = getStringField(value, 'task_run_id', 'taskRunId') ?? fallbackTaskRunId
+
+  if (approvalId === undefined || taskRunId === undefined) {
+    return null
+  }
+
+  return {
+    ...value,
+    approval_id: approvalId,
+    task_run_id: taskRunId,
+  }
+}
+
+const clearResolvedApprovalSubmissions = (
+  submissionIdsByApprovalId: Record<string, string>,
+  approvals: RawApproval[],
+) => {
+  const nextSubmissionIdsByApprovalId = { ...submissionIdsByApprovalId }
+  approvals.forEach((approval) => {
+    if (!isPendingApprovalStatus(approval.status)) {
+      delete nextSubmissionIdsByApprovalId[approval.approval_id]
+    }
+  })
+  return nextSubmissionIdsByApprovalId
+}
+
+const isPendingApprovalStatus = (status?: RawApproval['status'] | null) =>
+  status === undefined || status === null || status === 'PENDING'
+
+const getTaskRunLastSequence = (taskRun: RawTaskRun) => {
+  if (typeof taskRun.last_sequence === 'number' && Number.isFinite(taskRun.last_sequence)) {
+    return taskRun.last_sequence
+  }
+
+  return typeof taskRun.lastSequence === 'number' && Number.isFinite(taskRun.lastSequence)
+    ? taskRun.lastSequence
+    : undefined
+}
+
+const getBooleanField = (value: unknown, firstKey: string, secondKey?: string): boolean => {
+  if (!isJsonObject(value)) {
+    return false
+  }
+
+  if (typeof value[firstKey] === 'boolean') {
+    return value[firstKey]
+  }
+
+  return secondKey !== undefined && typeof value[secondKey] === 'boolean' ? value[secondKey] : false
+}
+
+const isRawTaskEventPayload = (value: unknown): value is RawTaskEventPayload =>
+  isJsonObject(value) &&
+  typeof value.event_id === 'string' &&
+  typeof value.event_type === 'string' &&
+  typeof value.task_run_id === 'string'
