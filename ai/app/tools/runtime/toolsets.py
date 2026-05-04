@@ -28,6 +28,26 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
         description="Local terminal execution tools.",
         tools=("terminal.run",),
     ),
+    "web": RuntimeToolsetDefinition(
+        description="Web research, extraction, and crawl tools.",
+        tools=("web_search", "web_extract", "web_crawl"),
+    ),
+    "browser": RuntimeToolsetDefinition(
+        description="Browser automation tools.",
+        tools=(
+            "browser_navigate",
+            "browser_snapshot",
+            "browser_click",
+            "browser_type",
+            "browser_scroll",
+            "browser_back",
+            "browser_press",
+            "browser_get_images",
+            "browser_vision",
+            "browser_console",
+            "browser_cdp",
+        ),
+    ),
     "file": RuntimeToolsetDefinition(
         description="Local file read, write, patch, and search tools.",
         tools=("read_file", "write_file", "patch", "search_files"),
@@ -38,7 +58,7 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "safe": RuntimeToolsetDefinition(
         description="Safe runtime tools without terminal execution.",
-        includes=("skills", "session", "planning"),
+        includes=("skills", "session", "planning", "web"),
     ),
     "delegation": RuntimeToolsetDefinition(
         description="Worker delegation tools.",
@@ -46,7 +66,7 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "local-core": RuntimeToolsetDefinition(
         description="Current minimal local runtime tool bundle.",
-        includes=("skills", "session", "planning", "terminal", "file", "delegation"),
+        includes=("skills", "session", "planning", "terminal", "file", "web", "delegation"),
     ),
 }
 

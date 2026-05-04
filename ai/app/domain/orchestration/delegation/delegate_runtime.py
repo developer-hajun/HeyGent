@@ -13,7 +13,7 @@ from app.domain.tasks.detail import merge_step_detail
 
 
 BLOCKED_WORKER_TOOLSETS = ("delegate", "delegation")
-DEFAULT_WORKER_TOOLSETS = ("skills", "terminal", "file")
+DEFAULT_WORKER_TOOLSETS = ("skills", "terminal", "file", "web")
 DEFAULT_WORKER_MAX_ITERATIONS = 50
 
 
