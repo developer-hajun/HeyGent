@@ -40,10 +40,19 @@ public class OpenAiResponsesClient {
         String apiKey,
         OpenAiProviderName providerName
     ) {
+        return callWithBearerToken(command, model, apiKey, providerName);
+    }
+
+    public OpenAiResponsesResult callWithBearerToken(
+        OpenAiResponsesCommand command,
+        String model,
+        String bearerToken,
+        OpenAiProviderName providerName
+    ) {
         Map<String, Object> requestBody = buildRequestBody(command, model);
 
         try {
-            Map<String, Object> responseBody = restClient(apiKey).post()
+            Map<String, Object> responseBody = restClient(bearerToken).post()
                 .uri(RESPONSES_PATH)
                 .body(requestBody)
                 .retrieve()
@@ -58,7 +67,7 @@ public class OpenAiResponsesClient {
         }
     }
 
-    private RestClient restClient(String apiKey) {
+    private RestClient restClient(String bearerToken) {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(Duration.ofSeconds(properties.getTimeoutSeconds()));
         requestFactory.setReadTimeout(Duration.ofSeconds(properties.getTimeoutSeconds()));
@@ -66,7 +75,7 @@ public class OpenAiResponsesClient {
         return RestClient.builder()
             .requestFactory(requestFactory)
             .baseUrl(properties.getRestApiBaseUrl())
-            .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
+            .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + bearerToken)
             .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
             .build();
     }

@@ -21,6 +21,7 @@ public class OpenAiProviderService {
 
     private final OpenAiProperties properties;
     private final OpenAiResponsesClient responsesClient;
+    private final OpenAiOAuthService openAiOAuthService;
 
     public OpenAiResponsesResult createResponse(OpenAiResponsesCommand command) {
         validateInput(command);
@@ -35,7 +36,11 @@ public class OpenAiProviderService {
             return responsesClient.callWithApiKey(command, model, properties.getApiKey(), providerName);
         }
 
-        throw new CustomException(ErrorCode.OPENAI_PROVIDER_NOT_CONFIGURED);
+        if (command.userId() == null) {
+            throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
+        }
+        String accessToken = openAiOAuthService.resolveAccessToken(command.userId());
+        return responsesClient.callWithBearerToken(command, model, accessToken, providerName);
     }
 
     public String resolveModel(String requestedModel) {
