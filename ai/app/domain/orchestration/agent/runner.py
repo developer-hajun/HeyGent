@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from time import monotonic
 from typing import Any
@@ -94,10 +95,22 @@ class AgentLoopRunner:
         )
         started_at = monotonic()
         execute_async = getattr(handler, "execute_async", None)
-        if execute_async is not None:
-            raw_outcome = await execute_async(task=task, step=None, resume_payload=None, progress_sink=None)
-        else:
-            raw_outcome = handler.execute(task=task, step=None, resume_payload=None)
+        hard_timeout_seconds = self._hard_timeout_seconds(input_payload)
+        try:
+            # worker는 parent StepRun을 기다리게 하므로, 모델/provider timeout보다 바깥에서
+            # 한 번 더 실행 상한을 잡아 무한 대기와 너무 빠른 read timeout을 구분한다.
+            if execute_async is not None:
+                raw_outcome = await asyncio.wait_for(
+                    execute_async(task=task, step=None, resume_payload=None, progress_sink=None),
+                    timeout=hard_timeout_seconds,
+                )
+            else:
+                raw_outcome = await asyncio.wait_for(
+                    asyncio.to_thread(handler.execute, task=task, step=None, resume_payload=None),
+                    timeout=hard_timeout_seconds,
+                )
+        except TimeoutError as error:
+            raise TimeoutError(f"worker session exceeded hard timeout {hard_timeout_seconds}s") from error
         outcome = normalize_handler_outcome(raw_outcome)
         status = str(outcome.get("task_status") or TaskStatus.COMPLETED)
         return ChildSessionLaunchResult(
@@ -130,3 +143,14 @@ class AgentLoopRunner:
             rendered = json.dumps(result_payload, ensure_ascii=False)
             return f"{summary_prompt}: {rendered}" if summary_prompt else rendered
         return summary_prompt
+
+    @staticmethod
+    def _hard_timeout_seconds(input_payload: dict[str, Any]) -> float:
+        for key in ("hard_timeout_seconds", "hardTimeoutSeconds"):
+            try:
+                value = float(input_payload.get(key))
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        return 900.0

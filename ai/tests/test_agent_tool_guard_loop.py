@@ -311,8 +311,8 @@ def test_agent_loop_explicit_max_iterations_can_exceed_legacy_hard_clamp():
     provider = FakeProvider(
         responses,
         settings=SimpleNamespace(
-            agent_loop_default_max_iterations=60,
-            agent_loop_max_iterations=60,
+            agent_loop_default_max_iterations=90,
+            agent_loop_max_iterations=120,
         ),
     )
     runtime = RecordingRuntime()
@@ -338,9 +338,9 @@ def test_agent_loop_worker_payload_uses_worker_default_when_max_iterations_is_ab
     provider = FakeProvider(
         responses,
         settings=SimpleNamespace(
-            agent_loop_default_max_iterations=60,
-            agent_loop_worker_default_max_iterations=50,
-            agent_loop_max_iterations=60,
+            agent_loop_default_max_iterations=90,
+            agent_loop_worker_default_max_iterations=80,
+            agent_loop_max_iterations=120,
         ),
     )
     runtime = RecordingRuntime()

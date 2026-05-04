@@ -13,8 +13,9 @@ from app.domain.tasks.detail import merge_step_detail
 
 
 BLOCKED_WORKER_TOOLSETS = ("delegate", "delegation")
-DEFAULT_WORKER_TOOLSETS = ("skills", "terminal", "file", "web")
-DEFAULT_WORKER_MAX_ITERATIONS = 50
+DEFAULT_WORKER_TOOLSETS = ("skills", "terminal", "file", "web", "browser")
+DEFAULT_WORKER_MAX_ITERATIONS = 80
+DEFAULT_WORKER_HARD_TIMEOUT_SECONDS = 900
 
 
 class DelegateRuntime:
@@ -50,6 +51,7 @@ class DelegateRuntime:
                 "agent_id": normalized_contract["agent_id"],
                 "toolsets": normalized_contract["toolsets"],
                 "blocked_toolsets": normalized_contract["blocked_toolsets"],
+                "hard_timeout_seconds": normalized_contract["hard_timeout_seconds"],
             },
             worker_session_id=worker_session_id,
         )
@@ -312,6 +314,24 @@ class DelegateRuntime:
             child_session.get("max_iterations", source_payload.get("max_iterations", profile_policy.get("maxIterations", profile_policy.get("max_iterations")))),
             default=DEFAULT_WORKER_MAX_ITERATIONS,
         )
+        # hard timeout은 worker profile의 실행 정책이다. payload에 같이 싣고 runner에서
+        # 실제 asyncio.wait_for로 강제해야 DB seed 값이 문서상 숫자로만 남지 않는다.
+        hard_timeout_seconds = cls._normalize_positive_int(
+            child_session.get(
+                "hard_timeout_seconds",
+                child_session.get(
+                    "hardTimeoutSeconds",
+                    source_payload.get(
+                        "hard_timeout_seconds",
+                        source_payload.get(
+                            "hardTimeoutSeconds",
+                            profile_policy.get("hardTimeoutSeconds", profile_policy.get("hard_timeout_seconds")),
+                        ),
+                    ),
+                ),
+            ),
+            default=DEFAULT_WORKER_HARD_TIMEOUT_SECONDS,
+        )
         profile_key = cls._optional_text(child_session.get("profile_key")) or cls._optional_text(metadata.get("profile_key")) or "worker.default"
         profile_id = cls._optional_text((profile or {}).get("profile_id"))
         profile_version = cls._normalize_positive_int((profile or {}).get("profile_version") or metadata.get("profile_version"), default=1)
@@ -332,6 +352,7 @@ class DelegateRuntime:
             "toolsets": toolsets,
             "blocked_toolsets": list(BLOCKED_WORKER_TOOLSETS),
             "max_iterations": max_iterations,
+            "hard_timeout_seconds": hard_timeout_seconds,
             "role": role,
             "acp_command": child_session.get("acp_command", source_payload.get("acp_command")),
             "acp_args": dict(child_session.get("acp_args", source_payload.get("acp_args", {})) or {}),
@@ -365,6 +386,8 @@ class DelegateRuntime:
                 "enabled_toolsets": contract["toolsets"],
                 "blocked_toolsets": contract["blocked_toolsets"],
                 "max_iterations": contract["max_iterations"],
+                "hard_timeout_seconds": contract["hard_timeout_seconds"],
+                "hardTimeoutSeconds": contract["hard_timeout_seconds"],
                 "role": contract["role"],
                 "acp_command": contract["acp_command"],
                 "acp_args": contract["acp_args"],
@@ -381,6 +404,7 @@ class DelegateRuntime:
                     "parent_step_run_id": contract["parent_step_run_id"],
                     "worker_session_id": worker_session_id,
                     "blocked_toolsets": contract["blocked_toolsets"],
+                    "hard_timeout_seconds": contract["hard_timeout_seconds"],
                 },
             }
         )

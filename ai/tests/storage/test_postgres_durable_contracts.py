@@ -98,7 +98,22 @@ def test_postgres_schema_seeds_builtin_agent_profiles():
     assert "main.default" in schema_sql
     assert "worker.default" in schema_sql
     assert "'worker'" in schema_sql
-    assert "ON CONFLICT (owner_key, profile_key, profile_version) DO NOTHING" in schema_sql
+    assert "ON CONFLICT (owner_key, profile_key, profile_version) DO UPDATE" in schema_sql
+    assert '"web","browser"' in schema_sql
+    assert '"hardTimeoutSeconds":900' in schema_sql
+
+
+def test_postgres_migrations_refresh_existing_builtin_agent_profiles():
+    migration_ids = [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    refresh_migration = POSTGRES_MIGRATIONS[migration_ids.index("0003_refresh_builtin_agent_profiles")]
+    migration_sql = "\n".join(refresh_migration.statements)
+
+    assert "UPDATE ai_agent_profiles" in migration_sql
+    assert "main.default" in migration_sql
+    assert "worker.default" in migration_sql
+    assert '"web","browser"' in migration_sql
+    assert '"maxIterations":80' in migration_sql
+    assert '"hardTimeoutSeconds":900' in migration_sql
 
 
 class _FakeCursor:

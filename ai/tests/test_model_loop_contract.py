@@ -1,5 +1,5 @@
 from app.domain.orchestration.prompts.prompt_builder import PromptBuilder
-from app.domain.orchestration.prompts.skill_prompt import SkillPromptBuilder, SkillRegistry
+from app.domain.orchestration.prompts.skill_prompt import SkillLoader, SkillPromptBuilder, SkillRegistry
 
 
 def test_prompt_builder_includes_native_tool_call_and_termination_guidance():
@@ -45,3 +45,18 @@ def test_prompt_builder_explains_approval_tool_call_boundary():
     assert "approval_required=true" in prompt
     assert "도구 호출 자체는 먼저 native tool call로 반환하세요" in prompt
     assert "같은 tool_call_id" in prompt
+
+
+def test_builtin_browser_web_skills_are_loaded_from_app_skills():
+    loaded = {skill["name"]: skill for skill in SkillLoader().load_builtin()}
+
+    for name in {
+        "web-search-fallback",
+        "web-scraping",
+        "academic-paper-search",
+        "domain-intelligence",
+        "ux-flow-review",
+    }:
+        assert name in loaded
+        assert "Hermes" not in loaded[name]["body"]
+        assert "metadata:\n  runtime:" in loaded[name]["body"]

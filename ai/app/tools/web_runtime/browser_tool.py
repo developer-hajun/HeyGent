@@ -122,7 +122,7 @@ _last_screenshot_cleanup_by_dir: dict[str, float] = {}
 # ============================================================================
 
 # Default timeout for browser commands (seconds)
-DEFAULT_COMMAND_TIMEOUT = 30
+DEFAULT_COMMAND_TIMEOUT = 180
 
 # Max tokens for snapshot content before summarization
 SNAPSHOT_SUMMARIZE_THRESHOLD = 8000
@@ -138,7 +138,7 @@ def _get_command_timeout() -> int:
     """Return the configured browser command timeout from config.yaml.
 
     Reads ``config["browser"]["command_timeout"]`` and falls back to
-    ``DEFAULT_COMMAND_TIMEOUT`` (30s) if unset or unreadable.  Result is
+    ``DEFAULT_COMMAND_TIMEOUT`` (180s) if unset or unreadable.  Result is
     cached after the first call and cleared by ``cleanup_all_browsers()``.
     """
     global _cached_command_timeout, _command_timeout_resolved

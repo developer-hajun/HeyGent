@@ -971,13 +971,13 @@ class ToolCallingLoopHandler:
             value = int(raw_value) if explicit_value else default_value
         except (TypeError, ValueError):
             value = default_value
-        upper_bound = self._configured_positive_int("agent_loop_max_iterations", default=60)
+        upper_bound = self._configured_positive_int("agent_loop_max_iterations", default=120)
         return max(1, min(value, upper_bound))
 
     def _default_max_iterations(self, task_input: dict[str, Any]) -> int:
         if self._is_worker_payload(task_input):
-            return self._configured_positive_int("agent_loop_worker_default_max_iterations", default=50)
-        return self._configured_positive_int("agent_loop_default_max_iterations", default=60)
+            return self._configured_positive_int("agent_loop_worker_default_max_iterations", default=80)
+        return self._configured_positive_int("agent_loop_default_max_iterations", default=90)
 
     def _configured_positive_int(self, name: str, *, default: int) -> int:
         settings = getattr(self.provider, "settings", None)

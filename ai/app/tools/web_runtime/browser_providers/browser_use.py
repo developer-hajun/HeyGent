@@ -17,7 +17,7 @@ _pending_create_keys: Dict[str, str] = {}
 _pending_create_keys_lock = threading.Lock()
 
 _BASE_URL = "https://api.browser-use.com/api/v3"
-_DEFAULT_MANAGED_TIMEOUT_MINUTES = 5
+_DEFAULT_MANAGED_TIMEOUT_MINUTES = 10
 _DEFAULT_MANAGED_PROXY_COUNTRY_CODE = "us"
 
 

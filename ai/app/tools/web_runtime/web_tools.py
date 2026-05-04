@@ -292,7 +292,7 @@ def _tavily_request(endpoint: str, payload: dict) -> dict:
     payload["api_key"] = api_key
     url = f"{_TAVILY_BASE_URL}/{endpoint.lstrip('/')}"
     logger.info("Tavily %s request to %s", endpoint, url)
-    response = httpx.post(url, json=payload, timeout=60)
+    response = httpx.post(url, json=payload, timeout=120)
     response.raise_for_status()
     return response.json()
 
@@ -1343,8 +1343,8 @@ async def web_extract_tool(
 
                     try:
                         logger.info("Scraping: %s", url)
-                        # Run synchronous Firecrawl scrape in a thread with a
-                        # 60s timeout so a hung fetch doesn't block the session.
+                        # 외부 페이지 추출은 느린 사이트가 많으므로 120초까지 기다리되,
+                        # 영구 대기는 막기 위해 fetch 단위 timeout은 유지한다.
                         try:
                             scrape_result = await asyncio.wait_for(
                                 asyncio.to_thread(
@@ -1352,13 +1352,13 @@ async def web_extract_tool(
                                     url=url,
                                     formats=formats,
                                 ),
-                                timeout=60,
+                                timeout=120,
                             )
                         except asyncio.TimeoutError:
                             logger.warning("Firecrawl scrape timed out for %s", url)
                             results.append({
                                 "url": url, "title": "", "content": "",
-                                "error": "Scrape timed out after 60s — page may be too large or unresponsive. Try browser_navigate instead.",
+                                "error": "Scrape timed out after 120s — page may be too large or unresponsive. Try browser_navigate instead.",
                             })
                             continue
 

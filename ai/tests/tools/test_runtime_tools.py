@@ -98,6 +98,15 @@ def test_runtime_exposes_heygent_browser_tool_definitions():
     assert schema_by_name["browser_click"]["parameters"]["properties"]["ref"]["type"] == "string"
 
 
+def test_web_browser_runtime_defaults_use_tolerant_timeouts():
+    from app.tools.web_runtime import browser_camofox, browser_tool
+    from app.tools.web_runtime.browser_providers import browser_use
+
+    assert browser_tool.DEFAULT_COMMAND_TIMEOUT == 180
+    assert browser_camofox._DEFAULT_TIMEOUT == 90
+    assert browser_use._DEFAULT_MANAGED_TIMEOUT_MINUTES == 10
+
+
 def test_web_is_available_in_local_core_and_safe_but_browser_is_explicit():
     assert {"web_search", "web_extract", "web_crawl"} <= resolve_runtime_tool_names(("web",))
     assert {"web_search", "web_extract", "web_crawl"} <= resolve_runtime_tool_names(("local-core",))
