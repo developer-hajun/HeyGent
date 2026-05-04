@@ -28,6 +28,12 @@
 - `cheap-gas-nearby`
 - `lotto-results`
 
+## 3차 1차분 포함 목록
+
+- `household-waste-info`
+- `public-restroom-nearby`
+- `subway-lost-property`
+
 ## 운영 메모
 
 - 별도 `skill.execute`는 사용하지 않는다.

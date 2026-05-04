@@ -12,6 +12,9 @@ metadata:
       - korea-weather
       - joseon-sillok-search
       - library-book-search
+      - household-waste-info
+      - public-restroom-nearby
+      - subway-lost-property
       - korean-character-count
 ---
 
@@ -79,6 +82,9 @@ Read a skill under `k-skills` when the request is about Korean public data, Kore
 - `k-schoollunch-menu`: Korean school search and school meal menu lookup through NEIS proxy routes.
 - `cheap-gas-nearby`: Nearby Korean gas station fuel price lookup through Opinet proxy routes.
 - `lotto-results`: Korean Lotto draw result and ticket match lookup using the `k-lotto` package.
+- `public-restroom-nearby`: Nearby Korean public/open restroom lookup using official public restroom data and optional Kakao location support.
+- `subway-lost-property`: Conservative LOST112 and Seoul Metro lost-property lookup guidance for subway lost items.
+- `household-waste-info`: Korean household waste disposal day, time, place, method, and contact lookup through data.go.kr proxy routes.
 
 ## Guardrails
 
