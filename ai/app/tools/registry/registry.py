@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from app.tools.contracts import TaskExecutor
-from app.tools.model.agent_loop import AgentLoopExecutor
+from app.tools.contracts import TaskHandler
+from app.tools.model.agent_loop import AgentLoopHandler
 from app.tools.registry.tool_entry import ToolEntry
 
 
-AGENT_LOOP_EXECUTOR_KEY = "agent.loop"
+AGENT_LOOP_HANDLER_KEY = "agent.loop"
 
 
 class ToolRegistry:
@@ -23,38 +23,38 @@ class ToolRegistry:
     ) -> None:
         default_provider = provider_registry.preferred_model_provider()
         entries = [
-            ToolEntry(AGENT_LOOP_EXECUTOR_KEY, "core", AgentLoopExecutor(default_provider, prompt_builder, tool_runtime, tool_catalog, session_store=session_store)),
+            ToolEntry(AGENT_LOOP_HANDLER_KEY, "core", AgentLoopHandler(default_provider, prompt_builder, tool_runtime, tool_catalog, session_store=session_store)),
         ]
 
         self._entries_by_key = {entry.name: entry for entry in entries}
         self._default_entry_by_intent = {
-            entry.executor.spec.intent_type: entry.executor.spec.entry_executor_key for entry in entries
+            entry.handler.spec.intent_type: entry.handler.spec.entry_handler_key for entry in entries
         }
 
     def resolve(
         self,
         *,
         intent_type: str | None = None,
-        entry_executor_key: str | None = None,
-    ) -> TaskExecutor:
-        if entry_executor_key and entry_executor_key != AGENT_LOOP_EXECUTOR_KEY:
-            raise ValueError(f"legacy executor routing has been removed: {entry_executor_key}")
+        entry_handler_key: str | None = None,
+    ) -> TaskHandler:
+        if entry_handler_key and entry_handler_key != AGENT_LOOP_HANDLER_KEY:
+            raise ValueError(f"legacy handler routing has been removed: {entry_handler_key}")
 
-        canonical_intent = str(intent_type or AGENT_LOOP_EXECUTOR_KEY)
-        if canonical_intent != AGENT_LOOP_EXECUTOR_KEY:
+        canonical_intent = str(intent_type or AGENT_LOOP_HANDLER_KEY)
+        if canonical_intent != AGENT_LOOP_HANDLER_KEY:
             raise ValueError(f"legacy intent routing has been removed: {canonical_intent}")
-        return self.get(self._default_entry_by_intent[AGENT_LOOP_EXECUTOR_KEY])
+        return self.get(self._default_entry_by_intent[AGENT_LOOP_HANDLER_KEY])
 
-    def get(self, executor_key: str) -> TaskExecutor:
+    def get(self, handler_key: str) -> TaskHandler:
         try:
-            return self._entries_by_key[executor_key].executor
+            return self._entries_by_key[handler_key].handler
         except KeyError as error:
-            raise KeyError(executor_key) from error
+            raise KeyError(handler_key) from error
 
     def list_intent_types(self) -> list[str]:
         return sorted(self._default_entry_by_intent)
 
-    def list_executor_keys(self) -> list[str]:
+    def list_handler_keys(self) -> list[str]:
         return sorted(self._entries_by_key)
 
     def list_toolsets(self) -> list[str]:

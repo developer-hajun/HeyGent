@@ -27,7 +27,8 @@ interface AgentSpriteProps {
 
 export function AgentSprite({ agent, onArrived }: AgentSpriteProps) {
   const { config, position, state, transitionDuration } = agent
-  const size = state === 'sitting_desk' ? SIZE_SITTING : SIZE_NORMAL
+  const scale = config.scale ?? 1
+  const size = (state === 'sitting_desk' ? SIZE_SITTING : SIZE_NORMAL) * scale
 
   return (
     <div

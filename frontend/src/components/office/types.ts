@@ -17,6 +17,7 @@ export interface AgentConfig {
   spritePath: string
   initialPosition: { x: number; y: number }
   destinations: Record<Destination, { x: number; y: number }>
+  scale?: number
 }
 
 export interface AgentRuntime {

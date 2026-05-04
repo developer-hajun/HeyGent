@@ -8,9 +8,9 @@ CREATE TABLE IF NOT EXISTS step_runs (
     step_order INTEGER NOT NULL,
     -- 단계의 내부 타입명. 어떤 종류의 step 인지 코드와 UI가 같이 해석한다.
     step_type TEXT NOT NULL,
-    -- 이 step 을 실제로 실행한 executor 식별자.
-    -- route/flow 제거 이후 step 단위 executor 복원을 위한 최소 키다.
-    executor_key TEXT,
+    -- 이 step 을 실제로 실행한 handler 식별자.
+    -- route/flow 제거 이후 step 단위 handler 복원을 위한 최소 키다.
+    handler_key TEXT,
     -- 현재 단계 상태. 어느 단계에서 멈췄는지/실패했는지 확인하는 핵심 값이다.
     status TEXT NOT NULL,
     -- 사람이 읽기 쉬운 단계 제목.

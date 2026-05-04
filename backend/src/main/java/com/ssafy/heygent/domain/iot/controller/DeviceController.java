@@ -3,6 +3,8 @@ package com.ssafy.heygent.domain.iot.controller;
 import com.ssafy.heygent.domain.iot.dto.DeviceRegisterRequest;
 import com.ssafy.heygent.domain.iot.dto.DeviceResponse;
 import com.ssafy.heygent.domain.iot.dto.DeviceStatusUpdateRequest;
+import com.ssafy.heygent.domain.iot.dto.DisplayPublishResult;
+import com.ssafy.heygent.domain.iot.dto.DisplayPublishTestRequest;
 import com.ssafy.heygent.domain.iot.service.DeviceService;
 import com.ssafy.heygent.global.config.security.CustomUserPrincipal;
 import com.ssafy.heygent.global.exception.ApiResponse;
@@ -54,5 +56,15 @@ public class DeviceController {
         @Valid @RequestBody DeviceStatusUpdateRequest request
     ) {
         return ApiResponse.success(deviceService.updateStatus(principal.getUserId(), deviceId, request.status()));
+    }
+
+    @Operation(summary = "IoT 디스플레이 테스트 메시지 발행")
+    @PostMapping("/{deviceId}/display/test")
+    public ApiResponse<DisplayPublishResult> publishDisplayTest(
+        @AuthenticationPrincipal CustomUserPrincipal principal,
+        @PathVariable String deviceId,
+        @Valid @RequestBody DisplayPublishTestRequest request
+    ) {
+        return ApiResponse.success(deviceService.publishTest(principal.getUserId(), deviceId, request));
     }
 }

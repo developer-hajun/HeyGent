@@ -10,7 +10,7 @@ from app.core.utils.ids import new_id
 class PostgresSessionStore:
     """agent transcript를 Postgres agent_sessions/agent_messages에 저장한다.
 
-    기존 SessionStore 호출부와 같은 응답 형태를 유지해 agent.loop replay 코드를 크게 흔들지 않는다.
+    TranscriptStore 호출부와 같은 응답 형태를 유지해 agent.loop replay 코드를 크게 흔들지 않는다.
     """
 
     def __init__(self, connection_factory: Callable[[], Any]) -> None:
@@ -88,12 +88,36 @@ class PostgresSessionStore:
         row = connection.execute("SELECT * FROM agent_sessions WHERE session_id = %s", (session_id,)).fetchone()
         return _session_from_row(row)
 
-    def get_latest_session_by_key(self, session_key: str) -> dict[str, Any] | None:
+    def list_sessions(
+        self,
+        owner: str | None = None,
+        *,
+        user_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
         connection = self.connection_factory()
-        row = connection.execute(
-            "SELECT * FROM agent_sessions WHERE session_key = %s ORDER BY created_at DESC LIMIT 1",
-            (session_key,),
-        ).fetchone()
+        sql = "SELECT * FROM agent_sessions"
+        effective_owner = owner if owner is not None else user_id
+        params: tuple[Any, ...]
+        if effective_owner is None:
+            params = (limit, offset)
+        else:
+            sql += " WHERE owner_key = %s"
+            params = (effective_owner, limit, offset)
+        sql += " ORDER BY updated_at DESC, created_at DESC LIMIT %s OFFSET %s"
+        rows = connection.execute(sql, params).fetchall()
+        return [record for row in rows if (record := _session_from_row(row)) is not None]
+
+    def get_latest_session_by_key(self, session_key: str, *, owner: str | None = None) -> dict[str, Any] | None:
+        connection = self.connection_factory()
+        sql = "SELECT * FROM agent_sessions WHERE session_key = %s"
+        params: tuple[Any, ...] = (session_key,)
+        if owner is not None:
+            sql += " AND owner_key = %s"
+            params = (session_key, owner)
+        sql += " ORDER BY created_at DESC LIMIT 1"
+        row = connection.execute(sql, params).fetchone()
         return _session_from_row(row)
 
     def append_message(
@@ -213,8 +237,10 @@ def _session_from_row(row: Any) -> dict[str, Any] | None:
         "system_prompt": metadata.get("system_prompt"),
         "parent_session_id": row.get("parent_session_id"),
         "parent_step_run_id": row.get("parent_step_run_id"),
+        "status": row.get("status"),
         "title": row.get("title"),
         "metadata": metadata,
+        "created_at": row.get("created_at"),
         "started_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "ended_at": row.get("ended_at"),
@@ -228,6 +254,8 @@ def _message_from_row(row: Any) -> dict[str, Any]:
     metadata = _json_load(row.get("metadata"), {})
     return {
         "id": row.get("message_sequence"),
+        "message_id": row.get("message_id"),
+        "message_sequence": row.get("message_sequence"),
         "session_id": row["session_id"],
         "role": row["role"],
         "content": content.get("text"),

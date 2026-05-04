@@ -31,6 +31,7 @@ import androidx.navigation.compose.rememberNavController
 import com.example.mob.common.AppDrawer
 import com.example.mob.feature.auth.LoginScreen
 import com.example.mob.feature.chat.ChatScreen
+import com.example.mob.feature.health.HealthViewModel
 import com.example.mob.feature.home.HomeScreen
 import com.example.mob.feature.profile.ProfileScreen
 import com.example.mob.ui.theme.MOBTheme
@@ -38,6 +39,12 @@ import com.example.mob.ui.theme.NavyPrimary
 import com.example.mob.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.ui.platform.LocalContext
+import android.app.Activity
+import androidx.compose.runtime.LaunchedEffect
+import android.util.Log
+import com.kakao.sdk.common.KakaoSdk
+import com.kakao.sdk.common.util.Utility
 
 private sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     data object Chat    : Screen("chat",    "Chat",    Icons.AutoMirrored.Filled.Chat)
@@ -51,11 +58,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        KakaoSdk.init(this, getString(R.string.kakao_app_key))
+        Log.d("KAKAO_KEY_HASH", Utility.getKeyHash(this))
         enableEdgeToEdge()
         setContent {
             MOBTheme {
                 var splashDone by remember { mutableStateOf(false) }
-                var isLoggedIn by remember { mutableStateOf(true) }
+                var isLoggedIn by remember { mutableStateOf(false) }
 
                 LaunchedEffect(Unit) {
                     delay(1800)
@@ -93,9 +102,21 @@ private fun SplashScreen() {
 
 @Composable
 private fun MainApp(onLogout: () -> Unit) {
+    val context = LocalContext.current
+    val healthViewModel = remember { HealthViewModel(context) }
+
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+
+    // 주기적 동기화 시작
+    LaunchedEffect(Unit) {
+        healthViewModel.startPeriodicSync()
+        // 권한이 없으면 요청 (최초 1회)
+        if (!healthViewModel.syncState.value.let { it is HealthViewModel.HealthSyncState.Success }) {
+            (context as? Activity)?.let { healthViewModel.requestPermissions(it) }
+        }
+    }
 
     // 앱 세션 동안 유지 (앱 재실행 시 초기화됨)
     var activeChatSessionId by remember { mutableStateOf<Int?>(null) }
@@ -155,7 +176,8 @@ private fun MainApp(onLogout: () -> Unit) {
                         bottomPadding = bottomPadding,
                         onLogout = onLogout,
                         agentName = agentName,
-                        onAgentNameChange = { agentName = it }
+                        onAgentNameChange = { agentName = it },
+                        healthViewModel = healthViewModel
                     )
                 }
             }

@@ -10,7 +10,7 @@ from app.domain.orchestration.delegation.delegate_runtime import DelegateRuntime
 from app.domain.orchestration.delegation.launcher import ChildSessionLauncher
 from app.domain.orchestration.delegation.spec import ChildSessionLaunchResult, ChildSessionSpec
 from app.domain.orchestration.runtime_planning import Planner
-from app.tools.contracts import ExecutorSpec
+from app.tools.contracts import HandlerSpec
 
 
 class FakeChildSessionLauncher:
@@ -91,11 +91,11 @@ class FakeWorkerSessionStore:
         return payload["session_id"]
 
 
-class FakeWorkerExecutor:
-    spec = ExecutorSpec(
+class FakeWorkerHandler:
+    spec = HandlerSpec(
         intent_type="agent.loop",
-        entry_executor_key="agent.loop",
-        executor_key="agent.loop",
+        entry_handler_key="agent.loop",
+        handler_key="agent.loop",
         task_type="agent.loop",
         task_title="Agent Loop",
         step_type="agent.loop",
@@ -117,11 +117,11 @@ class FakeWorkerExecutor:
 
 
 class FakeWorkerRegistry:
-    def __init__(self, executor) -> None:
-        self.executor = executor
+    def __init__(self, handler) -> None:
+        self.handler = handler
 
-    def resolve(self, *, intent_type, entry_executor_key):
-        return self.executor
+    def resolve(self, *, intent_type, entry_handler_key):
+        return self.handler
 
 
 class RepositoryThatFailsOnCreateTask:
@@ -158,7 +158,7 @@ async def test_child_session_launcher_uses_worker_callback_without_legacy_task_r
         parent_task_run_id="task_parent",
         parent_step_run_id="step_parent",
         child_intent_type="agent.loop",
-        child_entry_executor_key="agent.loop",
+        child_entry_handler_key="agent.loop",
         metadata={"profile_key": "worker.default", "agent_id": "agent_worker"},
         worker_session_id="session_worker",
     )
@@ -179,18 +179,18 @@ async def test_child_session_launcher_uses_worker_callback_without_legacy_task_r
 
 @pytest.mark.asyncio
 async def test_agent_loop_runner_worker_session_does_not_create_task_run():
-    executor = FakeWorkerExecutor()
+    handler = FakeWorkerHandler()
     runner = AgentLoopRunner(
         repository=RepositoryThatFailsOnCreateTask(),
         planner=Planner(),
         task_engine=SimpleNamespace(),
-        tool_registry=FakeWorkerRegistry(executor),
+        tool_registry=FakeWorkerRegistry(handler),
     )
     spec = ChildSessionSpec(
         parent_task_run_id="task_parent",
         parent_step_run_id="step_parent",
         child_intent_type="agent.loop",
-        child_entry_executor_key="agent.loop",
+        child_entry_handler_key="agent.loop",
         metadata={"agent_id": "agent_worker"},
         worker_session_id="session_worker",
     )
@@ -201,12 +201,12 @@ async def test_agent_loop_runner_worker_session_does_not_create_task_run():
         session_key="session_1",
         input_payload={"prompt": "worker", "transcript_session_id": "session_worker"},
         intent_type="agent.loop",
-        entry_executor_key="agent.loop",
+        entry_handler_key="agent.loop",
     )
 
     assert result.status == TaskStatus.COMPLETED
     assert result.summary == "worker result"
-    assert executor.executed[0]["step"] is None
+    assert handler.executed[0]["step"] is None
 
 
 @pytest.mark.asyncio
@@ -226,7 +226,7 @@ async def test_delegate_runtime_records_worker_handoff_when_repository_supports_
     outcome = {
         "child_session": {
             "intent_type": "agent.loop",
-            "entry_executor_key": "agent.loop",
+            "entry_handler_key": "agent.loop",
             "input_payload": {"prompt": "하위 작업"},
             "metadata": {"profile_key": "worker.default"},
         }
@@ -271,7 +271,7 @@ async def test_delegate_runtime_creates_worker_session_and_normalizes_contract_p
         outcome={
             "child_session": {
                 "intent_type": "agent.loop",
-                "entry_executor_key": "agent.loop",
+                "entry_handler_key": "agent.loop",
                 "goal": "문서 갭 줄이기",
                 "context": {"branch": "AI-feat/Subagent_구조화"},
                 "toolsets": ["file", "delegation", "terminal", "file"],
@@ -367,7 +367,7 @@ async def test_delegate_runtime_applies_profile_defaults_and_toolset_intersectio
         outcome={
             "child_session": {
                 "intent_type": "agent.loop",
-                "entry_executor_key": "agent.loop",
+                "entry_handler_key": "agent.loop",
                 "goal": "profile 적용",
                 "toolsets": ["terminal", "file", "delegation"],
                 "metadata": {"profile_key": "worker.profiled"},
@@ -400,7 +400,7 @@ async def test_delegate_runtime_completes_handoff_as_failed_when_launch_fails():
         outcome={
             "child_session": {
                 "intent_type": "agent.loop",
-                "entry_executor_key": "agent.loop",
+                "entry_handler_key": "agent.loop",
                 "input_payload": {"prompt": "하위 작업"},
             }
         },

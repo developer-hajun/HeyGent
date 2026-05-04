@@ -19,6 +19,15 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
         migration_id="0001_initial_durable_schema",
         statements=POSTGRES_SCHEMA_STATEMENTS,
     ),
+    PostgresMigration(
+        migration_id="0002_run_anchor_session_key",
+        statements=(
+            """
+            CREATE INDEX IF NOT EXISTS idx_run_anchors_owner_session
+            ON run_anchors(owner_key, session_key);
+            """,
+        ),
+    ),
 )
 
 

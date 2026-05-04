@@ -111,7 +111,7 @@ class RedisTaskProjectionStore:
         return int(value)
 
     def acquire_active_session_lock(self, session_key: str, task_run_id: str, *, owner_key: str | None = None) -> bool:
-        """같은 owner/product session의 active TaskRun 생성을 원자적 lease로 제한한다."""
+        """같은 owner/sessionId의 active TaskRun 생성을 원자적 lease로 제한한다."""
 
         if not session_key:
             return True
