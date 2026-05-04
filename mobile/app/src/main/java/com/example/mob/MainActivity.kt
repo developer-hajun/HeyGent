@@ -76,6 +76,7 @@ class MainActivity : ComponentActivity() {
                     !isLoggedIn -> LoginScreen(onLoginSuccess = { isLoggedIn = true })
                     else        -> MainApp(onLogout = { isLoggedIn = false })
                 }
+
             }
         }
     }
