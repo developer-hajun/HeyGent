@@ -10,6 +10,8 @@ metadata:
       - github-repo-management
       - parallel-cli
       - korea-weather
+      - joseon-sillok-search
+      - library-book-search
       - korean-character-count
 ---
 
@@ -72,6 +74,11 @@ Read a skill under `k-skills` when the request is about Korean public data, Kore
 - `zipcode-search`: Korean road-name address and postal code search.
 - `geeknews-search`: GeekNews article listing and search.
 - `korean-character-count`: Korean character count, byte count, and spacing-sensitive text metrics.
+- `joseon-sillok-search`: Joseon Dynasty Annals keyword search using the official Sillok surface.
+- `library-book-search`: Korean public library book search and holdings lookup through Data4Library proxy routes.
+- `k-schoollunch-menu`: Korean school search and school meal menu lookup through NEIS proxy routes.
+- `cheap-gas-nearby`: Nearby Korean gas station fuel price lookup through Opinet proxy routes.
+- `lotto-results`: Korean Lotto draw result and ticket match lookup using the `k-lotto` package.
 
 ## Guardrails
 

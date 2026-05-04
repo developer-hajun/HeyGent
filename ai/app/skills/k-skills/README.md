@@ -1,6 +1,6 @@
 # k-skills
 
-1차로 선별한 `NomaDamas/k-skill` 기반 skill 문서 모음이다.
+1차와 2차 1차분으로 선별한 `NomaDamas/k-skill` 기반 skill 문서 모음이다.
 
 ## 포함 기준
 
@@ -19,6 +19,14 @@
 - `zipcode-search`
 - `geeknews-search`
 - `korean-character-count`
+
+## 2차 1차분 포함 목록
+
+- `joseon-sillok-search`
+- `library-book-search`
+- `k-schoollunch-menu`
+- `cheap-gas-nearby`
+- `lotto-results`
 
 ## 운영 메모
 
