@@ -124,6 +124,29 @@ def test_third_batch_k_skills_are_loaded_from_app_skills():
     assert "LOST112" in loaded["subway-lost-property"]["body"]
 
 
+def test_third_batch_k_skills_include_safety_guidance():
+    loaded = {skill["name"]: skill for skill in SkillLoader().load_builtin()}
+
+    household = loaded["household-waste-info"]["body"]
+    restroom = loaded["public-restroom-nearby"]["body"]
+    lost_property = loaded["subway-lost-property"]["body"]
+
+    assert "serviceKey" in household
+    assert "proxy" in household
+    assert "pageNo=1" in household
+    assert "numOfRows=100" in household
+    assert "사용자 측 로컬 환경에 `DATA_GO_KR_API_KEY`를 둘 필요가 없다" in household
+
+    assert "반드시 먼저 현재 위치를 질문" in restroom
+    assert "KAKAO_REST_API_KEY" in restroom
+    assert "CSV 단일 소스" in restroom
+    assert "위치 기준점이 흔들릴 수 있다" in restroom
+
+    assert "안내형/하이브리드" in lost_property
+    assert "완전 자동 조회형으로 확장하려면" in lost_property
+    assert "runnable `curl` 예시" in lost_property
+
+
 def test_skill_index_is_loaded_from_app_skills():
     loaded = {skill["name"]: skill for skill in SkillLoader().load_builtin()}
 
