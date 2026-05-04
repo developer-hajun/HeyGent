@@ -532,6 +532,7 @@ class ToolCallingLoopHandler:
             "tool_name": tool_name,
             "toolName": tool_name,
             "title": cls._tool_progress_summary(tool_name=tool_name, args=args, result=result),
+            "input": cls._compact_progress_value(args),
         }
         for key in ("path", "query", "pattern"):
             value = cls._optional_text(args.get(key)) or cls._optional_text((result or {}).get(key))
@@ -560,6 +561,7 @@ class ToolCallingLoopHandler:
                 for item in steps[:12]
             ]
         if isinstance(result, dict):
+            payload["result"] = cls._compact_progress_value(result)
             if result.get("ok") is False:
                 payload["ok"] = False
                 error = result.get("error")
@@ -573,6 +575,49 @@ class ToolCallingLoopHandler:
                 if isinstance(value, (int, float)) and not isinstance(value, bool):
                     payload[key] = value
         return payload
+
+    @classmethod
+    def _compact_progress_value(cls, value: Any, *, depth: int = 0) -> Any:
+        """세부 기록용 tool 입출력을 너무 커지지 않게 줄이고 민감값은 가린다."""
+
+        if depth >= 5:
+            return "..."
+        if isinstance(value, dict):
+            compacted: dict[str, Any] = {}
+            for index, (key, item) in enumerate(value.items()):
+                if index >= 40:
+                    compacted["..."] = "truncated"
+                    break
+                key_text = str(key)
+                if cls._looks_sensitive_key(key_text):
+                    compacted[key_text] = "[redacted]"
+                else:
+                    compacted[key_text] = cls._compact_progress_value(item, depth=depth + 1)
+            return compacted
+        if isinstance(value, list):
+            compacted_items = [cls._compact_progress_value(item, depth=depth + 1) for item in value[:20]]
+            if len(value) > 20:
+                compacted_items.append("...")
+            return compacted_items
+        if isinstance(value, str):
+            return cls._redact_progress_text(value[:4000] + ("..." if len(value) > 4000 else ""))
+        if isinstance(value, (int, float, bool)) or value is None:
+            return value
+        return cls._redact_progress_text(str(value))
+
+    @staticmethod
+    def _looks_sensitive_key(key: str) -> bool:
+        return bool(re.search(r"(?i)(api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password|authorization)", key))
+
+    @staticmethod
+    def _redact_progress_text(value: str) -> str:
+        redacted = re.sub(r"sk-[A-Za-z0-9_-]{10,}", "[redacted]", value)
+        redacted = re.sub(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+", "Bearer [redacted]", redacted)
+        return re.sub(
+            r"(?i)\b(api[_-]?key|token|secret|password)\s*[:=]\s*[^,\s]+",
+            r"\1=[redacted]",
+            redacted,
+        )
 
     @classmethod
     def _active_todo_title(cls, value: Any) -> str | None:

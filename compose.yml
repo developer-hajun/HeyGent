@@ -87,6 +87,10 @@ services:
     ports:
       - "8000:8000"
     env_file: ./ai/.env
+    volumes:
+      - .:/workspace
+    environment:
+      - HEYGENT_WORKSPACE_ROOT=/workspace
     depends_on:
       backend:
         condition: service_healthy

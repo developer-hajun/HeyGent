@@ -106,11 +106,14 @@ export const isLiveTaskRunStatus = (status?: string | null) =>
   status === 'session.message.delta'
 
 export const toActivityItemView = (event: RawTaskEventPayload): ActivityItemView => {
-  const statusKey = event.status ?? event.event_type
+  const statusKey = event.event_type ?? event.status
   const eventTitle = toTaskRunEventTitle(event.event_type)
+  const payloadTitle = getTaskRunEventPayloadTitle(event)
+  const summaryTitle = getMeaningfulTaskEventSummary(event.summary_message)
+  const preferPayloadTitle = shouldPreferPayloadTitle(event.event_type)
   const title =
-    getMeaningfulTaskEventSummary(event.summary_message) ??
-    getTaskRunEventPayloadTitle(event) ??
+    (preferPayloadTitle ? payloadTitle : summaryTitle) ??
+    (preferPayloadTitle ? summaryTitle : payloadTitle) ??
     eventTitle ??
     toTaskRunStatusText(statusKey)
 
@@ -314,6 +317,10 @@ const getMeaningfulTaskEventSummary = (value?: string | null) => {
   return text
 }
 
+const shouldPreferPayloadTitle = (eventType?: string | null) =>
+  typeof eventType === 'string' &&
+  (eventType.startsWith('tool.') || eventType.startsWith('search.'))
+
 const getTaskRunEventPayloadTitle = (event: RawTaskEventPayload) =>
   pickTaskRunEventString(event.payload, [
     'step_title',
@@ -326,6 +333,16 @@ const getTaskRunEventPayloadTitle = (event: RawTaskEventPayload) =>
     'toolName',
     'query',
   ]) ??
+  pickNestedTaskRunEventString(
+    event.payload,
+    ['input', 'args'],
+    ['path', 'query', 'pattern', 'command', 'title', 'content'],
+  ) ??
+  pickNestedTaskRunEventString(
+    event.payload,
+    ['result', 'output'],
+    ['path', 'query', 'pattern', 'summary', 'stdout', 'text'],
+  ) ??
   pickTaskRunEventString(event.detail_json, [
     'step_title',
     'stepTitle',
@@ -337,6 +354,22 @@ const getTaskRunEventPayloadTitle = (event: RawTaskEventPayload) =>
     'toolName',
     'query',
   ])
+
+const pickNestedTaskRunEventString = (value: unknown, containerKeys: string[], keys: string[]) => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined
+  }
+
+  const payload = value as Record<string, unknown>
+  for (const containerKey of containerKeys) {
+    const candidate = pickTaskRunEventString(payload[containerKey], keys)
+    if (candidate !== undefined) {
+      return candidate
+    }
+  }
+
+  return undefined
+}
 
 const pickTaskRunEventString = (value: unknown, keys: string[]) => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {

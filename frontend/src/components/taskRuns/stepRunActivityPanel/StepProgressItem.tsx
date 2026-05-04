@@ -2,7 +2,7 @@ import { ChevronDown } from 'lucide-react'
 import type { ActivityItemView, RawStepRun } from '@/types/taskRuns'
 import { toTaskRunStatusTone } from '@/utils/taskRunStatusView'
 import { ActivityEventItem } from './ActivityEventItem'
-import { toProgressSentence, toUserFacingTaskTitle } from './activityPanelText'
+import { toStepProgressSentence, toUserFacingTaskTitle } from './activityPanelText'
 import { TaskRunStatusIcon } from './TaskRunStatusIcon'
 
 export function StepProgressItem({
@@ -24,7 +24,7 @@ export function StepProgressItem({
               {toUserFacingTaskTitle(step.title ?? step.goal ?? '답변 준비')}
             </span>
             <span className="text-muted-foreground mt-1 line-clamp-1 block text-xs">
-              {toProgressSentence(step.status)}
+              {toStepProgressSentence(step.status)}
             </span>
           </span>
           <span className="text-muted-foreground text-[11px]">{activities.length}개</span>

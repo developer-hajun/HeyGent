@@ -293,13 +293,25 @@ def _resolve_read_workspace_path(value: Any, *, workspace_root: Any = None) -> P
     if not isinstance(value, str) or not value.strip():
         raise ValueError("path is required")
     root = _workspace_root(workspace_root)
-    raw_path = Path(value).expanduser()
+    raw_path = _coerce_workspace_path(value, root=root)
     candidate = raw_path if raw_path.is_absolute() else root / raw_path
     resolved = candidate.resolve(strict=False)
     # workspace guard: 모델이 절대 경로나 ..를 넘겨도 루트 밖 파일에는 접근하지 않는다.
     if not _is_relative_to(resolved, root):
         raise PermissionError("path must stay inside the workspace")
     return resolved
+
+
+def _coerce_workspace_path(value: str, *, root: Path) -> Path:
+    text = value.strip()
+    normalized = text.replace("\\", "/")
+    # 브라우저 사용자가 Windows 절대 경로를 붙여 넣어도 컨테이너 안에서는 bind mount된
+    # workspace 기준 상대 경로로 바꿔야 실제 호스트 파일에 닿는다.
+    if re.match(r"^[A-Za-z]:/", normalized):
+        workspace_marker = f"/{root.name}/"
+        if workspace_marker in normalized:
+            normalized = normalized.split(workspace_marker, 1)[1]
+    return Path(normalized).expanduser()
 
 
 def _relative_path(path: Path, root: Path) -> Path:

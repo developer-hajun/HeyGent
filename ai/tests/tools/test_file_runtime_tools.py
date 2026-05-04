@@ -58,6 +58,15 @@ def test_write_file_creates_parent_inside_workspace(tmp_path: Path):
     assert (tmp_path / "nested" / "result.txt").read_text(encoding="utf-8") == "hello\nworld\n"
 
 
+def test_write_file_maps_windows_workspace_path_to_bound_workspace(tmp_path: Path):
+    requested_path = rf"C:\Users\SSAFY\Desktop\PR\IDEA\{tmp_path.name}\nested\windows-path.md"
+
+    result = write_file(_args(tmp_path, path=requested_path, content="windows path\n"))
+
+    assert result["path"] == "nested/windows-path.md"
+    assert (tmp_path / "nested" / "windows-path.md").read_text(encoding="utf-8") == "windows path\n"
+
+
 def test_write_file_blocks_directory_and_path_escape(tmp_path: Path):
     with pytest.raises(IsADirectoryError):
         write_file(_args(tmp_path, path=".", content="blocked"))
