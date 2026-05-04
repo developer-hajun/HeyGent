@@ -47,11 +47,18 @@ READ_FILE_SCHEMA = {
 
 WRITE_FILE_SCHEMA = {
     "name": "write_file",
-    "description": "Write a text file inside the workspace, creating parent directories when needed.",
+    "description": (
+        "Write a text file inside the workspace, creating parent directories when needed. "
+        "If the user provided a directory as the save location, choose a meaningful file name inside that directory; "
+        "do not turn the directory path itself into a file by appending an extension."
+    ),
     "parameters": {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "Workspace-relative file path to write."},
+            "path": {
+                "type": "string",
+                "description": "Workspace-relative file path to write. Must include the final file name, not only a directory.",
+            },
             "content": {"type": "string", "description": "Complete text content to write."},
         },
         "required": ["path", "content"],
@@ -308,10 +315,23 @@ def _coerce_workspace_path(value: str, *, root: Path) -> Path:
     # 브라우저 사용자가 Windows 절대 경로를 붙여 넣어도 컨테이너 안에서는 bind mount된
     # workspace 기준 상대 경로로 바꿔야 실제 호스트 파일에 닿는다.
     if re.match(r"^[A-Za-z]:/", normalized):
-        workspace_marker = f"/{root.name}/"
-        if workspace_marker in normalized:
-            normalized = normalized.split(workspace_marker, 1)[1]
+        for workspace_name in _workspace_path_markers(root):
+            workspace_marker = f"/{workspace_name}/"
+            if workspace_marker in normalized:
+                normalized = normalized.split(workspace_marker, 1)[1]
+                break
+        else:
+            if os.name != "nt":
+                return Path("/") / normalized
     return Path(normalized).expanduser()
+
+
+def _workspace_path_markers(root: Path) -> list[str]:
+    markers = [root.name]
+    host_workspace_name = str(os.environ.get("HEYGENT_HOST_WORKSPACE_BASENAME") or "").strip()
+    if host_workspace_name:
+        markers.append(host_workspace_name)
+    return list(dict.fromkeys(markers))
 
 
 def _relative_path(path: Path, root: Path) -> Path:

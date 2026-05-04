@@ -22,6 +22,8 @@ def test_file_tool_definitions_register_runtime_tool_names():
     assert [item["name"] for item in definitions] == ["read_file", "write_file", "patch", "search_files"]
     assert {item["toolset"] for item in definitions} == {"file"}
     assert definitions[0]["schema"]["name"] == "read_file"
+    write_schema = next(item["schema"] for item in definitions if item["name"] == "write_file")
+    assert "Must include the final file name" in write_schema["parameters"]["properties"]["path"]["description"]
     patch_schema = next(item["schema"] for item in definitions if item["name"] == "patch")
     assert patch_schema["parameters"]["properties"]["mode"]["enum"] == ["replace", "patch"]
 
@@ -65,6 +67,16 @@ def test_write_file_maps_windows_workspace_path_to_bound_workspace(tmp_path: Pat
 
     assert result["path"] == "nested/windows-path.md"
     assert (tmp_path / "nested" / "windows-path.md").read_text(encoding="utf-8") == "windows path\n"
+
+
+def test_write_file_maps_windows_host_workspace_basename_to_docker_workspace(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("HEYGENT_HOST_WORKSPACE_BASENAME", "S14P31E105")
+    requested_path = r"C:\Users\SSAFY\Desktop\PR\IDEA\S14P31E105\tmp\testfile\profile.md"
+
+    result = write_file(_args(tmp_path, path=requested_path, content="host workspace\n"))
+
+    assert result["path"] == "tmp/testfile/profile.md"
+    assert (tmp_path / "tmp" / "testfile" / "profile.md").read_text(encoding="utf-8") == "host workspace\n"
 
 
 def test_write_file_blocks_directory_and_path_escape(tmp_path: Path):

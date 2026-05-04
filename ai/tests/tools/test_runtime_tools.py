@@ -27,6 +27,7 @@ def test_runtime_exposes_todo_schema_without_legacy_write_name():
     assert "steps" in schema_by_name["step"]["parameters"]["properties"]
     title_description = schema_by_name["step"]["parameters"]["properties"]["steps"]["items"]["properties"]["title"]["description"]
     assert "target/topic/artifact" in title_description
+    assert "뉴스 출처 근거 조사" in title_description
     assert "기존 자료 파악" in title_description
 
 

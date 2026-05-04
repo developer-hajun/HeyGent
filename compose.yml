@@ -91,6 +91,7 @@ services:
       - .:/workspace
     environment:
       - HEYGENT_WORKSPACE_ROOT=/workspace
+      - HEYGENT_HOST_WORKSPACE_BASENAME=S14P31E105
     depends_on:
       backend:
         condition: service_healthy
