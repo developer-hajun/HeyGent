@@ -22,6 +22,7 @@ public class OpenAiProperties {
     private List<String> allowedModels = new ArrayList<>(List.of("gpt-5.4", "gpt-5.4-mini"));
     private String embeddingModel = "text-embedding-3-small";
     private int timeoutSeconds = 60;
+    private String credentialEncryptionKey = "";
     private OAuth oauth = new OAuth();
 
     public boolean hasApiKey() {
@@ -33,6 +34,10 @@ public class OpenAiProperties {
             .filter(StringUtils::hasText)
             .map(String::trim)
             .toList();
+    }
+
+    public boolean hasCredentialEncryptionKey() {
+        return StringUtils.hasText(credentialEncryptionKey);
     }
 
     @Getter

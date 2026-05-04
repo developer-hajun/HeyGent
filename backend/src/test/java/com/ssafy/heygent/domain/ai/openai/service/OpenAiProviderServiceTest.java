@@ -30,6 +30,9 @@ class OpenAiProviderServiceTest {
     @Mock
     private OpenAiResponsesClient responsesClient;
 
+    @Mock
+    private OpenAiOAuthService openAiOAuthService;
+
     private OpenAiProperties properties;
     private OpenAiProviderService openAiProviderService;
 
@@ -39,7 +42,7 @@ class OpenAiProviderServiceTest {
         properties.setApiKey("test-api-key");
         properties.setDefaultModel("gpt-5.4");
         properties.setAllowedModels(List.of("gpt-5.4", "gpt-5.4-mini"));
-        openAiProviderService = new OpenAiProviderService(properties, responsesClient);
+        openAiProviderService = new OpenAiProviderService(properties, responsesClient, openAiOAuthService);
     }
 
     @Test
@@ -110,13 +113,42 @@ class OpenAiProviderServiceTest {
     }
 
     @Test
-    void createResponseKeepsOauthProviderReservedUntilTokenStorageIsImplemented() {
+    void createResponseUsesOAuthProviderToken() {
         OpenAiResponsesCommand command = command("openai_oauth", "gpt-5.4");
+        OpenAiResponsesResult expected = result("openai_oauth", "gpt-5.4");
+
+        when(openAiOAuthService.resolveAccessToken(1L)).thenReturn("oauth-access-token");
+        when(responsesClient.callWithBearerToken(
+            any(OpenAiResponsesCommand.class),
+            eq("gpt-5.4"),
+            eq("oauth-access-token"),
+            eq(OpenAiProviderName.OPENAI_OAUTH)
+        )).thenReturn(expected);
+
+        OpenAiResponsesResult response = openAiProviderService.createResponse(command);
+
+        assertThat(response).isEqualTo(expected);
+        assertThat(response.providerName()).isEqualTo("openai_oauth");
+    }
+
+    @Test
+    void createResponseFailsWhenOauthProviderHasNoUserId() {
+        OpenAiResponsesCommand command = new OpenAiResponsesCommand(
+            null,
+            "task-1",
+            "step-1",
+            "openai_oauth",
+            "gpt-5.4",
+            List.of(Map.of("role", "user", "content", "hello")),
+            List.of(),
+            null,
+            Map.of("sessionKey", "workspace-a")
+        );
 
         assertThatThrownBy(() -> openAiProviderService.createResponse(command))
             .isInstanceOf(CustomException.class)
             .extracting("errorCode")
-            .isEqualTo(ErrorCode.OPENAI_PROVIDER_NOT_CONFIGURED);
+            .isEqualTo(ErrorCode.INVALID_INPUT_VALUE);
     }
 
     @Test
