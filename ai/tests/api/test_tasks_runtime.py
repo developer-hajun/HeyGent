@@ -353,10 +353,29 @@ def test_agent_loop_switches_active_steprun_when_llm_declares_next_step(client, 
                                     "summary": "이승엽 기록 근거 조사 중",
                                     "goal": "공식 기록과 주요 이력을 확인한다.",
                                     "status": "in_progress",
+                                },
+                                {
+                                    "id": "write",
+                                    "title": "이승엽 조사 문서 작성",
+                                    "summary": "이승엽 조사 문서 작성 준비 중",
+                                    "goal": "확인한 내용을 마크다운 문서로 저장한다.",
+                                    "status": "pending",
+                                },
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_todo_research",
+                        "todo",
+                        {
+                            "todos": [
+                                {
+                                    "content": "이승엽 관련 공식 기록 확인",
+                                    "status": "in_progress",
                                 }
                             ]
                         },
-                    )
+                    ),
                 ]
             ),
             _response(
@@ -420,8 +439,48 @@ def test_agent_loop_switches_active_steprun_when_llm_declares_next_step(client, 
     assert (workspace / "tmp/testfile/lee.md").read_text(encoding="utf-8") == "# 이승엽\n"
 
     events = client.app.state.repository.list_events(body["task_run_id"])
-    step_created = [event for event in events if event.event_type == "step.created"]
-    assert [event.summary_message for event in step_created] == ["이승엽 기록 근거 조사 중", "이승엽 조사 문서 작성 중"]
+    step_created_events = [event for event in events if event.event_type == "step.created"]
+    step_started_events = [event for event in events if event.event_type == "step.started"]
+    todo_started_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "tool.started" and event.payload.get("tool_name") == "todo"
+    )
+    write_started_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "tool.started" and event.payload.get("tool_name") == "write_file"
+    )
+    write_step_created_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "step.created" and event.payload.get("step_title") == "이승엽 조사 문서 작성"
+    )
+    write_step_started_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "step.started" and event.payload.get("step_title") == "이승엽 조사 문서 작성"
+    )
+
+    assert [event.payload["step_title"] for event in step_created_events] == [
+        "이승엽 기록 근거 조사",
+        "이승엽 조사 문서 작성",
+    ]
+    assert [event.payload["step_title"] for event in step_started_events] == [
+        "이승엽 기록 근거 조사",
+        "이승엽 조사 문서 작성",
+    ]
+    # LLM이 선언한 다음 StepRun shell은 실제 다음 도구가 실행되기 전에 먼저 프론트로 내려가야 한다.
+    assert write_step_created_index < todo_started_index
+    # pending shell은 현재 단계의 실제 도구가 도는 동안에는 started 되면 안 된다.
+    assert todo_started_index < write_step_started_index
+    # 다음 단계가 active로 전환될 때만 running 상태가 되고, 그 뒤에 실제 파일 도구가 붙는다.
+    assert write_step_started_index < write_started_index
+
+    assert [event.summary_message for event in step_created_events] == [
+        "이승엽 기록 근거 조사 중",
+        "이승엽 조사 문서 작성 준비 중",
+    ]
 
     write_events = [
         event
@@ -433,6 +492,98 @@ def test_agent_loop_switches_active_steprun_when_llm_declares_next_step(client, 
     assert write_events[0].payload["input"]["path"] == "tmp/testfile/lee.md"
     assert write_events[-1].payload["result"]["path"] == "tmp/testfile/lee.md"
     assert len({event.step_run_id for event in events if event.event_type == "step.completed"}) == 2
+
+
+def test_agent_loop_moves_tool_to_matching_pending_steprun(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "pending-tool-workspace"
+    workspace.mkdir()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "research",
+                                    "title": "이승엽 자료 조사",
+                                    "summary": "이승엽 주요 이력 조사 중",
+                                    "goal": "문서 작성 전에 이승엽 관련 근거를 확인한다.",
+                                    "status": "in_progress",
+                                },
+                                {
+                                    "id": "write",
+                                    "title": "이승엽 Markdown 문서 작성 및 저장",
+                                    "summary": "조사 내용을 Markdown 문서로 저장 준비 중",
+                                    "goal": "확인한 내용을 마크다운 파일로 작성해 저장한다.",
+                                    "status": "pending",
+                                },
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_write_file",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/lee-pending.md",
+                            "content": "# 이승엽\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(text="작성 완료"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "pending-tool-user",
+            "input_payload": {
+                "prompt": "이승엽에 대하여 조사하고 tmp/testfile 여기에 md 파일로 저장해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert [step["title"] for step in steps] == ["이승엽 자료 조사", "이승엽 Markdown 문서 작성 및 저장"]
+    assert all(step["status"] == "COMPLETED" for step in steps)
+    assert (workspace / "tmp/testfile/lee-pending.md").read_text(encoding="utf-8") == "# 이승엽\n"
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    research_completed_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "step.completed" and event.step_run_id == steps[0]["step_run_id"]
+    )
+    write_started_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "step.started" and event.step_run_id == steps[1]["step_run_id"]
+    )
+    write_tool_started = next(
+        event
+        for event in events
+        if event.event_type == "tool.started" and event.payload.get("tool_name") == "write_file"
+    )
+
+    # 모델이 step 전환을 한 번 더 선언하지 않아도, 이미 선언된 pending 단계에 맞는 tool은 그 단계에 묶는다.
+    assert research_completed_index < write_started_index
+    assert write_started_index < events.index(write_tool_started)
+    assert write_tool_started.step_run_id == steps[1]["step_run_id"]
+    assert [
+        event.step_run_id
+        for event in events
+        if event.event_type == "step.completed"
+    ] == [steps[0]["step_run_id"], steps[1]["step_run_id"]]
 
 
 def test_agent_loop_provider_timeout_fails_task_and_materializes_failed_step(client, monkeypatch):

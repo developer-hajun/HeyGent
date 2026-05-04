@@ -183,7 +183,9 @@ class TaskEngine:
                     outcome=outcome if candidate is observed_step else {},
                 )
 
-            if not step_is_terminal(step.status) and step.status != StepStatus.RUNNING:
+            candidate_status = str(candidate.get("status") or "").strip().lower()
+            should_start_step = candidate is observed_step or candidate_status == "completed"
+            if should_start_step and not step_is_terminal(step.status) and step.status != StepStatus.RUNNING:
                 step.status = StepStatus.RUNNING
                 step.started_at = step.started_at or task.started_at or now
                 self.repository.update_step(step)
@@ -191,15 +193,28 @@ class TaskEngine:
 
             if candidate is observed_step:
                 active_step = step
+                if candidate_status == "completed":
+                    await self._complete_observed_step(task=task, step=step, now=now)
                 continue
 
             # 모델이 이미 완료했다고 선언한 선행 의미 단계는 별도 StepRun으로 닫아
             # 프론트가 한 요청 안의 사용자 가시 단계를 여러 줄로 복원할 수 있게 한다.
-            if str(candidate.get("status") or "").strip().lower() == "completed":
+            if candidate_status == "completed":
                 await self._complete_observed_step(task=task, step=step, now=now)
 
         if active_step is None:
             return None
+        existing_current = self.repository.get_step(task.current_step_run_id) if task.current_step_run_id else None
+        if (
+            existing_current is not None
+            and existing_current.step_run_id != active_step.step_run_id
+            and step_is_terminal(active_step.status)
+            and not step_is_terminal(existing_current.status)
+        ):
+            # progress sink가 pending 단계를 이미 RUNNING으로 전환했는데,
+            # 최종 outcome의 마지막 step tool 결과가 예전 active 단계를 가리킬 수 있다.
+            # 이 경우 화면의 현재 단계와 tool 귀속이 되감기지 않도록 실제 current StepRun을 유지한다.
+            return existing_current
         task.current_step_run_id = active_step.step_run_id
         self.repository.update_task(task)
         return active_step
@@ -275,16 +290,10 @@ class TaskEngine:
 
     @staticmethod
     def _observed_steps_to_materialize(observed_steps: list[dict], current_step: dict) -> list[dict]:
-        selected: list[dict] = []
-        for observed_step in observed_steps:
-            if observed_step is current_step:
-                selected.append(observed_step)
-                break
-            if str(observed_step.get("status") or "").strip().lower() == "completed":
-                selected.append(observed_step)
-        if current_step not in selected:
-            selected.append(current_step)
-        return selected
+        _ = current_step
+        # LLM이 step 도구로 이미 선언한 사용자 가시 단계는 아직 실행 전이어도
+        # StepRun shell을 먼저 내려보낸다. 실제 시작 이벤트는 active 단계가 될 때만 보낸다.
+        return observed_steps
 
     async def resume(self, *, task: TaskRun, handler, approval_id: str, payload: dict) -> TaskRun:
         approval = self.approval_service.resolve(approval_id, payload)
@@ -574,6 +583,7 @@ class TaskEngine:
         outcome = self.outcome_inspector.inspect(step=step, outcome=outcome)
         task_status = outcome["task_status"]
         step_status = outcome["step_status"]
+        was_step_completed = step.status == StepStatus.COMPLETED
         ensure_task_transition(task.status, task_status)
         ensure_step_transition(step.status, step_status)
 
@@ -617,7 +627,7 @@ class TaskEngine:
         self.repository.update_step(step)
         await self._sync_todo_steps(task=task, handler=handler)
 
-        if task_status == TaskStatus.COMPLETED:
+        if task_status == TaskStatus.COMPLETED and not was_step_completed:
             # 다음 plan step으로 넘어가더라도 현재 StepRun은 먼저 닫아야
             # realtime UI가 이전 단계를 계속 "진행 중"으로 보지 않는다.
             await self._emit("step.completed", task, step)
@@ -679,9 +689,122 @@ class TaskEngine:
             )
             if observed_step is not None:
                 current_step = observed_step
+            elif event_type == "tool.started":
+                switched_step = await self._maybe_start_declared_pending_step_for_tool(
+                    task=task,
+                    current_step=current_step,
+                    payload=payload or {},
+                )
+                if switched_step is not None:
+                    current_step = switched_step
             await self._emit(event_type, task, current_step, payload=payload, summary_message=summary_message)
 
         return sink
+
+    async def _maybe_start_declared_pending_step_for_tool(
+        self,
+        *,
+        task: TaskRun,
+        current_step: StepRun | None,
+        payload: dict,
+    ) -> StepRun | None:
+        """pending StepRun(LLM이 먼저 선언한 의미 단계)에 맞는 tool이 시작되면 단계도 같이 전환한다.
+
+        모델이 첫 응답에서 "자료 조사"는 in_progress, "문서 작성/저장"은 pending 으로
+        올바르게 선언했더라도, 같은 응답 묶음 안에서 write_file 같은 실제 tool을 바로 호출할 수 있다.
+        이때 tool을 이전 단계에 붙이면 화면상으로는 "조사 단계에서 파일 작성"처럼 보이므로,
+        이미 LLM이 선언한 pending 단계 중 tool 성격과 가장 잘 맞는 단계가 있으면 그 단계를 RUNNING으로
+        열고 후속 tool 이벤트를 거기에 묶는다.
+        """
+
+        tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").strip()
+        if not tool_name or tool_name == "step":
+            return None
+
+        steps = self.repository.list_steps(task.task_run_id)
+        pending_steps = [step for step in steps if step.status == StepStatus.PENDING]
+        if not pending_steps:
+            return None
+
+        current_score = self._progress_tool_step_score(step=current_step, payload=payload, tool_name=tool_name)
+        scored_pending = [
+            (self._progress_tool_step_score(step=step, payload=payload, tool_name=tool_name), step)
+            for step in pending_steps
+        ]
+        best_score, best_step = max(scored_pending, key=lambda item: item[0])
+        if best_score < 2 or best_score <= current_score:
+            return None
+
+        now = utc_now()
+        live_current = self.repository.get_step(task.current_step_run_id) if task.current_step_run_id else current_step
+        if live_current is not None and live_current.step_run_id != best_step.step_run_id:
+            await self._complete_observed_step(task=task, step=live_current, now=now)
+
+        if not step_is_terminal(best_step.status) and best_step.status != StepStatus.RUNNING:
+            best_step.status = StepStatus.RUNNING
+            best_step.started_at = best_step.started_at or task.started_at or now
+            self.repository.update_step(best_step)
+            task.current_step_run_id = best_step.step_run_id
+            self.repository.update_task(task)
+            await self._emit("step.started", task, best_step)
+        return best_step
+
+    @classmethod
+    def _progress_tool_step_score(cls, *, step: StepRun | None, payload: dict, tool_name: str) -> int:
+        if step is None:
+            return 0
+
+        step_text = cls._normalized_step_match_text(
+            step.title,
+            step.summary_message,
+            step.input_payload.get("observed_step_title"),
+            step.input_payload.get("observed_step_summary"),
+            step.input_payload.get("observed_step_goal"),
+        )
+        payload_text = cls._normalized_step_match_text(
+            tool_name,
+            payload.get("title"),
+            payload.get("path"),
+            payload.get("summary"),
+            payload.get("input"),
+            payload.get("result"),
+        )
+        step_tokens = {
+            token
+            for token in re.findall(r"[0-9a-zA-Z가-힣]+", step_text)
+            if len(token) >= 2
+        }
+        score = sum(1 for token in step_tokens if token in payload_text)
+        action_hints = cls._tool_action_hints(tool_name)
+        score += sum(2 for hint in action_hints if hint in step_text)
+        return score
+
+    @staticmethod
+    def _normalized_step_match_text(*values) -> str:
+        parts: list[str] = []
+        for value in values:
+            if value is None:
+                continue
+            if isinstance(value, str):
+                parts.append(value)
+                continue
+            try:
+                parts.append(json.dumps(value, ensure_ascii=False, sort_keys=True))
+            except TypeError:
+                parts.append(str(value))
+        return " ".join(parts).lower()
+
+    @staticmethod
+    def _tool_action_hints(tool_name: str) -> tuple[str, ...]:
+        # runtime tool(agent.loop 안에서 LLM이 호출하는 실제 기능)의 일반 행위만 힌트로 쓴다.
+        # 사용자 의도나 특정 주제명으로 분류하지 않고, 이미 선언된 pending 단계와 tool 성격을 맞추는 용도다.
+        hints: dict[str, tuple[str, ...]] = {
+            "write_file": ("write", "save", "file", "markdown", "md", "작성", "저장", "파일", "문서"),
+            "read_file": ("read", "file", "읽기", "확인", "파일"),
+            "search_files": ("search", "find", "검색", "조사", "확인"),
+            "terminal.run": ("run", "execute", "command", "실행", "명령", "터미널"),
+        }
+        return hints.get(tool_name, ())
 
     async def _materialize_progress_step(self, *, task: TaskRun, handler, event_type: str, payload: dict) -> StepRun | None:
         """tool_call 관찰값에서 StepRun(LLM이 판단한 자연어 의미 단계)을 즉시 만든다.

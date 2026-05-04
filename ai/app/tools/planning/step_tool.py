@@ -10,14 +10,21 @@ STEP_SCHEMA = {
         "Use this for meaningful phases, not every todo item. "
         "Each title must include the target/topic/artifact and the work action. "
         "If the request has sequential flows such as gathering evidence and then creating/saving an artifact, "
-        "declare those flows as separate stages."
+        "declare those flows as separate stages. "
+        "When multiple stages are already clear, declare the active stage as in_progress and the next stage shells as pending "
+        "before running the actual work tools. "
+        "Do not call tools that belong to a pending stage until a later step call marks that stage as in_progress."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "steps": {
                 "type": "array",
-                "description": "Semantic work stages to show for this request.",
+                "description": (
+                    "Semantic work stages to show for this request. Include every meaningful stage that is already clear now; "
+                    "future stages that are not active yet should be declared as pending. "
+                    "A pending stage is display-only until a later step call marks it as in_progress."
+                ),
                 "items": {
                     "type": "object",
                     "properties": {
@@ -41,6 +48,10 @@ STEP_SCHEMA = {
                         "status": {
                             "type": "string",
                             "enum": ["pending", "in_progress", "completed", "cancelled"],
+                            "description": (
+                                "pending means a user-visible stage shell is prepared before its tools run; "
+                                "in_progress means this is the active stage; completed means the stage is done."
+                            ),
                         },
                     },
                     "required": ["id", "title", "status"],
