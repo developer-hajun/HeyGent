@@ -37,5 +37,6 @@
 
 ## 남은 이슈
 
-- `joseon-sillok-search` helper 실제 검색은 공식 사이트 연결 종료로 실패했다.
-- 3차에서 scraping 기반 skill fallback과 실패 응답 기준을 정리한다.
+- 최초 검증에서는 `joseon-sillok-search` helper 실제 검색이 실패했다.
+- 추가 확인 결과 사이트 자체와 GET 검색 URL은 정상 동작했다.
+- 원본 helper의 POST 호출 방식을 GET query 호출로 보정한 뒤 `훈민정음` 검색 smoke가 통과했다.
