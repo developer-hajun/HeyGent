@@ -547,6 +547,18 @@ class ToolCallingLoopHandler:
                 }
                 for item in todos[:12]
             ]
+        if tool_name == "step":
+            steps = [item for item in args.get("steps") or [] if isinstance(item, dict)]
+            payload["steps"] = [
+                {
+                    "id": cls._optional_text(item.get("id") or item.get("key")),
+                    "title": cls._optional_text(item.get("title") or item.get("summary")),
+                    "summary": cls._optional_text(item.get("summary") or item.get("title")),
+                    "goal": cls._optional_text(item.get("goal")),
+                    "status": cls._optional_text(item.get("status")),
+                }
+                for item in steps[:12]
+            ]
         if isinstance(result, dict):
             if result.get("ok") is False:
                 payload["ok"] = False
@@ -803,42 +815,6 @@ class ToolCallingLoopHandler:
             "tool_results": tool_results,
             "approval_response": resume_payload or {},
         }
-        if self._requires_file_write(task_input) and not self._has_successful_file_write(tool_results):
-            error_message = "파일 작성 도구가 실행되지 않았습니다. 실제 파일 생성 없이 완료할 수 없습니다."
-            operations.append(
-                {
-                    "key": self._next_operation_key(
-                        operation_counters,
-                        namespace="tool",
-                        base_key="write_file.missing",
-                    ),
-                    "title": "파일 작성 확인",
-                    "kind": "tool",
-                    "status": "failed",
-                    "summary": error_message,
-                }
-            )
-            output_payload["error"] = {
-                "code": "file_write_not_executed",
-                "message": error_message,
-            }
-            return {
-                "task_status": TaskStatus.FAILED,
-                "step_status": StepStatus.FAILED,
-                "result_payload": result_payload,
-                "output_payload": output_payload,
-                "detail_json": self._build_detail_json(
-                    tool_names=tool_names,
-                    llm_call_count=llm_call_count,
-                    model_name=model_name,
-                    todo_state=todo_state,
-                ),
-                "todo_state": todo_state,
-                "observed_steps": self._observed_semantic_steps(tool_results),
-                "summary_message": error_message,
-                "error_message": error_message,
-                "operations": operations,
-            }
         detail_json = self._build_detail_json(
             tool_names=tool_names,
             llm_call_count=llm_call_count,
@@ -878,28 +854,6 @@ class ToolCallingLoopHandler:
             # parent StepRun에 worker agent_session linkage를 만든 뒤 처리해야 한다.
             outcome["child_session"] = child_session
         return outcome
-
-    @classmethod
-    def _requires_file_write(cls, task_input: dict[str, Any]) -> bool:
-        prompt = str(task_input.get("prompt") or "")
-        plan_step_key = str(task_input.get("plan_step_key") or "").strip().lower()
-        if plan_step_key and plan_step_key not in {"write", "draft", "create_file", "save_file"}:
-            return False
-        if not re.search(r"(?i)(\b[\w./\\-]+\.(md|txt|csv|json|html|py|ts|tsx)\b|파일\s*(로|에)|저장)", prompt):
-            return False
-        return any(keyword in prompt.lower() for keyword in ("작성", "파일", "write", "draft", "create", "save", "저장"))
-
-    @staticmethod
-    def _has_successful_file_write(tool_results: list[dict[str, Any]]) -> bool:
-        for tool_result in tool_results:
-            name = str(tool_result.get("name") or "").strip()
-            if name not in {"write_file", "patch"}:
-                continue
-            result = tool_result.get("result")
-            if isinstance(result, dict) and result.get("ok") is False:
-                continue
-            return True
-        return False
 
     def _build_waiting_outcome(
         self,
