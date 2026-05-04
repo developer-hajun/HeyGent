@@ -208,7 +208,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
             'main.default',
             1,
             'main',
-            '{"promptRole":"main","toolsets":["skills","session","planning","terminal","file","delegation"]}'::jsonb,
+            '{"promptRole":"main","toolsets":["skills","session","planning","terminal","file","web","browser","delegation"]}'::jsonb,
             '{"canDelegate":true,"maxWorkerDepth":1,"maxConcurrentWorkers":3}'::jsonb
         ),
         (
@@ -217,10 +217,13 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
             'worker.default',
             1,
             'worker',
-            '{"promptRole":"worker","toolsets":["skills","terminal","file"]}'::jsonb,
-            '{"canDelegate":false,"maxWorkerDepth":0,"hardTimeoutSeconds":300,"maxIterations":50}'::jsonb
+            '{"promptRole":"worker","toolsets":["skills","terminal","file","web","browser"]}'::jsonb,
+            '{"canDelegate":false,"maxWorkerDepth":0,"hardTimeoutSeconds":900,"maxIterations":80}'::jsonb
         )
-    ON CONFLICT (owner_key, profile_key, profile_version) DO NOTHING;
+    ON CONFLICT (owner_key, profile_key, profile_version) DO UPDATE
+    SET
+        config_snapshot = EXCLUDED.config_snapshot,
+        delegation_policy = EXCLUDED.delegation_policy;
     """,
 ]
 
