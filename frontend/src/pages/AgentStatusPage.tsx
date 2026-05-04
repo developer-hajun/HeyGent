@@ -121,6 +121,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
     id: 'agent08',
     name: 'Agent 08',
     spritePath: '/assets/agents/agent08',
+    scale: 0.85,
     initialPosition: { x: 80, y: 820 },
     destinations: {
       desk: { x: 652, y: 480 },
