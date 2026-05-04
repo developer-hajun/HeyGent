@@ -1,6 +1,6 @@
 import pytest
 
-from app.domain.orchestration.runtime_planning import Planner, build_task_plan
+from app.domain.orchestration.runtime_planning import Planner, build_task_plan, inject_prompt_task_plan
 from app.tools.contracts import HandlerSpec
 
 
@@ -38,6 +38,21 @@ def test_build_task_plan_rejects_explicit_handler_routing():
                             "title": "외부 반영",
                             "entryHandlerKey": "notion.page.create",
                         }
+                    ]
+                }
+            },
+            default_task_title="agent loop 요청",
+        )
+
+
+def test_build_task_plan_rejects_duplicate_step_keys():
+    with pytest.raises(ValueError, match="task_plan step key must be unique"):
+        build_task_plan(
+            input_payload={
+                "task_plan": {
+                    "steps": [
+                        {"key": "write", "title": "첫 번째 작성"},
+                        {"key": "write", "title": "두 번째 작성"},
                     ]
                 }
             },
@@ -101,3 +116,26 @@ def test_planner_uses_explicit_task_plan_for_current_step_and_remaining_todos():
     assert plan.steps[2].entry_handler_key is None
     assert plan.steps[2].intent_type is None
     assert plan.steps[2].input_payload == {"title": "API 명세", "content": "요약"}
+
+
+def test_inject_prompt_task_plan_for_clear_multi_phase_agent_prompt():
+    payload = inject_prompt_task_plan(
+        input_payload={"prompt": "관련 자료를 조사하고 내용을 정리한 뒤 초안을 작성해줘."},
+        default_task_title="agent loop 요청",
+    )
+
+    plan = build_task_plan(input_payload=payload, default_task_title="agent loop 요청")
+
+    assert payload["task_plan_source"] == "prompt_heuristic"
+    assert plan is not None
+    assert [step.key for step in plan.steps] == ["research", "organize", "write"]
+    assert [step.title for step in plan.steps] == ["자료 조사", "내용 정리", "초안 작성"]
+
+
+def test_inject_prompt_task_plan_preserves_simple_one_shot_prompt():
+    payload = inject_prompt_task_plan(
+        input_payload={"prompt": "한 줄로 요약해줘."},
+        default_task_title="agent loop 요청",
+    )
+
+    assert "task_plan" not in payload

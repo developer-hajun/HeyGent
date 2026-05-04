@@ -24,6 +24,10 @@ def configure_test_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("HEYGENT_OPENAI_API_KEY", "")
     monkeypatch.setenv("HEYGENT_POSTGRES_DSN", "postgresql://test")
     monkeypatch.setenv("HEYGENT_REDIS_URL", "redis://test")
+    # 로컬 AI/.env의 WebSocket Origin 제한이 TestClient 기본 Origin을 막지 않도록
+    # 테스트 런타임에서는 각 테스트가 필요한 경우에만 허용 목록을 직접 설정한다.
+    monkeypatch.setenv("HEYGENT_WS_ALLOWED_ORIGINS", "")
+    monkeypatch.setenv("HEYGENT_CORS_ALLOWED_ORIGINS", "")
 
     import app.api.http.sessions as session_routes
     import app.api.http.agent_sessions as agent_session_routes

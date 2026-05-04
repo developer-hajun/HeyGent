@@ -254,6 +254,8 @@ def _message_from_row(row: Any) -> dict[str, Any]:
     metadata = _json_load(row.get("metadata"), {})
     return {
         "id": row.get("message_sequence"),
+        "message_id": row.get("message_id"),
+        "message_sequence": row.get("message_sequence"),
         "session_id": row["session_id"],
         "role": row["role"],
         "content": content.get("text"),
