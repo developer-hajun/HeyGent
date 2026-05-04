@@ -8,7 +8,7 @@ import type {
 } from '@/components/office/types'
 
 // 버튼으로 조작 가능한 에이전트 (API 연결 전 임시)
-const CONTROLLABLE_AGENTS = new Set(['agent01', 'agent02', 'agent05'])
+const CONTROLLABLE_AGENTS = new Set(['agent01', 'agent02', 'agent05', 'agent06', 'agent09'])
 
 // 에이전트별 고정 목적지 (API 연결 전 임시)
 const AGENT_FIXED_DEST: Record<string, Destination> = {
@@ -17,6 +17,11 @@ const AGENT_FIXED_DEST: Record<string, Destination> = {
   agent03: 'floorLean',
   agent04: 'sofa',
   agent05: 'calling',
+  agent06: 'sofa',
+  agent07: 'meeting',
+  agent08: 'desk',
+  agent09: 'calling',
+  agent10: 'sofa',
 }
 
 // 새 에이전트 추가 시 이 배열에 항목만 추가하면 됩니다.
@@ -84,6 +89,71 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1340, y: 300 },
       meeting: { x: 860, y: 95 },
       calling: { x: 1334, y: 665 },
+    },
+  },
+  {
+    id: 'agent06',
+    name: 'Agent 06',
+    spritePath: '/assets/agents/agent06',
+    initialPosition: { x: 1380, y: 667 },
+    destinations: {
+      desk: { x: 680, y: 430 },
+      sofa: { x: 1070, y: 250 },
+      floorLean: { x: 1290, y: 260 },
+      meeting: { x: 820, y: 95 },
+      calling: { x: 1070, y: 658 },
+    },
+  },
+  {
+    id: 'agent07',
+    name: 'Agent 07',
+    spritePath: '/assets/agents/agent07',
+    initialPosition: { x: 140, y: 750 },
+    destinations: {
+      desk: { x: 720, y: 440 },
+      sofa: { x: 1080, y: 270 },
+      floorLean: { x: 1340, y: 280 },
+      meeting: { x: 850, y: 110 },
+      calling: { x: 1110, y: 680 },
+    },
+  },
+  {
+    id: 'agent08',
+    name: 'Agent 08',
+    spritePath: '/assets/agents/agent08',
+    initialPosition: { x: 80, y: 820 },
+    destinations: {
+      desk: { x: 652, y: 480 },
+      sofa: { x: 1090, y: 245 },
+      floorLean: { x: 1390, y: 300 },
+      meeting: { x: 870, y: 115 },
+      calling: { x: 1150, y: 658 },
+    },
+  },
+  {
+    id: 'agent09',
+    name: 'Agent 09',
+    spritePath: '/assets/agents/agent09',
+    initialPosition: { x: 1380, y: 770 },
+    destinations: {
+      desk: { x: 800, y: 440 },
+      sofa: { x: 1100, y: 260 },
+      floorLean: { x: 1440, y: 270 },
+      meeting: { x: 890, y: 100 },
+      calling: { x: 1200, y: 658 },
+    },
+  },
+  {
+    id: 'agent10',
+    name: 'Agent 10',
+    spritePath: '/assets/agents/agent10',
+    initialPosition: { x: 200, y: 820 },
+    destinations: {
+      desk: { x: 840, y: 430 },
+      sofa: { x: 1120, y: 280 },
+      floorLean: { x: 1490, y: 285 },
+      meeting: { x: 910, y: 120 },
+      calling: { x: 1250, y: 658 },
     },
   },
 ]
