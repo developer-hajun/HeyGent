@@ -15,6 +15,19 @@ _SKILLS_TOOL_DEFINITIONS = [
         toolset="skills",
         module="app.tools.skills.skills_tool",
         summary="Read a specific skill document.",
+        schema={
+            "description": "Read a specific skill document.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "Skill name from skills.list.",
+                    },
+                },
+                "required": ["skill_name"],
+            },
+        },
     ),
 ]
 

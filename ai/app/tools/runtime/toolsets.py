@@ -16,6 +16,10 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
         description="Skill browsing and reading tools.",
         tools=("skills.list", "skills.read"),
     ),
+    "skill-runtime": RuntimeToolsetDefinition(
+        description="Restricted skill execution tools.",
+        tools=("skill.execute",),
+    ),
     "session": RuntimeToolsetDefinition(
         description="Session record and recall tools.",
         tools=("session.record", "session.search"),
