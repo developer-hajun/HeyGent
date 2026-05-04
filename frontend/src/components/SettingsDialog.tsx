@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Zap,
   Database,
@@ -624,6 +624,74 @@ function ChannelsContent() {
 // ────────────────────────────────────────────────────────────────────────────
 function ExternalServicesContent() {
   const [notionConnected, setNotionConnected] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // 마운트 시 연결 상태 조회
+  useEffect(() => {
+    import('@/apis/notion').then(({ getNotionStatus }) => {
+      getNotionStatus()
+        .then((res) => setNotionConnected(res.data.connected))
+        .catch(() => {})
+    })
+  }, [])
+
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }
+
+  const handleNotionConnect = async () => {
+    try {
+      setLoading(true)
+      // 팝업 차단 방지: 창 먼저 열고 URL 나중에 설정
+      const popup = window.open('about:blank', '_blank')
+      const { getNotionConnectUrl, getNotionStatus } = await import('@/apis/notion')
+      const res = await getNotionConnectUrl()
+      if (popup) {
+        popup.location.href = res.data.url
+      } else {
+        window.open(res.data.url, '_blank')
+      }
+
+      // OAuth 창 열고 나서 연결 완료될 때까지 폴링
+      pollRef.current = setInterval(async () => {
+        try {
+          const statusRes = await getNotionStatus()
+          if (statusRes.data.connected) {
+            setNotionConnected(true)
+            stopPolling()
+            setLoading(false)
+          }
+        } catch {
+          stopPolling()
+          setLoading(false)
+        }
+      }, 2000)
+
+      // 2분 후 자동 폴링 중단
+      setTimeout(() => {
+        stopPolling()
+        setLoading(false)
+      }, 120000)
+    } catch {
+      setLoading(false)
+    }
+  }
+
+  const handleNotionDisconnect = async () => {
+    try {
+      const { disconnectNotion } = await import('@/apis/notion')
+      await disconnectNotion()
+      setNotionConnected(false)
+    } catch {
+      // 에러 무시
+    }
+  }
+
+  useEffect(() => () => stopPolling(), [])
 
   return (
     <div className="space-y-6">
@@ -666,14 +734,15 @@ function ExternalServicesContent() {
               </div>
             </div>
             <button
-              onClick={() => setNotionConnected((prev) => !prev)}
-              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+              onClick={notionConnected ? handleNotionDisconnect : handleNotionConnect}
+              disabled={loading}
+              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 ${
                 notionConnected
                   ? 'bg-muted text-muted-foreground hover:bg-muted/80'
                   : 'bg-primary hover:bg-primary/90 text-white'
               }`}
             >
-              {notionConnected ? '연결 해제' : '연결하기'}
+              {loading ? '연결 중...' : notionConnected ? '연결 해제' : '연결하기'}
             </button>
           </div>
         </div>
