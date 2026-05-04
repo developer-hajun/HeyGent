@@ -440,7 +440,8 @@ def fetch_search_page(
     timeout: int,
 ) -> SearchReport:
     payload = build_search_payload(query=query, search_type=search_type, page_index=page_index)
-    html_text = fetch_text(opener, SEARCH_URL, data=payload, timeout=timeout, referer=f"{BASE_URL}/main/main.do")
+    search_url = f"{SEARCH_URL}?{urllib.parse.urlencode(payload)}"
+    html_text = fetch_text(opener, search_url, timeout=timeout, referer=f"{BASE_URL}/main/main.do")
     return parse_search_results(html_text, query=query, search_type=search_type)
 
 
