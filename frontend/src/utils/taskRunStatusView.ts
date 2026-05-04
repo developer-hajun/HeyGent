@@ -1,4 +1,4 @@
-import type { RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
+import { type RawTaskEventPayload, isJsonObject } from '@/realtime/aiRealtimeTypes'
 import type {
   ActivityItemView,
   RawApproval,
@@ -47,11 +47,9 @@ const STATUS_TEXT: Record<string, string> = {
 export const toTaskRunStatusTone = (status?: string | null): TaskRunStatusTone => {
   switch (status) {
     case 'RUNNING':
-    case 'PENDING':
     case 'accepted':
     case 'task.created':
     case 'task.started':
-    case 'step.created':
     case 'step.started':
     case 'tool.started':
     case 'search.started':
@@ -134,7 +132,9 @@ export const toTaskRunSummaryView = (
   taskRun: RawTaskRun | undefined,
   events: RawTaskEventPayload[] = [],
 ): TaskRunSummaryView => {
-  const sortedEvents = sortTaskRunEvents(events)
+  const sortedEvents = sortTaskRunEvents(
+    events.filter((event) => !isInternalStepAnchorEvent(event)),
+  )
   const lastEvent = sortedEvents.at(-1)
   const status = taskRun?.status ?? lastEvent?.status ?? lastEvent?.event_type
   const title = getTaskRunDisplayTitle(taskRun) ?? lastEvent?.summary_message ?? '답변 진행'
@@ -168,9 +168,11 @@ export const toTaskRunDetailSummaryView = ({
   recovering = false,
   recoveryAfterSequence,
 }: TaskRunDetailSummaryInput): TaskRunDetailSummaryView => {
-  const sortedEvents = sortTaskRunEvents(events)
+  const visibleEvents = events.filter((event) => !isInternalStepAnchorEvent(event))
+  const visibleStepRuns = stepRuns.filter((stepRun) => !isInternalStepAnchorStepRun(stepRun))
+  const sortedEvents = sortTaskRunEvents(visibleEvents)
   const latestEvent = sortedEvents.at(-1)
-  const latestStepRun = selectLatestStepRun(taskRun, stepRuns)
+  const latestStepRun = selectLatestStepRun(taskRun, visibleStepRuns)
   const pendingApproval = selectPendingApproval(approvals)
   const summary = toTaskRunSummaryView(taskRun, sortedEvents)
 
@@ -185,6 +187,28 @@ export const toTaskRunDetailSummaryView = ({
     recoveryAfterSequence,
   }
 }
+
+export const isInternalStepAnchorEvent = (event: RawTaskEventPayload) =>
+  isInternalStepAnchorPayload(event.payload)
+
+export const isInternalStepAnchorStepRun = (stepRun: RawStepRun) => {
+  if (stepRun.internal_step_anchor === true || stepRun.internalStepAnchor === true) {
+    return true
+  }
+  const inputPayload = isJsonObject(stepRun.input_payload) ? stepRun.input_payload : undefined
+  return (
+    inputPayload?.progress_fallback_step === true ||
+    inputPayload?.internal_step_anchor === true ||
+    inputPayload?.internalStepAnchor === true
+  )
+}
+
+const isInternalStepAnchorPayload = (payload: unknown) =>
+  isJsonObject(payload) &&
+  (payload.internal_step_anchor === true ||
+    payload.internalStepAnchor === true ||
+    payload.step_visibility === 'internal' ||
+    payload.stepVisibility === 'internal')
 
 const selectLatestStepRun = (taskRun: RawTaskRun | undefined, stepRuns: RawStepRun[]) => {
   const currentStepRunId =
@@ -209,6 +233,12 @@ const selectPendingApproval = (approvals: RawApproval[]) =>
   [...approvals].sort(compareApprovals).at(-1)
 
 const compareStepRuns = (first: RawStepRun, second: RawStepRun) => {
+  const firstStepOrder = getStepRunOrder(first)
+  const secondStepOrder = getStepRunOrder(second)
+  if (firstStepOrder !== undefined && secondStepOrder !== undefined) {
+    return firstStepOrder - secondStepOrder
+  }
+
   const firstSequence = typeof first.sequence === 'number' ? first.sequence : undefined
   const secondSequence = typeof second.sequence === 'number' ? second.sequence : undefined
 
@@ -220,6 +250,16 @@ const compareStepRuns = (first: RawStepRun, second: RawStepRun) => {
     getComparableTime(first.started_at ?? first.completed_at) -
     getComparableTime(second.started_at ?? second.completed_at)
   )
+}
+
+const getStepRunOrder = (stepRun: RawStepRun) => {
+  if (typeof stepRun.step_order === 'number' && Number.isFinite(stepRun.step_order)) {
+    return stepRun.step_order
+  }
+  if (typeof stepRun.stepOrder === 'number' && Number.isFinite(stepRun.stepOrder)) {
+    return stepRun.stepOrder
+  }
+  return undefined
 }
 
 const compareApprovals = (first: RawApproval, second: RawApproval) =>

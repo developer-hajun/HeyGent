@@ -6,6 +6,8 @@ import sys
 
 from app.clients.backend_auth import BackendAuthVerifyResult
 from app.contracts.event.task_events import TaskEventEnvelope
+from app.contracts.task.task_status import TaskStatus
+from app.domain.orchestration.delegation.spec import ChildSessionLaunchResult
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse, AssistantToolCall
 from app.domain.tasks.models import StepRun, TaskRun
 from app.storage.redis import FakeRedis, RedisTaskProjectionStore
@@ -174,6 +176,142 @@ def test_agent_loop_emits_runtime_tool_progress_events_before_completion(client,
     assert [event.status for event in tool_completed] == ["COMPLETED", "COMPLETED"]
     assert tool_completed[0].summary_message == "이승엽 기록 자료 조사"
     assert tool_completed[1].payload["path"] == "tmp/testfile/progress.md"
+
+
+def test_agent_loop_materializes_fallback_step_before_first_tool_without_step_declaration(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "fallback-step-workspace"
+    workspace.mkdir()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_write",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/fallback.md",
+                            "content": "fallback step\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(text="fallback done"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "fallback-step-user",
+            "input_payload": {
+                "prompt": "파일을 바로 작성해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert (workspace / "tmp/testfile/fallback.md").read_text(encoding="utf-8") == "fallback step\n"
+
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert len(steps) == 1
+    assert steps[0]["title"] == "tmp/testfile/fallback.md 파일 작성"
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    step_created = next(event for event in events if event.event_type == "step.created")
+    step_started = next(event for event in events if event.event_type == "step.started")
+    tool_started = next(event for event in events if event.event_type == "tool.started")
+    assert events.index(step_created) < events.index(tool_started)
+    assert events.index(step_started) < events.index(tool_started)
+    assert tool_started.step_run_id == steps[0]["step_run_id"]
+    assert step_created.payload["internal_step_anchor"] is True
+    assert tool_started.payload["internal_step_anchor"] is True
+    assert tool_started.payload["step_visibility"] == "internal"
+
+
+def test_agent_loop_closes_fallback_step_when_llm_declares_semantic_steps_later(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "fallback-to-semantic-workspace"
+    workspace.mkdir()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_probe",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/probe.md",
+                            "content": "probe\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "research",
+                                    "title": "자료 조사",
+                                    "summary": "자료 조사 완료",
+                                    "goal": "근거를 확인한다.",
+                                    "status": "completed",
+                                },
+                                {
+                                    "id": "write",
+                                    "title": "보고서 작성",
+                                    "summary": "보고서 작성 중",
+                                    "goal": "결과를 문서로 정리한다.",
+                                    "status": "in_progress",
+                                },
+                            ]
+                        },
+                    )
+                ]
+            ),
+            _response(text="semantic steps done"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "fallback-semantic-user",
+            "input_payload": {
+                "prompt": "먼저 확인한 뒤 의미 단계를 선언해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert [step["status"] for step in steps] == ["COMPLETED", "COMPLETED", "COMPLETED"]
+    assert steps[0]["input_payload"]["progress_fallback_step"] is True
+    assert [step["title"] for step in steps[1:]] == ["자료 조사", "보고서 작성"]
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    fallback_completed = next(
+        event
+        for event in events
+        if event.event_type == "step.completed" and event.step_run_id == steps[0]["step_run_id"]
+    )
+    task_completed = next(event for event in events if event.event_type == "task.completed")
+    assert events.index(fallback_completed) < events.index(task_completed)
 
 
 def test_agent_loop_does_not_create_steprun_before_first_provider_call(client, monkeypatch):
@@ -584,6 +722,138 @@ def test_agent_loop_moves_tool_to_matching_pending_steprun(client, monkeypatch, 
         for event in events
         if event.event_type == "step.completed"
     ] == [steps[0]["step_run_id"], steps[1]["step_run_id"]]
+
+
+def test_agent_loop_keeps_delegate_step_running_until_worker_result_before_file_write(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "delegate-order-workspace"
+    workspace.mkdir()
+
+    async def fake_worker_start(**kwargs):
+        return ChildSessionLaunchResult(
+            agent_id="agent_web_research",
+            status=TaskStatus.COMPLETED,
+            summary="웹 자료 조사, 실무 운영 관점, 아키텍처 관점, 사용자 경험 관점 검토 완료",
+            output_payload={
+                "tool_results": [
+                    {"tool_call_id": "worker_web", "name": "web_search", "result": {"ok": True}},
+                ]
+            },
+        )
+
+    client.app.state.child_session_launcher.bind_worker_start(fake_worker_start)
+    provider_calls = _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step_plan",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "write",
+                                    "title": "종합 보고서와 관점별 md 파일 작성",
+                                    "summary": "조사 결과를 파일로 저장한다.",
+                                    "goal": "최종 보고서와 관점별 요약 파일을 만든다.",
+                                    "status": "pending",
+                                },
+                                {
+                                    "id": "research",
+                                    "title": "AI 서브에이전트 depth1 설계 관점별 조사",
+                                    "summary": "worker 서브에이전트로 관점별 조사를 진행한다.",
+                                    "goal": "관점별 조사 결과를 모은다.",
+                                    "status": "in_progress",
+                                },
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_delegate",
+                        "delegate_task",
+                        {
+                            "goal": "AI 서브에이전트 depth1 설계 관점별 조사",
+                            "context": "웹 자료, 실무 운영, 아키텍처, 사용자 경험 관점을 분리해 검토한다.",
+                            "toolsets": ["web", "file"],
+                            "max_iterations": 5,
+                        },
+                    ),
+                    _tool_call(
+                        "call_write_too_early",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/depth1/report.md",
+                            "content": "# premature\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_write_after_worker",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/depth1/report.md",
+                            "content": "# AI 서브에이전트 depth1 설계\n\nworker 조사 완료 후 작성\n",
+                        },
+                    )
+                ]
+            ),
+            _response(text="보고서 저장 완료"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "delegate-order-user",
+            "input_payload": {
+                "prompt": "AI 서브에이전트를 depth1로만 두는 설계를 조사하고 tmp/testfile 아래에 md로 정리해줘.",
+                "workspace_root": str(workspace),
+                "enabled_toolsets": ["local-core", "delegation", "file", "web"],
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert (workspace / "tmp/testfile/depth1/report.md").read_text(encoding="utf-8").startswith("# AI 서브에이전트 depth1 설계")
+
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert [step["title"] for step in steps] == [
+        "AI 서브에이전트 depth1 설계 관점별 조사",
+        "종합 보고서와 관점별 md 파일 작성",
+    ]
+    research_step, write_step = steps
+    assert research_step["detail_json"]["agentDetail"]["workerSessionId"] is not None
+    assert research_step["detail_json"]["agentDetail"]["workers"][0]["status"] == TaskStatus.COMPLETED
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    delegate_update = next(
+        event
+        for event in events
+        if event.event_type == "step.updated"
+        and event.step_run_id == research_step["step_run_id"]
+        and event.payload.get("reason") == "delegate.started"
+    )
+    write_tool_started = next(
+        event
+        for event in events
+        if event.event_type == "tool.started" and event.payload.get("tool_call_id") == "call_write_after_worker"
+    )
+    assert events.index(delegate_update) < events.index(write_tool_started)
+    assert write_tool_started.step_run_id == write_step["step_run_id"]
+
+    first_turn_tool_messages = [
+        message for message in provider_calls[1]["messages"]
+        if getattr(message, "tool_call_id", None) in {"call_delegate", "call_write_too_early"}
+    ]
+    assert "관점 검토 완료" in first_turn_tool_messages[0].content
+    assert "이번 turn에서 실행하지 않았습니다" in first_turn_tool_messages[1].content
 
 
 def test_agent_loop_provider_timeout_fails_task_and_materializes_failed_step(client, monkeypatch):

@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import pytest
 
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
@@ -268,6 +269,58 @@ def test_delegate_task_tool_result_becomes_child_session_outcome():
     assert outcome["child_session"]["goal"] == "분리 검증"
     assert outcome["child_session"]["toolsets"] == ["file"]
     assert outcome["child_session"]["max_iterations"] == 2
+
+
+@pytest.mark.asyncio
+async def test_delegate_task_executes_worker_before_deferring_later_sibling_tools():
+    provider = FakeProvider(
+        [
+            _response(
+                tool_calls=[
+                    _tool_call("call_delegate", "delegate_task", {"goal": "웹 자료 조사", "toolsets": ["web"]}),
+                    _tool_call("call_write", "write_file", {"path": "tmp/report.md", "content": "# report"}),
+                ]
+            ),
+            _response(text="worker 결과를 보고 다음 행동을 다시 판단했습니다."),
+        ]
+    )
+    runtime = DelegationRuntime()
+    handler = ToolCallingLoopHandler(
+        provider=provider,
+        prompt_builder=FakePromptBuilder(),
+        tool_runtime=runtime,
+        tool_catalog=FakeDelegateToolCatalog(),
+        tool_guard=StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW)),
+    )
+
+    async def delegate_executor(*, child_session, tool_call_id, args, accepted_result):
+        assert child_session["goal"] == "웹 자료 조사"
+        return {
+            "ok": True,
+            "content": "worker 조사 요약",
+            "delegate": {
+                "agent_id": "agent_web",
+                "workerSessionId": "session_worker_web",
+                "profileKey": "worker.default",
+                "status": TaskStatus.COMPLETED,
+                "summary": "worker 조사 요약",
+            },
+        }
+
+    outcome = await handler.execute_async(
+        task=_task(input_payload={"prompt": "조사 후 작성", "enabled_toolsets": ["delegation", "file"]}),
+        step=_step(),
+        delegate_executor=delegate_executor,
+    )
+
+    tool_results = outcome["result_payload"]["tool_results"]
+    assert [item["name"] for item in tool_results] == ["delegate_task", "write_file"]
+    assert tool_results[0]["result"]["delegate"]["workerSessionId"] == "session_worker_web"
+    assert tool_results[1]["result"]["error"]["code"] == "tool_deferred_by_delegate_boundary"
+    assert runtime.calls == [{"name": "delegate_task", "args": {"goal": "웹 자료 조사", "toolsets": ["web"]}, "enabled_toolsets": ("delegation", "file")}]
+    assert "child_session" not in outcome
+    replayed_tool_messages = [message for message in provider.calls[1]["messages"] if isinstance(message, ToolResultMessage)]
+    assert replayed_tool_messages[0].content == "worker 조사 요약"
 
 
 def test_guard_block_appends_blocked_tool_result_without_runtime_call():
