@@ -55,6 +55,7 @@ class DevicePairingContractTest {
         LocalDateTime expiresAt = createdAt.plusMinutes(5);
 
         DevicePairingSession session = DevicePairingSession.pending(
+            "482913",
             "deskmate-c3-a1b2c3",
             "nonce-001",
             "0.1.0",
@@ -63,6 +64,7 @@ class DevicePairingContractTest {
         );
 
         assertThat(session.status()).isEqualTo(DevicePairingStatus.PENDING);
+        assertThat(session.pairCode()).isEqualTo("482913");
         assertThat(session.deviceId()).isEqualTo("deskmate-c3-a1b2c3");
         assertThat(session.expiresAt()).isEqualTo(expiresAt);
     }

@@ -3,6 +3,7 @@ package com.ssafy.heygent.domain.iot.dto;
 import java.time.LocalDateTime;
 
 public record DevicePairingSession(
+    String pairCode,
     String deviceId,
     String nonce,
     String firmwareVersion,
@@ -12,6 +13,7 @@ public record DevicePairingSession(
 ) {
 
     public static DevicePairingSession pending(
+        String pairCode,
         String deviceId,
         String nonce,
         String firmwareVersion,
@@ -19,6 +21,7 @@ public record DevicePairingSession(
         LocalDateTime expiresAt
     ) {
         return new DevicePairingSession(
+            pairCode,
             deviceId,
             nonce,
             firmwareVersion,
