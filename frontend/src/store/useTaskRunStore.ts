@@ -18,7 +18,7 @@ import type {
 } from '@/types/taskRuns'
 import { createApprovalResponseId, createClientCommandId } from '@/utils/requestId'
 import { getLastTaskRunSequence, mergeTaskRunEvents } from '@/utils/taskRunEvents'
-import { toTaskRunDetailSummaryView } from '@/utils/taskRunStatusView'
+import { isInternalStepAnchorEvent, toTaskRunDetailSummaryView } from '@/utils/taskRunStatusView'
 
 type TaskRunState = {
   taskRunsById: Record<string, RawTaskRun>
@@ -540,6 +540,8 @@ const buildRealtimeStepRunPlaceholder = (
     !isTerminalTaskRunStatus(inferredStatus)
       ? existingStepRun.status
       : inferredStatus
+  const internalStepAnchor =
+    existingStepRun?.internal_step_anchor ?? isInternalStepAnchorEvent(event)
 
   return {
     ...(existingStepRun ?? {}),
@@ -547,6 +549,13 @@ const buildRealtimeStepRunPlaceholder = (
     task_run_id: existingStepRun?.task_run_id ?? event.task_run_id,
     title: existingStepRun?.title ?? inferRealtimeStepRunTitle(event),
     status: nextStatus ?? existingStepRun?.status,
+    step_order:
+      existingStepRun?.step_order ??
+      pickTaskEventNumber(event.payload, ['step_order', 'stepOrder']),
+    stepOrder:
+      existingStepRun?.stepOrder ?? pickTaskEventNumber(event.payload, ['stepOrder', 'step_order']),
+    internal_step_anchor: internalStepAnchor ? true : undefined,
+    internalStepAnchor: internalStepAnchor ? true : undefined,
     sequence: existingStepRun?.sequence ?? event.sequence,
     started_at:
       existingStepRun?.started_at ??
@@ -583,6 +592,7 @@ const inferRealtimeStepRunStatus = (
 ): RawStepRun['status'] | undefined => {
   switch (event.event_type) {
     case 'step.created':
+      return typeof event.status === 'string' ? event.status : 'PENDING'
     case 'step.started':
     case 'step.waiting':
     case 'step.completed':
@@ -648,6 +658,21 @@ const pickTaskEventString = (value: unknown, keys: string[]) => {
     const candidate = value[key]
     if (typeof candidate === 'string' && candidate.trim() !== '') {
       return candidate.trim()
+    }
+  }
+
+  return undefined
+}
+
+const pickTaskEventNumber = (value: unknown, keys: string[]) => {
+  if (!isJsonObject(value)) {
+    return undefined
+  }
+
+  for (const key of keys) {
+    const candidate = value[key]
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return candidate
     }
   }
 

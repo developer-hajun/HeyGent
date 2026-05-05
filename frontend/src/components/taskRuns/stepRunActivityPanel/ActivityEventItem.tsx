@@ -1,40 +1,146 @@
 import { ChevronDown } from 'lucide-react'
 import type { ActivityItemView } from '@/types/taskRuns'
-import { toProgressSentence, toUserFacingTaskTitle } from './activityPanelText'
+import { toUserFacingTaskTitle } from './activityPanelText'
 import { TaskRunStatusIcon } from './TaskRunStatusIcon'
 
 export function ActivityEventItem({
   activity,
   taskRunFinished = false,
+  compact = false,
 }: {
   activity: ActivityItemView
   taskRunFinished?: boolean
+  compact?: boolean
 }) {
   // 세부 기록은 과거 이벤트의 상태를 보여준다. 다만 TaskRun이 이미 끝난 뒤에는
   // 과거 started/running 이벤트 아이콘이 계속 도는 것처럼 보이지 않게 고정 아이콘으로 바꾼다.
   const tone = taskRunFinished && activity.tone === 'running' ? 'completed' : activity.tone
+  const detailSections = buildActivityDetailSections(activity.raw)
 
   return (
-    <li className="bg-muted/30 border-border rounded-lg border">
+    <li
+      className={compact ? 'bg-muted/20 rounded-md' : 'bg-muted/30 border-border rounded-lg border'}
+    >
       <details className="group">
-        <summary className="hover:bg-muted/50 flex min-h-20 cursor-pointer list-none items-center gap-3 rounded-lg p-3 transition-colors">
+        <summary
+          className={
+            compact
+              ? 'hover:bg-muted/50 flex min-h-12 cursor-pointer list-none items-start gap-2 rounded-md px-2 py-2 transition-colors'
+              : 'hover:bg-muted/50 flex min-h-20 cursor-pointer list-none items-center gap-3 rounded-lg p-3 transition-colors'
+          }
+        >
           <TaskRunStatusIcon tone={tone} />
           <span className="min-w-0 flex-1">
-            <span className="text-foreground line-clamp-2 block text-sm font-medium [overflow-wrap:anywhere] break-words">
+            <span
+              className={
+                compact
+                  ? 'text-foreground/90 line-clamp-1 block text-xs font-medium [overflow-wrap:anywhere] break-words'
+                  : 'text-foreground line-clamp-2 block text-sm font-medium [overflow-wrap:anywhere] break-words'
+              }
+            >
               {toUserFacingTaskTitle(activity.title)}
             </span>
-            <span className="text-muted-foreground mt-1 line-clamp-1 block text-xs leading-5 [overflow-wrap:anywhere] break-words">
-              {toProgressSentence(activity.raw.status ?? activity.raw.event_type)}
+            <span className="text-muted-foreground mt-0.5 line-clamp-1 block text-xs leading-5 [overflow-wrap:anywhere] break-words">
+              {activity.statusText}
             </span>
           </span>
           <ChevronDown className="text-muted-foreground h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
         </summary>
-        {activity.occurredAt && (
-          <div className="border-border text-muted-foreground/80 border-t px-3 py-2 pl-12 text-[11px]">
-            {activity.occurredAt}
+        {(activity.occurredAt || detailSections.length > 0) && (
+          <div
+            className={
+              compact
+                ? 'border-border space-y-2 border-t px-2 py-2 pl-8'
+                : 'border-border space-y-2 border-t px-3 py-2 pl-12'
+            }
+          >
+            {activity.occurredAt && (
+              <div className="text-muted-foreground/80 text-[11px]">{activity.occurredAt}</div>
+            )}
+            {detailSections.map((section) => (
+              <details key={section.label} className="group/detail">
+                <summary className="text-muted-foreground hover:text-foreground flex cursor-pointer list-none items-center justify-between rounded px-1 py-1 text-[11px] font-medium transition-colors">
+                  <span>{section.label}</span>
+                  <ChevronDown className="h-3 w-3 shrink-0 transition-transform group-open/detail:rotate-180" />
+                </summary>
+                <pre className="bg-background/80 border-border text-muted-foreground mt-1 max-h-72 overflow-auto rounded border p-2 text-[11px] leading-4 [overflow-wrap:anywhere] whitespace-pre-wrap">
+                  {section.text}
+                </pre>
+              </details>
+            ))}
           </div>
         )}
       </details>
     </li>
   )
+}
+
+type DetailSection = {
+  label: string
+  text: string
+}
+
+const MAX_DETAIL_CHARS = 1800
+
+const buildActivityDetailSections = (raw: ActivityItemView['raw']): DetailSection[] => {
+  const sections: DetailSection[] = []
+  const payload = raw.payload
+  const payloadRecord = asRecord(payload)
+
+  if (payloadRecord !== undefined) {
+    const input = payloadRecord.input ?? payloadRecord.args
+    const result = payloadRecord.result ?? payloadRecord.output
+    const metadata = withoutKeys(payloadRecord, ['input', 'args', 'result', 'output'])
+
+    pushDetailSection(sections, '도구 입력', input)
+    pushDetailSection(sections, '도구 결과', result)
+    pushDetailSection(sections, '이벤트 payload', metadata)
+  } else {
+    pushDetailSection(sections, '이벤트 payload', payload)
+  }
+
+  pushDetailSection(sections, '상세 데이터', raw.detail_json)
+  return sections
+}
+
+const pushDetailSection = (sections: DetailSection[], label: string, value: unknown) => {
+  if (value === undefined || value === null) {
+    return
+  }
+  if (isEmptyRecord(value)) {
+    return
+  }
+
+  sections.push({
+    label,
+    text: formatDetailValue(value),
+  })
+}
+
+const formatDetailValue = (value: unknown) => {
+  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+  if (text.length <= MAX_DETAIL_CHARS) {
+    return text
+  }
+  return `${text.slice(0, MAX_DETAIL_CHARS)}\n...`
+}
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined
+  }
+  return value as Record<string, unknown>
+}
+
+const withoutKeys = (value: Record<string, unknown>, keys: string[]) => {
+  const copied = { ...value }
+  keys.forEach((key) => {
+    delete copied[key]
+  })
+  return copied
+}
+
+const isEmptyRecord = (value: unknown) => {
+  const record = asRecord(value)
+  return record !== undefined && Object.keys(record).length === 0
 }

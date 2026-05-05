@@ -1,8 +1,11 @@
 import { RotateCcw } from 'lucide-react'
 import type { ActivityItemView, RawApproval, RawStepRun, RawTaskRun } from '@/types/taskRuns'
+import { toTaskRunStatusTone } from '@/utils/taskRunStatusView'
 import { ActivityEventItem } from './ActivityEventItem'
 import { ApprovalCard } from './ApprovalCard'
 import { StepProgressItem } from './StepProgressItem'
+import { toStepProgressSentence, toUserFacingTaskTitle } from './activityPanelText'
+import { TaskRunStatusIcon } from './TaskRunStatusIcon'
 
 export function SelectedTaskRunView({
   taskRunId,
@@ -26,9 +29,34 @@ export function SelectedTaskRunView({
   const taskRunFinished = status === 'COMPLETED' || status === 'task.completed'
   // 패널이 길어지지 않도록 세부 기록 본문에는 최신 raw event 5개만 펼쳐 보여준다.
   const recentActivities = activities.slice(-5).reverse()
+  const currentStep = selectCurrentVisibleStep(taskRun, steps)
+  const currentStepActivities =
+    currentStep === undefined
+      ? []
+      : activities.filter((activity) => activity.stepRunId === currentStep.step_run_id)
+  const latestCurrentActivity = currentStepActivities.at(-1) ?? activities.at(-1)
 
   return (
     <div className="space-y-5">
+      {!taskRunFinished && (currentStep !== undefined || latestCurrentActivity !== undefined) && (
+        <section className="border-border bg-muted/30 rounded-lg border px-3 py-2">
+          <div className="flex items-start gap-2">
+            <TaskRunStatusIcon tone={toTaskRunStatusTone(currentStep?.status ?? status)} />
+            <div className="min-w-0">
+              <div className="text-foreground line-clamp-1 text-xs font-semibold [overflow-wrap:anywhere] break-words">
+                {toUserFacingTaskTitle(
+                  currentStep?.title ?? currentStep?.goal ?? latestCurrentActivity?.title,
+                )}
+              </div>
+              <div className="text-muted-foreground mt-0.5 line-clamp-1 text-[11px] [overflow-wrap:anywhere] break-words">
+                {latestCurrentActivity?.title ??
+                  toStepProgressSentence(currentStep?.status ?? status)}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {replayNeeded && (
         <section className="border-border bg-muted/40 text-muted-foreground flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
           <RotateCcw className="h-3.5 w-3.5" />
@@ -87,5 +115,25 @@ export function SelectedTaskRunView({
         </details>
       </section>
     </div>
+  )
+}
+
+function selectCurrentVisibleStep(taskRun: RawTaskRun | undefined, steps: RawStepRun[]) {
+  const currentStepRunId =
+    typeof taskRun?.current_step_run_id === 'string'
+      ? taskRun.current_step_run_id
+      : typeof taskRun?.currentStepRunId === 'string'
+        ? taskRun.currentStepRunId
+        : undefined
+
+  if (currentStepRunId !== undefined) {
+    const currentStep = steps.find((step) => step.step_run_id === currentStepRunId)
+    if (currentStep !== undefined) {
+      return currentStep
+    }
+  }
+
+  return (
+    steps.find((step) => step.status === 'RUNNING' || step.status === 'WAITING') ?? steps.at(-1)
   )
 }

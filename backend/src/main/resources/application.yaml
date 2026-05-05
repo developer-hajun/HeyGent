@@ -71,6 +71,7 @@ memory:
 openai:
   api-key: ${OPENAI_API_KEY:}
   rest-api-base-url: ${OPENAI_REST_API_BASE_URL:https://api.openai.com/v1}
+  usage-api-base-url: ${OPENAI_USAGE_API_BASE_URL:https://api.openai.com/v1}
   default-model: ${OPENAI_DEFAULT_MODEL:gpt-5.4}
   allowed-models: ${OPENAI_ALLOWED_MODELS:gpt-5.4,gpt-5.4-mini}
   embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}

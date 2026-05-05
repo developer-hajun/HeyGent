@@ -9,7 +9,7 @@ def build_child_pending_detail(*, agent_id: str, worker_session_id: str | None =
             "workerSessionId": worker_session_id,
             "profileKey": profile_key,
             "summary": None,
-            "status": "PENDING",
+            "status": "RUNNING",
         }
     }
 

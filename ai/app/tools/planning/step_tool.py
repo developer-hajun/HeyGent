@@ -8,14 +8,23 @@ STEP_SCHEMA = {
     "description": (
         "Declare or update user-visible semantic work stages for the current request. "
         "Use this for meaningful phases, not every todo item. "
-        "Each title must include the target/topic/artifact and the work action."
+        "Each title must include the target/topic/artifact and the work action. "
+        "If the request has sequential flows such as gathering evidence and then creating/saving an artifact, "
+        "declare those flows as separate stages. "
+        "When multiple stages are already clear, declare the active stage as in_progress and the next stage shells as pending "
+        "before running the actual work tools. "
+        "Do not call tools that belong to a pending stage until a later step call marks that stage as in_progress."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "steps": {
                 "type": "array",
-                "description": "Semantic work stages to show for this request.",
+                "description": (
+                    "Semantic work stages to show for this request. Include every meaningful stage that is already clear now; "
+                    "future stages that are not active yet should be declared as pending. "
+                    "A pending stage is display-only until a later step call marks it as in_progress."
+                ),
                 "items": {
                     "type": "object",
                     "properties": {
@@ -24,7 +33,7 @@ STEP_SCHEMA = {
                             "type": "string",
                             "description": (
                                 "User-visible stage title. Must include the target/topic/artifact and action, "
-                                "for example '뉴스 조사 브리핑 문서 작성' or '자소서 경험 근거 정리'. "
+                                "for example '뉴스 출처 근거 조사', '뉴스 브리핑 문서 작성', or '자소서 경험 근거 정리'. "
                                 "Do not use vague titles like '기존 자료 파악', '보강 리서치', or '최종 점검'."
                             ),
                         },
@@ -39,6 +48,10 @@ STEP_SCHEMA = {
                         "status": {
                             "type": "string",
                             "enum": ["pending", "in_progress", "completed", "cancelled"],
+                            "description": (
+                                "pending means a user-visible stage shell is prepared before its tools run; "
+                                "in_progress means this is the active stage; completed means the stage is done."
+                            ),
                         },
                     },
                     "required": ["id", "title", "status"],

@@ -47,6 +47,20 @@ class LocalToolRuntime:
                 "todo": self._todo,
                 "delegate_task": self._delegate_task,
                 "terminal.run": self._run_terminal_command,
+                "web_search": self._run_web_search,
+                "web_extract": self._run_web_extract,
+                "web_crawl": self._run_web_crawl,
+                "browser_navigate": self._run_browser_navigate,
+                "browser_snapshot": self._run_browser_snapshot,
+                "browser_click": self._run_browser_click,
+                "browser_type": self._run_browser_type,
+                "browser_scroll": self._run_browser_scroll,
+                "browser_back": self._run_browser_back,
+                "browser_press": self._run_browser_press,
+                "browser_get_images": self._run_browser_get_images,
+                "browser_vision": self._run_browser_vision,
+                "browser_console": self._run_browser_console,
+                "browser_cdp": self._run_browser_cdp,
                 "read_file": self._read_file,
                 "write_file": self._write_file,
                 "patch": self._patch_file,
@@ -226,12 +240,66 @@ class LocalToolRuntime:
     def _search_files(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_file_tool_handler("search_files_handler", args)
 
+    def _run_web_search(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.web.web_tools", "web_search_handler", args)
+
+    def _run_web_extract(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.web.web_tools", "web_extract_handler", args)
+
+    def _run_web_crawl(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.web.web_tools", "web_crawl_handler", args)
+
+    def _run_browser_navigate(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_navigate_handler", args)
+
+    def _run_browser_snapshot(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_snapshot_handler", args)
+
+    def _run_browser_click(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_click_handler", args)
+
+    def _run_browser_type(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_type_handler", args)
+
+    def _run_browser_scroll(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_scroll_handler", args)
+
+    def _run_browser_back(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_back_handler", args)
+
+    def _run_browser_press(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_press_handler", args)
+
+    def _run_browser_get_images(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_get_images_handler", args)
+
+    def _run_browser_vision(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_vision_handler", args)
+
+    def _run_browser_console(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_console_handler", args)
+
+    def _run_browser_cdp(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_cdp_handler", args)
+
     @staticmethod
     def _run_file_tool_handler(handler_name: str, args: dict[str, Any]) -> dict[str, Any]:
         from app.tools.file import file_tools
 
         # 파일 도구 구현은 별도 모듈 소유라 실행 시점에만 함수 존재를 확인한다.
         handler = getattr(file_tools, handler_name)
+        result = handler(dict(args))
+        if isinstance(result, dict):
+            return result
+        return {"ok": True, "result": result}
+
+    @staticmethod
+    def _run_external_tool_handler(module_name: str, handler_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        # 검색/브라우저 실행 모듈은 선택 의존성이 많아 호출 시점에만 불러온다.
+        import importlib
+
+        module = importlib.import_module(module_name)
+        handler = getattr(module, handler_name)
         result = handler(dict(args))
         if isinstance(result, dict):
             return result
@@ -528,14 +596,39 @@ class LocalToolRuntime:
     @staticmethod
     def _normalize_delegate_toolsets(value: Any) -> list[str]:
         if not isinstance(value, list):
-            return ["skills", "terminal", "file"]
+            return ["skills", "terminal", "file", "web"]
+        tool_name_to_toolset = {
+            "web_search": "web",
+            "web_extract": "web",
+            "web_crawl": "web",
+            "read_file": "file",
+            "write_file": "file",
+            "patch": "file",
+            "search_files": "file",
+            "terminal.run": "terminal",
+            "browser_navigate": "browser",
+            "browser_snapshot": "browser",
+            "browser_click": "browser",
+            "browser_type": "browser",
+            "browser_scroll": "browser",
+            "browser_back": "browser",
+            "browser_press": "browser",
+            "browser_get_images": "browser",
+            "browser_vision": "browser",
+            "browser_console": "browser",
+            "browser_cdp": "browser",
+        }
         normalized: list[str] = []
         for item in value:
             name = str(item or "").strip()
             if not name or name in {"delegate", "delegation", "delegate_task"} or name in normalized:
                 continue
+            # 모델이 toolset 이름 대신 실제 도구 이름을 넣어도 worker에는 올바른 toolset 계약을 넘긴다.
+            name = tool_name_to_toolset.get(name, name)
+            if name in normalized:
+                continue
             normalized.append(name)
-        return normalized or ["skills", "terminal", "file"]
+        return normalized or ["skills", "terminal", "file", "web"]
 
     @staticmethod
     def _optional_positive_int(value: Any) -> int | None:
