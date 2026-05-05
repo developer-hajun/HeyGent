@@ -6,7 +6,7 @@ from collections import defaultdict, deque
 class ApprovalQueue:
     """TaskRun 기준 FIFO 승인 큐다.
 
-    지금은 메모리 보조 구조만 두고, 영속 저장은 SQLite 가 담당한다.
+    지금은 메모리 보조 구조만 두고, 영속 저장은 repository가 담당한다.
     """
 
     def __init__(self) -> None:

@@ -49,7 +49,7 @@ class LocalCLIClient:
     """
 
     def __enter__(self):
-        self._client = TestClient(app)
+        self._client = TestClient(app, headers={"Authorization": "Bearer local-user"})
         self._client.__enter__()
         return self
 

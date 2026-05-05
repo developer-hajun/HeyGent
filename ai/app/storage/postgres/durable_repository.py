@@ -24,14 +24,14 @@ class PostgresDurableRepository:
         connection.execute(
             """
             INSERT INTO run_anchors (
-                task_run_id, session_id, owner_key, product_session_id,
+                task_run_id, session_id, owner_key, session_key,
                 current_step_run_id, durable_status, anchor_payload
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
             ON CONFLICT (task_run_id) DO UPDATE SET
                 session_id = EXCLUDED.session_id,
                 owner_key = EXCLUDED.owner_key,
-                product_session_id = EXCLUDED.product_session_id,
+                session_key = EXCLUDED.session_key,
                 current_step_run_id = EXCLUDED.current_step_run_id,
                 durable_status = EXCLUDED.durable_status,
                 anchor_payload = EXCLUDED.anchor_payload,
@@ -42,7 +42,7 @@ class PostgresDurableRepository:
                 task_run_id,
                 payload.get("session_id"),
                 owner_key,
-                payload.get("product_session_id"),
+                payload.get("session_key"),
                 payload.get("current_step_run_id"),
                 payload.get("durable_status", "OPEN"),
                 _json(payload.get("anchor_payload", {})),
@@ -63,7 +63,7 @@ class PostgresDurableRepository:
             """
             INSERT INTO step_anchors (
                 step_run_id, task_run_id, parent_step_run_id, worker_session_id,
-                step_order, step_type, executor_key, durable_status, anchor_payload
+                step_order, step_type, handler_key, durable_status, anchor_payload
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
             ON CONFLICT (step_run_id) DO UPDATE SET
@@ -72,7 +72,7 @@ class PostgresDurableRepository:
                 worker_session_id = EXCLUDED.worker_session_id,
                 step_order = EXCLUDED.step_order,
                 step_type = EXCLUDED.step_type,
-                executor_key = EXCLUDED.executor_key,
+                handler_key = EXCLUDED.handler_key,
                 durable_status = EXCLUDED.durable_status,
                 anchor_payload = EXCLUDED.anchor_payload,
                 revision = step_anchors.revision + 1,
@@ -85,7 +85,7 @@ class PostgresDurableRepository:
                 payload.get("worker_session_id"),
                 payload.get("step_order", 0),
                 payload.get("step_type", "agent.loop.execute"),
-                payload.get("executor_key"),
+                payload.get("handler_key"),
                 payload.get("durable_status", "OPEN"),
                 _json(payload.get("anchor_payload", {})),
             ),
@@ -236,7 +236,7 @@ class PostgresTaskRepository(PostgresDurableRepository):
             {
                 "owner_key": anchor["owner_key"],
                 "session_id": anchor.get("session_id"),
-                "product_session_id": anchor.get("product_session_id"),
+                "session_key": anchor.get("session_key"),
                 "current_step_run_id": anchor.get("current_step_run_id"),
                 "durable_status": anchor.get("durable_status", "OPEN"),
                 "anchor_payload": payload,
@@ -449,7 +449,7 @@ class PostgresTaskRepository(PostgresDurableRepository):
         connection = self.connection_factory()
         row = connection.execute(
             """
-            SELECT * FROM agent_profiles
+            SELECT * FROM ai_agent_profiles
             WHERE owner_key = %s AND profile_key = %s AND profile_version = %s
             """,
             (owner_key, profile_key, version),
@@ -471,7 +471,7 @@ class PostgresTaskRepository(PostgresDurableRepository):
             {
                 "owner_key": task.owner_key,
                 "session_id": payload.get("transcript_session_id"),
-                "product_session_id": task.session_key,
+                "session_key": task.session_key,
                 "current_step_run_id": task.current_step_run_id,
                 "durable_status": _durable_status(task.status),
                 "anchor_payload": payload,
@@ -489,7 +489,7 @@ class PostgresTaskRepository(PostgresDurableRepository):
                 "worker_session_id": ((step.detail_json or {}).get("agentDetail") or {}).get("workerSessionId"),
                 "step_order": step.step_order,
                 "step_type": step.step_type,
-                "executor_key": step.executor_key,
+                "handler_key": step.handler_key,
                 "durable_status": _durable_status(step.status),
                 "anchor_payload": payload,
             },
@@ -568,7 +568,7 @@ def _task_payload(task: TaskRun) -> dict[str, Any]:
         "task_run_id": task.task_run_id,
         "task_type": task.task_type,
         "intent_type": task.intent_type,
-        "entry_executor_key": task.entry_executor_key,
+        "entry_handler_key": task.entry_handler_key,
         "current_step_run_id": task.current_step_run_id,
         "owner_key": task.owner_key,
         "session_key": task.session_key,
@@ -595,7 +595,7 @@ def _task_from_payload(payload: dict[str, Any] | None) -> TaskRun | None:
         task_run_id=payload["task_run_id"],
         task_type=payload["task_type"],
         intent_type=payload.get("intent_type"),
-        entry_executor_key=payload.get("entry_executor_key"),
+        entry_handler_key=payload.get("entry_handler_key"),
         current_step_run_id=payload.get("current_step_run_id"),
         owner_key=payload["owner_key"],
         session_key=payload.get("session_key"),
@@ -621,7 +621,7 @@ def _step_payload(step: StepRun) -> dict[str, Any]:
         "task_run_id": step.task_run_id,
         "step_order": step.step_order,
         "step_type": step.step_type,
-        "executor_key": step.executor_key,
+        "handler_key": step.handler_key,
         "status": step.status,
         "title": step.title,
         "input_payload": step.input_payload,
@@ -645,7 +645,7 @@ def _step_from_payload(payload: dict[str, Any] | None) -> StepRun | None:
         task_run_id=payload["task_run_id"],
         step_order=int(payload["step_order"]),
         step_type=payload["step_type"],
-        executor_key=payload.get("executor_key"),
+        handler_key=payload.get("handler_key"),
         status=payload["status"],
         title=payload.get("title"),
         input_payload=payload.get("input_payload") or {},

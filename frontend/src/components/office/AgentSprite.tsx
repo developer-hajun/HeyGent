@@ -8,6 +8,7 @@ const SITTING_SPRITES: Record<string, string> = {
   sitting_sofa: 'sit_sofa',
   sitting_floor_lean: 'sit_floor_lean',
   sitting_meeting: 'meeting',
+  sitting_calling: 'calling',
 }
 
 const WALK_FRAMES = ['walk_side_01', 'walk_side_stand', 'walk_side_02', 'walk_side_stand'] as const
@@ -26,7 +27,8 @@ interface AgentSpriteProps {
 
 export function AgentSprite({ agent, onArrived }: AgentSpriteProps) {
   const { config, position, state, transitionDuration } = agent
-  const size = state === 'sitting_desk' ? SIZE_SITTING : SIZE_NORMAL
+  const scale = config.scale ?? 1
+  const size = (state === 'sitting_desk' ? SIZE_SITTING : SIZE_NORMAL) * scale
 
   return (
     <div

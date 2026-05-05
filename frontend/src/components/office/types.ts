@@ -1,4 +1,4 @@
-export type Destination = 'desk' | 'sofa' | 'floorLean' | 'meeting'
+export type Destination = 'desk' | 'sofa' | 'floorLean' | 'meeting' | 'calling'
 
 export type AgentState =
   | 'idle'
@@ -7,6 +7,7 @@ export type AgentState =
   | 'sitting_sofa'
   | 'sitting_floor_lean'
   | 'sitting_meeting'
+  | 'sitting_calling'
 
 export type SittingState = Exclude<AgentState, 'idle' | 'walking'>
 
@@ -16,6 +17,7 @@ export interface AgentConfig {
   spritePath: string
   initialPosition: { x: number; y: number }
   destinations: Record<Destination, { x: number; y: number }>
+  scale?: number
 }
 
 export interface AgentRuntime {

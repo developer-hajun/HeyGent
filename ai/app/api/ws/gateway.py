@@ -9,10 +9,12 @@ from typing import Callable
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
 from app.clients.backend_auth import BackendAuthVerifyError, BackendAuthVerifyResult
+from app.api.ws.commands import WebSocketAuthContext, WebSocketCommandContext, WebSocketCommandRouter
 from app.api.ws.subscriptions import handle_subscription
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+command_router = WebSocketCommandRouter()
 
 
 class WebSocketAuthRateLimiter:
@@ -70,7 +72,7 @@ def build_websocket_auth_rate_limiter(settings) -> WebSocketAuthRateLimiter:
 
 
 def _client_message_action(message: dict) -> str | None:
-    """문서 계약의 type 메시지와 기존 action 메시지를 내부 동작명으로 정규화한다."""
+    """제품 WebSocket 계약의 type 메시지를 내부 동작명으로 정규화한다."""
 
     message_type = message.get("type")
     if message_type == "auth.start":
@@ -81,27 +83,38 @@ def _client_message_action(message: dict) -> str | None:
         return "subscribe"
     if message_type == "subscribe.all":
         return "subscribe_all"
-
-    legacy_action = message.get("action")
-    if legacy_action in {"auth", "ping", "subscribe", "subscribe_all"}:
-        return legacy_action
     return None
 
 
 def _client_task_run_id(message: dict) -> str | None:
-    """신규 camelCase 계약과 기존 snake_case 필드를 모두 받아 전환기 호환성을 유지한다."""
+    """제품 WebSocket 계약의 camelCase TaskRun ID를 읽는다."""
 
-    task_run_id = message.get("taskRunId")
+    payload = message.get("payload")
+    payload_dict = payload if isinstance(payload, dict) else {}
+    task_run_id = message.get("taskRunId") or payload_dict.get("taskRunId") or payload_dict.get("task_run_id")
     if isinstance(task_run_id, str) and task_run_id:
         return task_run_id
-
-    legacy_task_run_id = message.get("task_run_id")
-    if isinstance(legacy_task_run_id, str) and legacy_task_run_id:
-        return legacy_task_run_id
     return None
 
 
-async def _authenticate_first_message(websocket: WebSocket) -> BackendAuthVerifyResult | None:
+def _client_last_sequence(message: dict) -> int | None:
+    """구독 재개 시 client가 마지막으로 본 TaskRun sequence를 읽는다."""
+
+    payload = message.get("payload")
+    payload_dict = payload if isinstance(payload, dict) else {}
+    value = message.get("lastSequence")
+    if value is None:
+        value = payload_dict.get("lastSequence", payload_dict.get("last_sequence"))
+    if value is None:
+        return None
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        return None
+    return result if result >= 0 else None
+
+
+async def _authenticate_first_message(websocket: WebSocket) -> WebSocketAuthContext | None:
     """인증 완료 전 상태 전이를 처리한다."""
 
     auth_client = websocket.app.state.backend_auth_client
@@ -124,26 +137,37 @@ async def _authenticate_first_message(websocket: WebSocket) -> BackendAuthVerify
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return None
 
-        access_token = message.get("accessToken")
+        payload = message.get("payload")
+        payload_dict = payload if isinstance(payload, dict) else {}
+        # 브라우저 WebSocket은 Authorization header를 못 붙이므로 첫 frame payload로 토큰을 보낸다.
+        # 전환기에는 기존 top-level 필드와 문서화된 payload 필드를 모두 허용한다.
+        access_token = message.get("accessToken") or payload_dict.get("accessToken") or payload_dict.get("access_token")
         if not isinstance(access_token, str) or not access_token:
             await websocket.send_json({"type": "auth.failed"})
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return None
 
-        workspace_key = message.get("workspaceKey")
+        workspace_key = message.get("workspaceKey") or payload_dict.get("workspaceKey") or payload_dict.get("workspace_key")
         if workspace_key is not None and not isinstance(workspace_key, str):
             await websocket.send_json({"type": "auth.failed"})
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return None
 
         try:
-            result = await auth_client.verify_access_token(access_token, workspace_key=(workspace_key or None))
+            result: BackendAuthVerifyResult = await auth_client.verify_access_token(access_token, workspace_key=(workspace_key or None))
         except BackendAuthVerifyError:
             await websocket.send_json({"type": "auth.failed"})
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return None
 
-        return result
+        return WebSocketAuthContext(
+            user_id=result.user_id,
+            access_token=access_token,
+            workspace_key=result.workspace_key,
+            scopes=list(result.scopes),
+            token_expires_at=result.token_expires_at,
+            scope_expires_at=result.scope_expires_at,
+        )
 
 
 async def _handle_gateway_socket(websocket: WebSocket) -> None:
@@ -153,6 +177,8 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
     session_id: str | None = None
     connection_id: str | None = None
     user_id: str | None = None
+    background_tasks: set[asyncio.Task] = set()
+    after_response_callbacks: list[Callable[[], None]] = []
     client_key = _websocket_client_key(websocket)
     rate_limiter = getattr(websocket.app.state, "ws_auth_rate_limiter", None)
     if not _websocket_origin_allowed(websocket):
@@ -163,9 +189,15 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
         return
 
     await manager.connect(websocket)
+
+    async def send_json(message: dict) -> None:
+        # command 응답, pong, TaskRun 이벤트가 모두 WebSocketManager의 같은 전송 lock을 거친다.
+        # 이렇게 해야 한 브라우저 연결에 frame이 동시에 쓰이면서 순서가 꼬이는 상황을 막을 수 있다.
+        await manager.send_json(websocket, message)
+
     try:
-        auth_result = await _authenticate_first_message(websocket)
-        if auth_result is None:
+        auth_context = await _authenticate_first_message(websocket)
+        if auth_context is None:
             if rate_limiter is not None:
                 rate_limiter.record_failure(client_key)
             return
@@ -173,7 +205,7 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
         # client query string의 userId/session_id는 위조 가능하므로 backend 검증 결과의 user_id만 세션 키로 사용한다.
         if rate_limiter is not None:
             rate_limiter.record_success(client_key)
-        user_id = auth_result.user_id
+        user_id = auth_context.user_id
         session_id = f"user:{user_id}"
         connection_id = token_urlsafe(24)
         try:
@@ -189,13 +221,23 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
             return
 
         auth_response = {"type": "auth.ok", "userId": user_id}
-        if auth_result.workspace_key is not None:
-            auth_response["workspaceKey"] = auth_result.workspace_key
-        await websocket.send_json(auth_response)
+        if auth_context.workspace_key is not None:
+            auth_response["workspaceKey"] = auth_context.workspace_key
+        await send_json(auth_response)
+        command_context = WebSocketCommandContext(
+            websocket=websocket,
+            auth=auth_context,
+            gateway_session_id=session_id,
+            session_service=session_service,
+            send_json=send_json,
+            background_tasks=background_tasks,
+            after_response_callbacks=after_response_callbacks,
+        )
         while True:
             message = await websocket.receive_json()
             action = _client_message_action(message)
             task_run_id = _client_task_run_id(message)
+            last_sequence = _client_last_sequence(message)
             if action == "subscribe" and task_run_id:
                 await handle_subscription(
                     websocket,
@@ -203,16 +245,20 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
                     session_id=session_id,
                     authenticated_user_id=user_id,
                     task_run_id=task_run_id,
+                    last_sequence=last_sequence,
+                    request_id=message.get("requestId"),
+                    send_json=send_json,
                 )
             elif action == "subscribe_all":
                 # 전체 토픽 구독은 사용자별 소유권 검증을 우회하므로 제품 WebSocket에서는 열지 않는다.
-                await websocket.send_json(
-                    {
-                        "type": "subscription.denied",
-                        "task_run_id": "all",
-                        "reason": "subscribe_all_disabled",
-                    }
-                )
+                response = {
+                    "type": "subscription.denied",
+                    "taskRunId": "all",
+                    "reason": "subscribe_all_disabled",
+                }
+                if message.get("requestId") is not None:
+                    response["requestId"] = message.get("requestId")
+                await send_json(response)
             elif action == "ping":
                 try:
                     await connection_registry.touch_connection(
@@ -223,7 +269,11 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
                 except Exception:
                     # heartbeat refresh 실패는 다음 ping/reconnect에서 복구할 수 있으므로 연결 자체는 유지한다.
                     logger.exception("웹소켓 연결 TTL 갱신에 실패했습니다.")
-                await websocket.send_json({"type": "pong"})
+                await send_json({"type": "pong"})
+            elif await command_router.handle(message, command_context):
+                continue
+            elif isinstance(message.get("type"), str):
+                await command_router.send_unknown_command_error(message, command_context)
     except WebSocketDisconnect:
         pass
     finally:
@@ -242,26 +292,8 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
         manager.disconnect(websocket)
 
 
-@router.websocket("/gateway/ws")
-async def websocket_gateway(websocket: WebSocket) -> None:
-    """권장 WebSocket 경로다.
-
-    HTTP 표면이 `/ai/api/v1/...` 로 정리된 뒤에는,
-    WebSocket 도 단순 `/ws` 보다 `/gateway/ws` 가 역할을 더 명확히 보여 준다.
-    """
-
-    await _handle_gateway_socket(websocket)
-
-
 @router.websocket("/realtime/user/ws")
 async def websocket_realtime_user(websocket: WebSocket) -> None:
     """제품 클라이언트가 사용하는 canonical WebSocket 경로다."""
-
-    await _handle_gateway_socket(websocket)
-
-
-@router.websocket("/ws")
-async def websocket_gateway_legacy(websocket: WebSocket) -> None:
-    """이전 테스트나 임시 클라이언트를 위한 호환 경로다."""
 
     await _handle_gateway_socket(websocket)
