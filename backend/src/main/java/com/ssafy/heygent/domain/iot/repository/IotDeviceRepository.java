@@ -15,6 +15,8 @@ public interface IotDeviceRepository extends JpaRepository<IotDevice, Long> {
 
     Optional<IotDevice> findByDeviceId(String deviceId);
 
+    Optional<IotDevice> findByUserId(Long userId);
+
     Optional<IotDevice> findByDeviceIdAndUserId(String deviceId, Long userId);
 
     List<IotDevice> findAllByUserIdOrderByCreatedAtDesc(Long userId);
