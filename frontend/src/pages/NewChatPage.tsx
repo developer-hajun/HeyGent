@@ -1,4 +1,4 @@
-import { Sparkles, Send, Code, Calendar, Apple, Activity, Mic, Bot } from 'lucide-react'
+import { Sparkles, Send, Code, Calendar, Apple, Activity, Mic, Bot, AudioLines } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
@@ -149,15 +149,27 @@ export function NewChatPage() {
               >
                 <Mic className="h-4 w-4" />
               </button>
-              <button
-                type="button"
-                onClick={() => void handleSend()}
-                aria-label="새 대화 메시지 보내기"
-                className="bg-primary hover:bg-primary/90 shrink-0 rounded-xl p-2 text-white transition-colors disabled:opacity-40"
-                disabled={!inputValue.trim() || isSending || commandClient === null}
-              >
-                <Send className={`h-4 w-4 ${isSending ? 'animate-pulse' : ''}`} />
-              </button>
+              {inputValue.trim() ? (
+                <button
+                  type="button"
+                  onClick={() => void handleSend()}
+                  aria-label="새 대화 메시지 보내기"
+                  className="bg-primary hover:bg-primary/90 shrink-0 rounded-xl p-2 text-white transition-colors disabled:opacity-40"
+                  disabled={isSending || commandClient === null}
+                >
+                  <Send className={`h-4 w-4 ${isSending ? 'animate-pulse' : ''}`} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => navigate('/session/voice', { state: { voiceMode: true } })}
+                  aria-label="음성 대화 모드"
+                  title="음성 대화 모드"
+                  className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-xl p-2 text-white transition-colors"
+                >
+                  <AudioLines className="h-4 w-4" />
+                </button>
+              )}
             </div>
             {sendError && <p className="text-destructive px-5 pb-2 text-xs">{sendError}</p>}
             {!sendError && providerMessage && (
