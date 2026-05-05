@@ -5,6 +5,15 @@ import type { AgentRuntime } from './types'
 const MAP_WIDTH = 1600
 const MAP_HEIGHT = 900
 
+function getOfficeMapSrc(): string {
+  const hour = new Date().getHours()
+  if (hour >= 8 && hour < 16) return '/assets/maps/office_map_day.png'
+  if (hour >= 16 && hour < 18) return '/assets/maps/office_map_sunset.png'
+  if (hour >= 6 && hour < 8) return '/assets/maps/office_map_sunset.png'
+  if (hour >= 18 && hour < 20) return '/assets/maps/office_map_dusk.png'
+  return '/assets/maps/office_map_night.png'
+}
+
 const CEO_SPRITES = {
   desk: { src: '/assets/agents/ceo/ceo_desk.png', x: 310, y: 215, size: 230 },
   explain: { src: '/assets/agents/ceo/ceo_explain.png', x: 383, y: 493, size: 210 },
@@ -20,6 +29,26 @@ export function OfficeMap({ agents, onAgentArrived, ceoMode }: OfficeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
   const [offset, setOffset] = useState({ x: 0, y: 0 })
+  const [mapSrc, setMapSrc] = useState(getOfficeMapSrc)
+
+  useEffect(() => {
+    function scheduleNext() {
+      const now = new Date()
+      const boundaries = [6, 8, 16, 18, 20]
+      const totalMinutes = now.getHours() * 60 + now.getMinutes()
+      const nextBoundaryMinutes =
+        boundaries.map((h) => h * 60).find((m) => m > totalMinutes) ?? 6 * 60 + 24 * 60
+      const msUntilNext = (nextBoundaryMinutes - totalMinutes) * 60_000 - now.getSeconds() * 1000
+
+      return setTimeout(() => {
+        setMapSrc(getOfficeMapSrc())
+        scheduleNext()
+      }, msUntilNext)
+    }
+
+    const timer = scheduleNext()
+    return () => clearTimeout(timer)
+  }, [])
   const [debugCoord, setDebugCoord] = useState<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
@@ -70,7 +99,7 @@ export function OfficeMap({ agents, onAgentArrived, ceoMode }: OfficeMapProps) {
         }}
       >
         <img
-          src="/assets/maps/office_map.png"
+          src={mapSrc}
           alt="Office Map"
           draggable={false}
           style={{
