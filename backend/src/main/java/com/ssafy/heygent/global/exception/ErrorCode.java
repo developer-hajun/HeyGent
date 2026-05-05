@@ -25,10 +25,16 @@ public enum ErrorCode {
 
     // 404 NOT_FOUND
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "요청한 대상을 찾을 수 없습니다."),
+    PAIR_CODE_NOT_FOUND(HttpStatus.NOT_FOUND, "유효한 IoT pairing code를 찾을 수 없습니다."),
 
     // 409 CONFLICT
     CONFLICT(HttpStatus.CONFLICT, "요청을 처리하는 중 충돌이 발생했습니다."),
     DEVICE_INACTIVE(HttpStatus.CONFLICT, "비활성화된 IoT 디바이스입니다."),
+    DEVICE_ALREADY_PAIRED(HttpStatus.CONFLICT, "이미 등록된 IoT 디바이스입니다."),
+    USER_DEVICE_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "이미 연결된 IoT 디바이스가 있습니다."),
+
+    // 410 GONE
+    PAIR_CODE_EXPIRED(HttpStatus.GONE, "만료된 IoT pairing code입니다."),
 
     // 502 BAD_GATEWAY
     EXTERNAL_AUTH_FAILED(HttpStatus.BAD_GATEWAY, "외부 인증 처리 중 오류가 발생했습니다."),
