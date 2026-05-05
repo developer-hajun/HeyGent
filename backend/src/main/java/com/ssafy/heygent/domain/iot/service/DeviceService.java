@@ -31,7 +31,10 @@ public class DeviceService {
     @Transactional
     public DeviceResponse register(Long userId, DeviceRegisterRequest request) {
         if (iotDeviceRepository.existsByDeviceId(request.deviceId())) {
-            throw new CustomException(ErrorCode.CONFLICT);
+            throw new CustomException(ErrorCode.DEVICE_ALREADY_PAIRED);
+        }
+        if (iotDeviceRepository.existsByUserId(userId)) {
+            throw new CustomException(ErrorCode.USER_DEVICE_LIMIT_EXCEEDED);
         }
 
         User user = userRepository.findById(userId)

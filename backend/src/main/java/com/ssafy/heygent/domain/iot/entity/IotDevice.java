@@ -33,7 +33,8 @@ import java.time.LocalDateTime;
 @Table(
     name = "iot_devices",
     uniqueConstraints = {
-        @UniqueConstraint(name = "uk_iot_devices_device_id", columnNames = "device_id")
+        @UniqueConstraint(name = "uk_iot_devices_device_id", columnNames = "device_id"),
+        @UniqueConstraint(name = "uk_iot_devices_user_id", columnNames = "user_id")
     }
 )
 @EntityListeners(AuditingEntityListener.class)
