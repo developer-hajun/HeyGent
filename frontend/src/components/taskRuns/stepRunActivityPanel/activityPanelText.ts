@@ -97,6 +97,7 @@ export function toProgressSentence(status?: string | null) {
     case 'session.message.delta':
       return '답변을 작성하고 있습니다.'
     case 'WAITING':
+    case 'BLOCKED':
     case 'task.waiting':
     case 'step.waiting':
     case 'approval.required':
@@ -133,6 +134,8 @@ export function toStepProgressSentence(status?: string | null) {
       return '현재 단계를 처리하고 있습니다.'
     case 'WAITING':
       return '현재 단계에서 추가 확인이 필요합니다.'
+    case 'BLOCKED':
+      return '현재 단계가 대기 중입니다.'
     case 'COMPLETED':
       return '현재 단계를 완료했습니다.'
     case 'FAILED':
