@@ -12,6 +12,7 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.core.env.Environment;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -33,6 +34,12 @@ class OpenAiProviderServiceTest {
     @Mock
     private OpenAiOAuthService openAiOAuthService;
 
+    @Mock
+    private OpenAiApiKeyService openAiApiKeyService;
+
+    @Mock
+    private Environment environment;
+
     private OpenAiProperties properties;
     private OpenAiProviderService openAiProviderService;
 
@@ -42,38 +49,47 @@ class OpenAiProviderServiceTest {
         properties.setApiKey("test-api-key");
         properties.setDefaultModel("gpt-5.4");
         properties.setAllowedModels(List.of("gpt-5.4", "gpt-5.4-mini"));
-        openAiProviderService = new OpenAiProviderService(properties, responsesClient, openAiOAuthService);
+        OpenAiRuntimePolicyService runtimePolicyService = new OpenAiRuntimePolicyService(properties, environment);
+        openAiProviderService = new OpenAiProviderService(
+            properties,
+            responsesClient,
+            openAiOAuthService,
+            openAiApiKeyService,
+            runtimePolicyService
+        );
     }
 
     @Test
-    void createResponseUsesApiKeyProviderAndDefaultModel() {
+    void createResponseUsesDevFallbackProviderAndDefaultModel() {
         OpenAiResponsesCommand command = command(null, null);
-        OpenAiResponsesResult expected = result("openai_api", "gpt-5.4");
+        OpenAiResponsesResult expected = result("openai_dev_fallback", "gpt-5.4");
 
+        when(environment.matchesProfiles("dev")).thenReturn(true);
         when(responsesClient.callWithApiKey(
             any(OpenAiResponsesCommand.class),
             eq("gpt-5.4"),
             eq("test-api-key"),
-            eq(OpenAiProviderName.OPENAI_API)
+            eq(OpenAiProviderName.OPENAI_DEV_FALLBACK)
         )).thenReturn(expected);
 
         OpenAiResponsesResult response = openAiProviderService.createResponse(command);
 
         assertThat(response).isEqualTo(expected);
-        assertThat(response.providerName()).isEqualTo("openai_api");
+        assertThat(response.providerName()).isEqualTo("openai_dev_fallback");
         assertThat(response.model()).isEqualTo("gpt-5.4");
     }
 
     @Test
     void createResponseUsesRequestedAllowedModel() {
-        OpenAiResponsesCommand command = command("openai_api", "gpt-5.4-mini");
-        OpenAiResponsesResult expected = result("openai_api", "gpt-5.4-mini");
+        OpenAiResponsesCommand command = command("openai_user_api_key", "gpt-5.4-mini");
+        OpenAiResponsesResult expected = result("openai_user_api_key", "gpt-5.4-mini");
 
+        when(openAiApiKeyService.resolveApiKey(1L)).thenReturn("user-api-key");
         when(responsesClient.callWithApiKey(
             any(OpenAiResponsesCommand.class),
             eq("gpt-5.4-mini"),
-            eq("test-api-key"),
-            eq(OpenAiProviderName.OPENAI_API)
+            eq("user-api-key"),
+            eq(OpenAiProviderName.OPENAI_USER_API_KEY)
         )).thenReturn(expected);
 
         OpenAiResponsesResult response = openAiProviderService.createResponse(command);
@@ -83,7 +99,7 @@ class OpenAiProviderServiceTest {
 
     @Test
     void createResponseFailsWhenModelIsNotAllowed() {
-        OpenAiResponsesCommand command = command("openai_api", "not-allowed-model");
+        OpenAiResponsesCommand command = command("openai_user_api_key", "not-allowed-model");
 
         assertThatThrownBy(() -> openAiProviderService.createResponse(command))
             .isInstanceOf(CustomException.class)
@@ -92,14 +108,14 @@ class OpenAiProviderServiceTest {
     }
 
     @Test
-    void createResponseFailsWhenApiKeyIsMissing() {
+    void createResponseFailsWhenDevFallbackIsNotAvailable() {
         properties.setApiKey("");
-        OpenAiResponsesCommand command = command("openai_api", "gpt-5.4");
+        OpenAiResponsesCommand command = command("openai_dev_fallback", "gpt-5.4");
 
         assertThatThrownBy(() -> openAiProviderService.createResponse(command))
             .isInstanceOf(CustomException.class)
             .extracting("errorCode")
-            .isEqualTo(ErrorCode.OPENAI_PROVIDER_NOT_CONFIGURED);
+            .isEqualTo(ErrorCode.OPENAI_DEV_FALLBACK_NOT_ALLOWED);
     }
 
     @Test
@@ -157,7 +173,7 @@ class OpenAiProviderServiceTest {
             1L,
             "task-1",
             "step-1",
-            "openai_api",
+            "openai_user_api_key",
             "gpt-5.4",
             List.of(),
             List.of(),

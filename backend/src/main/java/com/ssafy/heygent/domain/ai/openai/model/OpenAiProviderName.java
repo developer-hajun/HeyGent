@@ -14,15 +14,16 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public enum OpenAiProviderName {
 
-    OPENAI_API("openai_api", "api_key"),
-    OPENAI_OAUTH("openai_oauth", "oauth");
+    OPENAI_USER_API_KEY("openai_user_api_key", "api_key"),
+    OPENAI_OAUTH("openai_oauth", "oauth"),
+    OPENAI_DEV_FALLBACK("openai_dev_fallback", "api_key");
 
     private final String value;
     private final String authType;
 
     public static OpenAiProviderName from(String value) {
         if (!StringUtils.hasText(value)) {
-            return OPENAI_API;
+            return OPENAI_DEV_FALLBACK;
         }
 
         return Arrays.stream(values())
