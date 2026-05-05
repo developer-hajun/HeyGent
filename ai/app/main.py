@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 from app.api.router import build_api_router
 from app.api.ws.gateway import build_websocket_auth_rate_limiter
+from app.bridge import BridgeSessionManager
 from app.clients.backend_auth import BackendAuthClient
 from app.core.cors import configure_cors
 from app.core.config import get_settings
@@ -101,7 +102,13 @@ async def lifespan(app: FastAPI):
     skill_registry.register_many(skill_loader.load_builtin())
     skill_prompt_builder = SkillPromptBuilder(skill_registry)
     prompt_builder = PromptBuilder(skill_prompt_builder)
-    tool_runtime = LocalToolRuntime(skill_registry=skill_registry, session_store=session_store)
+    bridge_session_manager = BridgeSessionManager()
+    bridge_session_manager.bind_event_loop(asyncio.get_running_loop())
+    tool_runtime = LocalToolRuntime(
+        skill_registry=skill_registry,
+        session_store=session_store,
+        bridge_session_manager=bridge_session_manager,
+    )
     tool_catalog = ToolCatalog(tool_runtime, default_toolsets=("skills", "session", "planning", "terminal", "file", "web", "browser", "delegation"))
     child_session_launcher = ChildSessionLauncher()
     planner = Planner()
@@ -142,6 +149,7 @@ async def lifespan(app: FastAPI):
     app.state.tool_registry = tool_registry
     app.state.tool_catalog = tool_catalog
     app.state.tool_runtime = tool_runtime
+    app.state.bridge_session_manager = bridge_session_manager
     app.state.child_session_launcher = child_session_launcher
     app.state.orchestrator = orchestrator
     app.state.task_engine = task_engine

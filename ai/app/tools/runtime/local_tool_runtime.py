@@ -14,6 +14,9 @@ from app.tools.runtime.toolsets import resolve_runtime_tool_names
 
 
 FILE_TOOL_NAMES = {"read_file", "write_file", "patch", "search_files"}
+# PoC 단계 3: terminal + file 4개를 사용자 PC 브릿지로 위임한다.
+# 분기 자리는 한 곳뿐이라 호출자(tool_calling_loop, transcript 기록)는 결과 dict가 같으면 변경을 인지할 필요 없음.
+BRIDGE_ROUTABLE_TOOLS = {"terminal.run", "read_file", "write_file", "patch", "search_files"}
 MAX_TERMINAL_STREAM_CHARS = 12_000
 MAX_TOOL_RESULT_STRING_CHARS = 20_000
 MAX_TOOL_RESULT_TRUNCATED_FIELDS = 20
@@ -31,9 +34,11 @@ class LocalToolRuntime:
         skill_registry,
         session_store: TranscriptStore,
         workspace_root: str | os.PathLike[str] | None = None,
+        bridge_session_manager=None,
     ) -> None:
         self.skill_registry = skill_registry
         self.session_store = session_store
+        self.bridge_session_manager = bridge_session_manager
         self.workspace_root = self._resolve_workspace_root(workspace_root)
         self._step_items: list[dict[str, str]] = []
         self._todo_items: list[dict[str, str]] = []
@@ -85,6 +90,7 @@ class LocalToolRuntime:
             skill_registry=self.skill_registry,
             session_store=self.session_store,
             workspace_root=workspace_root,
+            bridge_session_manager=self.bridge_session_manager,
         )
         bound._step_items = [dict(item) for item in self._step_items]
         bound._todo_items = [dict(item) for item in self._todo_items]
@@ -145,6 +151,15 @@ class LocalToolRuntime:
             )
 
         trusted_args = self._bind_trusted_runtime_args(tool_name=normalized_name, args=args)
+
+        # ★ PoC 단계 2 분기 ★
+        # 로컬 자원 도구는 사용자 PC 브릿지에 위임. 분기 자리는 여기 한 곳뿐이라
+        # 호출자(tool_calling_loop, transcript 기록 등)는 결과 dict 형식이 그대로면 변경을 인지할 필요 없음.
+        if normalized_name in BRIDGE_ROUTABLE_TOOLS and self.bridge_session_manager is not None:
+            bridge_result = self._maybe_route_via_bridge(tool_name=normalized_name, args=trusted_args)
+            if bridge_result is not None:
+                return self._cap_tool_result(bridge_result)
+
         try:
             result = entry.handler(trusted_args)
         except Exception as error:
@@ -161,6 +176,37 @@ class LocalToolRuntime:
         if entry is None:
             raise KeyError(name)
         return entry.handler(dict(args))
+
+    def _maybe_route_via_bridge(self, *, tool_name: str, args: dict[str, Any]) -> dict[str, Any] | None:
+        """브릿지가 연결돼 있으면 도구 호출을 위임하고 결과 dict를 그대로 반환한다.
+
+        결과 형식은 기존 로컬 실행과 동일해야 한다 (브릿지 executor가 맞춤).
+        브릿지 미연결·타임아웃 등은 _tool_error 형식으로 변환.
+        """
+
+        manager = self.bridge_session_manager
+        if manager is None or not manager.is_alive():
+            return self._tool_error(
+                code="bridge_not_connected",
+                message="로컬 브릿지가 연결되어 있지 않습니다",
+                tool_name=tool_name,
+            )
+
+        # 순환 import 방지를 위해 함수 내부에서 import.
+        from app.bridge import BridgeDisconnected, BridgeError, BridgeTimeout
+
+        try:
+            return manager.execute_sync(name=tool_name, args=args)
+        except BridgeTimeout as error:
+            return self._tool_error(code="bridge_timeout", message=str(error), tool_name=tool_name)
+        except BridgeDisconnected as error:
+            return self._tool_error(code="bridge_disconnected", message=str(error), tool_name=tool_name)
+        except BridgeError as error:
+            return self._tool_error(
+                code="bridge_error",
+                message=f"{type(error).__name__}: {error}",
+                tool_name=tool_name,
+            )
 
     def _list_skills(self, args: dict[str, Any]) -> dict[str, object]:
         names = sorted(getattr(self.skill_registry, "_skills", {}).keys())
