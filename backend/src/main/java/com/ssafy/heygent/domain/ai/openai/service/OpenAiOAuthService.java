@@ -128,6 +128,11 @@ public class OpenAiOAuthService {
 
     @Transactional
     public String resolveAccessToken(Long userId) {
+        return resolveAccessTokenCredential(userId).accessToken();
+    }
+
+    @Transactional
+    public AccessTokenCredential resolveAccessTokenCredential(Long userId) {
         OpenAiProviderConnection connection = getConnection(userId);
         if (connection.isExpired(LocalDateTime.now()) && StringUtils.hasText(connection.getEncryptedRefreshToken())) {
             refresh(userId);
@@ -136,7 +141,10 @@ public class OpenAiOAuthService {
         if (connection.isExpired(LocalDateTime.now())) {
             throw new CustomException(ErrorCode.OPENAI_OAUTH_NOT_CONNECTED);
         }
-        return credentialCipher.decrypt(connection.getEncryptedAccessToken());
+        return new AccessTokenCredential(
+            credentialCipher.decrypt(connection.getEncryptedAccessToken()),
+            connection.getExpiresAt()
+        );
     }
 
     private OpenAiProviderConnection getConnection(Long userId) {
@@ -307,5 +315,8 @@ public class OpenAiOAuthService {
 
     private String urlEncode(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    public record AccessTokenCredential(String accessToken, LocalDateTime expiresAt) {
     }
 }

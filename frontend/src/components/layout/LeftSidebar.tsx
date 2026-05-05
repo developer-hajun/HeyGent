@@ -15,10 +15,15 @@ import {
   UserCircle,
   X,
   Edit3,
+  MoreHorizontal,
+  Pin,
+  PinOff,
+  DoorOpen,
 } from 'lucide-react'
 import { useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SettingsDialog } from '@/components/SettingsDialog'
+import { NewSessionModal } from '@/components/NewSessionModal'
 import { useUIStore } from '@/store/useUIStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -46,9 +51,18 @@ export function LeftSidebar() {
     clampSidebarWidth,
     setSettingsOpen,
   } = useUIStore()
-  const { selectedSessionId, setSelectedSessionId } = useSessionStore()
+  const {
+    selectedSessionId,
+    setSelectedSessionId,
+    pinnedSessionIds,
+    hiddenSessionIds,
+    togglePinSession,
+    hideSession,
+  } = useSessionStore()
   const [profileOpen, setProfileOpen] = useState(false)
   const [sessionsPopoverOpen, setSessionsPopoverOpen] = useState(false)
+  const [newSessionModalOpen, setNewSessionModalOpen] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const commandClient = useAiRealtimeStore((state) => state.commandClient)
   const realtimeStatus = useAiRealtimeStore((state) => state.connectionStatus)
   const sessionsById = useChatStore((state) => state.sessionsById)
@@ -59,13 +73,15 @@ export function LeftSidebar() {
   const startWidth = useRef(0)
   const navigate = useNavigate()
   const location = useLocation()
-  const sidebarSessions = useMemo(
-    () =>
-      Object.values(sessionsById)
-        .map(toSidebarSession)
-        .sort((first, second) => getSessionTime(second.raw) - getSessionTime(first.raw)),
-    [sessionsById],
-  )
+  const sidebarSessions = useMemo(() => {
+    const all = Object.values(sessionsById)
+      .map(toSidebarSession)
+      .filter((s) => !hiddenSessionIds.has(s.id))
+      .sort((first, second) => getSessionTime(second.raw) - getSessionTime(first.raw))
+    const pinned = all.filter((s) => pinnedSessionIds.has(s.id))
+    const unpinned = all.filter((s) => !pinnedSessionIds.has(s.id))
+    return [...pinned, ...unpinned]
+  }, [sessionsById, hiddenSessionIds, pinnedSessionIds])
   const runningSessions = useMemo(
     () => sidebarSessions.filter((session) => session.isRunning),
     [sidebarSessions],
@@ -80,7 +96,7 @@ export function LeftSidebar() {
   }, [commandClient, fetchSessions])
 
   const handleNewChat = () => {
-    navigate('/new-chat')
+    setNewSessionModalOpen(true)
   }
 
   const handleOpenChatSession = (sessionId: string, event?: React.MouseEvent) => {
@@ -123,9 +139,45 @@ export function LeftSidebar() {
   return (
     <>
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <NewSessionModal
+        open={newSessionModalOpen}
+        onOpenChange={setNewSessionModalOpen}
+        onConfirm={() => {
+          setNewSessionModalOpen(false)
+          navigate('/new-chat')
+        }}
+      />
+      {/* Leave confirmation dialog */}
+      {deleteConfirm !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-card border-border w-80 rounded-2xl border p-6 shadow-xl">
+            <h3 className="text-foreground mb-2 text-base font-semibold">채팅 나가기</h3>
+            <p className="text-muted-foreground mb-5 text-sm">
+              이 채팅 세션을 나가시겠습니까? 목록에서 사라집니다.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="bg-muted text-foreground hover:bg-muted/80 flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
+              >
+                취소
+              </button>
+              <button
+                onClick={() => {
+                  hideSession(deleteConfirm)
+                  setDeleteConfirm(null)
+                }}
+                className="flex-1 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-600"
+              >
+                나가기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div
-        className="bg-sidebar border-sidebar-border relative flex flex-shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200 ease-in-out"
+        className="bg-sidebar border-sidebar-border relative flex shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200 ease-in-out"
         style={{ width: collapsed ? 52 : width }}
       >
         {/* ── Collapsed Rail ── */}
@@ -280,7 +332,7 @@ export function LeftSidebar() {
         {!collapsed && (
           <div className="flex h-full flex-col overflow-hidden">
             {/* Header */}
-            <div className="border-sidebar-border flex h-12 flex-shrink-0 items-center justify-between border-b px-4">
+            <div className="border-sidebar-border flex h-12 shrink-0 items-center justify-between border-b px-4">
               <div className="flex items-center gap-2">
                 <MessageSquare className="text-muted-foreground h-4 w-4" />
                 <span className="text-foreground text-sm font-semibold">대화 세션</span>
@@ -312,6 +364,7 @@ export function LeftSidebar() {
                     const isActive =
                       location.pathname === '/agent-status' && selectedSessionId === session.id
                     const isChatActive = location.pathname === `/session/${session.id}`
+                    const isPinned = pinnedSessionIds.has(session.id)
                     return (
                       <div
                         key={session.id}
@@ -319,18 +372,21 @@ export function LeftSidebar() {
                           setSelectedSessionId(session.id)
                           navigate('/agent-status')
                         }}
-                        className={`flex cursor-pointer items-center gap-2 rounded-lg p-2.5 transition-colors ${
+                        className={`group flex cursor-pointer items-center gap-2 rounded-lg p-2.5 transition-colors ${
                           isActive
                             ? 'bg-primary/8 border-primary/15 border'
                             : 'hover:bg-sidebar-accent border border-transparent'
                         }`}
                       >
                         <div className="min-w-0 flex-1">
-                          <p
-                            className={`mb-0.5 truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
-                          >
-                            {session.title}
-                          </p>
+                          <div className="mb-0.5 flex items-center gap-1">
+                            {isPinned && <Pin className="text-primary h-3 w-3 shrink-0" />}
+                            <p
+                              className={`truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
+                            >
+                              {session.title}
+                            </p>
+                          </div>
                           <p className="text-muted-foreground truncate text-xs">
                             {session.preview}
                           </p>
@@ -339,21 +395,75 @@ export function LeftSidebar() {
                             <span className="text-muted-foreground text-xs">{session.time}</span>
                           </div>
                         </div>
-                        <button
-                          type="button"
-                          aria-label="채팅 열기"
-                          onClick={(event) => handleOpenChatSession(session.id, event)}
-                          className={`relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors ${
-                            isChatActive
-                              ? 'bg-primary/10 text-primary'
-                              : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
-                          }`}
-                        >
-                          {session.isRunning && (
-                            <Loader2 className="text-primary absolute -top-0.5 -right-0.5 h-3 w-3 animate-spin" />
-                          )}
-                          <MessageCircle className="h-4 w-4" />
-                        </button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          {/* ⋯ menu */}
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button
+                                type="button"
+                                aria-label="세션 옵션"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-muted-foreground hover:bg-sidebar-accent hover:text-foreground flex h-7 w-7 items-center justify-center rounded-md opacity-0 transition-all group-hover:opacity-100"
+                              >
+                                <MoreHorizontal className="h-4 w-4" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              side="right"
+                              align="start"
+                              className="w-40 rounded-xl p-1"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  togglePinSession(session.id)
+                                }}
+                                className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
+                              >
+                                {isPinned ? (
+                                  <>
+                                    <PinOff className="text-muted-foreground h-4 w-4 shrink-0" />
+                                    <span>고정 해제</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Pin className="text-muted-foreground h-4 w-4 shrink-0" />
+                                    <span>채팅 고정</span>
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setDeleteConfirm(session.id)
+                                }}
+                                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-red-500 transition-colors hover:bg-red-50"
+                              >
+                                <DoorOpen className="h-4 w-4 shrink-0" />
+                                <span>나가기</span>
+                              </button>
+                            </PopoverContent>
+                          </Popover>
+                          {/* Chat open button */}
+                          <button
+                            type="button"
+                            aria-label="채팅 열기"
+                            onClick={(event) => handleOpenChatSession(session.id, event)}
+                            className={`relative flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                              isChatActive
+                                ? 'bg-primary/10 text-primary'
+                                : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
+                            }`}
+                          >
+                            {session.isRunning && (
+                              <Loader2 className="text-primary absolute -top-0.5 -right-0.5 h-3 w-3 animate-spin" />
+                            )}
+                            <MessageCircle className="h-4 w-4" />
+                          </button>
+                        </div>
                       </div>
                     )
                   })}
@@ -365,7 +475,7 @@ export function LeftSidebar() {
             </div>
 
             {/* ── Profile Footer (Fixed) ── */}
-            <div className="border-sidebar-border flex-shrink-0 border-t p-3">
+            <div className="border-sidebar-border shrink-0 border-t p-3">
               <Popover open={profileOpen} onOpenChange={setProfileOpen}>
                 <PopoverTrigger asChild>
                   <button className="hover:bg-sidebar-accent flex w-full items-center gap-3 rounded-lg p-2.5 transition-colors">
@@ -636,7 +746,7 @@ function ProfileMenu({ onSettingsClick }: { onSettingsClick: () => void }) {
             disabled={isLoggingOut}
             className="flex w-full items-center gap-3 rounded-xl bg-red-50 px-3 py-2.5 text-red-600 transition-colors hover:bg-red-100 disabled:opacity-60"
           >
-            <LogOut className="h-4 w-4 flex-shrink-0" />
+            <LogOut className="h-4 w-4 shrink-0" />
             <span className="text-sm font-medium">
               {isLoggingOut ? '로그아웃 중...' : '로그아웃'}
             </span>
@@ -659,7 +769,7 @@ function ProfileMenu({ onSettingsClick }: { onSettingsClick: () => void }) {
           onClick={item.action}
           className="hover:bg-muted flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors"
         >
-          <item.icon className="text-muted-foreground h-4 w-4 flex-shrink-0" />
+          <item.icon className="text-muted-foreground h-4 w-4 shrink-0" />
           <span className="text-foreground text-sm">{item.label}</span>
         </button>
       ))}

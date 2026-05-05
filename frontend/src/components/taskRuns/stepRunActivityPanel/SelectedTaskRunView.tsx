@@ -27,30 +27,21 @@ export function SelectedTaskRunView({
   const status =
     activities.at(-1)?.raw.status ?? activities.at(-1)?.raw.event_type ?? taskRun?.status
   const taskRunFinished = status === 'COMPLETED' || status === 'task.completed'
-  // 패널이 길어지지 않도록 세부 기록 본문에는 최신 raw event 5개만 펼쳐 보여준다.
-  const recentActivities = activities.slice(-5).reverse()
+  const reversedActivities = [...activities].reverse()
   const currentStep = selectCurrentVisibleStep(taskRun, steps)
-  const currentStepActivities =
-    currentStep === undefined
-      ? []
-      : activities.filter((activity) => activity.stepRunId === currentStep.step_run_id)
-  const latestCurrentActivity = currentStepActivities.at(-1) ?? activities.at(-1)
 
   return (
     <div className="space-y-5">
-      {!taskRunFinished && (currentStep !== undefined || latestCurrentActivity !== undefined) && (
+      {!taskRunFinished && currentStep !== undefined && (
         <section className="border-border bg-muted/30 rounded-lg border px-3 py-2">
           <div className="flex items-start gap-2">
             <TaskRunStatusIcon tone={toTaskRunStatusTone(currentStep?.status ?? status)} />
             <div className="min-w-0">
               <div className="text-foreground line-clamp-1 text-xs font-semibold [overflow-wrap:anywhere] break-words">
-                {toUserFacingTaskTitle(
-                  currentStep?.title ?? currentStep?.goal ?? latestCurrentActivity?.title,
-                )}
+                {toUserFacingTaskTitle(currentStep.title ?? currentStep.goal ?? '답변 진행')}
               </div>
               <div className="text-muted-foreground mt-0.5 line-clamp-1 text-[11px] [overflow-wrap:anywhere] break-words">
-                {latestCurrentActivity?.title ??
-                  toStepProgressSentence(currentStep?.status ?? status)}
+                {toStepProgressSentence(currentStep.status ?? status)}
               </div>
             </div>
           </div>
@@ -80,11 +71,9 @@ export function SelectedTaskRunView({
               <StepProgressItem
                 key={step.step_run_id}
                 step={step}
-                // step_run_id가 있는 event만 해당 단계 아래에 묶고, 전체 진행 event는 아래 세부 기록에서 본다.
                 activities={activities.filter(
                   (activity) => activity.stepRunId === step.step_run_id,
                 )}
-                taskRunFinished={taskRunFinished}
               />
             ))}
           </ol>
@@ -103,7 +92,7 @@ export function SelectedTaskRunView({
             </div>
           ) : (
             <ol className="mt-2 space-y-2">
-              {recentActivities.map((activity) => (
+              {reversedActivities.map((activity) => (
                 <ActivityEventItem
                   key={activity.id}
                   activity={activity}
@@ -134,6 +123,8 @@ function selectCurrentVisibleStep(taskRun: RawTaskRun | undefined, steps: RawSte
   }
 
   return (
-    steps.find((step) => step.status === 'RUNNING' || step.status === 'WAITING') ?? steps.at(-1)
+    steps.find(
+      (step) => step.status === 'RUNNING' || step.status === 'WAITING' || step.status === 'BLOCKED',
+    ) ?? steps.at(-1)
   )
 }

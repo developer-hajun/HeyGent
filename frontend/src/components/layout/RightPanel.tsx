@@ -51,11 +51,11 @@ function resolveAll(
         const abovePinned = above === pinnedId
         const belowPinned = below === pinnedId
         if (abovePinned) {
-          // above 고정 → below만 밀어냄
-          result.set(below, (result.get(above) ?? 0) + MIN_SPACING)
-        } else if (belowPinned) {
-          // below 고정 → above만 밀어냄
+          // above가 드래그한 탭 → above만 밀어냄 (below 고정)
           result.set(above, (result.get(below) ?? 0) - MIN_SPACING)
+        } else if (belowPinned) {
+          // below가 드래그한 탭 → below만 밀어냄 (above 고정)
+          result.set(below, (result.get(above) ?? 0) + MIN_SPACING)
         } else {
           // 둘 다 비고정 → 중간점 기준 분리
           const mid = ((result.get(above) ?? 0) + (result.get(below) ?? 0)) / 2
