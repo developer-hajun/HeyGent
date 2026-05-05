@@ -61,6 +61,7 @@ class Settings:
     agent_loop_default_max_iterations: int = 90
     agent_loop_worker_default_max_iterations: int = 80
     agent_loop_max_iterations: int = 120
+    bridge_token: str | None = None
 
     def resolved_api_base_url(self) -> str:
         """CLI 와 외부 클라이언트가 공통으로 사용할 기본 API 주소를 계산한다."""
@@ -248,4 +249,5 @@ def get_settings() -> Settings:
             _read_env("HEYGENT_AGENT_LOOP_MAX_ITERATIONS", 120, dotenv_values),
             default=120,
         ),
+        bridge_token=_read_env("HEYGENT_BRIDGE_TOKEN", None, dotenv_values),
     )

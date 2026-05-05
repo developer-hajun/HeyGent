@@ -10,6 +10,13 @@ Thumbs.db
 tmp/
 reference/
 
+# Python 캐시
+__pycache__/
+*.pyc
+
+# Claude Code 작업용 메모 (개인 작업 기록, push 대상 아님)
+.claude/
+
 # Env / secrets
 .env
 .env.*

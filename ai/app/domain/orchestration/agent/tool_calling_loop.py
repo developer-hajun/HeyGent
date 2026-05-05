@@ -259,7 +259,11 @@ class ToolCallingLoopHandler:
                         args=tool_call.arguments,
                         result=None,
                     )
-                    result = self._run_native_tool_call(
+                    # PoC 단계 2: run_call이 동기 함수인데 내부에서 브릿지 위임 시
+                    # 메인 이벤트 루프에 코루틴을 던지고 동기 차단으로 결과 대기 → 데드락.
+                    # to_thread로 별도 스레드에 옮겨 메인 루프가 자유롭게 굴러가게 한다.
+                    result = await asyncio.to_thread(
+                        self._run_native_tool_call,
                         name=runtime_tool_name,
                         args=tool_call.arguments,
                         requested_toolsets=requested_toolsets,
@@ -784,6 +788,8 @@ class ToolCallingLoopHandler:
         if not call_id or not tool_name or not isinstance(args, dict):
             return None
         if bool(resume_payload.get("approved", False)):
+            # PoC 단계 2 메모: 이 경로는 approval resume용. 동기 함수 안이라 to_thread 못 씀.
+            # 브릿지 위임이 필요하면 함수 시그니처를 async로 바꾸거나 별도 처리 필요.
             result = self._run_native_tool_call(
                 name=tool_name,
                 args=args,
