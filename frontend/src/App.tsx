@@ -5,6 +5,7 @@ import { RightPanel } from '@/components/layout/RightPanel'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
 import { NewChatPage } from '@/pages/NewChatPage'
+import { SessionChatPage } from '@/pages/SessionChatPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { KakaoCallbackPage } from '@/pages/KakaoCallbackPage'
 
@@ -27,10 +28,8 @@ export default function App() {
                     <Route path="/" element={<DashboardPage />} />
                     <Route path="/new-chat" element={<NewChatPage />} />
                     <Route path="/agent-status" element={<AgentStatusPage />} />
-                    <Route
-                      path="/session/:sessionId"
-                      element={<Navigate to="/agent-status" replace />}
-                    />
+                    <Route path="/session/:sessionId" element={<SessionChatPage />} />
+                    <Route path="/chat/new" element={<SessionChatPage />} />
                     <Route path="/chat" element={<Navigate to="/new-chat" replace />} />
                     <Route path="/agents" element={<Navigate to="/agent-status" replace />} />
                     <Route path="/reminders" element={<Navigate to="/" replace />} />

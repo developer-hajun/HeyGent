@@ -1,7 +1,8 @@
 import { Sparkles, Send, Code, Calendar, Apple, Activity, Mic, Bot } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useNavigate, useLocation } from 'react-router'
+import type { CustomAgentConfig } from '@/components/NewSessionModal'
 
 const suggestedPrompts = [
   {
@@ -30,6 +31,8 @@ export function NewChatPage() {
   const [inputValue, setInputValue] = useState('')
   const [isRecording, setIsRecording] = useState(false)
   const navigate = useNavigate()
+  const location = useLocation()
+  const customAgent = (location.state as { customAgent?: CustomAgentConfig } | null)?.customAgent
 
   const handleVoiceInput = () => {
     setIsRecording(!isRecording)
@@ -37,7 +40,7 @@ export function NewChatPage() {
 
   const handleSend = () => {
     if (!inputValue.trim()) return
-    navigate('/agent-status')
+    navigate('/chat/new', { state: { firstMessage: inputValue, customAgent: customAgent ?? null } })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {

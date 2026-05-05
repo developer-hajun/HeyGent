@@ -14,11 +14,16 @@ import {
   UserCircle,
   X,
   Edit3,
+  MoreHorizontal,
+  Pin,
+  PinOff,
+  DoorOpen,
 } from 'lucide-react'
 import { useState } from 'react'
-import { sessions } from '@/data/sessions'
+import { sessions as staticSessions } from '@/data/sessions'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SettingsDialog } from '@/components/SettingsDialog'
+import { NewSessionModal, type CustomAgentConfig } from '@/components/NewSessionModal'
 import { useUIStore } from '@/store/useUIStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -36,9 +41,29 @@ export function LeftSidebar() {
     clampSidebarWidth,
     setSettingsOpen,
   } = useUIStore()
-  const { selectedSessionId, setSelectedSessionId } = useSessionStore()
+  const {
+    setSelectedSessionId,
+    dynamicSessions,
+    removeDynamicSession,
+    pinnedSessionIds,
+    togglePinSession,
+    hiddenSessionIds,
+    hideSession,
+  } = useSessionStore()
+
+  // 숨김 제외 후 고정 세션 상단 정렬
+  const allSessions = [...dynamicSessions, ...staticSessions]
+    .filter((s) => !hiddenSessionIds.has(s.id))
+    .sort((a, b) => {
+      const ap = pinnedSessionIds.has(a.id) ? 0 : 1
+      const bp = pinnedSessionIds.has(b.id) ? 0 : 1
+      return ap - bp
+    })
+
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [profileOpen, setProfileOpen] = useState(false)
   const [sessionsPopoverOpen, setSessionsPopoverOpen] = useState(false)
+  const [newSessionModalOpen, setNewSessionModalOpen] = useState(false)
   const isResizing = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
@@ -46,7 +71,7 @@ export function LeftSidebar() {
   const location = useLocation()
 
   const handleNewChat = () => {
-    navigate('/new-chat')
+    setNewSessionModalOpen(true)
   }
 
   const startResize = useCallback(
@@ -84,6 +109,14 @@ export function LeftSidebar() {
   return (
     <>
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <NewSessionModal
+        open={newSessionModalOpen}
+        onOpenChange={setNewSessionModalOpen}
+        onConfirm={(config?: CustomAgentConfig) => {
+          setNewSessionModalOpen(false)
+          navigate('/new-chat', { state: { customAgent: config ?? null } })
+        }}
+      />
 
       <div
         className="bg-sidebar border-sidebar-border relative flex flex-shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200 ease-in-out"
@@ -105,7 +138,7 @@ export function LeftSidebar() {
             <div className="bg-sidebar-border my-1 h-px w-6" />
 
             {/* New Chat button */}
-            <CollapsedTooltip label="새 채팅">
+            <CollapsedTooltip label="새 세션 시작">
               <button
                 onClick={handleNewChat}
                 className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
@@ -137,15 +170,14 @@ export function LeftSidebar() {
                   <p className="text-muted-foreground text-xs">최근 대화 세션</p>
                 </div>
                 <div className="space-y-1.5">
-                  {sessions.slice(0, 3).map((session) => {
-                    const isActive =
-                      location.pathname === '/agent-status' && selectedSessionId === session.id
+                  {allSessions.slice(0, 3).map((session) => {
+                    const isActive = location.pathname === `/session/${session.id}`
                     return (
                       <div
                         key={session.id}
                         onClick={() => {
                           setSelectedSessionId(session.id)
-                          navigate('/agent-status')
+                          navigate(`/session/${session.id}`)
                           setSessionsPopoverOpen(false)
                         }}
                         className={`cursor-pointer rounded-lg p-2.5 transition-colors ${
@@ -181,14 +213,14 @@ export function LeftSidebar() {
             </Popover>
 
             {/* Running session loading indicators */}
-            {sessions
+            {allSessions
               .filter((s) => runningSessionIds.has(s.id))
               .map((s) => (
                 <CollapsedTooltip key={s.id} label={s.title}>
                   <button
                     onClick={() => {
                       setSelectedSessionId(s.id)
-                      navigate('/agent-status')
+                      navigate(`/session/${s.id}`)
                     }}
                     className="hover:bg-sidebar-accent text-primary flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
                   >
@@ -250,47 +282,94 @@ export function LeftSidebar() {
                     className="hover:bg-sidebar-accent border-sidebar-border flex w-full items-center gap-2 rounded-lg border border-dashed p-2.5 transition-colors"
                   >
                     <Plus className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-                    <span className="text-muted-foreground text-sm">새 채팅 시작</span>
+                    <span className="text-muted-foreground text-sm">새 세션 시작</span>
                   </button>
 
-                  {sessions.map((session) => {
-                    const isActive =
-                      location.pathname === '/agent-status' && selectedSessionId === session.id
+                  {allSessions.map((session) => {
+                    const isActive = location.pathname === `/session/${session.id}`
                     const isRunning = runningSessionIds.has(session.id)
+                    const isPinned = pinnedSessionIds.has(session.id)
                     return (
                       <div
                         key={session.id}
                         onClick={() => {
                           setSelectedSessionId(session.id)
-                          navigate('/agent-status')
+                          navigate(`/session/${session.id}`)
                         }}
-                        className={`flex cursor-pointer items-center gap-2 rounded-lg p-2.5 transition-colors ${
+                        className={`group relative cursor-pointer rounded-lg p-2.5 transition-colors ${
                           isActive
                             ? 'bg-primary/8 border-primary/15 border'
                             : 'hover:bg-sidebar-accent border border-transparent'
                         }`}
                       >
-                        <div className="min-w-0 flex-1">
+                        {/* 상단 행: 제목 + 고정 아이콘 + 점3개 버튼 */}
+                        <div className="mb-0.5 flex items-center gap-1">
+                          {isPinned && (
+                            <Pin className="text-primary mr-0.5 h-2.5 w-2.5 shrink-0 rotate-45" />
+                          )}
                           <p
-                            className={`mb-0.5 truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
+                            className={`min-w-0 flex-1 truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
                           >
                             {session.title}
                           </p>
-                          <p className="text-muted-foreground truncate text-xs">
-                            {session.preview}
-                          </p>
-                          <div className="mt-1.5 flex items-center gap-1">
-                            <Clock className="text-muted-foreground h-3 w-3" />
-                            <span className="text-muted-foreground text-xs">{session.time}</span>
-                          </div>
+                          {isRunning && (
+                            <Loader2
+                              className="text-primary shrink-0 animate-spin opacity-70"
+                              style={{ width: '11px', height: '11px' }}
+                              strokeWidth={2.5}
+                            />
+                          )}
+                          {/* 점3개 메뉴 */}
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <button
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-0 transition-all group-hover:opacity-100"
+                              >
+                                <MoreHorizontal className="h-3.5 w-3.5" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              side="right"
+                              align="start"
+                              className="w-40 rounded-xl p-1"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {/* 세션 고정 */}
+                              <button
+                                onClick={() => togglePinSession(session.id)}
+                                className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors"
+                              >
+                                {isPinned ? (
+                                  <PinOff className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+                                ) : (
+                                  <Pin className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+                                )}
+                                <span className="text-foreground text-xs font-medium">
+                                  {isPinned ? '고정 해제' : '채팅 고정'}
+                                </span>
+                              </button>
+                              {/* 구분선 */}
+                              <div className="border-border my-1 border-t" />
+                              {/* 나가기 */}
+                              <button
+                                onClick={() => setDeleteConfirm(session.id)}
+                                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-red-500 transition-colors hover:bg-red-50"
+                              >
+                                <DoorOpen className="h-3.5 w-3.5 shrink-0" />
+                                <span className="text-xs font-medium">나가기</span>
+                              </button>
+                            </PopoverContent>
+                          </Popover>
                         </div>
-                        {isRunning && (
-                          <Loader2
-                            className="text-primary shrink-0 animate-spin"
-                            style={{ width: '18px', height: '18px' }}
-                            strokeWidth={2.5}
-                          />
-                        )}
+
+                        <p className="text-muted-foreground mb-1.5 truncate text-xs">
+                          {session.preview}
+                        </p>
+                        <div className="flex items-center gap-1">
+                          <Clock className="text-muted-foreground h-3 w-3 shrink-0" />
+                          <span className="text-muted-foreground text-xs">{session.time}</span>
+                        </div>
                       </div>
                     )
                   })}
@@ -298,12 +377,57 @@ export function LeftSidebar() {
               </section>
             </div>
 
+            {/* ── 나가기 확인 모달 ── */}
+            {deleteConfirm && (
+              <div
+                className="fixed inset-0 z-200 flex items-center justify-center bg-black/40"
+                onClick={() => setDeleteConfirm(null)}
+              >
+                <div
+                  className="bg-background w-72 rounded-2xl p-5 shadow-2xl"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="mb-1 flex items-center gap-2">
+                    <DoorOpen className="h-4 w-4 shrink-0 text-red-500" />
+                    <h3 className="text-foreground text-sm font-semibold">세션 나가기</h3>
+                  </div>
+                  <p className="text-muted-foreground mb-4 text-xs leading-relaxed">
+                    이 세션에서 나가면 대화 내용이 삭제됩니다.
+                    <br />
+                    정말 나가시겠습니까?
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setDeleteConfirm(null)}
+                      className="bg-muted text-foreground hover:bg-muted/80 flex-1 rounded-lg py-2 text-xs font-medium transition-colors"
+                    >
+                      취소
+                    </button>
+                    <button
+                      onClick={() => {
+                        const id = deleteConfirm
+                        const isActive = location.pathname === `/session/${id}`
+                        const isDynamic = dynamicSessions.some((s) => s.id === id)
+                        if (isDynamic) removeDynamicSession(id)
+                        else hideSession(id)
+                        setDeleteConfirm(null)
+                        if (isActive) navigate('/')
+                      }}
+                      className="flex-1 rounded-lg bg-red-500 py-2 text-xs font-medium text-white transition-colors hover:bg-red-600"
+                    >
+                      나가기
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* ── Profile Footer (Fixed) ── */}
-            <div className="border-sidebar-border flex-shrink-0 border-t p-3">
+            <div className="border-sidebar-border flex-shrink-0 border-t px-3 py-3">
               <Popover open={profileOpen} onOpenChange={setProfileOpen}>
                 <PopoverTrigger asChild>
-                  <button className="hover:bg-sidebar-accent flex w-full items-center gap-3 rounded-lg p-2.5 transition-colors">
-                    <ProfileAvatar size={36} />
+                  <button className="hover:bg-sidebar-accent flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors">
+                    <ProfileAvatar size={28} />
                     <div className="min-w-0 flex-1 text-left">
                       <p className="text-foreground truncate text-sm font-medium">
                         <ProfileName />
