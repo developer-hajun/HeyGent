@@ -14,6 +14,8 @@ public enum ErrorCode {
     OPENAI_PROVIDER_NOT_SUPPORTED(HttpStatus.BAD_REQUEST, "지원하지 않는 OpenAI Provider입니다."),
     OPENAI_MODEL_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "허용되지 않은 OpenAI 모델입니다."),
     OPENAI_OAUTH_STATE_INVALID(HttpStatus.BAD_REQUEST, "OpenAI OAuth state가 유효하지 않습니다."),
+    OPENAI_PROVIDER_NOT_CONNECTED(HttpStatus.BAD_REQUEST, "선택한 OpenAI Provider가 연결되어 있지 않습니다."),
+    OPENAI_DEV_FALLBACK_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "dev fallback OpenAI Provider는 현재 환경에서 사용할 수 없습니다."),
 
     // 401 UNAUTHORIZED
     INVALID_TOKEN(HttpStatus.UNAUTHORIZED, "유효하지 않은 토큰입니다."),
@@ -33,6 +35,7 @@ public enum ErrorCode {
     BAD_GATEWAY(HttpStatus.BAD_GATEWAY, "외부 서비스 처리 중 오류가 발생했습니다."),
     OPENAI_CALL_FAILED(HttpStatus.BAD_GATEWAY, "OpenAI 호출 처리 중 오류가 발생했습니다."),
     OPENAI_OAUTH_TOKEN_EXCHANGE_FAILED(HttpStatus.BAD_GATEWAY, "OpenAI OAuth token 교환 중 오류가 발생했습니다."),
+    OPENAI_USAGE_QUERY_FAILED(HttpStatus.BAD_GATEWAY, "OpenAI 사용량 조회 중 오류가 발생했습니다."),
 
     // 503 SERVICE_UNAVAILABLE
     SERVICE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "서비스를 일시적으로 사용할 수 없습니다."),
