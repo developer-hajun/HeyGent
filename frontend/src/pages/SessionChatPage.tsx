@@ -1,13 +1,12 @@
 import { useParams, useLocation, useNavigate } from 'react-router'
 import { Send, Mic, Bot, ChevronLeft, AudioLines, Square, X, PhoneOff } from 'lucide-react'
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { motion, AnimatePresence } from 'motion/react'
+import { motion, AnimatePresence, useMotionValue, useSpring } from 'motion/react'
 import { sessions as staticSessions, agentMeta } from '@/data/sessions'
 import type { Message, AgentKey } from '@/data/sessions'
 import type { CustomAgentConfig } from '@/components/NewSessionModal'
 import { useSessionStore } from '@/store/useSessionStore'
 
-// ── 가짜 AI 응답 풀 ──────────────────────────────────────────────
 const FAKE_REPLIES = [
   '네, 말씀하신 내용 잘 이해했습니다. 바로 처리해 드릴게요.',
   '좋은 질문이에요! 분석해보니 몇 가지 방법이 있는데, 가장 효율적인 방법을 추천드릴게요.',
@@ -24,7 +23,6 @@ const LOADING_STEPS = [
   '응답을 생성하는 중...',
 ]
 
-// 마이크 웨이브 바 개수
 const WAVE_BARS = 5
 
 type ChatMessage = Message & { isNew?: boolean }
@@ -32,6 +30,7 @@ type ChatMessage = Message & { isNew?: boolean }
 interface LocationState {
   firstMessage?: string
   customAgent?: CustomAgentConfig | null
+  voiceMode?: boolean
 }
 
 function nowTime() {
@@ -50,7 +49,7 @@ function randomReply() {
   return FAKE_REPLIES[Math.floor(Math.random() * FAKE_REPLIES.length)]
 }
 
-// ── 마이크 웨이브 컴포넌트 (입력창 내부용) ──────────────────────
+// ── 입력창 마이크 웨이브 (작은 바) ───────────────────────────────
 function VoiceWave({ volumes }: { volumes: number[] }) {
   return (
     <div className="flex items-center gap-0.75">
@@ -66,76 +65,75 @@ function VoiceWave({ volumes }: { volumes: number[] }) {
   )
 }
 
-// ── 음성대화 오버레이 웨이브 (큰 원형 애니메이션) ─────────────────
+// ── 음성대화 오버레이 ─────────────────────────────────────────────
 type VoiceTurnState = 'user' | 'ai' | 'idle'
 
-function VoiceOrb({ state, volumes }: { state: VoiceTurnState; volumes: number[] }) {
-  const avgVol = volumes.reduce((a, b) => a + b, 0) / volumes.length
+// 볼륨 기반 spring 원 (user 말하는 중)
+function UserOrb({ avgVolume }: { avgVolume: number }) {
+  const scale = useMotionValue(1)
+  const springScale = useSpring(scale, { stiffness: 200, damping: 20 })
 
-  if (state === 'user') {
-    // 내가 말하는 중 — 볼륨 기반 파동 원
-    const scale = 1 + avgVol * 0.6
-    return (
-      <div className="relative flex h-36 w-36 items-center justify-center">
-        {/* 바깥 파동 */}
-        <motion.div
-          className="absolute rounded-full bg-white/10"
-          animate={{ width: 144 * scale, height: 144 * scale }}
-          transition={{ duration: 0.08, ease: 'easeOut' }}
-        />
-        <motion.div
-          className="absolute rounded-full bg-white/15"
-          animate={{ width: 120 * scale * 0.85, height: 120 * scale * 0.85 }}
-          transition={{ duration: 0.08, ease: 'easeOut', delay: 0.02 }}
-        />
-        {/* 중앙 원 */}
-        <div className="relative z-10 flex h-20 w-20 items-center justify-center rounded-full bg-white shadow-2xl">
-          <Mic className="h-8 w-8 text-gray-800" />
-        </div>
-      </div>
-    )
-  }
+  useEffect(() => {
+    scale.set(1 + avgVolume * 0.7)
+  }, [avgVolume, scale])
 
-  if (state === 'ai') {
-    // AI가 말하는 중 — 부드러운 pulse 애니메이션
-    return (
-      <div className="relative flex h-36 w-36 items-center justify-center">
-        <motion.div
-          className="absolute rounded-full bg-white/10"
-          animate={{ scale: [1, 1.3, 1], opacity: [0.6, 0.2, 0.6] }}
-          transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
-          style={{ width: 144, height: 144 }}
-        />
-        <motion.div
-          className="absolute rounded-full bg-white/20"
-          animate={{ scale: [1, 1.18, 1], opacity: [0.8, 0.3, 0.8] }}
-          transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut', delay: 0.3 }}
-          style={{ width: 104, height: 104 }}
-        />
-        <div className="relative z-10 flex h-20 w-20 items-center justify-center rounded-full bg-white shadow-2xl">
-          <AudioLines className="h-7 w-7 text-gray-800" />
-        </div>
-      </div>
-    )
-  }
-
-  // idle — 조용히 대기
   return (
-    <div className="relative flex h-36 w-36 items-center justify-center">
+    <div className="relative flex h-40 w-40 items-center justify-center">
       <motion.div
-        className="absolute rounded-full bg-white/10"
-        animate={{ scale: [1, 1.06, 1] }}
-        transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
-        style={{ width: 144, height: 144 }}
+        className="absolute rounded-full bg-white/8"
+        style={{ width: 160, height: 160, scaleX: springScale, scaleY: springScale }}
+      />
+      <motion.div
+        className="absolute rounded-full bg-white/12"
+        style={{ width: 128, height: 128, scaleX: springScale, scaleY: springScale }}
       />
       <div className="relative z-10 flex h-20 w-20 items-center justify-center rounded-full bg-white shadow-2xl">
-        <Mic className="h-7 w-7 text-gray-400" />
+        <Mic className="h-8 w-8 text-gray-800" />
       </div>
     </div>
   )
 }
 
-// ── 음성대화 전체화면 오버레이 ────────────────────────────────────
+// AI 말하는 중 pulse 원
+function AiOrb() {
+  return (
+    <div className="relative flex h-40 w-40 items-center justify-center">
+      <motion.div
+        className="absolute rounded-full bg-white/8"
+        style={{ width: 160, height: 160 }}
+        animate={{ scale: [1, 1.28, 1], opacity: [0.7, 0.2, 0.7] }}
+        transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <motion.div
+        className="absolute rounded-full bg-white/15"
+        style={{ width: 112, height: 112 }}
+        animate={{ scale: [1, 1.15, 1], opacity: [0.9, 0.3, 0.9] }}
+        transition={{ duration: 1.8, repeat: Infinity, ease: 'easeInOut', delay: 0.35 }}
+      />
+      <div className="relative z-10 flex h-20 w-20 items-center justify-center rounded-full bg-white shadow-2xl">
+        <AudioLines className="h-7 w-7 text-gray-800" />
+      </div>
+    </div>
+  )
+}
+
+// 대기 중 idle 원
+function IdleOrb() {
+  return (
+    <div className="relative flex h-40 w-40 items-center justify-center">
+      <motion.div
+        className="absolute rounded-full bg-white/8"
+        style={{ width: 160, height: 160 }}
+        animate={{ scale: [1, 1.05, 1] }}
+        transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <div className="relative z-10 flex h-20 w-20 items-center justify-center rounded-full bg-white/20 shadow-xl">
+        <Mic className="h-7 w-7 text-white/60" />
+      </div>
+    </div>
+  )
+}
+
 interface VoiceChatOverlayProps {
   agentDisplayName: string
   agentMeta: { color: string; icon: React.ElementType }
@@ -144,222 +142,266 @@ interface VoiceChatOverlayProps {
 
 function VoiceChatOverlay({ agentDisplayName, agentMeta: meta, onClose }: VoiceChatOverlayProps) {
   const [turnState, setTurnState] = useState<VoiceTurnState>('idle')
-  const [statusText, setStatusText] = useState('대화를 시작하려면 마이크를 탭하세요')
-  const [volumes, setVolumes] = useState<number[]>(Array(WAVE_BARS).fill(0.1))
-  const audioContextRef = useRef<AudioContext | null>(null)
+  const [statusText, setStatusText] = useState('탭해서 대화 시작')
+  const [avgVolume, setAvgVolume] = useState(0)
+
+  const audioCtxRef = useRef<AudioContext | null>(null)
   const analyserRef = useRef<AnalyserNode | null>(null)
   const micStreamRef = useRef<MediaStream | null>(null)
-  const waveRafRef = useRef<number | null>(null)
-  const aiTurnRef = useRef<number | null>(null)
-  const listenAgainRef = useRef<number | null>(null)
+  const rafRef = useRef<number | null>(null)
+  const aiTimerRef = useRef<number | null>(null)
+  const nextListenRef = useRef<number | null>(null)
+  const startListeningRef = useRef<() => Promise<void>>()
 
-  const stopMicStream = useCallback(() => {
-    if (waveRafRef.current) cancelAnimationFrame(waveRafRef.current)
-    if (micStreamRef.current) micStreamRef.current.getTracks().forEach((t) => t.stop())
-    if (audioContextRef.current) audioContextRef.current.close()
-    audioContextRef.current = null
+  const stopMic = useCallback(() => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    micStreamRef.current?.getTracks().forEach((t) => t.stop())
+    audioCtxRef.current?.close()
+    audioCtxRef.current = null
     analyserRef.current = null
     micStreamRef.current = null
-    setVolumes(Array(WAVE_BARS).fill(0.1))
+    setAvgVolume(0)
   }, [])
-
-  const startListeningRef = useRef<() => void>(() => {})
 
   const startListening = useCallback(async () => {
     setTurnState('user')
     setStatusText('듣고 있어요...')
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const ctx = new AudioContext()
-      const source = ctx.createMediaStreamSource(stream)
+      const src = ctx.createMediaStreamSource(stream)
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 256
-      source.connect(analyser)
-      audioContextRef.current = ctx
+      src.connect(analyser)
+      audioCtxRef.current = ctx
       analyserRef.current = analyser
       micStreamRef.current = stream
 
       const data = new Uint8Array(analyser.frequencyBinCount)
       const tick = () => {
         analyser.getByteFrequencyData(data)
-        const step = Math.floor(data.length / WAVE_BARS)
-        const vols = Array.from({ length: WAVE_BARS }, (_, i) => {
-          const slice = data.slice(i * step, (i + 1) * step)
-          const avg = slice.reduce((a, b) => a + b, 0) / slice.length
-          return Math.min(1, avg / 180)
-        })
-        setVolumes(vols)
-        waveRafRef.current = requestAnimationFrame(tick)
+        const avg = data.reduce((a, b) => a + b, 0) / data.length / 255
+        setAvgVolume(avg)
+        rafRef.current = requestAnimationFrame(tick)
       }
-      waveRafRef.current = requestAnimationFrame(tick)
+      rafRef.current = requestAnimationFrame(tick)
     } catch {
+      // 마이크 권한 없을 때 가짜 볼륨
       const fake = () => {
-        setVolumes(Array.from({ length: WAVE_BARS }, () => 0.15 + Math.random() * 0.65))
-        waveRafRef.current = requestAnimationFrame(fake)
+        setAvgVolume(0.1 + Math.random() * 0.5)
+        rafRef.current = requestAnimationFrame(fake)
       }
-      waveRafRef.current = requestAnimationFrame(fake)
+      rafRef.current = requestAnimationFrame(fake)
     }
 
-    // 3초 후 자동으로 AI 턴으로 전환 (시뮬레이션)
-    aiTurnRef.current = window.setTimeout(
+    // 3~5초 후 AI 턴
+    aiTimerRef.current = window.setTimeout(
       () => {
-        stopMicStream()
+        stopMic()
         setTurnState('ai')
         setStatusText(`${agentDisplayName}이(가) 응답하는 중...`)
-        const replyDelay = 2000 + Math.random() * 2000
-        listenAgainRef.current = window.setTimeout(() => {
-          startListeningRef.current()
-        }, replyDelay)
+        nextListenRef.current = window.setTimeout(
+          () => {
+            startListeningRef.current?.()
+          },
+          2000 + Math.random() * 2000,
+        )
       },
       3000 + Math.random() * 2000,
     )
-  }, [agentDisplayName, stopMicStream])
+  }, [agentDisplayName, stopMic])
 
   useEffect(() => {
     startListeningRef.current = startListening
   }, [startListening])
 
+  const clearTimers = useCallback(() => {
+    if (aiTimerRef.current) clearTimeout(aiTimerRef.current)
+    if (nextListenRef.current) clearTimeout(nextListenRef.current)
+    aiTimerRef.current = null
+    nextListenRef.current = null
+  }, [])
+
   const handleMicTap = () => {
     if (turnState === 'idle') {
       startListening()
     } else if (turnState === 'user') {
-      if (aiTurnRef.current) clearTimeout(aiTurnRef.current)
-      stopMicStream()
+      clearTimers()
+      stopMic()
       setTurnState('ai')
       setStatusText(`${agentDisplayName}이(가) 응답하는 중...`)
-      listenAgainRef.current = window.setTimeout(
+      nextListenRef.current = window.setTimeout(
         () => {
-          startListeningRef.current()
+          startListeningRef.current?.()
         },
         2000 + Math.random() * 2000,
       )
-    } else if (turnState === 'ai') {
-      if (listenAgainRef.current) clearTimeout(listenAgainRef.current)
+    } else {
+      clearTimers()
       startListening()
     }
   }
 
   const handleClose = useCallback(() => {
-    if (aiTurnRef.current) clearTimeout(aiTurnRef.current)
-    if (listenAgainRef.current) clearTimeout(listenAgainRef.current)
-    stopMicStream()
+    clearTimers()
+    stopMic()
     onClose()
-  }, [onClose, stopMicStream])
+  }, [clearTimers, onClose, stopMic])
 
   useEffect(
     () => () => {
-      if (aiTurnRef.current) clearTimeout(aiTurnRef.current)
-      if (listenAgainRef.current) clearTimeout(listenAgainRef.current)
-      stopMicStream()
+      clearTimers()
+      stopMic()
     },
-    [stopMicStream],
+    [clearTimers, stopMic],
   )
 
   const turnLabel =
     turnState === 'user'
-      ? '말하는 중'
+      ? '내가 말하는 중'
       : turnState === 'ai'
         ? `${agentDisplayName} 응답 중`
         : '대기 중'
 
+  const micHint =
+    turnState === 'user'
+      ? '탭하면 AI에게 넘기기'
+      : turnState === 'ai'
+        ? '탭하면 끊기'
+        : '탭하면 시작'
+
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.25 }}
-      className="fixed inset-0 z-50 flex flex-col items-center justify-between overflow-hidden"
-      style={{
-        background: 'linear-gradient(160deg, #1a1a2e 0%, #16213e 40%, #0f3460 100%)',
-      }}
+      initial={{ opacity: 0, scale: 0.97 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.97 }}
+      transition={{ duration: 0.22 }}
+      className="fixed inset-0 z-50 flex flex-col items-center justify-between"
+      style={{ background: 'linear-gradient(160deg, #0f0f1a 0%, #151526 45%, #0d1f3c 100%)' }}
     >
-      {/* 상단 닫기 */}
-      <div className="flex w-full items-center justify-between px-6 pt-6">
-        <div className="flex items-center gap-2">
+      {/* 상단 */}
+      <div className="flex w-full items-center justify-between px-6 pt-8">
+        <div className="flex items-center gap-2.5">
           <div
-            className="flex h-7 w-7 items-center justify-center rounded-lg"
-            style={{ backgroundColor: `${meta.color}30` }}
+            className="flex h-8 w-8 items-center justify-center rounded-xl"
+            style={{ backgroundColor: `${meta.color}25` }}
           >
-            <meta.icon style={{ color: meta.color, width: 14, height: 14 }} />
+            <meta.icon style={{ color: meta.color, width: 15, height: 15 }} />
           </div>
-          <span className="text-sm font-medium text-white/80">{agentDisplayName}</span>
+          <div>
+            <p className="text-sm font-semibold text-white/90">{agentDisplayName}</p>
+            <AnimatePresence mode="wait">
+              <motion.p
+                key={turnLabel}
+                initial={{ opacity: 0, y: 3 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -3 }}
+                transition={{ duration: 0.18 }}
+                className="text-xs text-white/40"
+              >
+                {turnLabel}
+              </motion.p>
+            </AnimatePresence>
+          </div>
         </div>
         <button
           onClick={handleClose}
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/60 transition-colors hover:bg-white/20 hover:text-white"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white/50 transition-colors hover:bg-white/20 hover:text-white"
         >
           <X className="h-4 w-4" />
         </button>
       </div>
 
-      {/* 중앙 오브 + 상태 */}
-      <div className="flex flex-col items-center gap-8">
-        <VoiceOrb state={turnState} volumes={volumes} />
+      {/* 중앙 Orb */}
+      <div className="flex flex-col items-center gap-10">
+        <AnimatePresence mode="wait">
+          {turnState === 'user' && (
+            <motion.div
+              key="user-orb"
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              transition={{ duration: 0.22 }}
+            >
+              <UserOrb avgVolume={avgVolume} />
+            </motion.div>
+          )}
+          {turnState === 'ai' && (
+            <motion.div
+              key="ai-orb"
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              transition={{ duration: 0.22 }}
+            >
+              <AiOrb />
+            </motion.div>
+          )}
+          {turnState === 'idle' && (
+            <motion.div
+              key="idle-orb"
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              transition={{ duration: 0.22 }}
+            >
+              <IdleOrb />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-        <div className="flex flex-col items-center gap-2 text-center">
-          <motion.div
-            key={turnLabel}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.2 }}
-            className="flex items-center gap-1.5"
-          >
-            {turnState !== 'idle' && (
-              <motion.span
-                className="inline-block h-1.5 w-1.5 rounded-full bg-green-400"
-                animate={{ opacity: [1, 0.3, 1] }}
-                transition={{ duration: 1.2, repeat: Infinity }}
-              />
-            )}
-            <span className="text-sm font-medium text-white/70">{turnLabel}</span>
-          </motion.div>
+        {/* 상태 텍스트 */}
+        <AnimatePresence mode="wait">
           <motion.p
             key={statusText}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.3 }}
-            className="text-xs text-white/40"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.2 }}
+            className="text-sm text-white/50"
           >
             {statusText}
           </motion.p>
-        </div>
+        </AnimatePresence>
       </div>
 
       {/* 하단 컨트롤 */}
-      <div className="mb-12 flex flex-col items-center gap-6">
-        {/* 마이크 탭 버튼 */}
-        <button
-          onClick={handleMicTap}
-          className={`flex h-16 w-16 items-center justify-center rounded-full shadow-lg transition-all duration-200 active:scale-95 ${
-            turnState === 'user' ? 'bg-white shadow-white/20' : 'bg-white/15 hover:bg-white/25'
-          }`}
-        >
-          {turnState === 'user' ? (
-            <Square className="h-5 w-5 fill-gray-800 text-gray-800" />
-          ) : (
-            <Mic className={`h-6 w-6 ${turnState === 'ai' ? 'text-white/40' : 'text-white'}`} />
-          )}
-        </button>
-        <p className="text-xs text-white/30">
-          {turnState === 'user'
-            ? '탭하면 전송'
-            : turnState === 'ai'
-              ? '탭하면 끊기'
-              : '탭하면 시작'}
-        </p>
+      <div className="mb-14 flex flex-col items-center gap-8">
+        {/* 마이크 / 멈춤 버튼 */}
+        <div className="flex flex-col items-center gap-3">
+          <button
+            onClick={handleMicTap}
+            className={`flex h-16 w-16 items-center justify-center rounded-full shadow-lg transition-all duration-200 active:scale-90 ${
+              turnState === 'user'
+                ? 'bg-white shadow-white/20'
+                : turnState === 'ai'
+                  ? 'cursor-default bg-white/10'
+                  : 'bg-white/15 hover:bg-white/25'
+            }`}
+          >
+            {turnState === 'user' ? (
+              <Square className="h-5 w-5 fill-gray-800 text-gray-800" />
+            ) : (
+              <Mic className={`h-6 w-6 ${turnState === 'ai' ? 'text-white/25' : 'text-white'}`} />
+            )}
+          </button>
+          <p className="text-xs text-white/25">{micHint}</p>
+        </div>
 
-        {/* 통화 종료 버튼 */}
+        {/* 종료 버튼 */}
         <button
           onClick={handleClose}
-          className="flex h-12 w-12 items-center justify-center rounded-full bg-red-500 shadow-lg shadow-red-500/30 transition-all duration-200 hover:bg-red-600 active:scale-95"
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-red-500 shadow-xl shadow-red-500/25 transition-all duration-200 hover:bg-red-600 active:scale-90"
         >
-          <PhoneOff className="h-5 w-5 text-white" />
+          <PhoneOff className="h-6 w-6 text-white" />
         </button>
       </div>
     </motion.div>
   )
 }
 
+// ─────────────────────────────────────────────────────────────────
 export function SessionChatPage() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const location = useLocation()
@@ -367,7 +409,6 @@ export function SessionChatPage() {
   const locationState = location.state as LocationState | null
   const { addDynamicSession, dynamicSessions } = useSessionStore()
 
-  // 기존 세션: static + dynamic 모두에서 탐색
   const existingSession = sessionId
     ? (dynamicSessions.find((s) => s.id === sessionId) ??
       staticSessions.find((s) => s.id === sessionId))
@@ -382,9 +423,9 @@ export function SessionChatPage() {
   const [inputValue, setInputValue] = useState('')
   const [isTyping, setIsTyping] = useState(false)
   const [loadingStep, setLoadingStep] = useState(0)
-  const [voiceChatOpen, setVoiceChatOpen] = useState(false)
+  const [voiceChatOpen, setVoiceChatOpen] = useState(() => !!locationState?.voiceMode)
 
-  // 마이크
+  // 입력창 마이크 (텍스트 보조용 음성 입력)
   const [isRecording, setIsRecording] = useState(false)
   const [waveVolumes, setWaveVolumes] = useState<number[]>(Array(WAVE_BARS).fill(0.15))
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -397,7 +438,6 @@ export function SessionChatPage() {
   const replyTimeoutRef = useRef<number | null>(null)
   const stepIntervalRef = useRef<number | null>(null)
 
-  // ── 마이크 웨이브 루프 ──────────────────────────────────────────
   const startWaveLoop = useCallback((analyser: AnalyserNode) => {
     const data = new Uint8Array(analyser.frequencyBinCount)
     const tick = () => {
@@ -416,8 +456,8 @@ export function SessionChatPage() {
 
   const stopWave = useCallback(() => {
     if (waveRafRef.current) cancelAnimationFrame(waveRafRef.current)
-    if (micStreamRef.current) micStreamRef.current.getTracks().forEach((t) => t.stop())
-    if (audioContextRef.current) audioContextRef.current.close()
+    micStreamRef.current?.getTracks().forEach((t) => t.stop())
+    audioContextRef.current?.close()
     audioContextRef.current = null
     analyserRef.current = null
     micStreamRef.current = null
@@ -433,19 +473,17 @@ export function SessionChatPage() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       const ctx = new AudioContext()
-      const source = ctx.createMediaStreamSource(stream)
+      const src = ctx.createMediaStreamSource(stream)
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 256
-      source.connect(analyser)
+      src.connect(analyser)
       audioContextRef.current = ctx
       analyserRef.current = analyser
       micStreamRef.current = stream
       setIsRecording(true)
       startWaveLoop(analyser)
     } catch {
-      // 마이크 권한 거부 시 단순 토글만
       setIsRecording(true)
-      // 가짜 웨이브 애니메이션
       const fake = () => {
         setWaveVolumes(Array.from({ length: WAVE_BARS }, () => 0.1 + Math.random() * 0.8))
         waveRafRef.current = requestAnimationFrame(fake)
@@ -454,7 +492,6 @@ export function SessionChatPage() {
     }
   }, [isRecording, startWaveLoop, stopWave])
 
-  // 언마운트 시 정리
   useEffect(
     () => () => {
       stopWave()
@@ -462,12 +499,10 @@ export function SessionChatPage() {
     [stopWave],
   )
 
-  // ── 스크롤 ──────────────────────────────────────────────────────
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isTyping])
 
-  // ── 세션 등록 (최초 메시지 전송 시) ───────────────────────────────
   const registerSession = useCallback(
     (firstText: string) => {
       if (sessionRegistered.current || existingSession) return
@@ -486,19 +521,13 @@ export function SessionChatPage() {
     [existingSession, customAgent, addDynamicSession],
   )
 
-  // ── 메시지 전송 ─────────────────────────────────────────────────
   const sendMessage = useCallback(
     (text: string) => {
       registerSession(text)
-      const userMsg: ChatMessage = {
-        id: `u-${Date.now()}`,
-        role: 'user',
-        text,
-        time: nowTime(),
-        isNew: true,
-      }
-      setMessages((prev) => [...prev, userMsg])
-
+      setMessages((prev) => [
+        ...prev,
+        { id: `u-${Date.now()}`, role: 'user', text, time: nowTime(), isNew: true },
+      ])
       setIsTyping(true)
       setLoadingStep(0)
       stepIntervalRef.current = window.setInterval(() => {
@@ -510,15 +539,17 @@ export function SessionChatPage() {
         stepIntervalRef.current = null
         replyTimeoutRef.current = null
         setIsTyping(false)
-        const agentMsg: ChatMessage = {
-          id: `a-${Date.now()}`,
-          role: 'agent',
-          agent: existingSession?.agentKey ?? ('main' as AgentKey),
-          text: randomReply(),
-          time: nowTime(),
-          isNew: true,
-        }
-        setMessages((prev) => [...prev, agentMsg])
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `a-${Date.now()}`,
+            role: 'agent',
+            agent: existingSession?.agentKey ?? ('main' as AgentKey),
+            text: randomReply(),
+            time: nowTime(),
+            isNew: true,
+          },
+        ])
       }, delay)
     },
     [existingSession, registerSession],
@@ -532,7 +563,6 @@ export function SessionChatPage() {
     setIsTyping(false)
   }, [])
 
-  // ── 첫 메시지 자동 전송 ─────────────────────────────────────────
   useEffect(() => {
     if (!existingSession && locationState?.firstMessage && !hasInitialized.current) {
       hasInitialized.current = true
@@ -545,7 +575,6 @@ export function SessionChatPage() {
     const text = inputValue.trim()
     if (!text || isTyping) return
     setInputValue('')
-    // 마이크 녹음 중이면 중지
     if (isRecording) {
       stopWave()
       setIsRecording(false)
@@ -565,7 +594,6 @@ export function SessionChatPage() {
 
   return (
     <div className="bg-background relative flex flex-1 flex-col overflow-hidden">
-      {/* 음성대화 오버레이 */}
       <AnimatePresence>
         {voiceChatOpen && (
           <VoiceChatOverlay
@@ -575,6 +603,7 @@ export function SessionChatPage() {
           />
         )}
       </AnimatePresence>
+
       {/* Header */}
       <div className="border-border flex h-12 shrink-0 items-center gap-3 border-b px-4">
         <button
@@ -606,7 +635,6 @@ export function SessionChatPage() {
           />
         ))}
 
-        {/* 로딩 버블 */}
         <AnimatePresence>
           {isTyping && (
             <motion.div
@@ -657,7 +685,7 @@ export function SessionChatPage() {
       </div>
 
       {/* Input */}
-      <div className="border-border shrink-0 border-t px-4 py-3">
+      <div className="shrink-0 px-4 py-3">
         <div className="border-border flex items-center gap-3 overflow-hidden rounded-xl border bg-white px-4 py-2.5 shadow-sm">
           <input
             type="text"
@@ -675,7 +703,7 @@ export function SessionChatPage() {
             className="text-foreground placeholder:text-muted-foreground flex-1 bg-transparent text-sm outline-none disabled:opacity-60"
           />
 
-          {/* 마이크 버튼 */}
+          {/* 입력 보조 마이크 버튼 */}
           <button
             onClick={handleMicToggle}
             disabled={isTyping}
@@ -688,6 +716,7 @@ export function SessionChatPage() {
             {isRecording ? <VoiceWave volumes={waveVolumes} /> : <Mic className="h-4 w-4" />}
           </button>
 
+          {/* 오른쪽 버튼: 중지 / 전송 / 음성대화 */}
           {isTyping ? (
             <button
               onClick={handleStop}
@@ -758,7 +787,6 @@ function MessageBubble({
           {!isUser ? `${displayName} · ` : ''}
           {msg.time}
         </span>
-
         <div
           className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
             isUser ? 'bg-primary text-white' : 'border-border border bg-white'
@@ -770,7 +798,6 @@ function MessageBubble({
             </p>
           ))}
         </div>
-
         {msg.card && (
           <div className="border-border w-full rounded-xl border bg-gray-50 px-4 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap text-gray-700">
             {msg.card.content}

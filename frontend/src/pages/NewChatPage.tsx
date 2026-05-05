@@ -1,4 +1,4 @@
-import { Sparkles, Send, Code, Calendar, Apple, Activity, Mic, Bot } from 'lucide-react'
+import { Sparkles, Send, Code, Calendar, Apple, Activity, Mic, Bot, AudioLines } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router'
@@ -88,6 +88,7 @@ export function NewChatPage() {
                 style={{ fontSize: '15px' }}
                 autoFocus
               />
+              {/* 입력 보조 마이크 */}
               <button
                 onClick={handleVoiceInput}
                 className={`shrink-0 rounded-xl p-2.5 transition-colors ${
@@ -99,13 +100,33 @@ export function NewChatPage() {
               >
                 <Mic className="h-4 w-4" />
               </button>
-              <button
-                onClick={handleSend}
-                className="bg-primary hover:bg-primary/90 shrink-0 rounded-xl p-2 text-white transition-colors disabled:opacity-40"
-                disabled={!inputValue.trim()}
-              >
-                <Send className="h-4 w-4" />
-              </button>
+
+              {/* 오른쪽 버튼: 전송 / 음성대화 모드 */}
+              {inputValue.trim() ? (
+                <button
+                  onClick={handleSend}
+                  title="전송"
+                  className="bg-primary hover:bg-primary/90 shrink-0 rounded-xl p-2 text-white transition-colors"
+                >
+                  <Send className="h-4 w-4" />
+                </button>
+              ) : (
+                <button
+                  onClick={() =>
+                    navigate('/chat/new', {
+                      state: {
+                        firstMessage: '',
+                        customAgent: customAgent ?? null,
+                        voiceMode: true,
+                      },
+                    })
+                  }
+                  title="음성 대화 모드"
+                  className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-xl p-2 text-white transition-colors"
+                >
+                  <AudioLines className="h-4 w-4" />
+                </button>
+              )}
             </div>
 
             {/* Divider */}
