@@ -168,10 +168,12 @@ export function OfficeMap({
       <div
         style={{
           position: 'absolute',
-          top: 0,
-          left: 0,
+          top: '50%',
+          left: '50%',
           width: MAP_WIDTH,
           height: MAP_HEIGHT,
+          transform: `translate(-50%, -50%) scale(${scale})`,
+          transformOrigin: 'center center',
         }}
       >
         <img
