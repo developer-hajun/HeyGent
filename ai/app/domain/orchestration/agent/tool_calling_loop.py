@@ -129,7 +129,8 @@ class ToolCallingLoopHandler:
         llm_call_count = 0
 
         for turn_index in range(1, max_iterations + 1):
-            generated = self.provider.respond(
+            generated = await asyncio.to_thread(
+                self.provider.respond,
                 messages=messages,
                 tools=provider_tools,
                 model=model,

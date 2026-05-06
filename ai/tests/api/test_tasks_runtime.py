@@ -39,6 +39,24 @@ def _tool_call(call_id: str, name: str, arguments: dict) -> AssistantToolCall:
     return AssistantToolCall(id=call_id, name=name, arguments=arguments)
 
 
+def _step_tool_call(call_id: str, *, step_id: str = "execute", title: str = "도구 실행") -> AssistantToolCall:
+    return _tool_call(
+        call_id,
+        "step",
+        {
+            "steps": [
+                {
+                    "id": step_id,
+                    "title": title,
+                    "summary": f"{title} 중",
+                    "goal": title,
+                    "status": "in_progress",
+                }
+            ]
+        },
+    )
+
+
 def _patch_respond(monkeypatch, responses: list[AgentModelResponse | Exception]) -> list[dict]:
     iterator = iter(responses)
     calls: list[dict] = []
@@ -61,6 +79,21 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
         [
             _response(
                 tool_calls=[
+                    _tool_call(
+                        "call_step",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "check",
+                                    "title": "요청 도구 실행 점검",
+                                    "summary": "필요한 도구를 실행한다.",
+                                    "goal": "요청 처리에 필요한 runtime tool을 확인하고 실행한다.",
+                                    "status": "in_progress",
+                                }
+                            ]
+                        },
+                    ),
                     _tool_call("call_skills", "skills_list", {}),
                     _tool_call(
                         "call_todo",
@@ -94,7 +127,7 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert body["status"] == "COMPLETED"
     assert "entry_handler_key" not in body
     assert body["result_payload"]["text"] == "NATIVE_LOOP_DONE"
-    assert [item["name"] for item in body["result_payload"]["tool_results"]] == ["skills.list", "todo", "terminal.run"]
+    assert [item["name"] for item in body["result_payload"]["tool_results"]] == ["step", "skills.list", "todo", "terminal.run"]
     assert body["todo_state"]["currentKey"] is None
     exposed_tool_names = [tool["function"]["name"] for tool in provider_calls[0]["tools"]]
     assert "skills_list" in exposed_tool_names
@@ -103,6 +136,7 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
 
     steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
     assert len(steps) == 1
+    assert steps[0]["title"] == "요청 도구 실행 점검"
     assert steps[0]["input_payload"].get("todo_key") is None
     assert steps[0]["status"] == "COMPLETED"
     todo_items = steps[0]["detail_json"]["planningDetail"]["todoItems"]
@@ -111,9 +145,9 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
 
     transcript_session = client.app.state.session_store.get_latest_session_by_key("sess_native_loop")
     transcript = client.app.state.session_store.list_messages(transcript_session["id"])
-    assert [message["role"] for message in transcript] == ["user", "assistant", "tool", "tool", "tool", "assistant"]
-    assert transcript[1]["tool_calls"][0]["id"] == "call_skills"
-    assert transcript[2]["tool_call_id"] == "call_skills"
+    assert [message["role"] for message in transcript] == ["user", "assistant", "tool", "tool", "tool", "tool", "assistant"]
+    assert transcript[1]["tool_calls"][0]["id"] == "call_step"
+    assert transcript[2]["tool_call_id"] == "call_step"
 
 
 def test_agent_loop_emits_runtime_tool_progress_events_before_completion(client, monkeypatch, tmp_path):
@@ -178,8 +212,8 @@ def test_agent_loop_emits_runtime_tool_progress_events_before_completion(client,
     assert tool_completed[1].payload["path"] == "tmp/testfile/progress.md"
 
 
-def test_agent_loop_materializes_fallback_step_before_first_tool_without_step_declaration(client, monkeypatch, tmp_path):
-    workspace = tmp_path / "fallback-step-workspace"
+def test_agent_loop_keeps_tool_progress_run_scoped_without_step_declaration(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "run-scoped-tool-workspace"
     workspace.mkdir()
     _patch_respond(
         monkeypatch,
@@ -219,23 +253,19 @@ def test_agent_loop_materializes_fallback_step_before_first_tool_without_step_de
     assert (workspace / "tmp/testfile/fallback.md").read_text(encoding="utf-8") == "fallback step\n"
 
     steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
-    assert len(steps) == 1
-    assert steps[0]["title"] == "tmp/testfile/fallback.md 파일 작성"
+    assert steps == []
 
     events = client.app.state.repository.list_events(body["task_run_id"])
-    step_created = next(event for event in events if event.event_type == "step.created")
-    step_started = next(event for event in events if event.event_type == "step.started")
     tool_started = next(event for event in events if event.event_type == "tool.started")
-    assert events.index(step_created) < events.index(tool_started)
-    assert events.index(step_started) < events.index(tool_started)
-    assert tool_started.step_run_id == steps[0]["step_run_id"]
-    assert step_created.payload["internal_step_anchor"] is True
-    assert tool_started.payload["internal_step_anchor"] is True
-    assert tool_started.payload["step_visibility"] == "internal"
+    assert "step.created" not in [event.event_type for event in events]
+    assert "step.started" not in [event.event_type for event in events]
+    assert tool_started.step_run_id is None
+    assert "internal_step_anchor" not in tool_started.payload
+    assert "step_visibility" not in tool_started.payload
 
 
-def test_agent_loop_closes_fallback_step_when_llm_declares_semantic_steps_later(client, monkeypatch, tmp_path):
-    workspace = tmp_path / "fallback-to-semantic-workspace"
+def test_agent_loop_materializes_only_llm_declared_steps_after_run_scoped_tool_events(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "run-scoped-to-semantic-workspace"
     workspace.mkdir()
     _patch_respond(
         monkeypatch,
@@ -300,18 +330,21 @@ def test_agent_loop_closes_fallback_step_when_llm_declares_semantic_steps_later(
     assert body["status"] == "COMPLETED"
 
     steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
-    assert [step["status"] for step in steps] == ["COMPLETED", "COMPLETED", "COMPLETED"]
-    assert steps[0]["input_payload"]["progress_fallback_step"] is True
-    assert [step["title"] for step in steps[1:]] == ["자료 조사", "보고서 작성"]
+    assert [step["status"] for step in steps] == ["COMPLETED", "COMPLETED"]
+    assert [step["title"] for step in steps] == ["자료 조사", "보고서 작성"]
+    assert all(step["input_payload"].get("progress_fallback_step") is None for step in steps)
 
     events = client.app.state.repository.list_events(body["task_run_id"])
-    fallback_completed = next(
+    probe_started = next(
         event
         for event in events
-        if event.event_type == "step.completed" and event.step_run_id == steps[0]["step_run_id"]
+        if event.event_type == "tool.started" and event.payload.get("tool_name") == "write_file"
     )
+    step_created = next(event for event in events if event.event_type == "step.created")
     task_completed = next(event for event in events if event.event_type == "task.completed")
-    assert events.index(fallback_completed) < events.index(task_completed)
+    assert probe_started.step_run_id is None
+    assert events.index(probe_started) < events.index(step_created)
+    assert events.index(step_created) < events.index(task_completed)
 
 
 def test_agent_loop_does_not_create_steprun_before_first_provider_call(client, monkeypatch):
@@ -346,8 +379,35 @@ def test_agent_loop_does_not_create_steprun_before_first_provider_call(client, m
 
     events = client.app.state.repository.list_events(body["task_run_id"])
     event_types = [event.event_type for event in events]
-    assert event_types.index("task.started") < event_types.index("step.created")
-    assert len(client.app.state.repository.list_steps(body["task_run_id"])) == 1
+    assert "step.created" not in event_types
+    assert len(client.app.state.repository.list_steps(body["task_run_id"])) == 0
+
+
+def test_agent_loop_runs_provider_response_off_event_loop(client, monkeypatch):
+    to_thread_calls: list[str] = []
+
+    async def fake_to_thread(func, /, *args, **kwargs):
+        to_thread_calls.append(getattr(func, "__name__", repr(func)))
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr("app.domain.orchestration.agent.tool_calling_loop.asyncio.to_thread", fake_to_thread)
+    _patch_respond(monkeypatch, [_response(text="THREAD_PROVIDER_DONE")])
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "intent_type": "agent.loop",
+            "owner_key": "provider-thread-user",
+            "input_payload": {
+                "prompt": "provider 호출 thread 경계 확인",
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "COMPLETED"
+    assert to_thread_calls == ["fake_respond"]
 
 
 def test_step_events_use_llm_declared_step_title_as_realtime_summary(client, monkeypatch):
@@ -632,7 +692,7 @@ def test_agent_loop_switches_active_steprun_when_llm_declares_next_step(client, 
     assert len({event.step_run_id for event in events if event.event_type == "step.completed"}) == 2
 
 
-def test_agent_loop_moves_tool_to_matching_pending_steprun(client, monkeypatch, tmp_path):
+def test_agent_loop_does_not_move_tool_to_pending_steprun_without_llm_step_update(client, monkeypatch, tmp_path):
     workspace = tmp_path / "pending-tool-workspace"
     workspace.mkdir()
     _patch_respond(
@@ -693,35 +753,33 @@ def test_agent_loop_moves_tool_to_matching_pending_steprun(client, monkeypatch, 
     body = response.json()
     steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
     assert [step["title"] for step in steps] == ["이승엽 자료 조사", "이승엽 Markdown 문서 작성 및 저장"]
-    assert all(step["status"] == "COMPLETED" for step in steps)
+    assert [step["status"] for step in steps] == ["COMPLETED", "CANCELED"]
     assert (workspace / "tmp/testfile/lee-pending.md").read_text(encoding="utf-8") == "# 이승엽\n"
 
     events = client.app.state.repository.list_events(body["task_run_id"])
-    research_completed_index = next(
-        index
-        for index, event in enumerate(events)
-        if event.event_type == "step.completed" and event.step_run_id == steps[0]["step_run_id"]
-    )
-    write_started_index = next(
-        index
-        for index, event in enumerate(events)
-        if event.event_type == "step.started" and event.step_run_id == steps[1]["step_run_id"]
-    )
     write_tool_started = next(
         event
         for event in events
         if event.event_type == "tool.started" and event.payload.get("tool_name") == "write_file"
     )
 
-    # 모델이 step 전환을 한 번 더 선언하지 않아도, 이미 선언된 pending 단계에 맞는 tool은 그 단계에 묶는다.
-    assert research_completed_index < write_started_index
-    assert write_started_index < events.index(write_tool_started)
-    assert write_tool_started.step_run_id == steps[1]["step_run_id"]
+    # pending 단계는 화면 shell일 뿐이다. LLM이 다시 step 호출로 in_progress 전환하기 전에는
+    # tool 이름이나 파일 경로를 보고 서버가 임의로 해당 단계에 붙이지 않는다.
+    assert write_tool_started.step_run_id == steps[0]["step_run_id"]
+    assert not any(
+        event.event_type == "step.started" and event.step_run_id == steps[1]["step_run_id"]
+        for event in events
+    )
     assert [
         event.step_run_id
         for event in events
         if event.event_type == "step.completed"
-    ] == [steps[0]["step_run_id"], steps[1]["step_run_id"]]
+    ] == [steps[0]["step_run_id"]]
+    assert [
+        event.step_run_id
+        for event in events
+        if event.event_type == "step.canceled"
+    ] == [steps[1]["step_run_id"]]
 
 
 def test_agent_loop_keeps_delegate_step_running_until_worker_result_before_file_write(client, monkeypatch, tmp_path):
@@ -790,6 +848,28 @@ def test_agent_loop_keeps_delegate_step_running_until_worker_result_before_file_
             ),
             _response(
                 tool_calls=[
+                    _tool_call(
+                        "call_step_write",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "research",
+                                    "title": "AI 서브에이전트 depth1 설계 관점별 조사",
+                                    "summary": "worker 서브에이전트 조사 완료",
+                                    "goal": "관점별 조사 결과를 모은다.",
+                                    "status": "completed",
+                                },
+                                {
+                                    "id": "write",
+                                    "title": "종합 보고서와 관점별 md 파일 작성",
+                                    "summary": "조사 결과를 파일로 저장한다.",
+                                    "goal": "최종 보고서와 관점별 요약 파일을 만든다.",
+                                    "status": "in_progress",
+                                },
+                            ]
+                        },
+                    ),
                     _tool_call(
                         "call_write_after_worker",
                         "write_file",
@@ -930,12 +1010,10 @@ def test_agent_loop_explicit_task_plan_is_reference_only_until_llm_declares_step
     assert len(provider_calls) == 1
 
     steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
-    assert len(steps) == 1
-    assert steps[0]["input_payload"].get("plan_step_key") is None
-    assert steps[0]["input_payload"].get("todo_key") is None
+    assert steps == []
 
     events = client.app.state.repository.list_events(body["task_run_id"])
-    assert [event.event_type for event in events if event.event_type == "step.created"] == ["step.created"]
+    assert [event.event_type for event in events if event.event_type == "step.created"] == []
 
 
 def test_agent_loop_does_not_inject_prompt_plan_from_keywords(client, monkeypatch):
@@ -968,8 +1046,7 @@ def test_agent_loop_does_not_inject_prompt_plan_from_keywords(client, monkeypatc
     assert "task_plan_source" not in saved_task.input_payload
 
     steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
-    assert len(steps) == 1
-    assert steps[0]["input_payload"].get("plan_step_key") is None
+    assert steps == []
 
 
 def test_agent_loop_todo_does_not_force_prompt_plan_step_boundary(client, monkeypatch):
@@ -1012,10 +1089,9 @@ def test_agent_loop_todo_does_not_force_prompt_plan_step_boundary(client, monkey
     assert len(provider_calls) == 2
 
     steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
-    assert len(steps) == 1
-    assert steps[0]["input_payload"].get("plan_step_key") is None
+    assert steps == []
     events = client.app.state.repository.list_events(body["task_run_id"])
-    assert [event.event_type for event in events if event.event_type == "step.completed"] == ["step.completed"]
+    assert [event.event_type for event in events if event.event_type == "step.completed"] == []
 
 
 def test_agent_loop_uses_input_workspace_root_for_file_and_terminal_runtime(client, monkeypatch, tmp_path):
@@ -1113,7 +1189,12 @@ def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch
     _patch_respond(
         monkeypatch,
         [
-            _response(tool_calls=[_tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT_OK')"]})]),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_approval", title="승인 후 터미널 확인"),
+                    _tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT_OK')"]}),
+                ]
+            ),
             _response(tool_calls=[_tool_call("call_followup", "terminal_run", {"argv": [sys.executable, "-c", "print('FOLLOWUP_OK')"]})]),
             _response(text="APPROVED_DONE"),
         ],
@@ -1163,7 +1244,12 @@ def test_agent_loop_resume_provider_runtime_error_fails_existing_step(client, mo
     _patch_respond(
         monkeypatch,
         [
-            _response(tool_calls=[_tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_resume_error", title="승인 후 provider 오류 확인"),
+                    _tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT')"]}),
+                ]
+            ),
             RuntimeError("provider unavailable"),
         ],
     )
@@ -1217,7 +1303,12 @@ def test_taskruns_resume_rejects_missing_approval_id_for_waiting_task(client, mo
     _patch_respond(
         monkeypatch,
         [
-            _response(tool_calls=[_tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_missing_approval", title="승인 대기 확인"),
+                    _tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT')"]}),
+                ]
+            ),
             _response(text="SHOULD_NOT_RESUME"),
         ],
     )
@@ -1248,8 +1339,18 @@ def test_taskruns_resume_rejects_approval_id_from_other_waiting_task(client, mon
     _patch_respond(
         monkeypatch,
         [
-            _response(tool_calls=[_tool_call("call_task_a", "terminal_run", {"argv": [sys.executable, "-c", "print('A')"]})]),
-            _response(tool_calls=[_tool_call("call_task_b", "terminal_run", {"argv": [sys.executable, "-c", "print('B')"]})]),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_task_a", title="A 작업 승인 대기"),
+                    _tool_call("call_task_a", "terminal_run", {"argv": [sys.executable, "-c", "print('A')"]}),
+                ]
+            ),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_task_b", title="B 작업 승인 대기"),
+                    _tool_call("call_task_b", "terminal_run", {"argv": [sys.executable, "-c", "print('B')"]}),
+                ]
+            ),
             _response(text="SHOULD_NOT_RESUME"),
         ],
     )
@@ -1292,7 +1393,12 @@ def test_taskruns_cancel_records_pending_tool_result_without_resuming_loop(clien
     provider_calls = _patch_respond(
         monkeypatch,
         [
-            _response(tool_calls=[_tool_call("call_cancel", "terminal_run", {"argv": [sys.executable, "-c", "print('CANCEL')"]})]),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_cancel", title="취소될 터미널 실행"),
+                    _tool_call("call_cancel", "terminal_run", {"argv": [sys.executable, "-c", "print('CANCEL')"]}),
+                ]
+            ),
         ],
     )
 
@@ -1323,17 +1429,16 @@ def test_taskruns_cancel_records_pending_tool_result_without_resuming_loop(clien
     steps = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/steps").json()
     step = next(item for item in steps if item["step_run_id"] == created["current_step_run_id"])
     tool_results = step["output_payload"]["tool_results"]
-    assert tool_results[0]["tool_call_id"] == "call_cancel"
-    assert tool_results[0]["name"] == "terminal.run"
-    assert tool_results[0]["result"]["ok"] is False
-    assert tool_results[0]["result"]["error"]["code"] == "tool_canceled"
+    canceled_tool = next(item for item in tool_results if item["tool_call_id"] == "call_cancel")
+    assert canceled_tool["name"] == "terminal.run"
+    assert canceled_tool["result"]["ok"] is False
+    assert canceled_tool["result"]["error"]["code"] == "tool_canceled"
 
     transcript_session = client.app.state.session_store.get_latest_session_by_key("sess_cancel_pending")
     transcript = client.app.state.session_store.list_messages(transcript_session["id"])
     tool_messages = [message for message in transcript if message["role"] == "tool"]
-    assert len(tool_messages) == 1
-    assert tool_messages[0]["tool_call_id"] == "call_cancel"
-    assert tool_messages[0]["tool_name"] == "terminal.run"
+    canceled_tool_message = next(message for message in tool_messages if message["tool_call_id"] == "call_cancel")
+    assert canceled_tool_message["tool_name"] == "terminal.run"
 
 
 def test_taskruns_resume_and_cancel_reject_non_waiting_task(client):
@@ -1416,8 +1521,18 @@ def test_taskruns_active_supports_session_filter_and_recent_terminal(client, mon
         monkeypatch,
         [
             _response(text="DONE"),
-            _response(tool_calls=[_tool_call("call_terminal", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
-            _response(tool_calls=[_tool_call("call_terminal", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_waiting", title="대기 작업 터미널 실행"),
+                    _tool_call("call_terminal", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]}),
+                ]
+            ),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_other_waiting", title="다른 대기 작업 터미널 실행"),
+                    _tool_call("call_terminal", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]}),
+                ]
+            ),
         ],
     )
 
@@ -1657,7 +1772,12 @@ def test_taskruns_create_rejects_second_active_task_in_same_session(client, monk
     _patch_respond(
         monkeypatch,
         [
-            _response(tool_calls=[_tool_call("call_active_lock", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_active_lock", title="첫 작업 승인 대기"),
+                    _tool_call("call_active_lock", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]}),
+                ]
+            ),
             _response(text="SHOULD_NOT_START"),
         ],
     )
@@ -1693,7 +1813,12 @@ def test_taskruns_create_active_lock_is_scoped_by_authenticated_owner(client, mo
     _patch_respond(
         monkeypatch,
         [
-            _response(tool_calls=[_tool_call("call_owner_a_wait", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_owner_a", title="owner-a 승인 대기"),
+                    _tool_call("call_owner_a_wait", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]}),
+                ]
+            ),
             _response(text="OWNER_B_DONE"),
         ],
     )
@@ -1843,9 +1968,5 @@ def test_taskruns_flow_returns_observed_step_node(client, monkeypatch):
     assert flow_response.status_code == 200
     flow = flow_response.json()
     assert "entry_handler_key" not in flow
-    assert len(flow["nodes"]) == 1
-    assert flow["nodes"][0]["title"] == "agent loop 실행"
+    assert flow["nodes"] == []
     assert "현재 연결은 정상" in flow["summary"]
-    assert flow["nodes"][0]["semantic"]["key"] == "agent.loop"
-    assert flow["nodes"][0]["semantic"]["step"] == "agent loop 실행"
-    assert flow["nodes"][0]["is_current"] is True

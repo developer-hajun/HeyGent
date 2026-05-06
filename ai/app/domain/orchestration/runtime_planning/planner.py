@@ -82,60 +82,6 @@ class Planner:
         step.detail_json = merge_step_detail(step.detail_json, build_todo_detail_patch(initial_todo_state))
         return step
 
-    def materialize_observed_step(
-        self,
-        *,
-        task: TaskRun,
-        handler: TaskHandler,
-        input_payload: dict,
-        step_order: int,
-        outcome: dict,
-    ) -> StepRun:
-        """첫 모델 응답을 본 뒤 StepRun(사용자에게 보이는 의미 단계)을 만든다.
-
-        agent.loop는 실행 전에 의미 단계를 확정하기 어려울 수 있어, outcome의 detail_json을
-        우선 신뢰하고 부족한 값만 handler 기본값으로 보강한다.
-        """
-
-        input_payload = self._normalized_input_payload(input_payload=input_payload, handler=handler)
-        detail_json = merge_step_detail(build_default_step_detail(), outcome.get("detail_json"))
-        semantic_detail = detail_json.get("semanticDetail") or {}
-        title = self._stable_step_title(semantic_detail.get("semanticStep"), fallback=handler.spec.step_title)
-        goal = semantic_detail.get("goal") or outcome.get("summary_message") or title
-        semantic_key = semantic_detail.get("semanticKey") or self._handler_semantic_key(handler)
-        step = StepRun(
-            step_run_id=new_id("step"),
-            task_run_id=task.task_run_id,
-            step_order=step_order,
-            step_type=handler.spec.step_type,
-            handler_key=handler.spec.handler_key,
-            status=StepStatus.PENDING,
-            title=str(title),
-            input_payload=input_payload,
-            detail_json=detail_json,
-            summary_message=outcome.get("summary_message"),
-        )
-        step.detail_json = merge_step_detail(
-            step.detail_json,
-            build_orchestration_detail(
-                intent_type=task.intent_type or handler.spec.intent_type,
-                entry_handler_key=task.entry_handler_key or handler.spec.entry_handler_key,
-                handler_key=handler.spec.handler_key,
-                semantic_step=str(title),
-            ),
-        )
-        step.detail_json = merge_step_detail(
-            step.detail_json,
-            build_semantic_step_detail(
-                step_run_id=step.step_run_id,
-                semantic_key=semantic_key,
-                semantic_step=str(title),
-                semantic_goal=str(goal),
-                lifecycle="running",
-            ),
-        )
-        return step
-
     def materialize_observed_semantic_step(
         self,
         *,
