@@ -7,7 +7,6 @@ import com.ssafy.heygent.domain.ai.dto.response.OpenAiResponsesResponse;
 import com.ssafy.heygent.domain.ai.openai.dto.OpenAiResponsesCommand;
 import com.ssafy.heygent.domain.ai.openai.dto.OpenAiResponsesResult;
 import com.ssafy.heygent.domain.ai.openai.service.OpenAiProviderService;
-import com.ssafy.heygent.domain.ai.openai.service.OpenAiTokenUsageService;
 
 import lombok.RequiredArgsConstructor;
 
@@ -16,7 +15,6 @@ import lombok.RequiredArgsConstructor;
 public class AiInternalOpenAiService {
 
     private final OpenAiProviderService openAiProviderService;
-    private final OpenAiTokenUsageService openAiTokenUsageService;
 
     public OpenAiResponsesResponse createResponse(OpenAiResponsesRequest request) {
         OpenAiResponsesCommand command = new OpenAiResponsesCommand(
@@ -31,7 +29,6 @@ public class AiInternalOpenAiService {
             request.getMetadata()
         );
         OpenAiResponsesResult result = openAiProviderService.createResponse(command);
-        openAiTokenUsageService.record(command, result);
         return OpenAiResponsesResponse.from(result);
     }
 }

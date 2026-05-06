@@ -56,9 +56,12 @@ class Settings:
     task_projection_ttl_seconds: int = 3600
     task_projection_max_events: int = 200
     public_session_limit_per_user: int = 10
-    agent_loop_default_max_iterations: int = 60
-    agent_loop_worker_default_max_iterations: int = 50
-    agent_loop_max_iterations: int = 60
+    agent_model_request_timeout_seconds: float = 300.0
+    agent_model_stream_timeout_seconds: float = 300.0
+    agent_loop_default_max_iterations: int = 90
+    agent_loop_worker_default_max_iterations: int = 80
+    agent_loop_max_iterations: int = 120
+    bridge_token: str | None = None
 
     def resolved_api_base_url(self) -> str:
         """CLI 와 외부 클라이언트가 공통으로 사용할 기본 API 주소를 계산한다."""
@@ -226,16 +229,25 @@ def get_settings() -> Settings:
             _read_env("HEYGENT_PUBLIC_SESSION_LIMIT_PER_USER", 10, dotenv_values),
             default=10,
         ),
+        agent_model_request_timeout_seconds=_parse_float(
+            _read_env("HEYGENT_AGENT_MODEL_REQUEST_TIMEOUT_SECONDS", 300.0, dotenv_values),
+            default=300.0,
+        ),
+        agent_model_stream_timeout_seconds=_parse_float(
+            _read_env("HEYGENT_AGENT_MODEL_STREAM_TIMEOUT_SECONDS", 300.0, dotenv_values),
+            default=300.0,
+        ),
         agent_loop_default_max_iterations=_parse_int(
-            _read_env("HEYGENT_AGENT_LOOP_DEFAULT_MAX_ITERATIONS", 60, dotenv_values),
-            default=60,
+            _read_env("HEYGENT_AGENT_LOOP_DEFAULT_MAX_ITERATIONS", 90, dotenv_values),
+            default=90,
         ),
         agent_loop_worker_default_max_iterations=_parse_int(
-            _read_env("HEYGENT_AGENT_LOOP_WORKER_DEFAULT_MAX_ITERATIONS", 50, dotenv_values),
-            default=50,
+            _read_env("HEYGENT_AGENT_LOOP_WORKER_DEFAULT_MAX_ITERATIONS", 80, dotenv_values),
+            default=80,
         ),
         agent_loop_max_iterations=_parse_int(
-            _read_env("HEYGENT_AGENT_LOOP_MAX_ITERATIONS", 60, dotenv_values),
-            default=60,
+            _read_env("HEYGENT_AGENT_LOOP_MAX_ITERATIONS", 120, dotenv_values),
+            default=120,
         ),
+        bridge_token=_read_env("HEYGENT_BRIDGE_TOKEN", None, dotenv_values),
     )

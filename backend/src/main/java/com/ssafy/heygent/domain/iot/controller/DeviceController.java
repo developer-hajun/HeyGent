@@ -1,10 +1,12 @@
 package com.ssafy.heygent.domain.iot.controller;
 
+import com.ssafy.heygent.domain.iot.dto.DevicePairRequest;
 import com.ssafy.heygent.domain.iot.dto.DeviceRegisterRequest;
 import com.ssafy.heygent.domain.iot.dto.DeviceResponse;
 import com.ssafy.heygent.domain.iot.dto.DeviceStatusUpdateRequest;
 import com.ssafy.heygent.domain.iot.dto.DisplayPublishResult;
 import com.ssafy.heygent.domain.iot.dto.DisplayPublishTestRequest;
+import com.ssafy.heygent.domain.iot.service.DevicePairingService;
 import com.ssafy.heygent.domain.iot.service.DeviceService;
 import com.ssafy.heygent.global.config.security.CustomUserPrincipal;
 import com.ssafy.heygent.global.exception.ApiResponse;
@@ -30,6 +32,7 @@ import java.util.List;
 public class DeviceController {
 
     private final DeviceService deviceService;
+    private final DevicePairingService devicePairingService;
 
     @Operation(summary = "IoT 디바이스 등록")
     @PostMapping
@@ -46,6 +49,15 @@ public class DeviceController {
         @AuthenticationPrincipal CustomUserPrincipal principal
     ) {
         return ApiResponse.success(deviceService.list(principal.getUserId()));
+    }
+
+    @Operation(summary = "IoT 디바이스 pairing code 등록")
+    @PostMapping("/pair")
+    public ApiResponse<DeviceResponse> pair(
+        @AuthenticationPrincipal CustomUserPrincipal principal,
+        @Valid @RequestBody DevicePairRequest request
+    ) {
+        return ApiResponse.success(devicePairingService.pair(principal.getUserId(), request));
     }
 
     @Operation(summary = "IoT 디바이스 상태 변경")

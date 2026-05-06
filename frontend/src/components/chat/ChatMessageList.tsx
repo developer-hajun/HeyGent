@@ -2,11 +2,12 @@ import { ArrowDown } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { ChatMessageItem } from './ChatMessageItem'
 import type { ChatMessageView } from '@/types/aiChat'
-import type { ActivityItemView, TaskRunSummaryView } from '@/types/taskRuns'
+import type { ActivityItemView, RawStepRun, TaskRunSummaryView } from '@/types/taskRuns'
 
 type ChatMessageListProps = {
   messages: ChatMessageView[]
   activitiesByTaskRunId: Record<string, ActivityItemView[]>
+  stepRunsByTaskRunId: Record<string, RawStepRun[]>
   taskRunSummariesById: Record<string, TaskRunSummaryView>
   onOpenTaskRun: (taskRunId: string) => void
   focusedTaskRunTarget?: { taskRunId: string; requestId: number }
@@ -15,6 +16,7 @@ type ChatMessageListProps = {
 export function ChatMessageList({
   messages,
   activitiesByTaskRunId,
+  stepRunsByTaskRunId,
   taskRunSummariesById,
   onOpenTaskRun,
   focusedTaskRunTarget,
@@ -67,6 +69,11 @@ export function ChatMessageList({
                 message.taskRunId === undefined
                   ? undefined
                   : taskRunSummariesById[message.taskRunId]
+              }
+              stepRuns={
+                message.taskRunId === undefined
+                  ? []
+                  : (stepRunsByTaskRunId[message.taskRunId] ?? [])
               }
               onOpenTaskRun={onOpenTaskRun}
             />

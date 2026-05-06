@@ -52,16 +52,30 @@ export function toUserFacingTaskTitle(value?: string | null) {
   }
 
   const normalized = text.toLowerCase().replaceAll(/[\s_-]+/g, '.')
-  if (normalized.includes('agent.loop')) {
+  if (isInternalRuntimeTitle(normalized, 'agent.loop')) {
     return '질문에 대한 답변'
   }
-  if (normalized.includes('taskrun') || normalized.includes('task.run')) {
+  if (
+    isInternalRuntimeTitle(normalized, 'taskrun') ||
+    isInternalRuntimeTitle(normalized, 'task.run')
+  ) {
     return '답변 진행'
   }
-  if (normalized.includes('steprun') || normalized.includes('step.run')) {
+  if (
+    isInternalRuntimeTitle(normalized, 'steprun') ||
+    isInternalRuntimeTitle(normalized, 'step.run')
+  ) {
     return '답변 진행'
   }
   return text
+}
+
+function isInternalRuntimeTitle(normalized: string, token: string) {
+  // 파일명이나 사용자 문장 안의 step-run 같은 단어는 숨기지 않고,
+  // 내부 실행 타입 자체가 제목으로 넘어온 경우에만 사용자용 문구로 바꾼다.
+  return (
+    normalized === token || normalized.startsWith(`${token}.`) || normalized.startsWith(`${token}:`)
+  )
 }
 
 // TaskRun 상태값과 raw event_type이 섞여 들어와도 한곳에서 자연스러운 설명 문장으로 바꾼다.
@@ -83,6 +97,7 @@ export function toProgressSentence(status?: string | null) {
     case 'session.message.delta':
       return '답변을 작성하고 있습니다.'
     case 'WAITING':
+    case 'BLOCKED':
     case 'task.waiting':
     case 'step.waiting':
     case 'approval.required':
@@ -108,5 +123,27 @@ export function toProgressSentence(status?: string | null) {
       return '요청이 취소되었습니다.'
     default:
       return toTaskRunStatusText(status)
+  }
+}
+
+export function toStepProgressSentence(status?: string | null) {
+  switch (status) {
+    case 'PENDING':
+      return '이전 단계가 끝나기를 기다리고 있습니다.'
+    case 'RUNNING':
+      return '현재 단계를 처리하고 있습니다.'
+    case 'WAITING':
+      return '현재 단계에서 추가 확인이 필요합니다.'
+    case 'BLOCKED':
+      return '현재 단계가 대기 중입니다.'
+    case 'COMPLETED':
+      return '현재 단계를 완료했습니다.'
+    case 'FAILED':
+      return '현재 단계 처리 중 문제가 발생했습니다.'
+    case 'CANCELED':
+    case 'CANCELLED':
+      return '현재 단계가 취소되었습니다.'
+    default:
+      return toProgressSentence(status)
   }
 }

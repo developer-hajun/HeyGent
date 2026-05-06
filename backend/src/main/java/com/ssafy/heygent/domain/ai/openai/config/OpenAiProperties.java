@@ -18,6 +18,7 @@ public class OpenAiProperties {
 
     private String apiKey = "";
     private String restApiBaseUrl = "https://api.openai.com/v1";
+    private String usageApiBaseUrl = "https://api.openai.com/v1";
     private String defaultModel = "gpt-5.4";
     private List<String> allowedModels = new ArrayList<>(List.of("gpt-5.4", "gpt-5.4-mini"));
     private String embeddingModel = "text-embedding-3-small";
