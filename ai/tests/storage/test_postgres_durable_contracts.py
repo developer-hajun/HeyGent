@@ -98,7 +98,22 @@ def test_postgres_schema_seeds_builtin_agent_profiles():
     assert "main.default" in schema_sql
     assert "worker.default" in schema_sql
     assert "'worker'" in schema_sql
-    assert "ON CONFLICT (owner_key, profile_key, profile_version) DO NOTHING" in schema_sql
+    assert "ON CONFLICT (owner_key, profile_key, profile_version) DO UPDATE" in schema_sql
+    assert '"web","browser"' in schema_sql
+    assert '"hardTimeoutSeconds":900' in schema_sql
+
+
+def test_postgres_migrations_refresh_existing_builtin_agent_profiles():
+    migration_ids = [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    refresh_migration = POSTGRES_MIGRATIONS[migration_ids.index("0003_refresh_builtin_agent_profiles")]
+    migration_sql = "\n".join(refresh_migration.statements)
+
+    assert "UPDATE ai_agent_profiles" in migration_sql
+    assert "main.default" in migration_sql
+    assert "worker.default" in migration_sql
+    assert '"web","browser"' in migration_sql
+    assert '"maxIterations":80' in migration_sql
+    assert '"hardTimeoutSeconds":900' in migration_sql
 
 
 class _FakeCursor:
@@ -183,7 +198,7 @@ class _FakeDurableConnection:
         elif normalized.startswith("SELECT * FROM run_anchors"):
             return _FakeCursor([self.run_anchors[params[0]]] if params[0] in self.run_anchors else [])
         elif normalized.startswith("INSERT INTO step_anchors"):
-            step_run_id, task_run_id, parent_step_run_id, worker_session_id, step_order, step_type, handler_key, durable_status, anchor_payload = params
+            step_run_id, task_run_id, parent_step_run_id, worker_session_id, step_order, step_type, durable_status, anchor_payload = params
             self.step_anchors[step_run_id] = {
                 "step_run_id": step_run_id,
                 "task_run_id": task_run_id,
@@ -191,7 +206,6 @@ class _FakeDurableConnection:
                 "worker_session_id": worker_session_id,
                 "step_order": step_order,
                 "step_type": step_type,
-                "handler_key": handler_key,
                 "durable_status": durable_status,
                 "anchor_payload": anchor_payload,
             }
@@ -228,7 +242,6 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
             "task_run_id": "task_pg_anchor",
             "step_order": 3,
             "step_type": "agent.loop.execute",
-            "handler_key": "agent.loop",
             "durable_status": "WAITING",
             "anchor_payload": {"tool": "terminal.run"},
         },

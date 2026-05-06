@@ -40,7 +40,11 @@ public class SecurityConfig {
                                 "/api/v1/auth/refresh",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
-                                "/swagger-ui.html"
+                                "/swagger-ui.html",
+                                "/auth/notion/callback",
+                                "/api/v1/ai/openai/oauth/callback",
+                                "/api/v1/iot/pairing/start",
+                                "/api/v1/iot/pairing/devices/*/status"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )

@@ -199,8 +199,8 @@ def test_ws_list_snapshot_and_replay_happy_path(client, monkeypatch):
         assert snapshot["requestId"] == "req_snapshot"
         assert snapshot["payload"]["task"]["task_run_id"] == task_run_id
         assert snapshot["payload"]["task_run"]["task_run_id"] == task_run_id
-        assert snapshot["payload"]["steps"]
-        assert snapshot["payload"]["step_runs"]
+        assert snapshot["payload"]["steps"] == []
+        assert snapshot["payload"]["step_runs"] == []
         assert snapshot["payload"]["approvals"] == []
         assert snapshot["payload"]["events"]
         assert snapshot["payload"]["events"][0]["task_run_id"] == task_run_id
@@ -228,8 +228,6 @@ def test_ws_task_runs_active_list_filters_authenticated_owner(client):
         TaskRun(
             task_run_id="task_active_ws_owner",
             task_type="agent.loop",
-            intent_type="agent.loop",
-            entry_handler_key="agent.loop",
             owner_key="active-owner",
             session_key="session_active_ws",
             status="RUNNING",
@@ -240,8 +238,6 @@ def test_ws_task_runs_active_list_filters_authenticated_owner(client):
         TaskRun(
             task_run_id="task_active_ws_other",
             task_type="agent.loop",
-            intent_type="agent.loop",
-            entry_handler_key="agent.loop",
             owner_key="other-owner",
             session_key="session_active_ws",
             status="RUNNING",
@@ -276,8 +272,6 @@ def test_ws_subscribe_task_preserves_request_id_when_provided(client):
         TaskRun(
             task_run_id="task_subscribe_request_id",
             task_type="agent.loop",
-            intent_type="agent.loop",
-            entry_handler_key="agent.loop",
             owner_key="subscribe-owner",
             status="RUNNING",
             title="subscribe command",

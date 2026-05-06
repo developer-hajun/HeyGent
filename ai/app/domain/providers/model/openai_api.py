@@ -117,7 +117,7 @@ class OpenAIAPIProvider(BaseProvider):
                 "Content-Type": "application/json",
             },
             json=request_body,
-            timeout=60.0,
+            timeout=self.settings.agent_model_request_timeout_seconds,
         )
         response.raise_for_status()
         return build_agent_model_response(

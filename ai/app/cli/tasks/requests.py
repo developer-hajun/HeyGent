@@ -38,7 +38,6 @@ def run_model_check_task(client, settings: Settings, prompt: str) -> httpx.Respo
         "POST",
         request_path(settings, "/taskRuns"),
         json_body={
-            "intent_type": "agent.loop",
             "owner_key": "cli-user",
             "input_payload": {"prompt": prompt},
         },
@@ -52,7 +51,6 @@ def run_prompt_task(client, settings: Settings, prompt: str):
         "POST",
         request_path(settings, "/taskRuns"),
         json_body={
-            "intent_type": "agent.loop",
             "owner_key": "cli-user",
             "input_payload": {"prompt": prompt},
         },

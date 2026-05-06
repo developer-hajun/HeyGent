@@ -66,8 +66,7 @@ TaskRun 생성 예시:
 
 ```json
 {
-  "intent_type": "agent.loop",
-  "productSessionId": "web-chat-session-001",
+  "sessionId": "web-chat-session-001",
   "input_payload": {
     "model": "gpt-5.4",
     "max_iterations": 8,

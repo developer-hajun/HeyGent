@@ -2,10 +2,14 @@ package com.ssafy.heygent.domain.iot.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.ssafy.heygent.domain.iot.dto.DeviceRegisterRequest;
+import com.ssafy.heygent.domain.iot.dto.DeviceResponse;
 import com.ssafy.heygent.domain.iot.dto.DisplayEventPayload;
 import com.ssafy.heygent.domain.iot.dto.DisplayEventType;
 import com.ssafy.heygent.domain.iot.dto.DisplayIcon;
@@ -21,6 +25,7 @@ import com.ssafy.heygent.global.exception.ErrorCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -54,6 +59,59 @@ class DeviceServiceTest {
             displayEventMapper,
             mqttDisplayPublisher
         );
+    }
+
+    @Test
+    void registerCreatesActiveDeviceWhenUserHasNoDevice() {
+        User user = User.builder().id(USER_ID).kakaoId(12345L).build();
+        IotDevice savedDevice = IotDevice.builder()
+            .id(10L)
+            .user(user)
+            .deviceId(DEVICE_ID)
+            .displayName("desk oled")
+            .status(IotDeviceStatus.ACTIVE)
+            .build();
+
+        when(iotDeviceRepository.existsByDeviceId(DEVICE_ID)).thenReturn(false);
+        when(iotDeviceRepository.existsByUserId(USER_ID)).thenReturn(false);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(iotDeviceRepository.save(any(IotDevice.class))).thenReturn(savedDevice);
+
+        DeviceResponse response = deviceService.register(
+            USER_ID,
+            new DeviceRegisterRequest(DEVICE_ID, "desk oled")
+        );
+
+        assertThat(response.deviceId()).isEqualTo(DEVICE_ID);
+        assertThat(response.displayName()).isEqualTo("desk oled");
+        assertThat(response.status()).isEqualTo(IotDeviceStatus.ACTIVE);
+    }
+
+    @Test
+    void registerFailsWhenDeviceIdAlreadyExists() {
+        when(iotDeviceRepository.existsByDeviceId(DEVICE_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> deviceService.register(USER_ID, new DeviceRegisterRequest(DEVICE_ID, null)))
+            .isInstanceOf(CustomException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.DEVICE_ALREADY_PAIRED);
+
+        verify(userRepository, never()).findById(USER_ID);
+        verify(iotDeviceRepository, never()).save(any(IotDevice.class));
+    }
+
+    @Test
+    void registerFailsWhenUserAlreadyHasDevice() {
+        when(iotDeviceRepository.existsByDeviceId(DEVICE_ID)).thenReturn(false);
+        when(iotDeviceRepository.existsByUserId(USER_ID)).thenReturn(true);
+
+        assertThatThrownBy(() -> deviceService.register(USER_ID, new DeviceRegisterRequest(DEVICE_ID, null)))
+            .isInstanceOf(CustomException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.USER_DEVICE_LIMIT_EXCEEDED);
+
+        verify(userRepository, never()).findById(USER_ID);
+        verify(iotDeviceRepository, never()).save(any(IotDevice.class));
     }
 
     @Test
@@ -115,6 +173,46 @@ class DeviceServiceTest {
         verify(mqttDisplayPublisher, never()).publish(DEVICE_ID, payload());
     }
 
+    @Test
+    void unpairPublishesResetAndDeletesOwnedDevice() {
+        IotDevice device = device(IotDeviceStatus.ACTIVE);
+        DisplayEventPayload payload = resetPayload();
+        when(iotDeviceRepository.findByDeviceIdAndUserId(DEVICE_ID, USER_ID)).thenReturn(Optional.of(device));
+        when(displayEventMapper.toPayload(
+            DisplayEventType.INFO,
+            DisplayIcon.INFO,
+            "pairing",
+            "reset",
+            "unpaired"
+        )).thenReturn(payload);
+
+        deviceService.unpair(USER_ID, DEVICE_ID);
+
+        InOrder inOrder = inOrder(mqttDisplayPublisher, iotDeviceRepository);
+        inOrder.verify(mqttDisplayPublisher).publish(DEVICE_ID, payload);
+        inOrder.verify(iotDeviceRepository).delete(device);
+    }
+
+    @Test
+    void unpairFailsWhenDeviceIsNotOwnedByUser() {
+        when(iotDeviceRepository.findByDeviceIdAndUserId(DEVICE_ID, USER_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> deviceService.unpair(USER_ID, DEVICE_ID))
+            .isInstanceOf(CustomException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+
+        verify(iotDeviceRepository, never()).delete(any(IotDevice.class));
+        verify(displayEventMapper, never()).toPayload(
+            DisplayEventType.INFO,
+            DisplayIcon.INFO,
+            "pairing",
+            "reset",
+            "unpaired"
+        );
+        verify(mqttDisplayPublisher, never()).publish(any(), any());
+    }
+
     private DisplayPublishTestRequest request() {
         return new DisplayPublishTestRequest(
             DisplayEventType.STEP,
@@ -134,6 +232,18 @@ class DeviceServiceTest {
             "searching",
             3000L,
             12L
+        );
+    }
+
+    private DisplayEventPayload resetPayload() {
+        return new DisplayEventPayload(
+            DisplayEventType.INFO,
+            "pairing",
+            "reset",
+            DisplayIcon.INFO,
+            "unpaired",
+            3000L,
+            13L
         );
     }
 

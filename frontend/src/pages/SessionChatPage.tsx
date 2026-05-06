@@ -151,7 +151,7 @@ function VoiceChatOverlay({ agentDisplayName, agentMeta: meta, onClose }: VoiceC
   const rafRef = useRef<number | null>(null)
   const aiTimerRef = useRef<number | null>(null)
   const nextListenRef = useRef<number | null>(null)
-  const startListeningRef = useRef<() => Promise<void>>()
+  const startListeningRef = useRef<(() => Promise<void>) | null>(null)
 
   const stopMic = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current)

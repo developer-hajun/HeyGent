@@ -53,8 +53,6 @@ class ChildSessionLauncher:
             owner_key=owner_key,
             session_key=session_key,
             input_payload=input_payload,
-            intent_type=spec.child_intent_type,
-            entry_handler_key=spec.child_entry_handler_key,
         )
         return self._normalize_result(spec=spec, result=result)
 
@@ -84,7 +82,7 @@ class ChildSessionLauncher:
         agent_id = str((spec.metadata or {}).get("agent_id") or "").strip()
         if agent_id:
             return agent_id
-        return f"{spec.parent_step_run_id}:{spec.child_entry_handler_key}"
+        return f"{spec.parent_step_run_id}:worker"
 
     @staticmethod
     def _profile_key(spec: ChildSessionSpec) -> str | None:

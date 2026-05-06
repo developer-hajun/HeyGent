@@ -28,6 +28,42 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """,
         ),
     ),
+    PostgresMigration(
+        migration_id="0003_refresh_builtin_agent_profiles",
+        statements=(
+            """
+            UPDATE ai_agent_profiles
+            SET
+                config_snapshot = '{"promptRole":"main","toolsets":["skills","session","planning","terminal","file","web","browser","delegation"]}'::jsonb,
+                delegation_policy = '{"canDelegate":true,"maxWorkerDepth":1,"maxConcurrentWorkers":3}'::jsonb
+            WHERE owner_key = 'system'
+              AND profile_key = 'main.default'
+              AND profile_version = 1;
+            """,
+            """
+            UPDATE ai_agent_profiles
+            SET
+                config_snapshot = '{"promptRole":"worker","toolsets":["skills","terminal","file","web","browser"]}'::jsonb,
+                delegation_policy = '{"canDelegate":false,"maxWorkerDepth":0,"hardTimeoutSeconds":900,"maxIterations":80}'::jsonb
+            WHERE owner_key = 'system'
+              AND profile_key = 'worker.default'
+              AND profile_version = 1;
+            """,
+        ),
+    ),
+    PostgresMigration(
+        migration_id="0004_remove_legacy_routing_columns",
+        statements=(
+            """
+            ALTER TABLE run_anchors
+            DROP COLUMN IF EXISTS entry_handler_key;
+            """,
+            """
+            ALTER TABLE step_anchors
+            DROP COLUMN IF EXISTS handler_key;
+            """,
+        ),
+    ),
 )
 
 

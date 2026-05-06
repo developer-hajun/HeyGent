@@ -1,10 +1,22 @@
-import { Bot, CheckCircle2, Clock3, Loader2, UserRound, XCircle } from 'lucide-react'
+import { Bot, CheckCircle2, Clock3, Loader2, XCircle } from 'lucide-react'
 import type { ChatMessageView } from '@/types/aiChat'
-import type { ActivityItemView, TaskRunSummaryView, TaskRunStatusTone } from '@/types/taskRuns'
+import type {
+  ActivityItemView,
+  RawStepRun,
+  TaskRunSummaryView,
+  TaskRunStatusTone,
+} from '@/types/taskRuns'
+import { toTaskRunStatusTone } from '@/utils/taskRunStatusView'
+import {
+  toStepProgressSentence,
+  toUserFacingTaskTitle,
+} from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
+import { TaskRunStatusIcon } from '@/components/taskRuns/stepRunActivityPanel/TaskRunStatusIcon'
 
 type ChatMessageItemProps = {
   message: ChatMessageView
   activities?: ActivityItemView[]
+  stepRuns?: RawStepRun[]
   taskRunSummary?: TaskRunSummaryView
   onOpenTaskRun?: (taskRunId: string) => void
 }
@@ -12,11 +24,19 @@ type ChatMessageItemProps = {
 export function ChatMessageItem({
   message,
   activities = [],
+  stepRuns = [],
   taskRunSummary,
   onOpenTaskRun,
 }: ChatMessageItemProps) {
   const isUser = message.role === 'user'
   const taskRunChip = isUser ? undefined : getAssistantTaskRunChip(activities, taskRunSummary)
+  const taskRunProgress = isUser ? undefined : getAssistantTaskRunProgress(stepRuns, taskRunSummary)
+  const taskStatus =
+    typeof taskRunSummary?.raw?.status === 'string' ? taskRunSummary.raw.status : undefined
+  const shouldShowMessageBody =
+    message.content.trim() !== '' ||
+    isUser ||
+    (!isTerminalTaskStatus(taskStatus) && !taskRunProgress)
 
   return (
     <article className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
@@ -25,26 +45,53 @@ export function ChatMessageItem({
           <Bot className="h-4 w-4" />
         </div>
       )}
-      <div className={`max-w-[78%] space-y-2 ${isUser ? 'items-end' : 'items-start'}`}>
-        <div
-          className={
-            isUser
-              ? 'bg-primary text-primary-foreground rounded-2xl px-4 py-3 text-sm leading-6 [overflow-wrap:anywhere] break-words'
-              : 'text-foreground rounded-2xl py-2 text-sm leading-7 [overflow-wrap:anywhere] break-words'
-          }
-        >
-          {message.content ? (
-            <p className="[overflow-wrap:anywhere] break-words whitespace-pre-wrap">
-              {message.content}
-            </p>
-          ) : (
-            <div className="text-muted-foreground flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>응답을 작성하는 중입니다.</span>
-            </div>
-          )}
-        </div>
-        {message.taskRunId && taskRunChip && (
+      <div className={`max-w-[78%] space-y-1 ${isUser ? 'items-end' : 'items-start'}`}>
+        {!isUser && <p className="text-muted-foreground px-1 text-xs font-medium">AI 어시스턴트</p>}
+        {shouldShowMessageBody && (
+          <div
+            className={
+              isUser
+                ? 'text-foreground rounded-2xl bg-zinc-200 px-4 py-3 text-sm leading-6 wrap-anywhere dark:bg-zinc-700'
+                : 'text-foreground rounded-2xl py-2 text-sm leading-7 [overflow-wrap:anywhere] break-words'
+            }
+          >
+            {message.content.trim() !== '' ? (
+              <p className="[overflow-wrap:anywhere] break-words whitespace-pre-wrap">
+                {message.content}
+              </p>
+            ) : (
+              <div className="text-muted-foreground flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>응답을 작성하는 중입니다.</span>
+              </div>
+            )}
+          </div>
+        )}
+        {message.taskRunId && taskRunProgress && (
+          <button
+            type="button"
+            onClick={() => onOpenTaskRun?.(message.taskRunId as string)}
+            aria-label="답변 진행 단계 열기"
+            className="border-border bg-card hover:bg-muted/40 w-full max-w-xl rounded-lg border px-3 py-2 text-left shadow-sm transition-colors"
+          >
+            <ol className="space-y-1.5">
+              {taskRunProgress.items.map((item) => (
+                <li key={item.id} className="flex items-start gap-2">
+                  <TaskRunStatusIcon tone={item.tone} />
+                  <span className="min-w-0 flex-1">
+                    <span className="text-foreground line-clamp-1 block text-xs font-medium [overflow-wrap:anywhere] break-words">
+                      {item.text}
+                    </span>
+                    <span className="text-muted-foreground line-clamp-1 block text-[11px]">
+                      {item.detail}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </button>
+        )}
+        {message.taskRunId && taskRunChip && taskRunProgress === undefined && (
           <button
             type="button"
             onClick={() => onOpenTaskRun?.(message.taskRunId as string)}
@@ -56,13 +103,49 @@ export function ChatMessageItem({
           </button>
         )}
       </div>
-      {isUser && (
-        <div className="bg-muted text-muted-foreground mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
-          <UserRound className="h-4 w-4" />
-        </div>
-      )}
     </article>
   )
+}
+
+type AssistantTaskRunProgress = {
+  items: {
+    id: string
+    text: string
+    detail: string
+    tone: TaskRunStatusTone
+  }[]
+}
+
+function getAssistantTaskRunProgress(
+  stepRuns: RawStepRun[],
+  taskRunSummary?: TaskRunSummaryView,
+): AssistantTaskRunProgress | undefined {
+  const taskStatus =
+    typeof taskRunSummary?.raw?.status === 'string' ? taskRunSummary.raw.status : undefined
+  if (isTerminalTaskStatus(taskStatus) || stepRuns.length === 0) {
+    return undefined
+  }
+
+  const visibleSteps = stepRuns
+    .filter((stepRun) => !isTerminalTaskStatus(stepRun.status) || stepRun.status === 'COMPLETED')
+    .slice(-3)
+
+  if (visibleSteps.length === 0) {
+    return undefined
+  }
+
+  return {
+    items: visibleSteps.map((stepRun) => {
+      const title = toUserFacingTaskTitle(stepRun.title ?? stepRun.goal ?? '답변 진행')
+      const status = stepRun.status
+      return {
+        id: stepRun.step_run_id,
+        text: `${title}${toCompactStepSuffix(status)}`,
+        detail: toStepProgressSentence(status),
+        tone: toTaskRunStatusTone(status),
+      }
+    }),
+  }
 }
 
 function getAssistantTaskRunChip(
@@ -99,6 +182,37 @@ function getAssistantTaskRunChip(
 
 function isAnswerCompletionEvent(eventType?: string) {
   return eventType === 'task.completed' || eventType === 'session.message.completed'
+}
+
+function isTerminalTaskStatus(status?: string | null) {
+  return (
+    status === 'COMPLETED' ||
+    status === 'FAILED' ||
+    status === 'CANCELLED' ||
+    status === 'CANCELED' ||
+    status === 'task.completed' ||
+    status === 'task.failed' ||
+    status === 'task.canceled'
+  )
+}
+
+function toCompactStepSuffix(status?: string | null) {
+  switch (status) {
+    case 'COMPLETED':
+    case 'step.completed':
+      return ' 완료'
+    case 'RUNNING':
+    case 'step.started':
+      return ' 중'
+    case 'WAITING':
+    case 'step.waiting':
+      return ' 대기 중'
+    case 'FAILED':
+    case 'step.failed':
+      return ' 실패'
+    default:
+      return ''
+  }
 }
 
 function TaskRunChipIcon({ tone }: { tone: TaskRunStatusTone }) {

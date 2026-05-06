@@ -1,8 +1,11 @@
 import { RotateCcw } from 'lucide-react'
 import type { ActivityItemView, RawApproval, RawStepRun, RawTaskRun } from '@/types/taskRuns'
+import { toTaskRunStatusTone } from '@/utils/taskRunStatusView'
 import { ActivityEventItem } from './ActivityEventItem'
 import { ApprovalCard } from './ApprovalCard'
 import { StepProgressItem } from './StepProgressItem'
+import { toStepProgressSentence, toUserFacingTaskTitle } from './activityPanelText'
+import { TaskRunStatusIcon } from './TaskRunStatusIcon'
 
 export function SelectedTaskRunView({
   taskRunId,
@@ -24,11 +27,27 @@ export function SelectedTaskRunView({
   const status =
     activities.at(-1)?.raw.status ?? activities.at(-1)?.raw.event_type ?? taskRun?.status
   const taskRunFinished = status === 'COMPLETED' || status === 'task.completed'
-  // 패널이 길어지지 않도록 세부 기록 본문에는 최신 raw event 5개만 펼쳐 보여준다.
-  const recentActivities = activities.slice(-5).reverse()
+  const reversedActivities = [...activities].reverse()
+  const currentStep = selectCurrentVisibleStep(taskRun, steps)
 
   return (
     <div className="space-y-5">
+      {!taskRunFinished && currentStep !== undefined && (
+        <section className="border-border bg-muted/30 rounded-lg border px-3 py-2">
+          <div className="flex items-start gap-2">
+            <TaskRunStatusIcon tone={toTaskRunStatusTone(currentStep?.status ?? status)} />
+            <div className="min-w-0">
+              <div className="text-foreground line-clamp-1 text-xs font-semibold [overflow-wrap:anywhere] break-words">
+                {toUserFacingTaskTitle(currentStep.title ?? currentStep.goal ?? '답변 진행')}
+              </div>
+              <div className="text-muted-foreground mt-0.5 line-clamp-1 text-[11px] [overflow-wrap:anywhere] break-words">
+                {toStepProgressSentence(currentStep.status ?? status)}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
       {replayNeeded && (
         <section className="border-border bg-muted/40 text-muted-foreground flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
           <RotateCcw className="h-3.5 w-3.5" />
@@ -52,11 +71,9 @@ export function SelectedTaskRunView({
               <StepProgressItem
                 key={step.step_run_id}
                 step={step}
-                // step_run_id가 있는 event만 해당 단계 아래에 묶고, 전체 진행 event는 아래 세부 기록에서 본다.
                 activities={activities.filter(
                   (activity) => activity.stepRunId === step.step_run_id,
                 )}
-                taskRunFinished={taskRunFinished}
               />
             ))}
           </ol>
@@ -75,7 +92,7 @@ export function SelectedTaskRunView({
             </div>
           ) : (
             <ol className="mt-2 space-y-2">
-              {recentActivities.map((activity) => (
+              {reversedActivities.map((activity) => (
                 <ActivityEventItem
                   key={activity.id}
                   activity={activity}
@@ -87,5 +104,27 @@ export function SelectedTaskRunView({
         </details>
       </section>
     </div>
+  )
+}
+
+function selectCurrentVisibleStep(taskRun: RawTaskRun | undefined, steps: RawStepRun[]) {
+  const currentStepRunId =
+    typeof taskRun?.current_step_run_id === 'string'
+      ? taskRun.current_step_run_id
+      : typeof taskRun?.currentStepRunId === 'string'
+        ? taskRun.currentStepRunId
+        : undefined
+
+  if (currentStepRunId !== undefined) {
+    const currentStep = steps.find((step) => step.step_run_id === currentStepRunId)
+    if (currentStep !== undefined) {
+      return currentStep
+    }
+  }
+
+  return (
+    steps.find(
+      (step) => step.status === 'RUNNING' || step.status === 'WAITING' || step.status === 'BLOCKED',
+    ) ?? steps.at(-1)
   )
 }

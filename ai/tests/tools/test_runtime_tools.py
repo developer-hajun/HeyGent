@@ -1,5 +1,6 @@
 import json
 import sys
+import types
 
 from app.domain.orchestration.runtime_planning.todo_state import (
     apply_tool_results_to_todo_state,
@@ -27,6 +28,7 @@ def test_runtime_exposes_todo_schema_without_legacy_write_name():
     assert "steps" in schema_by_name["step"]["parameters"]["properties"]
     title_description = schema_by_name["step"]["parameters"]["properties"]["steps"]["items"]["properties"]["title"]["description"]
     assert "target/topic/artifact" in title_description
+    assert "뉴스 출처 근거 조사" in title_description
     assert "기존 자료 파악" in title_description
 
 
@@ -69,6 +71,90 @@ def test_file_toolset_is_available_for_coding_and_local_core_but_not_safe():
     assert file_tool_names.isdisjoint(resolve_runtime_tool_names(("safe",)))
 
 
+def test_runtime_exposes_heygent_web_tool_definitions():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    definitions = runtime.list_tool_definitions(enabled_toolsets=("web",))
+
+    assert [definition["name"] for definition in definitions] == ["web_crawl", "web_extract", "web_search"]
+    schema_by_name = {definition["name"]: definition["schema"] for definition in definitions}
+    assert schema_by_name["web_search"]["parameters"]["properties"]["query"]["type"] == "string"
+    assert schema_by_name["web_extract"]["parameters"]["properties"]["urls"]["items"]["type"] == "string"
+    assert schema_by_name["web_crawl"]["parameters"]["properties"]["url"]["type"] == "string"
+
+
+def test_runtime_exposes_heygent_browser_tool_definitions():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    definitions = runtime.list_tool_definitions(enabled_toolsets=("browser",))
+
+    names = [definition["name"] for definition in definitions]
+    assert "browser_navigate" in names
+    assert "browser_snapshot" in names
+    assert "browser_click" in names
+    assert "browser_cdp" in names
+    schema_by_name = {definition["name"]: definition["schema"] for definition in definitions}
+    assert schema_by_name["browser_navigate"]["parameters"]["properties"]["url"]["type"] == "string"
+    assert schema_by_name["browser_click"]["parameters"]["properties"]["ref"]["type"] == "string"
+
+
+def test_web_browser_runtime_defaults_use_tolerant_timeouts():
+    from app.tools.web_runtime import browser_camofox, browser_tool
+    from app.tools.web_runtime.browser_providers import browser_use
+
+    assert browser_tool.DEFAULT_COMMAND_TIMEOUT == 180
+    assert browser_camofox._DEFAULT_TIMEOUT == 90
+    assert browser_use._DEFAULT_MANAGED_TIMEOUT_MINUTES == 10
+
+
+def test_web_is_available_in_local_core_and_safe_but_browser_is_explicit():
+    assert {"web_search", "web_extract", "web_crawl"} <= resolve_runtime_tool_names(("web",))
+    assert {"web_search", "web_extract", "web_crawl"} <= resolve_runtime_tool_names(("local-core",))
+    assert {"web_search", "web_extract", "web_crawl"} <= resolve_runtime_tool_names(("safe",))
+    assert "browser_navigate" in resolve_runtime_tool_names(("browser",))
+    assert "browser_navigate" not in resolve_runtime_tool_names(("local-core",))
+
+
+def test_web_runtime_invokes_heygent_web_tool(monkeypatch):
+    fake_module = types.ModuleType("app.tools.web_runtime.web_tools")
+
+    def fake_web_search_tool(query, limit=5):
+        return json.dumps({"success": True, "data": {"web": [{"title": query, "url": "https://example.com"}]}, "limit": limit})
+
+    fake_module.web_search_tool = fake_web_search_tool
+    monkeypatch.setitem(sys.modules, "app.tools.web_runtime.web_tools", fake_module)
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    result = runtime.run_call(
+        name="web_search",
+        args={"query": "agent tool", "limit": 2},
+        enabled_toolsets=("web",),
+    )
+
+    assert result["success"] is True
+    assert result["data"]["web"][0]["title"] == "agent tool"
+    assert result["limit"] == 2
+
+
+def test_browser_runtime_invokes_heygent_browser_tool(monkeypatch):
+    fake_module = types.ModuleType("app.tools.web_runtime.browser_tool")
+
+    def fake_browser_navigate(url, task_id=None):
+        return json.dumps({"success": True, "url": url, "task_id": task_id})
+
+    fake_module.browser_navigate = fake_browser_navigate
+    monkeypatch.setitem(sys.modules, "app.tools.web_runtime.browser_tool", fake_module)
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    result = runtime.run_call(
+        name="browser_navigate",
+        args={"url": "https://example.com", "task_id": "task-test"},
+        enabled_toolsets=("browser",),
+    )
+
+    assert result == {"success": True, "url": "https://example.com", "task_id": "task-test"}
+
+
 def test_delegation_toolset_exposes_delegate_task_contract():
     runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
 
@@ -96,11 +182,25 @@ def test_delegate_task_runtime_returns_worker_handoff_request():
     )
 
     assert result["ok"] is True
-    assert result["child_session"]["intent_type"] == "agent.loop"
-    assert result["child_session"]["entry_handler_key"] == "agent.loop"
     assert result["child_session"]["goal"] == "문서 구현 여부 검증"
     assert result["child_session"]["toolsets"] == ["file", "terminal"]
     assert result["child_session"]["metadata"]["profile_key"] == "worker.default"
+
+
+def test_delegate_task_normalizes_tool_names_to_worker_toolsets():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    result = runtime.run_call(
+        name="delegate_task",
+        args={
+            "goal": "웹 자료 조사",
+            "toolsets": ["web_search", "web_extract", "read_file", "terminal.run"],
+        },
+        enabled_toolsets=("delegation",),
+    )
+
+    assert result["child_session"]["toolsets"] == ["web", "file", "terminal"]
+    assert result["child_session"]["input_payload"]["enabled_toolsets"] == ["web", "file", "terminal"]
 
 
 def test_todo_writes_and_reads_full_json_ready_result():

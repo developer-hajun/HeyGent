@@ -8,9 +8,6 @@ class AgentLoopHandler:
     """TaskRun 을 agent.loop 중심 실행으로 연결하는 handler 다."""
 
     spec = HandlerSpec(
-        intent_type="agent.loop",
-        entry_handler_key="agent.loop",
-        handler_key="agent.loop",
         task_type="agent.loop",
         task_title="agent loop 요청",
         step_type="agent.loop.execute",
@@ -39,3 +36,12 @@ class AgentLoopHandler:
 
     def execute(self, *, task, step=None, resume_payload=None):
         return self.loop_handler.execute(task=task, step=step, resume_payload=resume_payload)
+
+    async def execute_async(self, *, task, step=None, resume_payload=None, progress_sink=None, delegate_executor=None):
+        return await self.loop_handler.execute_async(
+            task=task,
+            step=step,
+            resume_payload=resume_payload,
+            progress_sink=progress_sink,
+            delegate_executor=delegate_executor,
+        )

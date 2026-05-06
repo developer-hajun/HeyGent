@@ -60,7 +60,6 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
         session_id TEXT REFERENCES agent_sessions(session_id) ON DELETE SET NULL,
         owner_key TEXT NOT NULL,
         session_key TEXT,
-        entry_handler_key TEXT,
         current_step_run_id TEXT,
         durable_status TEXT NOT NULL DEFAULT 'OPEN' CHECK (durable_status IN ('OPEN', 'WAITING', 'TERMINAL')),
         anchor_generation BIGINT NOT NULL DEFAULT 1,
@@ -83,7 +82,6 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
         worker_session_id TEXT REFERENCES agent_sessions(session_id) ON DELETE SET NULL,
         step_order INTEGER NOT NULL,
         step_type TEXT NOT NULL,
-        handler_key TEXT,
         durable_status TEXT NOT NULL DEFAULT 'OPEN' CHECK (durable_status IN ('OPEN', 'WAITING', 'TERMINAL')),
         anchor_generation BIGINT NOT NULL DEFAULT 1,
         revision BIGINT NOT NULL DEFAULT 0,
@@ -208,7 +206,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
             'main.default',
             1,
             'main',
-            '{"promptRole":"main","toolsets":["skills","session","planning","terminal","file","delegation"]}'::jsonb,
+            '{"promptRole":"main","toolsets":["skills","session","planning","terminal","file","web","browser","delegation"]}'::jsonb,
             '{"canDelegate":true,"maxWorkerDepth":1,"maxConcurrentWorkers":3}'::jsonb
         ),
         (
@@ -217,10 +215,13 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
             'worker.default',
             1,
             'worker',
-            '{"promptRole":"worker","toolsets":["skills","terminal","file"]}'::jsonb,
-            '{"canDelegate":false,"maxWorkerDepth":0,"hardTimeoutSeconds":300,"maxIterations":50}'::jsonb
+            '{"promptRole":"worker","toolsets":["skills","terminal","file","web","browser"]}'::jsonb,
+            '{"canDelegate":false,"maxWorkerDepth":0,"hardTimeoutSeconds":900,"maxIterations":80}'::jsonb
         )
-    ON CONFLICT (owner_key, profile_key, profile_version) DO NOTHING;
+    ON CONFLICT (owner_key, profile_key, profile_version) DO UPDATE
+    SET
+        config_snapshot = EXCLUDED.config_snapshot,
+        delegation_policy = EXCLUDED.delegation_policy;
     """,
 ]
 

@@ -2,7 +2,10 @@ import { X } from 'lucide-react'
 import { useEffect, useMemo, useRef } from 'react'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
+import type { RawStepRun } from '@/types/taskRuns'
 import {
+  isInternalStepAnchorEvent,
+  isInternalStepAnchorStepRun,
   isLiveTaskRunStatus,
   toActivityItemView,
   toTaskRunSummaryView,
@@ -88,12 +91,20 @@ export function StepRunActivityPanelBody({
         : (eventsByTaskRunId[resolvedSelectedTaskRunId] ?? []),
     [eventsByTaskRunId, resolvedSelectedTaskRunId],
   )
-  const selectedActivities = useMemo(() => selectedEvents.map(toActivityItemView), [selectedEvents])
+  const selectedVisibleEvents = useMemo(
+    () => selectedEvents.filter((event) => !isInternalStepAnchorEvent(event)),
+    [selectedEvents],
+  )
+  const selectedActivities = useMemo(
+    () => selectedVisibleEvents.map(toActivityItemView),
+    [selectedVisibleEvents],
+  )
   const selectedStepRuns = useMemo(
     () =>
       Object.values(stepRunsById)
         .filter((stepRun) => stepRun.task_run_id === resolvedSelectedTaskRunId)
-        .sort((first, second) => (first.sequence ?? 0) - (second.sequence ?? 0)),
+        .filter((stepRun) => !isInternalStepAnchorStepRun(stepRun))
+        .sort(compareVisibleStepRuns),
     [resolvedSelectedTaskRunId, stepRunsById],
   )
   const selectedApprovals = useMemo(
@@ -192,4 +203,23 @@ export function StepRunActivityPanelBody({
       </div>
     </div>
   )
+}
+
+const compareVisibleStepRuns = (first: RawStepRun, second: RawStepRun) => {
+  const firstOrder = getVisibleStepOrder(first)
+  const secondOrder = getVisibleStepOrder(second)
+  if (firstOrder !== undefined && secondOrder !== undefined) {
+    return firstOrder - secondOrder
+  }
+  return (first.sequence ?? 0) - (second.sequence ?? 0)
+}
+
+const getVisibleStepOrder = (stepRun: RawStepRun) => {
+  if (typeof stepRun.step_order === 'number' && Number.isFinite(stepRun.step_order)) {
+    return stepRun.step_order
+  }
+  if (typeof stepRun.stepOrder === 'number' && Number.isFinite(stepRun.stepOrder)) {
+    return stepRun.stepOrder
+  }
+  return undefined
 }

@@ -6,7 +6,8 @@ from app.tools.runtime.catalog import register_runtime_tool_definition
 DELEGATE_TASK_SCHEMA = {
     "name": "delegate_task",
     "description": (
-        "Delegate an isolated worker task. The worker runs in a separate agent session and returns summary-only results."
+        "Delegate exactly one isolated worker task. Use one call per requested perspective, area, or subtask when the user asks separate workers. "
+        "The worker runs in a separate leaf agent session and returns summary-only results."
     ),
     "parameters": {
         "type": "object",
@@ -62,7 +63,7 @@ _DELEGATE_TASK_DEFINITION = register_runtime_tool_definition(
     name="delegate_task",
     toolset="delegation",
     module="app.tools.delegation.delegate_tool",
-    summary="Delegate an isolated worker task and return only a handoff summary.",
+    summary="Delegate exactly one isolated worker task; use one call per requested perspective or subtask.",
     schema=DELEGATE_TASK_SCHEMA,
     result_format="json",
 )

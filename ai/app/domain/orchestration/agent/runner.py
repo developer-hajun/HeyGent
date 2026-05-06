@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from time import monotonic
 from typing import Any
@@ -34,10 +35,7 @@ class AgentLoopRunner:
         self.resume_target_resolver = ResumeTargetResolver()
 
     async def start(self, request: OrchestrationRequest) -> TaskRun:
-        handler = self.tool_registry.resolve(
-            intent_type=request.intent_type,
-            entry_handler_key=request.entry_handler_key,
-        )
+        handler = self.tool_registry.resolve()
         task = self.planner.materialize_task(
             owner_key=request.owner_key,
             session_key=request.session_key,
@@ -54,11 +52,7 @@ class AgentLoopRunner:
         if step is None:
             raise KeyError(step_run_id)
 
-        handler_key = step.handler_key or task.entry_handler_key
-        if not handler_key:
-            raise ValueError("step handler key is missing")
-
-        handler = self.tool_registry.get(handler_key)
+        handler = self.tool_registry.resolve()
         boundary = decide_handler_step_boundary(
             current_detail=step.detail_json,
             next_semantic_key=handler.spec.semantic_key or step.step_type,
@@ -79,13 +73,8 @@ class AgentLoopRunner:
         owner_key: str,
         session_key: str | None,
         input_payload: dict,
-        intent_type: str,
-        entry_handler_key: str,
     ) -> ChildSessionLaunchResult:
-        handler = self.tool_registry.resolve(
-            intent_type=intent_type,
-            entry_handler_key=entry_handler_key,
-        )
+        handler = self.tool_registry.resolve()
         task = self.planner.materialize_task(
             owner_key=owner_key,
             session_key=session_key,
@@ -93,7 +82,24 @@ class AgentLoopRunner:
             handler=handler,
         )
         started_at = monotonic()
-        outcome = normalize_handler_outcome(handler.execute(task=task, step=None, resume_payload=None))
+        execute_async = getattr(handler, "execute_async", None)
+        hard_timeout_seconds = self._hard_timeout_seconds(input_payload)
+        try:
+            # worker는 parent StepRun을 기다리게 하므로, 모델/provider timeout보다 바깥에서
+            # 한 번 더 실행 상한을 잡아 무한 대기와 너무 빠른 read timeout을 구분한다.
+            if execute_async is not None:
+                raw_outcome = await asyncio.wait_for(
+                    execute_async(task=task, step=None, resume_payload=None, progress_sink=None),
+                    timeout=hard_timeout_seconds,
+                )
+            else:
+                raw_outcome = await asyncio.wait_for(
+                    asyncio.to_thread(handler.execute, task=task, step=None, resume_payload=None),
+                    timeout=hard_timeout_seconds,
+                )
+        except TimeoutError as error:
+            raise TimeoutError(f"worker session exceeded hard timeout {hard_timeout_seconds}s") from error
+        outcome = normalize_handler_outcome(raw_outcome)
         status = str(outcome.get("task_status") or TaskStatus.COMPLETED)
         return ChildSessionLaunchResult(
             agent_id=self._worker_agent_id(spec=spec, input_payload=input_payload),
@@ -110,7 +116,7 @@ class AgentLoopRunner:
         for value in (input_payload.get("agent_id"), metadata.get("agent_id")):
             if isinstance(value, str) and value.strip():
                 return value.strip()
-        return f"{spec.parent_step_run_id}:{spec.child_entry_handler_key}"
+        return f"{spec.parent_step_run_id}:worker"
 
     @staticmethod
     def _worker_summary(*, outcome: dict[str, Any], summary_prompt: str | None) -> str | None:
@@ -125,3 +131,14 @@ class AgentLoopRunner:
             rendered = json.dumps(result_payload, ensure_ascii=False)
             return f"{summary_prompt}: {rendered}" if summary_prompt else rendered
         return summary_prompt
+
+    @staticmethod
+    def _hard_timeout_seconds(input_payload: dict[str, Any]) -> float:
+        for key in ("hard_timeout_seconds", "hardTimeoutSeconds"):
+            try:
+                value = float(input_payload.get(key))
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        return 900.0

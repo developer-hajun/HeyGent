@@ -13,6 +13,8 @@ import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import {
+  isInternalStepAnchorEvent,
+  isInternalStepAnchorStepRun,
   isLiveTaskRunStatus,
   toActivityItemView,
   toTaskRunSummaryView,
@@ -58,6 +60,7 @@ export function ChatSessionPage() {
   const sendMessage = useChatStore((state) => state.sendMessage)
 
   const taskRunsById = useTaskRunStore((state) => state.taskRunsById)
+  const stepRunsById = useTaskRunStore((state) => state.stepRunsById)
   const eventsByTaskRunId = useTaskRunStore((state) => state.eventsByTaskRunId)
   const lastSequenceByTaskRunId = useTaskRunStore((state) => state.lastSequenceByTaskRunId)
   const taskRunError = useTaskRunStore((state) => state.lastError)
@@ -98,10 +101,25 @@ export function ChatSessionPage() {
       Object.fromEntries(
         taskRunIds.map((taskRunId) => [
           taskRunId,
-          (eventsByTaskRunId[taskRunId] ?? []).map(toActivityItemView),
+          (eventsByTaskRunId[taskRunId] ?? [])
+            .filter((event) => !isInternalStepAnchorEvent(event))
+            .map(toActivityItemView),
         ]),
       ),
     [eventsByTaskRunId, taskRunIds],
+  )
+  const stepRunsByTaskRunId = useMemo(
+    () =>
+      Object.fromEntries(
+        taskRunIds.map((taskRunId) => [
+          taskRunId,
+          Object.values(stepRunsById)
+            .filter((stepRun) => stepRun.task_run_id === taskRunId)
+            .filter((stepRun) => !isInternalStepAnchorStepRun(stepRun))
+            .sort(compareChatStepRuns),
+        ]),
+      ),
+    [stepRunsById, taskRunIds],
   )
   const taskRunSummariesById = useMemo(
     () =>
@@ -387,6 +405,7 @@ export function ChatSessionPage() {
           <ChatMessageList
             messages={messages}
             activitiesByTaskRunId={activitiesByTaskRunId}
+            stepRunsByTaskRunId={stepRunsByTaskRunId}
             taskRunSummariesById={taskRunSummariesById}
             onOpenTaskRun={handleOpenTaskRun}
             focusedTaskRunTarget={focusedTaskRunTarget}
@@ -477,4 +496,26 @@ function shouldWaitForRealtime(
     connectionStatus === 'idle' ||
     connectionStatus === 'closed'
   )
+}
+
+const compareChatStepRuns = (
+  first: { step_order?: number | null; stepOrder?: number | null; sequence?: number | null },
+  second: { step_order?: number | null; stepOrder?: number | null; sequence?: number | null },
+) => {
+  const firstOrder = getChatStepOrder(first)
+  const secondOrder = getChatStepOrder(second)
+  if (firstOrder !== undefined && secondOrder !== undefined) {
+    return firstOrder - secondOrder
+  }
+  return (first.sequence ?? 0) - (second.sequence ?? 0)
+}
+
+const getChatStepOrder = (stepRun: { step_order?: number | null; stepOrder?: number | null }) => {
+  if (typeof stepRun.step_order === 'number' && Number.isFinite(stepRun.step_order)) {
+    return stepRun.step_order
+  }
+  if (typeof stepRun.stepOrder === 'number' && Number.isFinite(stepRun.stepOrder)) {
+    return stepRun.stepOrder
+  }
+  return undefined
 }

@@ -1,10 +1,12 @@
 package com.ssafy.heygent.domain.iot.controller;
 
+import com.ssafy.heygent.domain.iot.dto.DevicePairRequest;
 import com.ssafy.heygent.domain.iot.dto.DeviceRegisterRequest;
 import com.ssafy.heygent.domain.iot.dto.DeviceResponse;
 import com.ssafy.heygent.domain.iot.dto.DeviceStatusUpdateRequest;
 import com.ssafy.heygent.domain.iot.dto.DisplayPublishResult;
 import com.ssafy.heygent.domain.iot.dto.DisplayPublishTestRequest;
+import com.ssafy.heygent.domain.iot.service.DevicePairingService;
 import com.ssafy.heygent.domain.iot.service.DeviceService;
 import com.ssafy.heygent.global.config.security.CustomUserPrincipal;
 import com.ssafy.heygent.global.exception.ApiResponse;
@@ -13,6 +15,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -30,6 +33,7 @@ import java.util.List;
 public class DeviceController {
 
     private final DeviceService deviceService;
+    private final DevicePairingService devicePairingService;
 
     @Operation(summary = "IoT 디바이스 등록")
     @PostMapping
@@ -48,6 +52,15 @@ public class DeviceController {
         return ApiResponse.success(deviceService.list(principal.getUserId()));
     }
 
+    @Operation(summary = "IoT 디바이스 pairing code 등록")
+    @PostMapping("/pair")
+    public ApiResponse<DeviceResponse> pair(
+        @AuthenticationPrincipal CustomUserPrincipal principal,
+        @Valid @RequestBody DevicePairRequest request
+    ) {
+        return ApiResponse.success(devicePairingService.pair(principal.getUserId(), request));
+    }
+
     @Operation(summary = "IoT 디바이스 상태 변경")
     @PatchMapping("/{deviceId}/status")
     public ApiResponse<DeviceResponse> updateStatus(
@@ -56,6 +69,16 @@ public class DeviceController {
         @Valid @RequestBody DeviceStatusUpdateRequest request
     ) {
         return ApiResponse.success(deviceService.updateStatus(principal.getUserId(), deviceId, request.status()));
+    }
+
+    @Operation(summary = "IoT 디바이스 해제")
+    @DeleteMapping("/{deviceId}")
+    public ApiResponse<Void> unpair(
+        @AuthenticationPrincipal CustomUserPrincipal principal,
+        @PathVariable String deviceId
+    ) {
+        deviceService.unpair(principal.getUserId(), deviceId);
+        return ApiResponse.success();
     }
 
     @Operation(summary = "IoT 디스플레이 테스트 메시지 발행")

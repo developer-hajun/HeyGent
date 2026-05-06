@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+import json
 from time import monotonic
 from typing import Any
 
@@ -13,8 +15,9 @@ from app.domain.tasks.detail import merge_step_detail
 
 
 BLOCKED_WORKER_TOOLSETS = ("delegate", "delegation")
-DEFAULT_WORKER_TOOLSETS = ("skills", "terminal", "file")
-DEFAULT_WORKER_MAX_ITERATIONS = 50
+DEFAULT_WORKER_TOOLSETS = ("skills", "terminal", "file", "web", "browser")
+DEFAULT_WORKER_MAX_ITERATIONS = 80
+DEFAULT_WORKER_HARD_TIMEOUT_SECONDS = 900
 
 
 class DelegateRuntime:
@@ -24,7 +27,7 @@ class DelegateRuntime:
         self.child_session_launcher = child_session_launcher
         self.session_store = session_store
 
-    async def apply(self, *, task, step, outcome: dict, repository) -> dict:
+    async def apply(self, *, task, step, outcome: dict, repository, on_step_updated=None) -> dict:
         child_session = outcome.get("child_session")
         if not child_session:
             return outcome
@@ -39,8 +42,6 @@ class DelegateRuntime:
         spec = ChildSessionSpec(
             parent_task_run_id=task.task_run_id,
             parent_step_run_id=step.step_run_id,
-            child_intent_type=str(child_session["intent_type"]),
-            child_entry_handler_key=str(child_session["entry_handler_key"]),
             summary_prompt=child_session.get("summary_prompt"),
             metadata={
                 **dict(child_session.get("metadata") or {}),
@@ -50,6 +51,7 @@ class DelegateRuntime:
                 "agent_id": normalized_contract["agent_id"],
                 "toolsets": normalized_contract["toolsets"],
                 "blocked_toolsets": normalized_contract["blocked_toolsets"],
+                "hard_timeout_seconds": normalized_contract["hard_timeout_seconds"],
             },
             worker_session_id=worker_session_id,
         )
@@ -59,6 +61,19 @@ class DelegateRuntime:
         # 이후 exact step 기준으로 parent-child linkage 를 다시 복원할 수 있다.
         step.detail_json = merge_step_detail(step.detail_json, self.child_session_launcher.build_pending_detail(spec))
         repository.update_step(step)
+        await self._notify_step_updated(
+            on_step_updated,
+            step=step,
+            event_type="step.updated",
+            payload={
+                "reason": "delegate.started",
+                "workerSessionId": worker_session_id,
+                "profileKey": normalized_contract["profile_key"],
+                "agentId": normalized_contract["agent_id"],
+                "status": "RUNNING",
+            },
+            summary_message=f"{normalized_contract['goal']} worker 실행 중",
+        )
         handoff_id = self._create_worker_handoff(
             repository=repository,
             spec=spec,
@@ -95,6 +110,7 @@ class DelegateRuntime:
                 status="FAILED",
                 result_summary=delegate_summary,
             )
+            self._end_worker_session(worker_session_id, end_reason="FAILED")
             return {
                 **outcome,
                 "task_status": TaskStatus.FAILED,
@@ -147,6 +163,7 @@ class DelegateRuntime:
             status=str(launch_result.status),
             result_summary=delegate_summary,
         )
+        self._end_worker_session(worker_session_id, end_reason=str(launch_result.status))
         merged_output_payload = {**dict(outcome.get("output_payload") or {})}
         merged_output_payload["childStatus"] = launch_result.status
         merged_output_payload["workerSessionId"] = worker_session_id
@@ -201,6 +218,60 @@ class DelegateRuntime:
             "operations": merged_operations,
         }
 
+    async def run_child_as_tool(self, *, task, step, child_session: dict[str, Any], repository, on_step_updated=None) -> dict[str, Any]:
+        """delegate_task 호출 1개를 실제 worker 실행 결과로 변환한다.
+
+        parent LLM 이 worker 요약을 읽고 다음 tool_call 을 다시 판단해야 단계 순서가 맞는다.
+        그래서 최종 TaskRun outcome 적용 시점까지 미루지 않고 tool 실행 중간에 worker 를 실행한다.
+        """
+
+        outcome = await self.apply(
+            task=task,
+            step=step,
+            outcome={
+                "child_session": child_session,
+                "result_payload": {},
+                "output_payload": {},
+                "operations": [],
+                "detail_json": {},
+            },
+            repository=repository,
+            on_step_updated=on_step_updated,
+        )
+        detail_patch = outcome.get("detail_json")
+        if isinstance(detail_patch, dict):
+            step.detail_json = self._merge_worker_list_detail(step.detail_json, detail_patch)
+            repository.update_step(step)
+            await self._notify_step_updated(
+                on_step_updated,
+                step=step,
+                event_type="step.updated",
+                payload={"reason": "delegate.completed"},
+                summary_message=outcome.get("summary_message"),
+            )
+
+        result_payload = dict(outcome.get("result_payload") or {})
+        output_payload = dict(outcome.get("output_payload") or {})
+        delegate_summary = result_payload.get("delegate") if isinstance(result_payload.get("delegate"), dict) else output_payload.get("delegate")
+        if not isinstance(delegate_summary, dict):
+            delegate_summary = {}
+        status = str(delegate_summary.get("status") or outcome.get("task_status") or TaskStatus.COMPLETED)
+        ok = not worker_session_unsuccessful(status)
+        summary = str(delegate_summary.get("summary") or outcome.get("summary_message") or "").strip()
+        error_message = outcome.get("error_message")
+        content = self._tool_result_content(summary=summary, delegate_summary=delegate_summary, error_message=error_message)
+        tool_result = {
+            "ok": ok,
+            "content": content,
+            "delegate": delegate_summary,
+            "workerSessionId": result_payload.get("workerSessionId") or output_payload.get("workerSessionId"),
+            "profileKey": result_payload.get("profileKey") or output_payload.get("profileKey"),
+            "childStatus": status,
+        }
+        if not ok and error_message:
+            tool_result["error"] = {"message": error_message}
+        return tool_result
+
     @staticmethod
     def _create_worker_handoff(*, repository, spec: ChildSessionSpec, task, contract: dict[str, Any]) -> str | None:
         if not hasattr(repository, "create_worker_handoff"):
@@ -217,11 +288,9 @@ class DelegateRuntime:
                 "worker_session_id": spec.worker_session_id,
                 "worker_profile_id": contract["profile_id"] or contract["profile_key"],
                 "worker_profile_version": contract["profile_version"],
-                "status": "PENDING",
+                "status": "RUNNING",
                 "input_payload": {
                     **contract,
-                    "child_intent_type": spec.child_intent_type,
-                    "child_entry_handler_key": spec.child_entry_handler_key,
                     "summary_prompt": spec.summary_prompt,
                     "metadata": metadata,
                 },
@@ -249,10 +318,7 @@ class DelegateRuntime:
         if not session_key:
             return None
 
-        parent_session_id = None
-        latest_parent = self.session_store.get_latest_session_by_key(session_key)
-        if latest_parent is not None:
-            parent_session_id = str(latest_parent.get("id") or "").strip() or None
+        parent_session_id = self._resolve_parent_session_id(task=task, session_key=session_key)
         contract["parent_session_id"] = parent_session_id
 
         worker_session_id = new_id("session")
@@ -281,6 +347,45 @@ class DelegateRuntime:
             },
         )
         return worker_session_id
+
+    def _resolve_parent_session_id(self, *, task, session_key: str) -> str | None:
+        task_input = dict(getattr(task, "input_payload", {}) or {})
+        transcript_session_id = self._optional_text(task_input.get("transcript_session_id"))
+        if transcript_session_id:
+            session = self._get_session(transcript_session_id)
+            if session is not None:
+                return self._flatten_worker_parent(session)
+            return transcript_session_id
+
+        latest_parent = self.session_store.get_latest_session_by_key(session_key)
+        if latest_parent is None:
+            return None
+        return self._flatten_worker_parent(latest_parent)
+
+    def _get_session(self, session_id: str) -> dict[str, Any] | None:
+        getter = getattr(self.session_store, "get_session", None)
+        if not callable(getter):
+            return None
+        return getter(session_id)
+
+    def _end_worker_session(self, worker_session_id: str | None, *, end_reason: str) -> None:
+        if not worker_session_id or self.session_store is None:
+            return
+        end_session = getattr(self.session_store, "end_session", None)
+        if callable(end_session):
+            end_session(worker_session_id, end_reason=end_reason)
+
+    @staticmethod
+    def _flatten_worker_parent(session: dict[str, Any]) -> str | None:
+        session_id = str(session.get("id") or "").strip() or None
+        metadata = dict(session.get("metadata") or {})
+        role = str(metadata.get("session_role") or session.get("source") or "").strip().lower()
+        parent_session_id = str(session.get("parent_session_id") or "").strip() or None
+        # worker가 다시 worker를 만드는 구조는 depth1 원칙과 UI 계층을 깨뜨린다.
+        # 혹시 worker 세션이 기준으로 들어와도 parent main transcript 아래에 평평하게 붙인다.
+        if role == "worker" and parent_session_id:
+            return parent_session_id
+        return session_id
 
     @classmethod
     def _load_agent_profile(cls, *, repository, task, child_session: dict[str, Any]) -> dict[str, Any] | None:
@@ -312,6 +417,24 @@ class DelegateRuntime:
             child_session.get("max_iterations", source_payload.get("max_iterations", profile_policy.get("maxIterations", profile_policy.get("max_iterations")))),
             default=DEFAULT_WORKER_MAX_ITERATIONS,
         )
+        # hard timeout은 worker profile의 실행 정책이다. payload에 같이 싣고 runner에서
+        # 실제 asyncio.wait_for로 강제해야 DB seed 값이 문서상 숫자로만 남지 않는다.
+        hard_timeout_seconds = cls._normalize_positive_int(
+            child_session.get(
+                "hard_timeout_seconds",
+                child_session.get(
+                    "hardTimeoutSeconds",
+                    source_payload.get(
+                        "hard_timeout_seconds",
+                        source_payload.get(
+                            "hardTimeoutSeconds",
+                            profile_policy.get("hardTimeoutSeconds", profile_policy.get("hard_timeout_seconds")),
+                        ),
+                    ),
+                ),
+            ),
+            default=DEFAULT_WORKER_HARD_TIMEOUT_SECONDS,
+        )
         profile_key = cls._optional_text(child_session.get("profile_key")) or cls._optional_text(metadata.get("profile_key")) or "worker.default"
         profile_id = cls._optional_text((profile or {}).get("profile_id"))
         profile_version = cls._normalize_positive_int((profile or {}).get("profile_version") or metadata.get("profile_version"), default=1)
@@ -332,6 +455,7 @@ class DelegateRuntime:
             "toolsets": toolsets,
             "blocked_toolsets": list(BLOCKED_WORKER_TOOLSETS),
             "max_iterations": max_iterations,
+            "hard_timeout_seconds": hard_timeout_seconds,
             "role": role,
             "acp_command": child_session.get("acp_command", source_payload.get("acp_command")),
             "acp_args": dict(child_session.get("acp_args", source_payload.get("acp_args", {})) or {}),
@@ -365,6 +489,8 @@ class DelegateRuntime:
                 "enabled_toolsets": contract["toolsets"],
                 "blocked_toolsets": contract["blocked_toolsets"],
                 "max_iterations": contract["max_iterations"],
+                "hard_timeout_seconds": contract["hard_timeout_seconds"],
+                "hardTimeoutSeconds": contract["hard_timeout_seconds"],
                 "role": contract["role"],
                 "acp_command": contract["acp_command"],
                 "acp_args": contract["acp_args"],
@@ -381,6 +507,7 @@ class DelegateRuntime:
                     "parent_step_run_id": contract["parent_step_run_id"],
                     "worker_session_id": worker_session_id,
                     "blocked_toolsets": contract["blocked_toolsets"],
+                    "hard_timeout_seconds": contract["hard_timeout_seconds"],
                 },
             }
         )
@@ -470,6 +597,62 @@ class DelegateRuntime:
     @staticmethod
     def _duration_since(started_at: float) -> float:
         return round(max(0.0, monotonic() - started_at), 3)
+
+    @staticmethod
+    async def _notify_step_updated(callback, *, step, event_type: str, payload: dict[str, Any], summary_message: str | None = None) -> None:
+        if callback is None:
+            return
+        result = callback(step=step, event_type=event_type, payload=payload, summary_message=summary_message)
+        if inspect.isawaitable(result):
+            await result
+
+    @classmethod
+    def _merge_worker_list_detail(cls, current: dict[str, Any] | None, patch: dict[str, Any] | None) -> dict[str, Any]:
+        merged = merge_step_detail(current, patch)
+        agent_detail = dict(merged.get("agentDetail") or {})
+        worker = cls._worker_item(agent_detail)
+        existing_workers = [
+            dict(item)
+            for item in ((current or {}).get("agentDetail") or {}).get("workers", [])
+            if isinstance(item, dict)
+        ]
+        if worker:
+            worker_id = worker.get("workerSessionId") or worker.get("agentId")
+            replaced = False
+            for index, existing in enumerate(existing_workers):
+                existing_id = existing.get("workerSessionId") or existing.get("agentId")
+                if worker_id and existing_id == worker_id:
+                    existing_workers[index] = {**existing, **worker}
+                    replaced = True
+                    break
+            if not replaced:
+                existing_workers.append(worker)
+        if existing_workers:
+            agent_detail["workers"] = existing_workers
+            merged["agentDetail"] = agent_detail
+        return merged
+
+    @staticmethod
+    def _worker_item(agent_detail: dict[str, Any]) -> dict[str, Any] | None:
+        if not agent_detail.get("called"):
+            return None
+        return {
+            "agentId": agent_detail.get("agentId"),
+            "workerSessionId": agent_detail.get("workerSessionId"),
+            "profileKey": agent_detail.get("profileKey"),
+            "summary": agent_detail.get("summary"),
+            "status": agent_detail.get("status"),
+        }
+
+    @staticmethod
+    def _tool_result_content(*, summary: str, delegate_summary: dict[str, Any], error_message: str | None) -> str:
+        if error_message:
+            return f"worker 실행 실패: {error_message}"
+        if summary:
+            return summary
+        if delegate_summary:
+            return json.dumps(delegate_summary, ensure_ascii=False)
+        return "worker 실행이 완료되었습니다."
 
     @staticmethod
     def _api_call_count(*, result_payload: dict[str, Any], output_payload: dict[str, Any]) -> int:

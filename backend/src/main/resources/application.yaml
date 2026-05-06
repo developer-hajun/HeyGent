@@ -3,6 +3,11 @@ spring:
     import: optional:file:.env[.properties]
   application:
     name: heygent
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
   profiles:
     default: local
   datasource:
@@ -25,6 +30,10 @@ spring:
       host: ${SPRING_DATA_REDIS_HOST:localhost}
       port: ${SPRING_DATA_REDIS_PORT:6379}
 
+server:
+  tomcat:
+    uri-encoding: UTF-8
+
 springdoc:
   swagger-ui:
     persistAuthorization: true
@@ -33,6 +42,12 @@ kakao:
   client-id: ${KAKAO_CLIENT_ID}
   client-secret: ${KAKAO_CLIENT_SECRET}
   redirect-uri: ${KAKAO_REDIRECT_URI:http://localhost:5173/auth/kakao/callback}
+
+composio:
+  api-key: ${COMPOSIO_API_KEY}
+  notion:
+    redirect-uri: ${COMPOSIO_NOTION_REDIRECT_URI:http://localhost:5173/auth/notion/callback}
+    integration-id: ${COMPOSIO_NOTION_INTEGRATION_ID}
 
 jwt:
   secret: ${JWT_SECRET}
@@ -61,3 +76,20 @@ memory:
     model: ${MEMORY_EMBEDDING_MODEL:text-embedding-3-small}
     dimensions: ${MEMORY_EMBEDDING_DIMENSIONS:1536}
     timeout-seconds: ${MEMORY_EMBEDDING_TIMEOUT_SECONDS:10}
+
+openai:
+  api-key: ${OPENAI_API_KEY:}
+  rest-api-base-url: ${OPENAI_REST_API_BASE_URL:https://api.openai.com/v1}
+  usage-api-base-url: ${OPENAI_USAGE_API_BASE_URL:https://api.openai.com/v1}
+  default-model: ${OPENAI_DEFAULT_MODEL:gpt-5.4}
+  allowed-models: ${OPENAI_ALLOWED_MODELS:gpt-5.4,gpt-5.4-mini}
+  embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+  timeout-seconds: ${OPENAI_TIMEOUT_SECONDS:60}
+  credential-encryption-key: ${OPENAI_CREDENTIAL_ENCRYPTION_KEY:}
+  oauth:
+    client-id: ${OPENAI_OAUTH_CLIENT_ID:}
+    client-secret: ${OPENAI_OAUTH_CLIENT_SECRET:}
+    redirect-uri: ${OPENAI_OAUTH_REDIRECT_URI:http://localhost:8080/api/v1/ai/openai/oauth/callback}
+    authorize-url: ${OPENAI_OAUTH_AUTHORIZE_URL:https://auth.openai.com/oauth/authorize}
+    token-url: ${OPENAI_OAUTH_TOKEN_URL:https://auth.openai.com/oauth/token}
+    scopes: ${OPENAI_OAUTH_SCOPES:openid,profile,email,offline_access}
