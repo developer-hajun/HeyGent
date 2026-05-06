@@ -3,6 +3,11 @@ spring:
     import: optional:file:.env[.properties]
   application:
     name: heygent
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
   profiles:
     default: local
   datasource:
@@ -24,6 +29,10 @@ spring:
     redis:
       host: ${SPRING_DATA_REDIS_HOST:localhost}
       port: ${SPRING_DATA_REDIS_PORT:6379}
+
+server:
+  tomcat:
+    uri-encoding: UTF-8
 
 springdoc:
   swagger-ui:

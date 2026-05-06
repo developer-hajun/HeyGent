@@ -50,6 +50,10 @@ tasks.named('test') {
 	useJUnitPlatform()
 }
 
+tasks.withType(JavaCompile).configureEach {
+	options.encoding = 'UTF-8'
+}
+
 checkstyle {
 	toolVersion = '10.12.4'
 	configFile = file("$rootDir/checkstyle/naver-checkstyle-rules.xml")
