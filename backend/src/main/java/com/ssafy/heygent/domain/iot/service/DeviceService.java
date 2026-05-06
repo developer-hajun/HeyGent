@@ -65,6 +65,12 @@ public class DeviceService {
         return DeviceResponse.from(device);
     }
 
+    @Transactional
+    public void unpair(Long userId, String deviceId) {
+        IotDevice device = findOwnedDevice(userId, deviceId);
+        iotDeviceRepository.delete(device);
+    }
+
     @Transactional(readOnly = true)
     public DisplayPublishResult publishTest(Long userId, String deviceId, DisplayPublishTestRequest request) {
         IotDevice device = findOwnedDevice(userId, deviceId);

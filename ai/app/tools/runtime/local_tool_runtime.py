@@ -20,6 +20,10 @@ BRIDGE_ROUTABLE_TOOLS = {"terminal.run", "read_file", "write_file", "patch", "se
 MAX_TERMINAL_STREAM_CHARS = 12_000
 MAX_TOOL_RESULT_STRING_CHARS = 20_000
 MAX_TOOL_RESULT_TRUNCATED_FIELDS = 20
+SECRET_FILE_NAME_PATTERN = re.compile(
+    r"(^|[._-])(secret|secrets|token|password|passwd|credential|credentials|env)($|[._-])",
+    re.IGNORECASE,
+)
 
 
 class LocalToolRuntime:
@@ -46,6 +50,7 @@ class LocalToolRuntime:
             {
                 "skills.list": self._list_skills,
                 "skills.read": self._read_skill,
+                "skill.execute": self._execute_skill,
                 "session.record": self._record_session_message,
                 "session.search": self._search_sessions,
                 "step": self._step,
@@ -224,6 +229,41 @@ class LocalToolRuntime:
             "name": skill_name,
             "path": str(skill.get("path") or ""),
             "body": str(skill.get("body") or ""),
+        }
+
+    def _execute_skill(self, args: dict[str, Any]) -> dict[str, object]:
+        skill_name = str(args.get("skill_name") or "").strip()
+        action = str(args.get("action") or "").strip()
+        if action != "inspect":
+            return self._tool_error(
+                code="unsupported_skill_action",
+                message=f"unsupported skill action: {action}",
+                tool_name="skill.execute",
+            )
+
+        skill = getattr(self.skill_registry, "_skills", {}).get(skill_name)
+        if skill is None:
+            return self._tool_error(
+                code="skill_not_found",
+                message=f"unknown skill: {skill_name}",
+                tool_name="skill.execute",
+            )
+
+        document_path = self._resolve_skill_document_path(skill.get("path"))
+        if document_path is not None and not self._is_allowed_skill_path(document_path):
+            return self._tool_error(
+                code="skill_path_not_allowed",
+                message="skill document path must stay inside app/skills",
+                tool_name="skill.execute",
+            )
+
+        return {
+            "ok": True,
+            "skill_name": skill_name,
+            "action": action,
+            "path": str(skill.get("path") or ""),
+            "files": self._list_skill_files(document_path),
+            "content": str(skill.get("body") or ""),
         }
 
     def _record_session_message(self, args: dict[str, Any]) -> dict[str, object]:
@@ -608,6 +648,49 @@ class LocalToolRuntime:
     def _resolve_workspace_root(value: str | os.PathLike[str] | None = None) -> Path:
         raw_root = value or os.environ.get("HEYGENT_WORKSPACE_ROOT") or os.environ.get("TERMINAL_CWD") or os.getcwd()
         return Path(str(raw_root)).expanduser().resolve()
+
+    @staticmethod
+    def _resolve_skill_document_path(value: Any) -> Path | None:
+        raw_value = str(value or "").strip()
+        if not raw_value:
+            return None
+        candidate = Path(raw_value).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path.cwd() / candidate
+        return candidate.resolve(strict=False)
+
+    @classmethod
+    def _is_allowed_skill_path(cls, path: Path) -> bool:
+        return cls._is_relative_to(
+            path.resolve(strict=False),
+            cls._default_skills_root().resolve(strict=False),
+        )
+
+    @staticmethod
+    def _default_skills_root() -> Path:
+        return Path(__file__).resolve().parents[2] / "skills"
+
+    @classmethod
+    def _list_skill_files(cls, document_path: Path | None) -> list[str]:
+        if document_path is None:
+            return []
+        skill_dir = document_path.parent
+        if not skill_dir.exists() or not skill_dir.is_dir():
+            return []
+
+        files: list[str] = []
+        for path in sorted(item for item in skill_dir.rglob("*") if item.is_file()):
+            relative_path = path.relative_to(skill_dir)
+            if cls._is_secret_skill_file(relative_path):
+                continue
+            files.append(relative_path.as_posix())
+            if len(files) >= 200:
+                break
+        return files
+
+    @staticmethod
+    def _is_secret_skill_file(relative_path: Path) -> bool:
+        return any(SECRET_FILE_NAME_PATTERN.search(part) for part in relative_path.parts)
 
     @staticmethod
     def _is_relative_to(path: Path, root: Path) -> bool:
