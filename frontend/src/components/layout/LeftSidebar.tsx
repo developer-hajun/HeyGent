@@ -18,15 +18,13 @@ import {
   MoreHorizontal,
   Pin,
   PinOff,
-  Archive,
-  ArchiveRestore,
   Trash2,
-  EyeOff,
 } from 'lucide-react'
 import { useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SettingsDialog } from '@/components/SettingsDialog'
-import { NewSessionModal, type CustomAgentConfig } from '@/components/NewSessionModal'
+import { NewSessionModal, type CustomAgentConfig } from '@/components/session/NewSessionModal'
+import { SessionSettingsModal } from '@/components/session/SessionSettingsModal'
 import { useUIStore } from '@/store/useUIStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -45,7 +43,7 @@ type SidebarSession = {
   raw: RawAiSession
 }
 
-type SessionConfirmAction = 'archive' | 'unarchive' | 'delete' | 'hide'
+type SessionConfirmAction = 'delete'
 
 type SessionConfirmState = {
   sessionId: string
@@ -62,28 +60,19 @@ export function LeftSidebar() {
     clampSidebarWidth,
     setSettingsOpen,
   } = useUIStore()
-  const {
-    selectedSessionId,
-    setSelectedSessionId,
-    pinnedSessionIds,
-    hiddenSessionIds,
-    togglePinSession,
-    hideSession,
-  } = useSessionStore()
+  const { selectedSessionId, setSelectedSessionId, pinnedSessionIds, togglePinSession } =
+    useSessionStore()
   const [profileOpen, setProfileOpen] = useState(false)
   const [sessionsPopoverOpen, setSessionsPopoverOpen] = useState(false)
   const [newSessionModalOpen, setNewSessionModalOpen] = useState(false)
+  const [sessionSettingsSessionId, setSessionSettingsSessionId] = useState<string | null>(null)
   const [sessionConfirm, setSessionConfirm] = useState<SessionConfirmState | null>(null)
-  const [showArchivedSessions, setShowArchivedSessions] = useState(false)
   const commandClient = useAiRealtimeStore((state) => state.commandClient)
   const realtimeStatus = useAiRealtimeStore((state) => state.connectionStatus)
   const sessionsById = useChatStore((state) => state.sessionsById)
   const sessionListLoading = useChatStore((state) => state.sessionListLoading)
   const chatError = useChatStore((state) => state.sessionListError ?? state.lastError)
   const fetchSessions = useChatStore((state) => state.fetchSessions)
-  const updateSession = useChatStore((state) => state.updateSession)
-  const archiveSession = useChatStore((state) => state.archiveSession)
-  const unarchiveSession = useChatStore((state) => state.unarchiveSession)
   const deleteSession = useChatStore((state) => state.deleteSession)
   const isResizing = useRef(false)
   const startX = useRef(0)
@@ -93,26 +82,26 @@ export function LeftSidebar() {
   const sidebarSessions = useMemo(() => {
     const all = Object.values(sessionsById)
       .map(toSidebarSession)
-      .filter(
-        (s) => !hiddenSessionIds.has(s.id) && !isRemovedSidebarSession(s.raw, showArchivedSessions),
-      )
+      .filter((s) => !isRemovedSidebarSession(s.raw))
       .sort((first, second) => getSessionTime(second.raw) - getSessionTime(first.raw))
     const pinned = all.filter((s) => pinnedSessionIds.has(s.id))
     const unpinned = all.filter((s) => !pinnedSessionIds.has(s.id))
     return [...pinned, ...unpinned]
-  }, [sessionsById, hiddenSessionIds, pinnedSessionIds, showArchivedSessions])
+  }, [sessionsById, pinnedSessionIds])
   const runningSessions = useMemo(
     () => sidebarSessions.filter((session) => session.isRunning),
     [sidebarSessions],
   )
+  const sessionSettingsSession =
+    sessionSettingsSessionId === null ? null : (sessionsById[sessionSettingsSessionId] ?? null)
 
   useEffect(() => {
     if (commandClient === null) {
       return
     }
 
-    void fetchSessions({ includeArchived: showArchivedSessions }).catch(() => undefined)
-  }, [commandClient, fetchSessions, showArchivedSessions])
+    void fetchSessions().catch(() => undefined)
+  }, [commandClient, fetchSessions])
 
   const handleNewChat = () => {
     setNewSessionModalOpen(true)
@@ -123,19 +112,6 @@ export function LeftSidebar() {
     navigate(`/session/${sessionId}`)
   }
 
-  const handleRenameSession = async (session: SidebarSession) => {
-    const nextTitle = window.prompt('새 이름을 입력하세요.', session.title)?.trim()
-    if (nextTitle === undefined || nextTitle === '' || nextTitle === session.title) {
-      return
-    }
-
-    try {
-      await updateSession({ sessionId: session.id, title: nextTitle })
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : '이름 변경에 실패했습니다.')
-    }
-  }
-
   const handleConfirmSessionAction = async () => {
     if (sessionConfirm === null) {
       return
@@ -143,17 +119,11 @@ export function LeftSidebar() {
 
     const { sessionId, action } = sessionConfirm
     try {
-      if (action === 'archive') {
-        await archiveSession(sessionId)
-      } else if (action === 'unarchive') {
-        await unarchiveSession(sessionId)
-      } else if (action === 'delete') {
+      if (action === 'delete') {
         await deleteSession(sessionId)
-      } else {
-        hideSession(sessionId)
       }
 
-      if (location.pathname === `/session/${sessionId}` && action !== 'hide') {
+      if (location.pathname === `/session/${sessionId}`) {
         navigate('/new-chat')
       }
     } catch (error) {
@@ -211,8 +181,21 @@ export function LeftSidebar() {
         onConfirm={(config) => {
           storePendingSessionConfig(config)
           setNewSessionModalOpen(false)
-          navigate('/new-chat')
+          if (config) {
+            navigate('/agent-status')
+          } else {
+            navigate('/new-chat')
+          }
         }}
+      />
+      <SessionSettingsModal
+        open={sessionSettingsSessionId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSessionSettingsSessionId(null)
+          }
+        }}
+        session={sessionSettingsSession}
       />
       {sessionConfirm !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -311,13 +294,13 @@ export function LeftSidebar() {
                         }}
                         className={`cursor-pointer rounded-lg p-2.5 transition-colors ${
                           isActive
-                            ? 'bg-primary/8 border-primary/15 border'
-                            : 'hover:bg-muted border border-transparent'
+                            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                            : 'hover:bg-muted'
                         }`}
                       >
                         <div className="mb-1 flex items-center justify-between gap-1">
                           <p
-                            className={`truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
+                            className={`truncate text-sm ${isActive ? 'text-sidebar-accent-foreground font-medium' : 'text-foreground/80'}`}
                           >
                             {session.title}
                           </p>
@@ -330,7 +313,7 @@ export function LeftSidebar() {
                             }}
                             className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors ${
                               isChatActive
-                                ? 'bg-primary/10 text-primary'
+                                ? 'bg-sidebar-primary text-sidebar-primary-foreground'
                                 : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                             }`}
                           >
@@ -412,19 +395,6 @@ export function LeftSidebar() {
               </div>
               <div className="flex items-center gap-1">
                 <button
-                  type="button"
-                  onClick={() => setShowArchivedSessions((value) => !value)}
-                  aria-pressed={showArchivedSessions}
-                  aria-label={showArchivedSessions ? '아카이브 숨기기' : '아카이브 보기'}
-                  className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
-                    showArchivedSessions
-                      ? 'bg-primary/10 text-primary'
-                      : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
-                  }`}
-                >
-                  <Archive className="h-3.5 w-3.5" />
-                </button>
-                <button
                   onClick={() => setSidebarCollapsed(true)}
                   className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-7 w-7 items-center justify-center rounded-md transition-colors"
                 >
@@ -451,7 +421,6 @@ export function LeftSidebar() {
                       location.pathname === '/agent-status' && selectedSessionId === session.id
                     const isChatActive = location.pathname === `/session/${session.id}`
                     const isPinned = pinnedSessionIds.has(session.id)
-                    const isArchived = isArchivedSidebarSession(session.raw)
                     return (
                       <div
                         key={session.id}
@@ -461,18 +430,15 @@ export function LeftSidebar() {
                         }}
                         className={`group flex cursor-pointer items-center gap-2 rounded-lg p-2.5 transition-colors ${
                           isActive
-                            ? 'bg-primary/8 border-primary/15 border'
-                            : 'hover:bg-sidebar-accent border border-transparent'
+                            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                            : 'hover:bg-sidebar-accent'
                         }`}
                       >
                         <div className="min-w-0 flex-1">
                           <div className="mb-0.5 flex items-center gap-1">
                             {isPinned && <Pin className="text-primary h-3 w-3 shrink-0" />}
-                            {isArchived && (
-                              <Archive className="text-muted-foreground h-3 w-3 shrink-0" />
-                            )}
                             <p
-                              className={`truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
+                              className={`truncate text-sm ${isActive ? 'text-sidebar-accent-foreground font-medium' : 'text-foreground/80'}`}
                             >
                               {session.title}
                             </p>
@@ -508,12 +474,12 @@ export function LeftSidebar() {
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  void handleRenameSession(session)
+                                  setSessionSettingsSessionId(session.id)
                                 }}
                                 className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
                               >
-                                <Edit3 className="text-muted-foreground h-4 w-4 shrink-0" />
-                                <span>이름 변경</span>
+                                <Settings className="text-muted-foreground h-4 w-4 shrink-0" />
+                                <span>설정</span>
                               </button>
                               <button
                                 type="button"
@@ -535,45 +501,6 @@ export function LeftSidebar() {
                                   </>
                                 )}
                               </button>
-                              {isArchived ? (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    setSessionConfirm({
-                                      sessionId: session.id,
-                                      action: 'unarchive',
-                                    })
-                                  }}
-                                  className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
-                                >
-                                  <ArchiveRestore className="text-muted-foreground h-4 w-4 shrink-0" />
-                                  <span>아카이브 해제</span>
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    setSessionConfirm({ sessionId: session.id, action: 'archive' })
-                                  }}
-                                  className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
-                                >
-                                  <Archive className="text-muted-foreground h-4 w-4 shrink-0" />
-                                  <span>아카이브</span>
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setSessionConfirm({ sessionId: session.id, action: 'hide' })
-                                }}
-                                className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
-                              >
-                                <EyeOff className="text-muted-foreground h-4 w-4 shrink-0" />
-                                <span>이 기기에서 숨김</span>
-                              </button>
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -594,7 +521,7 @@ export function LeftSidebar() {
                             onClick={(event) => handleOpenChatSession(session.id, event)}
                             className={`relative flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
                               isChatActive
-                                ? 'bg-primary/10 text-primary'
+                                ? 'bg-sidebar-primary text-sidebar-primary-foreground'
                                 : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
                             }`}
                           >
@@ -689,42 +616,24 @@ function EmptySessionNotice({
 }
 
 function getSessionConfirmTitle(action: SessionConfirmAction) {
-  if (action === 'archive') {
-    return '채팅 아카이브'
-  }
-  if (action === 'unarchive') {
-    return '아카이브 해제'
-  }
   if (action === 'delete') {
     return '채팅 삭제'
   }
-  return '이 기기에서 숨김'
+  return '채팅 삭제'
 }
 
 function getSessionConfirmMessage(action: SessionConfirmAction) {
-  if (action === 'archive') {
-    return '이 채팅을 기본 목록에서 숨기고 서버 아카이브 상태로 변경합니다.'
-  }
-  if (action === 'unarchive') {
-    return '이 채팅을 기본 목록에 다시 표시합니다.'
-  }
   if (action === 'delete') {
     return '이 채팅을 삭제하시겠습니까? 서버의 삭제 정책에 따라 복구가 제한될 수 있습니다.'
   }
-  return '서버 상태는 바꾸지 않고 이 브라우저의 목록에서만 숨깁니다.'
+  return '이 채팅을 삭제하시겠습니까? 서버의 삭제 정책에 따라 복구가 제한될 수 있습니다.'
 }
 
 function getSessionConfirmButtonLabel(action: SessionConfirmAction) {
-  if (action === 'archive') {
-    return '아카이브'
-  }
-  if (action === 'unarchive') {
-    return '해제'
-  }
   if (action === 'delete') {
     return '삭제'
   }
-  return '숨김'
+  return '삭제'
 }
 
 function toSidebarSession(session: RawAiSession): SidebarSession {
@@ -796,16 +705,8 @@ function isRunningTaskRunStatus(status: string | undefined) {
   return status === 'PENDING' || status === 'RUNNING' || status === 'WAITING'
 }
 
-function isRemovedSidebarSession(session: RawAiSession, includeArchived = false) {
-  return (
-    session.deleted_at != null ||
-    session.status === 'DELETED' ||
-    (!includeArchived && isArchivedSidebarSession(session))
-  )
-}
-
-function isArchivedSidebarSession(session: RawAiSession) {
-  return session.archived_at != null || session.status === 'ARCHIVED'
+function isRemovedSidebarSession(session: RawAiSession) {
+  return session.deleted_at != null || session.status === 'DELETED'
 }
 
 // ────────────────────────────────────────────────────────────────────────────

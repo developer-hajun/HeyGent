@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { X, Bot, Sparkles, SlidersHorizontal, Camera, ChevronLeft } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog'
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 
 export interface CustomAgentConfig {
   agentName: string
@@ -160,16 +160,12 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                 {/* Profile Image */}
                 <div className="flex flex-col items-center gap-2">
                   <div className="relative">
-                    <div className="bg-muted border-border flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-2">
-                      {profileImage ? (
-                        <img
-                          src={profileImage}
-                          alt="프로필"
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <Bot className="text-muted-foreground h-9 w-9" />
-                      )}
+                    <div className="border-border flex h-20 w-20 overflow-hidden rounded-full border-2">
+                      <img
+                        src={profileImage ?? '/assets/agents/ceo/ceo_profile.png'}
+                        alt="프로필"
+                        className="h-full w-full object-cover"
+                      />
                     </div>
                     <button
                       onClick={() => fileInputRef.current?.click()}

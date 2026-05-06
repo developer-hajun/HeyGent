@@ -12,6 +12,7 @@ export type RawAiSession = {
   last_message_at?: string | null
   last_task_run_status?: string | null
   active_task_run_id?: string | null
+  metadata?: JsonObject | null
   [key: string]: unknown
 }
 

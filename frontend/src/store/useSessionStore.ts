@@ -15,7 +15,6 @@ interface SessionState {
   agentPanels: AgentPanelItem[]
   dynamicSessions: Session[]
   pinnedSessionIds: Set<string>
-  hiddenSessionIds: Set<string>
   setSelectedSessionId: (id: string | null) => void
   addAgentPanel: (agent: Agent) => void
   removeAgentPanel: (id: string) => void
@@ -23,14 +22,12 @@ interface SessionState {
   addDynamicSession: (session: Session) => void
   removeDynamicSession: (id: string) => void
   togglePinSession: (id: string) => void
-  hideSession: (id: string) => void
   allSessions: () => Session[]
 }
 
 type PersistedSessionState = Partial<{
   selectedSessionId: string | null
   pinnedSessionIds: string[]
-  hiddenSessionIds: string[]
 }>
 
 export const useSessionStore = create<SessionState>()(
@@ -40,7 +37,6 @@ export const useSessionStore = create<SessionState>()(
       agentPanels: [],
       dynamicSessions: [],
       pinnedSessionIds: new Set(),
-      hiddenSessionIds: new Set(),
 
       setSelectedSessionId: (id) => set({ selectedSessionId: id }),
 
@@ -89,21 +85,9 @@ export const useSessionStore = create<SessionState>()(
           return { pinnedSessionIds: next }
         }),
 
-      hideSession: (id) =>
-        set((s) => {
-          const hidden = new Set(s.hiddenSessionIds)
-          hidden.add(id)
-          const pinned = new Set(s.pinnedSessionIds)
-          pinned.delete(id)
-          return { hiddenSessionIds: hidden, pinnedSessionIds: pinned }
-        }),
-
       allSessions: () => {
-        const { dynamicSessions, hiddenSessionIds } = get()
-        return [
-          ...dynamicSessions.filter((s) => !hiddenSessionIds.has(s.id)),
-          ...staticSessions.filter((s) => !hiddenSessionIds.has(s.id)),
-        ]
+        const { dynamicSessions } = get()
+        return [...dynamicSessions, ...staticSessions]
       },
     }),
     {
@@ -113,7 +97,6 @@ export const useSessionStore = create<SessionState>()(
       partialize: (state) => ({
         selectedSessionId: state.selectedSessionId,
         pinnedSessionIds: [...state.pinnedSessionIds],
-        hiddenSessionIds: [...state.hiddenSessionIds],
       }),
       merge: (persisted, current) => {
         const value = persisted as PersistedSessionState
@@ -121,7 +104,6 @@ export const useSessionStore = create<SessionState>()(
           ...current,
           selectedSessionId: value.selectedSessionId ?? current.selectedSessionId,
           pinnedSessionIds: new Set(value.pinnedSessionIds ?? []),
-          hiddenSessionIds: new Set(value.hiddenSessionIds ?? []),
         }
       },
     },

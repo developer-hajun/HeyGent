@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'motion/react'
 import { sessions as staticSessions, agentMeta } from '@/data/sessions'
 import type { Message, AgentKey } from '@/data/sessions'
-import type { CustomAgentConfig } from '@/components/NewSessionModal'
+import type { CustomAgentConfig } from '@/components/session/NewSessionModal'
 import { useSessionStore } from '@/store/useSessionStore'
 
 const FAKE_REPLIES = [
@@ -699,8 +699,7 @@ export function SessionChatPage() {
                   ? '음성 입력 중...'
                   : '메시지를 입력하세요...'
             }
-            disabled={isTyping}
-            className="text-foreground placeholder:text-muted-foreground flex-1 bg-transparent text-sm outline-none disabled:opacity-60"
+            className="text-foreground placeholder:text-muted-foreground flex-1 bg-transparent text-sm outline-none"
           />
 
           {/* 입력 보조 마이크 버튼 */}

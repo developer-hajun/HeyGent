@@ -6,8 +6,13 @@ import { ChatEmptyState } from '@/components/chat/ChatEmptyState'
 import { ChatMessageList } from '@/components/chat/ChatMessageList'
 import { ChatSessionHeader } from '@/components/chat/ChatSessionHeader'
 import type { ChatConnectionState } from '@/components/chat/chatTypes'
+import { SessionSettingsModal } from '@/components/session/SessionSettingsModal'
 import { StepRunActivityPanel } from '@/components/taskRuns/StepRunActivityPanel'
-import type { AiRealtimeAuthStatus, AiRealtimeConnectionStatus } from '@/realtime/aiRealtimeTypes'
+import type {
+  AiRealtimeAuthStatus,
+  AiRealtimeConnectionStatus,
+  JsonObject,
+} from '@/realtime/aiRealtimeTypes'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
@@ -27,6 +32,7 @@ const EMPTY_MESSAGES: never[] = []
 export function ChatSessionPage() {
   const { sessionId = '' } = useParams()
   const [activityOpen, setActivityOpen] = useState(false)
+  const [sessionSettingsOpen, setSessionSettingsOpen] = useState(false)
   const [selectedTaskRunId, setSelectedTaskRunId] = useState<string | undefined>()
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -80,18 +86,7 @@ export function ChatSessionPage() {
       storeMessages.filter((message) => message.role === 'user' || message.role === 'assistant'),
     [storeMessages],
   )
-  const title = useMemo(() => {
-    const sessionTitle = getNonEmptyString(currentSession?.title)
-    if (sessionTitle !== undefined) {
-      return sessionTitle
-    }
-
-    const preview =
-      getNonEmptyString(currentSession?.last_message) ??
-      getNonEmptyString(messages.find((message) => message.role === 'user')?.content)
-
-    return preview ?? '새 대화'
-  }, [currentSession?.last_message, currentSession?.title, messages])
+  const sessionName = useMemo(() => getSessionDisplayName(currentSession), [currentSession])
   const taskRunIds = useMemo(() => {
     const ids = new Set<string>()
 
@@ -385,6 +380,9 @@ export function ChatSessionPage() {
         message.status === 'streaming' ||
         message.status === 'waiting',
     )
+  const isStreaming = messages.some(
+    (message) => message.role === 'assistant' && message.status === 'streaming',
+  )
   const isComposerDisabled =
     connectionState === 'auth-expired' ||
     !authenticatedReady ||
@@ -398,9 +396,10 @@ export function ChatSessionPage() {
     <main className="bg-background flex min-w-0 flex-1 overflow-hidden">
       <section className="flex min-w-0 flex-1 flex-col">
         <ChatSessionHeader
-          title={title}
+          title={sessionName}
           connectionState={connectionState}
           onOpenActivity={() => setActivityOpen(true)}
+          onOpenSettings={() => setSessionSettingsOpen(true)}
         />
         {displayErrorMessage && loadState !== 'error' && (
           <button
@@ -449,7 +448,11 @@ export function ChatSessionPage() {
             focusedTaskRunTarget={focusedTaskRunTarget}
           />
         )}
-        <ChatComposer disabled={isComposerDisabled} isSending={isSending} onSend={handleSend} />
+        <ChatComposer
+          disabled={isComposerDisabled}
+          isSending={isSending || isStreaming}
+          onSend={handleSend}
+        />
       </section>
       <StepRunActivityPanel
         open={activityOpen}
@@ -458,6 +461,11 @@ export function ChatSessionPage() {
         selectedTaskRunId={selectedTaskRunId}
         onSelectTaskRun={setSelectedTaskRunId}
         onFocusTaskRunMessage={handleFocusTaskRunMessage}
+      />
+      <SessionSettingsModal
+        open={sessionSettingsOpen}
+        onOpenChange={setSessionSettingsOpen}
+        session={currentSession ?? null}
       />
     </main>
   )
@@ -560,4 +568,18 @@ const getChatStepOrder = (stepRun: { step_order?: number | null; stepOrder?: num
 
 function getNonEmptyString(value: unknown) {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+}
+
+function getSessionDisplayName(session: unknown) {
+  const source = toJsonObject(session)
+  const metadata = toJsonObject(source.metadata)
+  const ui = toJsonObject(metadata.ui)
+  return getNonEmptyString(ui.sessionName) ?? '새 세션'
+}
+
+function toJsonObject(value: unknown): JsonObject {
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    return value as JsonObject
+  }
+  return {}
 }

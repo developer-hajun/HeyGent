@@ -6,6 +6,7 @@ import { TopNavBar } from '@/components/layout/TopNavBar'
 import { RightPanel } from '@/components/layout/RightPanel'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
+import { BuildingOverviewPage } from '@/pages/BuildingOverviewPage'
 import { NewChatPage } from '@/pages/NewChatPage'
 import { ChatSessionPage } from '@/pages/ChatSessionPage'
 import { LoginPage } from '@/pages/LoginPage'
@@ -113,7 +114,8 @@ export default function App() {
                     <Routes>
                       <Route path="/" element={<DashboardPage />} />
                       <Route path="/new-chat" element={<NewChatPage />} />
-                      <Route path="/agent-status" element={<AgentStatusPage />} />
+                      <Route path="/agent-status" element={<BuildingOverviewPage />} />
+                      <Route path="/agent-status/:sessionId" element={<AgentStatusPage />} />
                       <Route path="/session/:sessionId" element={<ChatSessionPage />} />
                       <Route path="/chat" element={<Navigate to="/new-chat" replace />} />
                       <Route path="/agents" element={<Navigate to="/agent-status" replace />} />
