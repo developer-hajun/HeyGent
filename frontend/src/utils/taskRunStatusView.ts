@@ -56,6 +56,8 @@ export const toTaskRunStatusTone = (status?: string | null): TaskRunStatusTone =
     case 'session.message.delta':
       return 'running'
     case 'WAITING':
+    case 'PENDING':
+    case 'BLOCKED':
     case 'approval.required':
     case 'task.waiting':
     case 'step.waiting':
