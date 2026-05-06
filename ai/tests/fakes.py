@@ -203,14 +203,17 @@ class InMemoryTranscriptStore:
         parent_session_id: str | None = None,
         title: str | None = None,
         metadata: dict[str, Any] | None = None,
+        settings: dict[str, Any] | None = None,
     ) -> str:
         now = utc_now()
+        owner_user_id = _owner_user_id(user_id)
         self.sessions[session_id] = {
             "id": session_id,
             "session_key": session_key,
             "source": source,
             "session_source": source,
             "user_id": user_id,
+            "owner_user_id": owner_user_id,
             "owner_key": user_id,
             "model": model,
             "system_prompt": system_prompt,
@@ -220,6 +223,7 @@ class InMemoryTranscriptStore:
                 **({"system_prompt_snapshot": system_prompt} if system_prompt else {}),
                 **deepcopy(metadata or {}),
             },
+            "settings": deepcopy(settings or {}),
             "created_at": now,
             "started_at": now,
             "updated_at": now,
@@ -229,6 +233,10 @@ class InMemoryTranscriptStore:
             "history_version": 0,
             "running_task_run_id": None,
             "workspace_key": (metadata or {}).get("workspace_key"),
+            "archived_at": None,
+            "deleted_at": None,
+            "deleted_by": None,
+            "purge_after": None,
         }
         self.messages.setdefault(session_id, [])
         return session_id
@@ -245,13 +253,26 @@ class InMemoryTranscriptStore:
         session = self.sessions.get(session_id)
         return deepcopy(session) if session is not None else None
 
-    def list_sessions(self, owner: str | None = None, *, user_id: str | None = None, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+    def list_sessions(
+        self,
+        owner: str | None = None,
+        *,
+        user_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        include_archived: bool = False,
+        include_deleted: bool = False,
+    ) -> list[dict[str, Any]]:
         effective_owner = owner if owner is not None else user_id
         sessions = [
             session
             for session in self.sessions.values()
             if effective_owner is None or session.get("user_id") == effective_owner
         ]
+        if not include_deleted:
+            sessions = [session for session in sessions if session.get("deleted_at") is None]
+        if not include_archived:
+            sessions = [session for session in sessions if session.get("archived_at") is None]
         sessions.sort(key=lambda session: session["updated_at"], reverse=True)
         return deepcopy(sessions[offset : offset + limit])
 
@@ -295,6 +316,57 @@ class InMemoryTranscriptStore:
             self.sessions[session_id]["message_count"] = len(self.messages[session_id])
             self.sessions[session_id]["updated_at"] = utc_now()
         return message_id
+
+    def update_title(self, *, owner_key: str, session_id: str, title: str) -> dict[str, Any]:
+        session = self._require_product_session(owner_key=owner_key, session_id=session_id)
+        if session.get("running_task_run_id"):
+            raise ValueError("session has a running task")
+        if session.get("title") == title:
+            return deepcopy(session)
+        session["title"] = title
+        session["history_version"] = int(session.get("history_version") or 0) + 1
+        session["updated_at"] = utc_now()
+        return deepcopy(session)
+
+    def archive_session(self, *, owner_key: str, session_id: str, archived: bool = True) -> dict[str, Any]:
+        session = self._require_product_session(owner_key=owner_key, session_id=session_id)
+        if session.get("running_task_run_id"):
+            raise ValueError("session has a running task")
+        if (session.get("archived_at") is not None) == archived:
+            return deepcopy(session)
+        session["archived_at"] = utc_now() if archived else None
+        session["updated_at"] = utc_now()
+        return deepcopy(session)
+
+    def delete_session(self, *, owner_key: str, session_id: str, deleted_by: str | None = None, retention_days: int = 30) -> dict[str, Any]:
+        session = self.sessions.get(session_id)
+        if session is None:
+            raise KeyError(session_id)
+        self._require_product_session(owner_key=owner_key, session_id=session_id, allow_deleted=True)
+        if session.get("running_task_run_id"):
+            raise ValueError("session has a running task")
+        if session.get("deleted_at") is None:
+            now = utc_now()
+            # soft delete는 메시지 배열을 지우지 않고 목록/생성 경계에서만 제외한다.
+            session["deleted_at"] = now
+            session["deleted_by"] = _owner_user_id(deleted_by or owner_key)
+            session["purge_after"] = now
+            session["archived_at"] = session.get("archived_at") or now
+            session["updated_at"] = now
+        return deepcopy(session)
+
+    def update_session_settings(self, *, owner_key: str, session_id: str, settings: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_product_session(owner_key=owner_key, session_id=session_id)
+        if session.get("running_task_run_id"):
+            raise ValueError("session has a running task")
+        # settings는 다음 TaskRun에 복사되는 영속 원본이라 허용된 key만 저장한 값을 받는다.
+        next_settings = {**deepcopy(session.get("settings") or {}), **deepcopy(settings)}
+        if next_settings == session.get("settings"):
+            return deepcopy(session)
+        session["settings"] = next_settings
+        session["history_version"] = int(session.get("history_version") or 0) + 1
+        session["updated_at"] = utc_now()
+        return deepcopy(session)
 
     def append_user_message_and_start_task(
         self,
@@ -417,7 +489,7 @@ class InMemoryTranscriptStore:
     def close(self) -> None:
         return None
 
-    def _require_product_session(self, *, owner_key: str, session_id: str) -> dict[str, Any]:
+    def _require_product_session(self, *, owner_key: str, session_id: str, allow_deleted: bool = False) -> dict[str, Any]:
         session = self.sessions.get(session_id)
         if session is None:
             raise KeyError(session_id)
@@ -427,6 +499,8 @@ class InMemoryTranscriptStore:
             raise ValueError("session is not a public product session")
         if str(session.get("user_id") or session.get("owner_key") or "") != str(owner_key):
             raise PermissionError("forbidden")
+        if session.get("deleted_at") is not None and not allow_deleted:
+            raise KeyError(session_id)
         return session
 
     def _search_by_source(
@@ -449,6 +523,8 @@ class InMemoryTranscriptStore:
             session_source = session.get("session_source") or session.get("source") or metadata.get("source")
             if session_source != source:
                 continue
+            if session.get("deleted_at") is not None or session.get("archived_at") is not None:
+                continue
             if owner_key is not None and str(session.get("user_id") or session.get("owner_key") or "") != str(owner_key):
                 continue
             if workspace_key is not None and str(session.get("workspace_key") or "") != str(workspace_key):
@@ -458,3 +534,10 @@ class InMemoryTranscriptStore:
             if len(results) >= limit:
                 break
         return results
+
+
+def _owner_user_id(value: Any) -> int | None:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None

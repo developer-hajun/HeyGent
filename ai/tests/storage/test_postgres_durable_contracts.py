@@ -6,11 +6,15 @@ from app.domain.tasks.repository import (
     TaskRepository,
     TaskRunRepository,
 )
+from app.domain.tasks.models import TaskRun
+from app.storage.queries.approval_queries import CREATE_APPROVAL_REQUESTS
+from app.storage.queries.task_queries import CREATE_TASK_RUNS
 from app.storage.postgres.schema import POSTGRES_SCHEMA_STATEMENTS, render_postgres_schema
 from app.storage.postgres.connection import apply_configured_postgres_migrations
 from app.storage.postgres.durable_repository import PostgresDurableRepository, PostgresTaskRepository
 from app.storage.postgres.migrations import POSTGRES_MIGRATIONS, apply_postgres_migrations
 from tests.fakes import InMemoryTaskRepository
+from app.storage.postgres.session_store import _owner_filter_params, _owner_filter_sql
 
 
 def test_in_memory_repository_satisfies_task_boundary_protocols():
@@ -46,6 +50,7 @@ def test_postgres_schema_contains_required_durable_tables():
         "agent_sessions",
         "agent_messages",
         "approval_requests",
+        "session_command_receipts",
         "run_anchors",
         "step_anchors",
         "worker_handoffs",
@@ -90,6 +95,57 @@ def test_postgres_schema_contains_anchor_profile_and_worker_linkage_columns():
         "WHERE status = 'PENDING'",
     ]:
         assert expected in schema_sql
+
+
+def test_postgres_schema_contains_user_owner_and_session_lifecycle_columns():
+    schema_sql = render_postgres_schema()
+    migration_sql = "\n".join(statement for migration in POSTGRES_MIGRATIONS for statement in migration.statements)
+
+    for expected in [
+        "owner_user_id BIGINT REFERENCES users(id)",
+        "archived_at TIMESTAMPTZ",
+        "deleted_at TIMESTAMPTZ",
+        "deleted_by BIGINT REFERENCES users(id)",
+        "purge_after TIMESTAMPTZ",
+        "settings JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "CONSTRAINT agent_sessions_public_owner_user_required",
+        "CREATE INDEX IF NOT EXISTS idx_agent_sessions_owner_user_source_updated",
+        "CREATE INDEX IF NOT EXISTS idx_agent_sessions_purge_after",
+        "CREATE INDEX IF NOT EXISTS idx_session_command_receipts_owner",
+    ]:
+        assert expected in schema_sql
+
+    for table_name in ("agent_sessions", "run_anchors", "approval_requests", "ai_agent_profiles"):
+        table_start = schema_sql.index(f"CREATE TABLE IF NOT EXISTS {table_name}")
+        table_end = schema_sql.index(");", table_start)
+        table_sql = schema_sql[table_start:table_end]
+        assert "owner_user_id BIGINT REFERENCES users(id)" in table_sql
+
+    for table_name in ("ai_agent_templates", "provider_tokens", "provider_oauth_states"):
+        table_start = schema_sql.index(f"CREATE TABLE IF NOT EXISTS {table_name}")
+        table_end = schema_sql.index(");", table_start)
+        table_sql = schema_sql[table_start:table_end]
+        assert "owner_user_id" not in table_sql
+
+    assert "0006_session_owner_lifecycle_settings" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "0007_session_command_receipts" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "ALTER TABLE agent_sessions" in migration_sql
+    assert "ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id)" in migration_sql
+    assert "ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}'::jsonb" in migration_sql
+    assert "agent_sessions_public_owner_user_required" in migration_sql
+    assert "CREATE TABLE IF NOT EXISTS session_command_receipts" in migration_sql
+
+
+def test_sqlite_task_and_approval_contracts_keep_owner_user_columns():
+    assert "owner_user_id INTEGER REFERENCES users(id)" in CREATE_TASK_RUNS
+    assert "owner_user_id INTEGER REFERENCES users(id)" in CREATE_APPROVAL_REQUESTS
+
+
+def test_postgres_session_owner_filter_prefers_user_fk_when_user_id_is_numeric():
+    assert _owner_filter_sql("42") == "owner_user_id = %s"
+    assert _owner_filter_params("42") == [42]
+    assert _owner_filter_sql("local-user") == "owner_key = %s"
+    assert _owner_filter_params("local-user") == ["local-user"]
 
 
 def test_postgres_schema_seeds_builtin_agent_profiles():
@@ -185,14 +241,26 @@ class _FakeDurableConnection:
     def execute(self, sql: str, params: tuple | None = None):
         normalized = " ".join(sql.split())
         if normalized.startswith("INSERT INTO run_anchors"):
-            task_run_id, session_id, owner_key, session_key, current_step_run_id, durable_status, anchor_payload = params
+            (
+                task_run_id,
+                session_id,
+                owner_key,
+                owner_user_id,
+                session_key,
+                current_step_run_id,
+                durable_status,
+                agent_config_snapshot,
+                anchor_payload,
+            ) = params
             self.run_anchors[task_run_id] = {
                 "task_run_id": task_run_id,
                 "session_id": session_id,
                 "owner_key": owner_key,
+                "owner_user_id": owner_user_id,
                 "session_key": session_key,
                 "current_step_run_id": current_step_run_id,
                 "durable_status": durable_status,
+                "agent_config_snapshot": agent_config_snapshot,
                 "anchor_payload": anchor_payload,
             }
         elif normalized.startswith("SELECT * FROM run_anchors"):
@@ -233,6 +301,7 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
             "session_key": "session_pg",
             "current_step_run_id": "step_pg_anchor",
             "durable_status": "WAITING",
+            "agent_config_snapshot": {"model": "gpt-session", "enabled_toolsets": ["session"]},
             "anchor_payload": {"reason": "approval"},
         },
     )
@@ -248,10 +317,39 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
     )
 
     assert run_anchor["owner_key"] == "user_pg"
+    assert run_anchor["agent_config_snapshot"] == {"model": "gpt-session", "enabled_toolsets": ["session"]}
     assert run_anchor["anchor_payload"] == {"reason": "approval"}
     assert step_anchor["step_order"] == 3
     assert step_anchor["anchor_payload"] == {"tool": "terminal.run"}
     assert connection.commits == 2
+
+
+def test_postgres_task_repository_copies_task_settings_to_run_anchor_config_snapshot():
+    connection = _FakeDurableConnection()
+    repository = PostgresTaskRepository(lambda: connection)
+
+    repository.create_task(
+        TaskRun(
+            task_run_id="task_pg_settings_anchor",
+            task_type="agent.loop",
+            owner_key="42",
+            status="RUNNING",
+            input_payload={
+                "settings_snapshot": {"model": "gpt-session", "systemPrompt": "세션 프롬프트"},
+                "enabled_toolsets": ["session", "planning"],
+                "delegation_policy": {"canDelegate": False},
+            },
+        )
+    )
+
+    anchor = repository.get_run_anchor("task_pg_settings_anchor")
+    assert anchor is not None
+    assert anchor["agent_config_snapshot"] == {
+        "model": "gpt-session",
+        "systemPrompt": "세션 프롬프트",
+        "toolsets": ["session", "planning"],
+        "delegationPolicy": {"canDelegate": False},
+    }
 
 
 def test_postgres_task_repository_reads_agent_profile_by_key():

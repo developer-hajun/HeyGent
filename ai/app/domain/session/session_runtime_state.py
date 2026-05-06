@@ -12,7 +12,16 @@ def get_system_prompt_snapshot(session: dict[str, Any], *, default: str = "") ->
     """
 
     metadata = session.get("metadata") if isinstance(session.get("metadata"), dict) else {}
-    value = metadata.get("system_prompt_snapshot") or metadata.get("system_prompt") or session.get("system_prompt")
+    settings = session.get("settings") if isinstance(session.get("settings"), dict) else {}
+    # 세션 settings가 다음 TaskRun에 복사되는 영속 원본이다.
+    # metadata 값은 이전 버전 호환용으로만 뒤에서 읽는다.
+    value = (
+        settings.get("systemPrompt")
+        or settings.get("system_prompt")
+        or metadata.get("system_prompt_snapshot")
+        or metadata.get("system_prompt")
+        or session.get("system_prompt")
+    )
     if isinstance(value, str):
         return value
     return default
