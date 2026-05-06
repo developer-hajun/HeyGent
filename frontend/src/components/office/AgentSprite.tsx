@@ -51,7 +51,12 @@ export function AgentSprite({ agent, onArrived }: AgentSpriteProps) {
         src={getSpriteSrc(agent)}
         alt={config.name}
         draggable={false}
-        style={{ width: '100%', height: '100%', userSelect: 'none' }}
+        style={{
+          width: '100%',
+          height: '100%',
+          userSelect: 'none',
+          transform: agent.facingRight && agent.state === 'walking' ? 'scaleX(-1)' : undefined,
+        }}
       />
     </div>
   )

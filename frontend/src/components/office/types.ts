@@ -11,12 +11,17 @@ export type AgentState =
 
 export type SittingState = Exclude<AgentState, 'idle' | 'walking'>
 
+export interface Waypoint {
+  x: number
+  y: number
+}
+
 export interface AgentConfig {
   id: string
   name: string
   spritePath: string
   initialPosition: { x: number; y: number }
-  destinations: Record<Destination, { x: number; y: number }>
+  destinations: Record<Destination, { x: number; y: number; waypoints?: Waypoint[] }>
   scale?: number
   stateScales?: Partial<Record<AgentState, number>>
 }
@@ -28,4 +33,7 @@ export interface AgentRuntime {
   targetState: SittingState
   walkFrame: 0 | 1 | 2 | 3
   transitionDuration: number
+  pendingWaypoints: Waypoint[]
+  targetPosition: Waypoint | null
+  facingRight: boolean // true면 스프라이트 좌우 반전
 }
