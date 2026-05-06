@@ -8,9 +8,6 @@ class AgentLoopHandler:
     """TaskRun 을 agent.loop 중심 실행으로 연결하는 handler 다."""
 
     spec = HandlerSpec(
-        intent_type="agent.loop",
-        entry_handler_key="agent.loop",
-        handler_key="agent.loop",
         task_type="agent.loop",
         task_title="agent loop 요청",
         step_type="agent.loop.execute",

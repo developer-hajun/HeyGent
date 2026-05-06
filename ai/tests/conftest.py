@@ -116,8 +116,6 @@ def task_run() -> TaskRun:
     return TaskRun(
         task_run_id="task_test",
         task_type="agent.loop",
-        intent_type="agent.loop",
-        entry_handler_key="agent.loop",
         owner_key="tester",
         status="PENDING",
         title="모델 생성 요청",
@@ -132,7 +130,6 @@ def step_run() -> StepRun:
         task_run_id="task_test",
         step_order=1,
         step_type="agent.loop.execute",
-        handler_key="agent.loop",
         status="PENDING",
         title="모델 응답 생성",
         input_payload={"prompt": "hello"},

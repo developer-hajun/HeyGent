@@ -64,16 +64,10 @@ class TaskEngine:
         self.outcome_inspector = OutcomeInspector()
         self.step_handler = StepHandler()
 
-    async def run(self, *, task: TaskRun, handler, step: StepRun | None = None) -> TaskRun:
+    async def run(self, *, task: TaskRun, handler) -> TaskRun:
         self.repository.create_task(task)
         await self._emit("task.created", task)
-        if step is None:
-            return await self._execute_initial(task=task, handler=handler, resume_payload=None)
-
-        task.current_step_run_id = step.step_run_id
-        self.repository.create_step(step)
-        await self._emit("step.created", task, step)
-        return await self._execute(task=task, step=step, handler=handler, resume_payload=None)
+        return await self._execute_initial(task=task, handler=handler, resume_payload=None)
 
     async def _execute_initial(self, *, task: TaskRun, handler, resume_payload: dict | None) -> TaskRun:
         ensure_task_transition(task.status, TaskStatus.RUNNING)
@@ -98,21 +92,7 @@ class TaskEngine:
             )
         except Exception as error:
             outcome = self._build_handler_failure_outcome(error)
-            step = self.planner.materialize_step(
-                task=task,
-                handler=handler,
-                input_payload=task.input_payload,
-                step_order=1,
-            )
-            # provider 호출 실패처럼 모델 관찰값이 없는 경우에만 사후 실패 anchor를 만든다.
-            step.status = StepStatus.RUNNING
-            step.started_at = step.started_at or task.started_at or utc_now()
-            task.current_step_run_id = step.step_run_id
-            self.repository.update_task(task)
-            self.repository.create_step(step)
-            await self._emit("step.created", task, step)
-            await self._emit("step.started", task, step)
-            return await self._apply_outcome(task=task, step=step, handler=handler, outcome=outcome)
+            return await self._apply_task_outcome_without_step(task=task, outcome=outcome)
 
         live_step = self.repository.get_step(task.current_step_run_id) if task.current_step_run_id else None
         if live_step is not None:
@@ -333,10 +313,7 @@ class TaskEngine:
             raise ValueError("current step is not waiting")
 
         wait_payload = dict(step.wait_payload or {})
-        handler = None
-        handler_key = step.handler_key or task.entry_handler_key
-        if handler_key:
-            handler = self.tool_registry.get(handler_key)
+        handler = self.tool_registry.resolve()
 
         approval = self.repository.get_open_approval(task.task_run_id)
         if approval is None:
@@ -750,7 +727,7 @@ class TaskEngine:
 
     def _build_progress_sink(self, *, task: TaskRun, step: StepRun | None):
         current_step = step
-        handler = self.tool_registry.get(task.entry_handler_key)
+        handler = self.tool_registry.resolve()
 
         async def sink(*, event_type: str, summary_message: str | None = None, payload: dict | None = None) -> None:
             nonlocal current_step

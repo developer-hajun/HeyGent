@@ -23,11 +23,6 @@ class TaskRun:
     # Spring 이 관리하는 외부 세션 식별자.
     # AI 서비스는 세션 자체를 소유하지 않고, 이 참조값으로 TaskRun 을 세션에 연결한다.
     session_key: str | None = None
-    # 사용자가 요청한 의도 타입.
-    # flow 제거 이후에는 이 값이 "무슨 작업을 하려는가"를 설명하는 정식 기준점이 된다.
-    intent_type: str | None = None
-    # 이 TaskRun 이 처음 어떤 handler 로 진입했는지 남기는 canonical key.
-    entry_handler_key: str | None = None
     # 현재 루프가 붙잡고 있는 StepRun ID.
     # waiting/resume/이벤트 발행이 "마지막 step 추측"이 아니라 정확한 step 기준으로 움직이게 만드는 최소 앵커다.
     current_step_run_id: str | None = None

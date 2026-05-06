@@ -115,7 +115,6 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "tool-user",
             "session_key": "sess_native_loop",
             "input_payload": {"prompt": "필요하면 도구를 사용해 정리해줘.", "model": "gpt-test"},
@@ -125,7 +124,7 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "COMPLETED"
-    assert "entry_handler_key" not in body
+    assert "task_type" in body
     assert body["result_payload"]["text"] == "NATIVE_LOOP_DONE"
     assert [item["name"] for item in body["result_payload"]["tool_results"]] == ["step", "skills.list", "todo", "terminal.run"]
     assert body["todo_state"]["currentKey"] is None
@@ -185,7 +184,6 @@ def test_agent_loop_emits_runtime_tool_progress_events_before_completion(client,
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "progress-user",
             "input_payload": {
                 "prompt": "이승엽 보고서를 tmp/testfile/progress.md 파일로 작성해줘.",
@@ -237,7 +235,6 @@ def test_agent_loop_keeps_tool_progress_run_scoped_without_step_declaration(clie
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "fallback-step-user",
             "input_payload": {
                 "prompt": "파일을 바로 작성해줘.",
@@ -315,7 +312,6 @@ def test_agent_loop_materializes_only_llm_declared_steps_after_run_scoped_tool_e
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "fallback-semantic-user",
             "input_payload": {
                 "prompt": "먼저 확인한 뒤 의미 단계를 선언해줘.",
@@ -363,7 +359,6 @@ def test_agent_loop_does_not_create_steprun_before_first_provider_call(client, m
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "first-provider-user",
             "input_payload": {
                 "prompt": "관련 자료를 조사하고 파일 초안을 작성해줘.",
@@ -396,7 +391,6 @@ def test_agent_loop_runs_provider_response_off_event_loop(client, monkeypatch):
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "provider-thread-user",
             "input_payload": {
                 "prompt": "provider 호출 thread 경계 확인",
@@ -440,7 +434,6 @@ def test_step_events_use_llm_declared_step_title_as_realtime_summary(client, mon
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "step-summary-user",
             "input_payload": {
                 "prompt": "관련 자료를 조사하고 파일 초안을 작성해줘.",
@@ -508,7 +501,6 @@ def test_agent_loop_declared_steps_materialize_multiple_observed_stepruns(client
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "declared-step-user",
             "input_payload": {"prompt": "진행 단계를 선언하면서 처리해줘.", "model": "gpt-test"},
         },
@@ -617,7 +609,6 @@ def test_agent_loop_switches_active_steprun_when_llm_declares_next_step(client, 
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "declared-progress-user",
             "input_payload": {
                 "prompt": "이승엽 정보를 조사하고 tmp/testfile/lee.md 파일로 작성해줘.",
@@ -739,7 +730,6 @@ def test_agent_loop_does_not_move_tool_to_pending_steprun_without_llm_step_updat
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "pending-tool-user",
             "input_payload": {
                 "prompt": "이승엽에 대하여 조사하고 tmp/testfile 여기에 md 파일로 저장해줘.",
@@ -887,7 +877,6 @@ def test_agent_loop_keeps_delegate_step_running_until_worker_result_before_file_
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "delegate-order-user",
             "input_payload": {
                 "prompt": "AI 서브에이전트를 depth1로만 두는 설계를 조사하고 tmp/testfile 아래에 md로 정리해줘.",
@@ -936,13 +925,12 @@ def test_agent_loop_keeps_delegate_step_running_until_worker_result_before_file_
     assert "이번 turn에서 실행하지 않았습니다" in first_turn_tool_messages[1].content
 
 
-def test_agent_loop_provider_timeout_fails_task_and_materializes_failed_step(client, monkeypatch):
+def test_agent_loop_provider_timeout_fails_task_without_fallback_step(client, monkeypatch):
     _patch_respond(monkeypatch, [TimeoutError("provider read timeout")])
 
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "timeout-user",
             "input_payload": {"prompt": "provider timeout을 실패로 저장해줘.", "model": "gpt-test"},
         },
@@ -953,27 +941,15 @@ def test_agent_loop_provider_timeout_fails_task_and_materializes_failed_step(cli
     assert body["status"] == "FAILED"
     assert body["error_message"] == "TimeoutError: provider read timeout"
     assert body["progress_summary"] == "작업 처리 중 오류가 발생했습니다."
-    assert body["current_step_run_id"]
+    assert body["current_step_run_id"] is None
 
     steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
-    assert len(steps) == 1
-    assert steps[0]["step_run_id"] == body["current_step_run_id"]
-    assert steps[0]["status"] == "FAILED"
-    assert steps[0]["error_message"] == "TimeoutError: provider read timeout"
-    assert steps[0]["summary_message"] == "작업 처리 중 오류가 발생했습니다."
-    operations = steps[0]["detail_json"]["operationDetail"]["operations"]
-    assert [operation["key"] for operation in operations[-3:]] == [
-        "handler.diagnose",
-        "handler.retry.unavailable",
-        "handler.failure",
-    ]
-    assert operations[-3]["status"] == "completed"
-    assert operations[-2]["status"] == "waiting"
-    assert operations[-1]["status"] == "failed"
-    assert operations[-1]["summary"] == "TimeoutError: provider read timeout"
-    assert steps[0]["output_payload"]["error"]["recovery"]["diagnose"] is True
-    assert steps[0]["output_payload"]["error"]["recovery"]["retryable"] is True
-    assert steps[0]["output_payload"]["error"]["recovery"]["retry_attempted"] is False
+    assert steps == []
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    task_failed_event = next(event for event in events if event.event_type == "task.failed")
+    assert task_failed_event.step_run_id is None
+    assert task_failed_event.payload["error_message"] == "TimeoutError: provider read timeout"
 
 
 def test_agent_loop_explicit_task_plan_is_reference_only_until_llm_declares_steps(client, monkeypatch):
@@ -987,7 +963,6 @@ def test_agent_loop_explicit_task_plan_is_reference_only_until_llm_declares_step
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "explicit-plan-user",
             "input_payload": {
                 "prompt": "명시 계획을 순서대로 처리해줘.",
@@ -1015,7 +990,6 @@ def test_agent_loop_explicit_task_plan_is_reference_only_until_llm_declares_step
     events = client.app.state.repository.list_events(body["task_run_id"])
     assert [event.event_type for event in events if event.event_type == "step.created"] == []
 
-
 def test_agent_loop_does_not_inject_prompt_plan_from_keywords(client, monkeypatch):
     provider_calls = _patch_respond(
         monkeypatch,
@@ -1027,7 +1001,6 @@ def test_agent_loop_does_not_inject_prompt_plan_from_keywords(client, monkeypatc
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "prompt-plan-user",
             "input_payload": {
                 "prompt": "관련 자료를 조사하고 파일 초안을 작성해줘.",
@@ -1073,7 +1046,6 @@ def test_agent_loop_todo_does_not_force_prompt_plan_step_boundary(client, monkey
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "prompt-plan-todo-user",
             "input_payload": {
                 "prompt": "관련 자료를 조사하고 파일 초안을 작성해줘.",
@@ -1133,7 +1105,6 @@ def test_agent_loop_uses_input_workspace_root_for_file_and_terminal_runtime(clie
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "workspace-root-user",
             "input_payload": {
                 "prompt": "요청 workspace에서 파일과 터미널 작업을 실행해줘.",
@@ -1167,7 +1138,6 @@ def test_agent_loop_does_not_fail_file_prompt_with_static_intent_check(client, m
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "missing-file-write-user",
             "input_payload": {
                 "prompt": "이승엽 조사 보고서를 tmp/testfile/missing.md 파일로 작성해줘.",
@@ -1203,7 +1173,6 @@ def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch
     create_response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "approval-user",
             "input_payload": {
                 "prompt": "승인 후 터미널 확인을 진행해줘.",
@@ -1257,7 +1226,6 @@ def test_agent_loop_resume_provider_runtime_error_fails_existing_step(client, mo
     create_response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "resume-error-user",
             "input_payload": {
                 "prompt": "승인 후 provider 오류를 실패로 저장해줘.",
@@ -1316,7 +1284,6 @@ def test_taskruns_resume_rejects_missing_approval_id_for_waiting_task(client, mo
     create_response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "approval-missing-user",
             "input_payload": {"prompt": "승인 대기", "approval_required": True},
         },
@@ -1358,7 +1325,6 @@ def test_taskruns_resume_rejects_approval_id_from_other_waiting_task(client, mon
     task_a_response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "approval-a",
             "input_payload": {"prompt": "A 작업", "approval_required": True},
         },
@@ -1366,7 +1332,6 @@ def test_taskruns_resume_rejects_approval_id_from_other_waiting_task(client, mon
     task_b_response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "approval-b",
             "input_payload": {"prompt": "B 작업", "approval_required": True},
         },
@@ -1405,7 +1370,6 @@ def test_taskruns_cancel_records_pending_tool_result_without_resuming_loop(clien
     create_response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "cancel-user",
             "session_key": "sess_cancel_pending",
             "input_payload": {
@@ -1445,7 +1409,6 @@ def test_taskruns_resume_and_cancel_reject_non_waiting_task(client):
     create_response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "non-waiting-user",
             "input_payload": {"prompt": "바로 완료되는 작업"},
         },
@@ -1463,28 +1426,25 @@ def test_taskruns_resume_and_cancel_reject_non_waiting_task(client):
     assert cancel_response.json()["detail"] == "task is not waiting"
 
 
-def test_removed_legacy_routing_is_rejected(client):
+def test_removed_request_route_field_is_rejected(client):
     legacy_response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "model.generate",
+            "removed_route": "model.generate",
             "owner_key": "legacy-user",
             "input_payload": {"prompt": "legacy"},
         },
     )
-    assert legacy_response.status_code == 400
-    assert "legacy intent routing has been removed" in legacy_response.json()["detail"]
+    assert legacy_response.status_code == 422
 
     workflow_response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "workflow-user",
-            "input_payload": {"prompt": "workflow", "workflow_key": "workspace_publish_to_notion"},
+            "input_payload": {"prompt": "workflow", "workflow_hint": "legacy.workflow"},
         },
     )
-    assert workflow_response.status_code == 400
-    assert "workflow_key routing has been removed" in workflow_response.json()["detail"]
+    assert workflow_response.status_code == 200
 
 
 def test_runtime_tool_error_is_model_observation_not_immediate_task_failure(client, monkeypatch):
@@ -1499,7 +1459,6 @@ def test_runtime_tool_error_is_model_observation_not_immediate_task_failure(clie
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "restricted-tools-user",
             "input_payload": {
                 "prompt": "terminal tool should be reported as unavailable here.",
@@ -1538,7 +1497,7 @@ def test_taskruns_active_supports_session_filter_and_recent_terminal(client, mon
 
     completed_response = client.post(
         "/ai/api/v1/taskRuns",
-        json={"intent_type": "agent.loop", "owner_key": "completed-user", "input_payload": {"prompt": "완료 작업"}},
+        json={"owner_key": "completed-user", "input_payload": {"prompt": "완료 작업"}},
     )
     assert completed_response.status_code == 200
     completed_task = completed_response.json()
@@ -1546,7 +1505,6 @@ def test_taskruns_active_supports_session_filter_and_recent_terminal(client, mon
     waiting_response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "waiting-user",
             "session_key": "sess_a",
             "input_payload": {"prompt": "대기 작업", "approval_required": True},
@@ -1583,8 +1541,6 @@ def test_taskruns_active_filters_by_session_id(client):
         TaskRun(
             task_run_id="task_session_match",
             task_type="agent.loop",
-            intent_type="agent.loop",
-            entry_handler_key="agent.loop",
             owner_key="session-user",
             session_key="target_session",
             status="RUNNING",
@@ -1595,8 +1551,6 @@ def test_taskruns_active_filters_by_session_id(client):
         TaskRun(
             task_run_id="task_other_session",
             task_type="agent.loop",
-            intent_type="agent.loop",
-            entry_handler_key="agent.loop",
             owner_key="other-user",
             session_key="other_session",
             status="RUNNING",
@@ -1620,7 +1574,6 @@ def test_taskruns_rejects_removed_session_aliases(client):
     create_response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "alias-user",
             "sessionKey": "legacy_create_session",
             "productSessionId": "removed_create_session",
@@ -1785,7 +1738,6 @@ def test_taskruns_create_rejects_second_active_task_in_same_session(client, monk
     first_response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "active-lock-user",
             "session_key": "sess_active_lock",
             "input_payload": {"prompt": "첫 작업은 승인 대기", "approval_required": True},
@@ -1797,7 +1749,6 @@ def test_taskruns_create_rejects_second_active_task_in_same_session(client, monk
     second_response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "active-lock-user",
             "session_key": "sess_active_lock",
             "input_payload": {"prompt": "동일 세션 두 번째 작업"},
@@ -1827,7 +1778,6 @@ def test_taskruns_create_active_lock_is_scoped_by_authenticated_owner(client, mo
         "/ai/api/v1/taskRuns",
         headers={"Authorization": "Bearer owner-a"},
         json={
-            "intent_type": "agent.loop",
             "owner_key": "ignored-owner",
             "session_key": "shared_session",
             "input_payload": {"prompt": "owner-a 작업은 승인 대기", "approval_required": True},
@@ -1840,7 +1790,6 @@ def test_taskruns_create_active_lock_is_scoped_by_authenticated_owner(client, mo
         "/ai/api/v1/taskRuns",
         headers={"Authorization": "Bearer owner-b"},
         json={
-            "intent_type": "agent.loop",
             "owner_key": "ignored-owner",
             "session_key": "shared_session",
             "input_payload": {"prompt": "owner-b는 같은 sessionId라도 별도 사용자"},
@@ -1863,7 +1812,6 @@ def test_taskruns_create_uses_redis_active_session_lock_before_start(client, mon
     response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "active-lock-user",
             "session_key": "sess_locked_by_redis",
             "input_payload": {"prompt": "Redis lock이 있으면 시작하면 안 됨"},
@@ -1880,8 +1828,6 @@ def test_taskruns_active_prefers_redis_projection_for_live_session(client):
     task = TaskRun(
         task_run_id="task_projection_active",
         task_type="agent.loop",
-        intent_type="agent.loop",
-        entry_handler_key="agent.loop",
         owner_key="projection-user",
         session_key="sess_projection",
         status="RUNNING",
@@ -1893,7 +1839,6 @@ def test_taskruns_active_prefers_redis_projection_for_live_session(client):
         task_run_id=task.task_run_id,
         step_order=1,
         step_type="agent.loop.execute",
-        handler_key="agent.loop",
         status="RUNNING",
         title="projection 단계",
     )
@@ -1956,7 +1901,6 @@ def test_taskruns_flow_returns_observed_step_node(client, monkeypatch):
     create_response = client.post(
         "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "flow-user",
             "input_payload": {"prompt": "흐름 확인", "model": "gpt-test"},
         },
@@ -1967,6 +1911,6 @@ def test_taskruns_flow_returns_observed_step_node(client, monkeypatch):
     flow_response = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/flow")
     assert flow_response.status_code == 200
     flow = flow_response.json()
-    assert "entry_handler_key" not in flow
+    assert "nodes" in flow
     assert flow["nodes"] == []
     assert "현재 연결은 정상" in flow["summary"]

@@ -151,11 +151,10 @@ async def _create_message_in_session(
                 owner_key=owner_key,
                 session_key=sessionId,
                 input_payload=task_input,
-                intent_type=payload.intent_type,
             )
         )
     except KeyError as error:
-        raise HTTPException(status_code=404, detail=f"unknown intent or handler: {error.args[0]}") from error
+        raise HTTPException(status_code=404, detail=f"unknown execution route: {error.args[0]}") from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
