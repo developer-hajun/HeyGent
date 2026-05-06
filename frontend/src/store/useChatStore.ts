@@ -152,6 +152,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       clientMessageId,
       createdAt: new Date().toISOString(),
     }
+    // accepted 왕복을 기다리면 첫 입력에서 DB append/TaskRun 생성 시간이 그대로 비어 보인다.
+    // 텍스트는 서버 이벤트가 올 때 채우고, 즉시 보이는 상태는 스피너 전용 placeholder로만 둔다.
+    const optimisticAssistantMessage: ChatMessageView = {
+      id: `pending_assistant_${clientMessageId}`,
+      sessionId: optimisticSessionId,
+      role: 'assistant',
+      content: '',
+      status: 'streaming',
+      clientMessageId,
+      createdAt: new Date().toISOString(),
+    }
 
     set((state) => ({
       messagesBySessionId: {
@@ -159,6 +170,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         [optimisticSessionId]: [
           ...(state.messagesBySessionId[optimisticSessionId] ?? []),
           optimisticMessage,
+          optimisticAssistantMessage,
         ],
       },
       pendingClientMessageIds: {
@@ -520,7 +532,24 @@ const mergeAcceptedMessage = (
   set((state) => {
     const sourceSessionId = previousSessionId ?? sessionId
     const previousMessages = state.messagesBySessionId[sourceSessionId] ?? []
+    const placeholderId =
+      assistantMessageId ?? (taskRunId === undefined ? undefined : `assistant_${taskRunId}`)
     const acceptedMessages = previousMessages.map((message) => {
+      if (
+        clientMessageId !== undefined &&
+        message.role === 'assistant' &&
+        message.clientMessageId === clientMessageId &&
+        message.status === 'streaming'
+      ) {
+        // 전송 직후 만든 스피너 placeholder를 accepted 응답의 실제 TaskRun에 연결한다.
+        // 새 assistant 메시지를 추가하지 않아야 말풍선이 두 번 깜빡이지 않는다.
+        return {
+          ...message,
+          id: assistantMessageId ?? placeholderId ?? message.id,
+          sessionId,
+          taskRunId,
+        }
+      }
       if (message.clientMessageId !== clientMessageId) {
         return { ...message, sessionId }
       }
@@ -540,8 +569,6 @@ const mergeAcceptedMessage = (
           message.role === 'assistant' &&
           message.taskRunId === taskRunId),
     )
-    const placeholderId =
-      assistantMessageId ?? (taskRunId === undefined ? undefined : `assistant_${taskRunId}`)
     // accepted는 "작업을 시작했다"는 응답이고 자연어 답변은 뒤이어 온다.
     // 그래서 completed/delta가 오기 전까지 빈 assistant placeholder를 만들어 진행 중 상태를 보여 준다.
     const assistantPlaceholder =

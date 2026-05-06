@@ -61,15 +61,13 @@ export function ChatMessageItem({
             ) : (
               <div className="text-muted-foreground flex items-center gap-2">
                 {message.status === 'waiting' ? (
-                  <Clock3 className="h-4 w-4 text-amber-500" />
+                  <>
+                    <Clock3 className="h-4 w-4 text-amber-500" />
+                    <span>사용자 확인을 기다리는 중입니다.</span>
+                  </>
                 ) : (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
-                <span>
-                  {message.status === 'waiting'
-                    ? '사용자 확인을 기다리는 중입니다.'
-                    : '응답을 작성하는 중입니다.'}
-                </span>
               </div>
             )}
           </div>
