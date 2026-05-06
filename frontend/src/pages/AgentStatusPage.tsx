@@ -286,10 +286,10 @@ export function AgentStatusPage() {
     <div className="relative flex flex-1 overflow-hidden">
       <OfficeMap agents={agents} onAgentArrived={handleAgentArrived} ceoMode={ceoMode} />
 
-      <div className="absolute bottom-6 left-1/2 z-20 -translate-x-1/2">
-        <div className="flex flex-col gap-2.5 rounded-2xl border border-white/20 bg-black/60 px-5 py-3 shadow-2xl backdrop-blur-md">
+      <div className="absolute bottom-4 left-1/2 z-20 w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 sm:bottom-6 sm:w-auto">
+        <div className="flex flex-col gap-2.5 rounded-2xl border border-white/20 bg-black/60 px-4 py-3 shadow-2xl backdrop-blur-md sm:px-5">
           {/* 에이전트 탭 */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             {agents
               .filter((agent) => CONTROLLABLE_AGENTS.has(agent.config.id))
               .map((agent) => (
@@ -320,7 +320,7 @@ export function AgentStatusPage() {
           {/* 선택된 에이전트 컨트롤 */}
           {selectedAgent && (
             <div className="flex items-center gap-3">
-              <div className="flex w-28 flex-col">
+              <div className="flex min-w-0 flex-col">
                 <span className="text-sm font-medium text-white">{selectedAgent.config.name}</span>
                 <span className="text-xs text-white/50">{STATE_LABELS[selectedAgent.state]}</span>
               </div>

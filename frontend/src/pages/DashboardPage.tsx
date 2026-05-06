@@ -163,7 +163,7 @@ function CalendarWidget({ onClose }: { onClose: () => void }) {
               return (
                 <div
                   key={`prev-${i}`}
-                  className="bg-muted/5 text-muted-foreground/40 border-border min-h-[42px] border-r border-b p-1 text-[10px] last:border-r-0"
+                  className="bg-muted/5 text-muted-foreground/40 border-border min-h-10.5 border-r border-b p-1 text-[10px] last:border-r-0"
                 >
                   {day}
                 </div>
@@ -190,12 +190,12 @@ function CalendarWidget({ onClose }: { onClose: () => void }) {
                 <button
                   key={day}
                   onClick={() => setSelectedDate(new Date(year, month, day))}
-                  className={`border-border relative flex min-h-[42px] flex-col items-start border-r border-b p-1 text-[10px] transition-colors last:border-r-0 ${
+                  className={`border-border relative flex min-h-10.5 flex-col items-start border-r border-b p-1 text-[10px] transition-colors last:border-r-0 ${
                     isSelected ? 'bg-primary/10' : 'hover:bg-muted/30 bg-white'
                   }`}
                 >
                   <span
-                    className={`flex-shrink-0 ${
+                    className={`shrink-0 ${
                       isToday
                         ? 'bg-primary flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold text-white'
                         : isSelected
@@ -231,7 +231,7 @@ function CalendarWidget({ onClose }: { onClose: () => void }) {
               return (
                 <div
                   key={`next-${i}`}
-                  className="bg-muted/5 text-muted-foreground/40 border-border min-h-[42px] border-r border-b p-1 text-[10px] last:border-r-0"
+                  className="bg-muted/5 text-muted-foreground/40 border-border min-h-10.5 border-r border-b p-1 text-[10px] last:border-r-0"
                 >
                   {day}
                 </div>
@@ -638,7 +638,7 @@ export function DashboardPage() {
 
   return (
     <div className="bg-background flex-1 overflow-x-hidden overflow-y-auto">
-      <div className="mx-auto max-w-3xl space-y-10 px-8 py-10">
+      <div className="mx-auto max-w-3xl space-y-10 px-4 py-6 sm:px-8 sm:py-10">
         {/* ── Hero Greeting ── */}
         <motion.div
           initial={{ opacity: 0, y: 18 }}
@@ -647,7 +647,7 @@ export function DashboardPage() {
           className="space-y-1"
         >
           <div className="mb-4 flex items-center gap-2.5">
-            <div className="from-primary to-chart-5 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br shadow-sm">
+            <div className="from-primary to-chart-5 flex h-10 w-10 items-center justify-center rounded-xl bg-linear-to-br shadow-sm">
               <Bot className="h-5 w-5 text-white" />
             </div>
             <div>
@@ -657,7 +657,7 @@ export function DashboardPage() {
         </motion.div>
 
         {/* ── Reminders & Healthcare Grid ── */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {/* Upcoming Reminders & Calendar */}
           <motion.div
             initial={{ opacity: 0, y: 14 }}
@@ -733,7 +733,7 @@ export function DashboardPage() {
                           className="bg-muted/30 hover:bg-muted/50 hover:border-border flex cursor-pointer items-center gap-3 rounded-xl border border-transparent p-3 transition-colors"
                         >
                           <div
-                            className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg"
+                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"
                             style={{ backgroundColor: `${reminder.color}15` }}
                           >
                             {React.createElement(typeIcon, {
@@ -750,7 +750,7 @@ export function DashboardPage() {
                             </p>
                           </div>
                           <div
-                            className="h-2 w-2 flex-shrink-0 rounded-full"
+                            className="h-2 w-2 shrink-0 rounded-full"
                             style={{ backgroundColor: reminder.color }}
                           />
                         </motion.div>
@@ -803,7 +803,7 @@ export function DashboardPage() {
                   >
                     <div className="flex items-start gap-3">
                       <div
-                        className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
                         style={{ backgroundColor: `${insight.color}20` }}
                       >
                         <insight.icon className="h-4 w-4" style={{ color: insight.color }} />
@@ -827,7 +827,7 @@ export function DashboardPage() {
         {/* Calendar Dialog */}
         <Dialog open={calendarOpen} onOpenChange={setCalendarOpen}>
           <DialogContent
-            className="max-w-[380px] p-0 [&>button]:hidden"
+            className="w-[calc(100%-2rem)] max-w-95 p-0 [&>button]:hidden"
             aria-describedby="calendar-description"
           >
             <DialogTitle className="sr-only">일정 등록</DialogTitle>
@@ -850,7 +850,7 @@ export function DashboardPage() {
               전체 보기 <ChevronRight className="h-3.5 w-3.5" />
             </button>
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {agents.map((agent, i) => (
               <motion.div
                 key={i}
@@ -921,7 +921,7 @@ export function DashboardPage() {
                 className="border-border hover:border-primary/20 flex cursor-pointer items-center gap-3 rounded-xl border bg-white p-4 transition-all duration-150 hover:shadow-sm"
               >
                 <div
-                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
                   style={{ backgroundColor: `${result.accent}14` }}
                 >
                   <result.icon
@@ -933,7 +933,7 @@ export function DashboardPage() {
                   <p className="text-foreground truncate text-sm font-medium">{result.task}</p>
                   <p className="text-muted-foreground text-xs">{result.agent}</p>
                 </div>
-                <div className="flex flex-shrink-0 items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                   <span className="text-muted-foreground text-xs">{result.time}</span>
                 </div>
