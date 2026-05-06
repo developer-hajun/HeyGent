@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import android.app.Activity
 import androidx.compose.runtime.LaunchedEffect
 import android.util.Log
+import com.example.mob.data.remote.RetrofitClient
 import com.kakao.sdk.common.KakaoSdk
 import com.kakao.sdk.common.util.Utility
 
@@ -108,6 +109,11 @@ private fun MainApp(onLogout: () -> Unit) {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+
+    // 토큰 만료 시 자동 로그아웃
+    LaunchedEffect(Unit) {
+        RetrofitClient.sessionExpiredEvent.collect { onLogout() }
+    }
 
     // 주기적 동기화 시작
     LaunchedEffect(Unit) {
