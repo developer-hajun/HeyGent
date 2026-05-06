@@ -1,5 +1,6 @@
 package com.ssafy.heygent.domain.notion.service;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -32,7 +33,7 @@ public class ComposioService {
     @Value("${composio.notion.integration-id}")
     private String integrationId;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = Utf8RestTemplateFactory.create();
 
     // Notion 연결 URL 생성
     public String getNotionConnectUrl(Long userId) {
@@ -101,7 +102,7 @@ public class ComposioService {
         HttpHeaders headers = buildHeaders();
         try {
             Map response = restTemplate.exchange(
-                BASE_URL + "/connectedAccounts?entityId=" + userId + "&appName=notion",
+                BASE_URL + "/connected_accounts?user_ids=" + userId + "&auth_config_ids=" + integrationId + "&statuses=ACTIVE",
                 HttpMethod.GET,
                 new HttpEntity<>(headers),
                 Map.class
@@ -113,7 +114,7 @@ public class ComposioService {
 
             String connectionId = items.get(0).get("id").toString();
             restTemplate.exchange(
-                BASE_URL + "/connectedAccounts/" + connectionId,
+                BASE_URL + "/connected_accounts/" + connectionId,
                 HttpMethod.DELETE,
                 new HttpEntity<>(headers),
                 Map.class
@@ -123,12 +124,12 @@ public class ComposioService {
         }
     }
 
-    // Notion access_token 조회 (직접 API 호출 시 사용)
-    public String getNotionAccessToken(Long userId) {
+    // Notion connected account ID 조회 (Composio proxy 호출 시 사용)
+    public String getConnectedAccountId(Long userId) {
         HttpHeaders headers = buildHeaders();
         try {
             Map response = restTemplate.exchange(
-                BASE_URL + "/connectedAccounts?entityId=" + userId + "&appName=notion",
+                BASE_URL + "/connected_accounts?user_ids=" + userId + "&auth_config_ids=" + integrationId + "&statuses=ACTIVE",
                 HttpMethod.GET,
                 new HttpEntity<>(headers),
                 Map.class
@@ -138,13 +139,13 @@ public class ComposioService {
             List<Map> items = (List<Map>) response.get("items");
             if (items == null || items.isEmpty()) throw new CustomException(ErrorCode.RESOURCE_NOT_FOUND);
 
-            Map connectionParams = (Map) items.get(0).get("connectionParams");
-            if (connectionParams == null) throw new CustomException(ErrorCode.RESOURCE_NOT_FOUND);
-
-            return connectionParams.get("access_token").toString();
+            Object id = items.get(0).get("id");
+            if (id == null) throw new CustomException(ErrorCode.RESOURCE_NOT_FOUND);
+            return id.toString();
         } catch (CustomException e) {
             throw e;
         } catch (Exception e) {
+            log.error("[Composio] connected_account_id 조회 실패: {}", e.getMessage());
             throw new CustomException(ErrorCode.EXTERNAL_AUTH_FAILED);
         }
     }
@@ -152,7 +153,9 @@ public class ComposioService {
     private HttpHeaders buildHeaders() {
         HttpHeaders headers = new HttpHeaders();
         headers.set("x-api-key", apiKey);
-        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setContentType(new MediaType(MediaType.APPLICATION_JSON, StandardCharsets.UTF_8));
+        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+        headers.setAcceptCharset(List.of(StandardCharsets.UTF_8));
         return headers;
     }
 }
