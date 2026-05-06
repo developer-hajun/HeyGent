@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'motion/react'
 import { sessions as staticSessions, agentMeta } from '@/data/sessions'
 import type { Message, AgentKey } from '@/data/sessions'
-import type { CustomAgentConfig } from '@/components/NewSessionModal'
+import type { CustomAgentConfig } from '@/components/session/NewSessionModal'
 import { useSessionStore } from '@/store/useSessionStore'
 
 const FAKE_REPLIES = [

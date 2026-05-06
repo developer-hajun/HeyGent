@@ -1,10 +1,11 @@
-import { AlertCircle, Loader2, MessageCircle, PanelRightOpen, Wifi } from 'lucide-react'
+import { AlertCircle, Loader2, MessageCircle, PanelRightOpen, Settings, Wifi } from 'lucide-react'
 import type { ChatConnectionState } from './chatTypes'
 
 type ChatSessionHeaderProps = {
   title: string
   connectionState: ChatConnectionState
   onOpenActivity: () => void
+  onOpenSettings: () => void
 }
 
 const connectionText: Record<ChatConnectionState, string> = {
@@ -20,6 +21,7 @@ export function ChatSessionHeader({
   title,
   connectionState,
   onOpenActivity,
+  onOpenSettings,
 }: ChatSessionHeaderProps) {
   const isBusy = connectionState === 'connecting' || connectionState === 'reconnecting'
   const isError = connectionState === 'error' || connectionState === 'auth-expired'
@@ -49,14 +51,24 @@ export function ChatSessionHeader({
             </div>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onOpenActivity}
-          className="hover:bg-muted text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
-          aria-label="활동 패널 열기"
-        >
-          <PanelRightOpen className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="hover:bg-muted text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+            aria-label="세션 설정 열기"
+          >
+            <Settings className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onOpenActivity}
+            className="hover:bg-muted text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+            aria-label="활동 패널 열기"
+          >
+            <PanelRightOpen className="h-4 w-4" />
+          </button>
+        </div>
       </div>
       <div className="border-border/60 absolute right-4 bottom-0 left-4 border-b" />
     </header>
