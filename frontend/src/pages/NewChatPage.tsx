@@ -11,6 +11,7 @@ import {
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import type { CustomAgentConfig } from '@/components/NewSessionModal'
 
 const suggestedPrompts = [
   {
@@ -73,7 +74,24 @@ export function NewChatPage() {
     setSendError(null)
 
     try {
-      const acceptedFrame = await sendMessage({ content })
+      const pendingConfig = readPendingSessionConfig()
+      const acceptedFrame = await sendMessage({
+        content,
+        settings: pendingConfig?.persona.trim()
+          ? { systemPrompt: pendingConfig.persona.trim() }
+          : undefined,
+        inputPayload:
+          pendingConfig === null
+            ? undefined
+            : {
+                sessionConfigSnapshot: {
+                  agentName: pendingConfig.agentName,
+                  persona: pendingConfig.persona,
+                  callName: pendingConfig.callName,
+                  profileImageProvided: pendingConfig.profileImage !== null,
+                },
+              },
+      })
       const payload = getFramePayload(acceptedFrame)
       const acceptedSessionId =
         getStringField(payload, 'session_id', 'sessionId') ??
@@ -84,6 +102,7 @@ export function NewChatPage() {
       }
 
       navigate(`/session/${acceptedSessionId}`)
+      clearPendingSessionConfig()
     } catch (error) {
       setSendError(error instanceof Error ? error.message : '새 채팅을 시작하지 못했습니다.')
     } finally {
@@ -214,6 +233,26 @@ function isRealtimePending(connectionStatus: AiRealtimeConnectionStatus) {
     connectionStatus === 'open' ||
     connectionStatus === 'reconnecting'
   )
+}
+
+function readPendingSessionConfig(): CustomAgentConfig | null {
+  const raw = sessionStorage.getItem('ai-new-session-config')
+  if (raw === null) {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(raw)
+    if (typeof parsed === 'object' && parsed !== null && typeof parsed.persona === 'string') {
+      return parsed as CustomAgentConfig
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+function clearPendingSessionConfig() {
+  sessionStorage.removeItem('ai-new-session-config')
 }
 
 function getRealtimeUnavailableMessage(

@@ -1,37 +1,65 @@
 import { create } from 'zustand'
 import {
   type AiRealtimeRawFrame,
+  type JsonObject,
   type RawSessionMessageAcceptedPayload,
   type RawSessionMessageCompletedPayload,
   type RawSessionMessageDeltaPayload,
   type RawSessionMessageFailedPayload,
   type RawSessionMessageWaitingPayload,
   type RawSessionUpdatedPayload,
+  type SessionMutationResultPayload,
+  type SessionDeleteResultPayload,
+  type ModelOptionsRawResultPayload,
   getFramePayload,
   getStringField,
+  getNumberField,
   isJsonObject,
 } from '@/realtime/aiRealtimeTypes'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import type {
+  AiModelOption,
+  AiModelProviderOption,
+  AiSessionSettingsPatch,
   ChatMessageView,
   ChatMessageStatus,
+  ModelOptionsResultPayload,
   RawAiMessage,
   RawAiSession,
   SessionListResultPayload,
   SessionMessagesListResultPayload,
 } from '@/types/aiChat'
-import { createClientMessageId } from '@/utils/requestId'
+import { createClientCommandId, createClientMessageId } from '@/utils/requestId'
 
 type ChatState = {
   sessionsById: Record<string, RawAiSession>
   messagesBySessionId: Record<string, ChatMessageView[]>
   pendingClientMessageIds: Record<string, string>
   loadingSessionIds: Record<string, boolean>
+  sessionListLoading: boolean
+  sessionListError: string | null
+  modelOptions: ModelOptionsResultPayload | null
+  modelOptionsLoading: boolean
+  modelOptionsError: string | null
   lastError: string | null
-  fetchSessions: () => Promise<RawAiSession[]>
+  fetchSessions: (options?: { includeArchived?: boolean }) => Promise<RawAiSession[]>
   fetchMessages: (sessionId: string) => Promise<ChatMessageView[]>
-  sendMessage: (input: { sessionId?: string; content: string }) => Promise<AiRealtimeRawFrame>
+  sendMessage: (input: {
+    sessionId?: string
+    content: string
+    settings?: AiSessionSettingsPatch
+    inputPayload?: JsonObject
+  }) => Promise<AiRealtimeRawFrame>
+  updateSession: (input: { sessionId: string; title?: string }) => Promise<RawAiSession | null>
+  archiveSession: (sessionId: string) => Promise<void>
+  unarchiveSession: (sessionId: string) => Promise<RawAiSession | null>
+  deleteSession: (sessionId: string) => Promise<void>
+  updateSessionSettings: (input: {
+    sessionId: string
+    settingsPatch: AiSessionSettingsPatch
+  }) => Promise<RawAiSession | null>
+  fetchModelOptions: (sessionId?: string) => Promise<ModelOptionsResultPayload>
   handleRealtimeFrame: (frame: AiRealtimeRawFrame) => void
   clearChatState: () => void
 }
@@ -41,23 +69,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messagesBySessionId: {},
   pendingClientMessageIds: {},
   loadingSessionIds: {},
+  sessionListLoading: false,
+  sessionListError: null,
+  modelOptions: null,
+  modelOptionsLoading: false,
+  modelOptionsError: null,
   lastError: null,
-  fetchSessions: async () => {
-    const frame = await useAiRealtimeStore
-      .getState()
-      .sendCommand<AiRealtimeRawFrame>('session.list', {})
-    const payload = getFramePayload(frame) as SessionListResultPayload
-    const sessions = getRawSessionList(payload)
+  fetchSessions: async (options = {}) => {
+    set({ sessionListLoading: true, sessionListError: null })
 
-    set((state) => ({
-      sessionsById: {
-        ...state.sessionsById,
-        ...Object.fromEntries(sessions.map((session) => [session.session_id, session])),
-      },
-      lastError: null,
-    }))
+    try {
+      const includeArchived = options.includeArchived === true
+      const frame = await useAiRealtimeStore
+        .getState()
+        .sendCommand<AiRealtimeRawFrame>('session.list', { includeArchived })
+      const payload = getFramePayload(frame) as SessionListResultPayload
+      const sessions = getRawSessionList(payload).filter(
+        (session) => !isRemovedSession(session, includeArchived),
+      )
 
-    return sessions
+      set((state) => ({
+        sessionsById: reconcileVisibleSessions(state.sessionsById, sessions),
+        sessionListLoading: false,
+        sessionListError: null,
+        lastError: null,
+      }))
+
+      return sessions
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '세션 목록 조회에 실패했습니다.'
+      set({
+        sessionListLoading: false,
+        sessionListError: message,
+        lastError: message,
+      })
+      throw error
+    }
   },
   fetchMessages: async (sessionId) => {
     set((state) => ({
@@ -86,7 +133,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       throw error
     }
   },
-  sendMessage: async ({ sessionId, content }) => {
+  sendMessage: async ({ sessionId, content, settings, inputPayload }) => {
     const trimmedContent = content.trim()
     if (trimmedContent === '') {
       throw new Error('전송할 메시지를 입력해 주세요.')
@@ -127,6 +174,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           sessionId,
           content: trimmedContent,
           clientMessageId,
+          settings,
+          inputPayload,
         })
 
       get().handleRealtimeFrame(frame)
@@ -144,6 +193,105 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return frame
     } catch (error) {
       markOptimisticMessageFailed(clientMessageId, set)
+      throw error
+    }
+  },
+  updateSession: async ({ sessionId, title }) => {
+    const frame = await useAiRealtimeStore
+      .getState()
+      .sendCommand<AiRealtimeRawFrame>('session.update', {
+        sessionId,
+        title,
+        clientCommandId: createClientCommandId(),
+      })
+
+    const updatedSession = getSessionFromMutationFrame(frame, sessionId)
+    set((state) => ({
+      sessionsById:
+        updatedSession === null
+          ? state.sessionsById
+          : { ...state.sessionsById, [updatedSession.session_id]: updatedSession },
+      lastError: null,
+    }))
+    get().handleRealtimeFrame(frame)
+    return updatedSession
+  },
+  archiveSession: async (sessionId) => {
+    const frame = await useAiRealtimeStore
+      .getState()
+      .sendCommand<AiRealtimeRawFrame>('session.archive', {
+        sessionId,
+        archived: true,
+        clientCommandId: createClientCommandId(),
+      })
+
+    get().handleRealtimeFrame(frame)
+    set((state) => removeSessionFromState(state, sessionId))
+  },
+  unarchiveSession: async (sessionId) => {
+    const frame = await useAiRealtimeStore
+      .getState()
+      .sendCommand<AiRealtimeRawFrame>('session.archive', {
+        sessionId,
+        archived: false,
+        clientCommandId: createClientCommandId(),
+      })
+
+    const updatedSession = getSessionFromMutationFrame(frame, sessionId)
+    set((state) => ({
+      sessionsById:
+        updatedSession === null
+          ? state.sessionsById
+          : { ...state.sessionsById, [updatedSession.session_id]: updatedSession },
+      lastError: null,
+    }))
+    get().handleRealtimeFrame(frame)
+    return updatedSession
+  },
+  deleteSession: async (sessionId) => {
+    const frame = await useAiRealtimeStore
+      .getState()
+      .sendCommand<AiRealtimeRawFrame>('session.delete', {
+        sessionId,
+        clientCommandId: createClientCommandId(),
+      })
+
+    get().handleRealtimeFrame(frame)
+    set((state) => removeSessionFromState(state, sessionId))
+  },
+  updateSessionSettings: async ({ sessionId, settingsPatch }) => {
+    const frame = await useAiRealtimeStore
+      .getState()
+      .sendCommand<AiRealtimeRawFrame>('session.settings.update', {
+        sessionId,
+        settings: settingsPatch,
+        clientCommandId: createClientCommandId(),
+      })
+
+    const updatedSession = getSessionFromMutationFrame(frame, sessionId)
+    set((state) => ({
+      sessionsById:
+        updatedSession === null
+          ? state.sessionsById
+          : { ...state.sessionsById, [updatedSession.session_id]: updatedSession },
+      lastError: null,
+    }))
+    get().handleRealtimeFrame(frame)
+    return updatedSession
+  },
+  fetchModelOptions: async (sessionId) => {
+    set({ modelOptionsLoading: true, modelOptionsError: null })
+
+    try {
+      const frame = await useAiRealtimeStore
+        .getState()
+        .sendCommand<AiRealtimeRawFrame>('model.options', { sessionId })
+      const options = normalizeModelOptions(getFramePayload(frame))
+      set({ modelOptions: options, modelOptionsLoading: false, modelOptionsError: null })
+      return options
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '모델 목록 조회에 실패했습니다.'
+      set({ modelOptionsLoading: false, modelOptionsError: message })
       throw error
     }
   },
@@ -174,6 +322,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       case 'session.updated':
         mergeSessionUpdated(frame, set)
         return
+      case 'session.archived':
+      case 'session.archive.result':
+        mergeSessionMutationResult(frame, set)
+        return
+      case 'session.deleted':
+      case 'session.delete.result':
+        mergeSessionDeleteResult(frame, set)
+        return
+      case 'session.settings.updated':
+      case 'session.settings.update.result':
+        mergeSessionMutationResult(frame, set)
+        return
       case 'task.event':
         mergeTaskEventCompletionPayload(getFramePayload(frame), set)
         return
@@ -187,6 +347,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messagesBySessionId: {},
       pendingClientMessageIds: {},
       loadingSessionIds: {},
+      sessionListLoading: false,
+      sessionListError: null,
+      modelOptions: null,
+      modelOptionsLoading: false,
+      modelOptionsError: null,
       lastError: null,
     }),
 }))
@@ -204,6 +369,41 @@ const getRawSessionList = (payload: SessionListResultPayload | unknown): RawAiSe
 
   return list.filter(isRawAiSession)
 }
+
+const reconcileVisibleSessions = (
+  previousSessionsById: Record<string, RawAiSession>,
+  visibleSessions: RawAiSession[],
+) => {
+  const nextSessionsById: Record<string, RawAiSession> = {}
+
+  Object.values(previousSessionsById).forEach((session) => {
+    if (isPendingSession(session)) {
+      nextSessionsById[session.session_id] = session
+    }
+  })
+
+  visibleSessions.forEach((session) => {
+    nextSessionsById[session.session_id] = session
+  })
+
+  return nextSessionsById
+}
+
+const removeSessionFromState = (state: ChatState, sessionId: string): Partial<ChatState> => {
+  const sessionsById = { ...state.sessionsById }
+  const messagesBySessionId = { ...state.messagesBySessionId }
+  delete sessionsById[sessionId]
+  delete messagesBySessionId[sessionId]
+  return { sessionsById, messagesBySessionId, lastError: null }
+}
+
+const isPendingSession = (session: RawAiSession) =>
+  session.session_id.startsWith('pending_session_') || session.source === 'pending'
+
+const isRemovedSession = (session: RawAiSession, includeArchived = false) =>
+  session.deleted_at != null ||
+  session.status === 'DELETED' ||
+  (!includeArchived && (session.archived_at != null || session.status === 'ARCHIVED'))
 
 const getRawMessageList = (payload: SessionMessagesListResultPayload | unknown): RawAiMessage[] => {
   if (!isJsonObject(payload)) {
@@ -236,12 +436,13 @@ const mergeSessionList = (
   frame: AiRealtimeRawFrame,
   set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
 ) => {
-  const sessions = getRawSessionList(getFramePayload(frame))
+  const sessions = getRawSessionList(getFramePayload(frame)).filter(
+    (session) => !isRemovedSession(session),
+  )
   set((state) => ({
-    sessionsById: {
-      ...state.sessionsById,
-      ...Object.fromEntries(sessions.map((session) => [session.session_id, session])),
-    },
+    sessionsById: reconcileVisibleSessions(state.sessionsById, sessions),
+    sessionListLoading: false,
+    sessionListError: null,
   }))
 }
 
@@ -556,6 +757,11 @@ const mergeSessionUpdated = (
     return
   }
 
+  if (rawSession !== undefined && isRemovedSession(rawSession)) {
+    set((state) => removeSessionFromState(state, resolvedSessionId))
+    return
+  }
+
   set((state) => ({
     sessionsById:
       rawSession === undefined
@@ -566,6 +772,64 @@ const mergeSessionUpdated = (
         ? state.messagesBySessionId
         : { ...state.messagesBySessionId, [resolvedSessionId]: messages },
   }))
+}
+
+const mergeSessionMutationResult = (
+  frame: AiRealtimeRawFrame,
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
+) => {
+  const payload = getFramePayload(frame) as SessionMutationResultPayload
+  const sessionId = getStringField(payload, 'session_id', 'sessionId')
+  const session = getSessionFromMutationFrame(frame, sessionId)
+
+  if (session === null) {
+    return
+  }
+
+  if (isRemovedSession(session)) {
+    set((state) => removeSessionFromState(state, session.session_id))
+    return
+  }
+
+  set((state) => ({
+    sessionsById: { ...state.sessionsById, [session.session_id]: session },
+    lastError: null,
+  }))
+}
+
+const mergeSessionDeleteResult = (
+  frame: AiRealtimeRawFrame,
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
+) => {
+  const payload = getFramePayload(frame) as SessionDeleteResultPayload
+  const sessionId = getStringField(payload, 'session_id', 'sessionId')
+  if (sessionId === undefined) {
+    return
+  }
+
+  set((state) => removeSessionFromState(state, sessionId))
+}
+
+const getSessionFromMutationFrame = (
+  frame: AiRealtimeRawFrame,
+  fallbackSessionId?: string,
+): RawAiSession | null => {
+  const payload = getFramePayload(frame)
+  if (isJsonObject(payload) && isJsonObject(payload.session)) {
+    const session = normalizeRawSession(payload.session)
+    return session ?? null
+  }
+
+  if (!isJsonObject(payload)) {
+    return null
+  }
+
+  const sessionId = getStringField(payload, 'session_id', 'sessionId') ?? fallbackSessionId
+  if (sessionId === undefined) {
+    return null
+  }
+
+  return normalizeRawSession({ ...payload, session_id: sessionId }) ?? null
 }
 
 const mergeTaskEventCompletionPayload = (
@@ -791,6 +1055,97 @@ const upsertAssistantMessage = (
   )
 }
 
+const normalizeModelOptions = (payload: unknown): ModelOptionsResultPayload => {
+  if (!isJsonObject(payload)) {
+    return { providers: [], models: [] }
+  }
+
+  const rawPayload = payload as ModelOptionsRawResultPayload
+  const providers = Array.isArray(rawPayload.providers)
+    ? rawPayload.providers.map(normalizeModelProviderOption).filter(isModelProviderOption)
+    : []
+  const directModels = Array.isArray(rawPayload.models)
+    ? rawPayload.models.map((model) => normalizeModelOption(model)).filter(isModelOption)
+    : []
+  const providerModels = providers.flatMap((provider) => provider.models)
+  const model =
+    typeof rawPayload.model === 'string' || rawPayload.model === null ? rawPayload.model : undefined
+
+  return {
+    ...payload,
+    model,
+    providers,
+    models: directModels.length > 0 ? directModels : providerModels,
+  }
+}
+
+const normalizeModelProviderOption = (value: unknown): AiModelProviderOption | null => {
+  if (!isJsonObject(value)) {
+    return null
+  }
+
+  const slug =
+    getStringField(value, 'slug') ??
+    getStringField(value, 'provider') ??
+    getStringField(value, 'id') ??
+    getStringField(value, 'name')
+  if (slug === undefined) {
+    return null
+  }
+
+  const rawModels = Array.isArray(value.models) ? value.models : []
+  return {
+    slug,
+    label: getStringField(value, 'label', 'name') ?? slug,
+    warning:
+      getStringField(value, 'warning') ??
+      getStringField(value, 'warning_message', 'warningMessage') ??
+      null,
+    isCurrent: value.is_current === true || value.isCurrent === true,
+    models: rawModels.map((model) => normalizeModelOption(model, slug)).filter(isModelOption),
+    raw: value,
+  }
+}
+
+const normalizeModelOption = (value: unknown, provider?: string): AiModelOption | null => {
+  if (typeof value === 'string') {
+    return { id: value, label: value, provider }
+  }
+  if (!isJsonObject(value)) {
+    return null
+  }
+
+  const id =
+    getStringField(value, 'id') ??
+    getStringField(value, 'model') ??
+    getStringField(value, 'name') ??
+    getStringField(value, 'slug')
+  if (id === undefined) {
+    return null
+  }
+
+  const usage = getNumberField(value, 'usage')
+  const limit = getNumberField(value, 'limit')
+  return {
+    id,
+    label: getStringField(value, 'label', 'name') ?? id,
+    provider: getStringField(value, 'provider') ?? provider,
+    warning:
+      getStringField(value, 'warning') ??
+      (usage !== undefined && limit !== undefined && usage >= limit
+        ? '사용 한도에 도달했습니다.'
+        : null),
+    isCurrent: value.is_current === true || value.isCurrent === true,
+    raw: value,
+  }
+}
+
+const isModelProviderOption = (
+  value: AiModelProviderOption | null,
+): value is AiModelProviderOption => value !== null
+
+const isModelOption = (value: AiModelOption | null): value is AiModelOption => value !== null
+
 const isRawAiSession = (value: unknown): value is RawAiSession =>
   isJsonObject(value) && typeof value.session_id === 'string'
 
@@ -803,6 +1158,17 @@ const normalizeRawSession = (value: Record<string, unknown>): RawAiSession | und
     ...value,
     session_id: sessionId,
     title: typeof value.title === 'string' || value.title === null ? value.title : undefined,
+    archived_at:
+      getStringField(value, 'archived_at', 'archivedAt') ??
+      (value.archived_at === null || value.archivedAt === null ? null : undefined),
+    deleted_at:
+      getStringField(value, 'deleted_at', 'deletedAt') ??
+      (value.deleted_at === null || value.deletedAt === null ? null : undefined),
+    settings: isJsonObject(value.settings)
+      ? value.settings
+      : value.settings === null
+        ? null
+        : undefined,
     active_task_run_id:
       getStringField(value, 'active_task_run_id', 'activeTaskRunId') ??
       (value.active_task_run_id === null ? null : undefined),

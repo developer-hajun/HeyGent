@@ -12,15 +12,19 @@ import {
   EyeOff,
   Search,
   Globe,
+  Loader2,
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog'
 import { Switch } from './ui/switch'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { motion, AnimatePresence } from 'motion/react'
+import { useChatStore } from '@/store/useChatStore'
+import type { AiModelOption } from '@/types/aiChat'
 
 interface SettingsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  sessionId?: string
 }
 
 type SettingsTab =
@@ -32,7 +36,7 @@ type SettingsTab =
   | 'channels'
   | 'external'
 
-export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
+export function SettingsDialog({ open, onOpenChange, sessionId }: SettingsDialogProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
 
   const tabs = [
@@ -92,7 +96,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               >
                 {activeTab === 'general' && <GeneralContent />}
                 {activeTab === 'skills' && <SkillsContent />}
-                {activeTab === 'models' && <ModelsContent />}
+                {activeTab === 'models' && <ModelsContent sessionId={sessionId} />}
                 {activeTab === 'personalization' && <PersonalizationContent />}
                 {activeTab === 'apiKeys' && <ApiKeysContent />}
                 {activeTab === 'channels' && <ChannelsContent />}
@@ -306,52 +310,108 @@ function SkillsContent() {
 // ────────────────────────────────────────────────────────────────────────────
 // Models Content
 // ────────────────────────────────────────────────────────────────────────────
-function ModelsContent() {
-  const models = [
-    { name: 'GPT-4 Turbo', usage: 1250, limit: 5000, color: '#3b82f6' },
-    { name: 'Claude 3 Sonnet', usage: 840, limit: 3000, color: '#8b5cf6' },
-    { name: 'Gemini Pro', usage: 320, limit: 2000, color: '#10b981' },
-  ]
+function ModelsContent({ sessionId }: { sessionId?: string }) {
+  const modelOptions = useChatStore((state) => state.modelOptions)
+  const modelOptionsLoading = useChatStore((state) => state.modelOptionsLoading)
+  const modelOptionsError = useChatStore((state) => state.modelOptionsError)
+  const fetchModelOptions = useChatStore((state) => state.fetchModelOptions)
+  const updateSessionSettings = useChatStore((state) => state.updateSessionSettings)
+  const [optimisticModel, setOptimisticModel] = useState<{
+    sessionId?: string
+    modelId: string
+  } | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  useEffect(() => {
+    void fetchModelOptions(sessionId).catch(() => undefined)
+  }, [fetchModelOptions, sessionId])
+
+  const models = modelOptions?.models ?? []
+  const selectedModel =
+    optimisticModel !== null && optimisticModel.sessionId === sessionId
+      ? optimisticModel.modelId
+      : typeof modelOptions?.model === 'string'
+        ? modelOptions.model
+        : null
+
+  const handleSelectModel = async (model: AiModelOption) => {
+    if (sessionId === undefined) {
+      setOptimisticModel(null)
+      setSaveError('세션을 연 뒤 모델을 저장할 수 있습니다.')
+      return
+    }
+
+    setOptimisticModel({ sessionId, modelId: model.id })
+    setSaveError(null)
+
+    try {
+      await updateSessionSettings({
+        sessionId,
+        settingsPatch: { model: model.id },
+      })
+    } catch (error) {
+      // 저장 실패 시 임시 선택 표시를 서버가 확인한 값으로 되돌린다.
+      setOptimisticModel(null)
+      setSaveError(error instanceof Error ? error.message : '모델 설정 저장에 실패했습니다.')
+    }
+  }
 
   return (
     <div className="space-y-6">
       <div>
         <h3 className="text-foreground mb-2 text-xl font-semibold">모델</h3>
-        <p className="text-muted-foreground text-sm">사용 중인 AI 모델과 사용량을 확인합니다</p>
+        <p className="text-muted-foreground text-sm">
+          서버에서 제공하는 모델 목록을 확인하고 현재 대화의 모델을 선택합니다
+        </p>
       </div>
 
-      <div className="space-y-4">
-        {models.map((model, i) => {
-          const percentage = (model.usage / model.limit) * 100
-          return (
-            <div key={i} className="bg-muted/30 border-border rounded-xl border p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <h4 className="text-foreground text-sm font-medium">{model.name}</h4>
-                <span className="text-muted-foreground text-xs">
-                  {model.usage.toLocaleString()} / {model.limit.toLocaleString()} 요청
-                </span>
-              </div>
-              <div className="bg-muted h-2 overflow-hidden rounded-full">
-                <div
-                  className="h-full rounded-full transition-all duration-500"
-                  style={{
-                    width: `${percentage}%`,
-                    backgroundColor: model.color,
-                  }}
-                />
-              </div>
-              <div className="mt-2 flex items-center justify-between">
-                <span className="text-muted-foreground text-xs">
-                  사용률: {percentage.toFixed(1)}%
-                </span>
-                <span className="text-muted-foreground text-xs">
-                  남은 요청: {(model.limit - model.usage).toLocaleString()}
-                </span>
-              </div>
+      {modelOptionsLoading && (
+        <div className="text-muted-foreground flex items-center gap-2 text-sm">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          모델 목록을 불러오는 중입니다.
+        </div>
+      )}
+
+      {modelOptionsError && (
+        <div className="border-border bg-muted/30 text-muted-foreground rounded-xl border p-4 text-sm">
+          {modelOptionsError}
+        </div>
+      )}
+
+      {!modelOptionsLoading && !modelOptionsError && models.length === 0 && (
+        <div className="border-border bg-muted/30 text-muted-foreground rounded-xl border p-4 text-sm">
+          사용할 수 있는 모델 목록이 아직 제공되지 않았습니다.
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {models.map((model) => (
+          <button
+            key={`${model.provider ?? 'default'}:${model.id}`}
+            type="button"
+            onClick={() => void handleSelectModel(model)}
+            className={`border-border flex w-full items-start justify-between rounded-xl border p-4 text-left transition-colors ${
+              selectedModel === model.id ? 'bg-primary/5 border-primary/30' : 'bg-muted/30'
+            }`}
+          >
+            <div className="min-w-0 flex-1">
+              <h4 className="text-foreground truncate text-sm font-medium">{model.label}</h4>
+              <p className="text-muted-foreground mt-1 text-xs">
+                {model.provider ?? '기본 provider'}
+              </p>
+              {model.warning && <p className="mt-2 text-xs text-amber-600">{model.warning}</p>}
             </div>
-          )
-        })}
+            {selectedModel === model.id && <Check className="text-primary h-4 w-4 shrink-0" />}
+          </button>
+        ))}
       </div>
+
+      {saveError && <p className="text-destructive text-sm">{saveError}</p>}
+      {sessionId === undefined && (
+        <p className="text-muted-foreground text-xs">
+          대화별 모델 저장은 채팅 화면에서 설정을 열었을 때만 적용됩니다.
+        </p>
+      )}
     </div>
   )
 }
