@@ -699,8 +699,7 @@ export function SessionChatPage() {
                   ? '음성 입력 중...'
                   : '메시지를 입력하세요...'
             }
-            disabled={isTyping}
-            className="text-foreground placeholder:text-muted-foreground flex-1 bg-transparent text-sm outline-none disabled:opacity-60"
+            className="text-foreground placeholder:text-muted-foreground flex-1 bg-transparent text-sm outline-none"
           />
 
           {/* 입력 보조 마이크 버튼 */}

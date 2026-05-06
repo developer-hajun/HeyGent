@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { AgentSprite } from './AgentSprite'
 import type { AgentRuntime } from './types'
 
@@ -19,13 +19,28 @@ interface OfficeMapProps {
 export function OfficeMap({ agents, onAgentArrived, ceoMode }: OfficeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [debugCoord, setDebugCoord] = useState<{ x: number; y: number } | null>(null)
+  const [scale, setScale] = useState(1)
+
+  useEffect(() => {
+    const updateScale = () => {
+      const el = containerRef.current
+      if (!el) return
+      const scaleX = el.clientWidth / MAP_WIDTH
+      const scaleY = el.clientHeight / MAP_HEIGHT
+      setScale(Math.min(scaleX, scaleY))
+    }
+    updateScale()
+    const ro = new ResizeObserver(updateScale)
+    if (containerRef.current) ro.observe(containerRef.current)
+    return () => ro.disconnect()
+  }, [])
 
   const handleMapClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = containerRef.current?.getBoundingClientRect()
     if (!rect) return
 
-    const mapX = Math.round(e.clientX - rect.left)
-    const mapY = Math.round(e.clientY - rect.top)
+    const mapX = Math.round((e.clientX - rect.left) / scale)
+    const mapY = Math.round((e.clientY - rect.top) / scale)
 
     console.log(`맵 좌표: { x: ${mapX}, y: ${mapY} }`)
     setDebugCoord({ x: mapX, y: mapY })
@@ -40,10 +55,12 @@ export function OfficeMap({ agents, onAgentArrived, ceoMode }: OfficeMapProps) {
       <div
         style={{
           position: 'absolute',
-          top: 0,
-          left: 0,
+          top: '50%',
+          left: '50%',
           width: MAP_WIDTH,
           height: MAP_HEIGHT,
+          transform: `translate(-50%, -50%) scale(${scale})`,
+          transformOrigin: 'center center',
         }}
       >
         <img

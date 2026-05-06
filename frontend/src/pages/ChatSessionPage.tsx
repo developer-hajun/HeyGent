@@ -352,6 +352,9 @@ export function ChatSessionPage() {
 
   const isComposerDisabled =
     connectionState === 'auth-expired' || !authenticatedReady || commandClient === null
+  const isStreaming = messages.some(
+    (message) => message.role === 'assistant' && message.status === 'streaming',
+  )
   const loading = (loadState === 'loading' || isLoadingMessages) && messages.length === 0
   const displayErrorMessage =
     errorMessage ?? (loadState === 'error' ? null : (chatError ?? taskRunError))
@@ -411,7 +414,11 @@ export function ChatSessionPage() {
             focusedTaskRunTarget={focusedTaskRunTarget}
           />
         )}
-        <ChatComposer disabled={isComposerDisabled} isSending={isSending} onSend={handleSend} />
+        <ChatComposer
+          disabled={isComposerDisabled}
+          isSending={isSending || isStreaming}
+          onSend={handleSend}
+        />
       </section>
       <StepRunActivityPanel
         open={activityOpen}
