@@ -12,7 +12,10 @@ import {
   EyeOff,
   Search,
   Globe,
+  Link,
   Loader2,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog'
 import { Switch } from './ui/switch'
@@ -20,11 +23,14 @@ import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { motion, AnimatePresence } from 'motion/react'
 import { useChatStore } from '@/store/useChatStore'
 import type { AiModelOption } from '@/types/aiChat'
+import { startOpenAiOAuth } from '@/apis/openaiOAuth'
+import { saveOpenAiApiKey } from '@/apis/openaiApiKey'
 
 interface SettingsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   sessionId?: string
+  initialTab?: SettingsTab
 }
 
 type SettingsTab =
@@ -36,8 +42,12 @@ type SettingsTab =
   | 'channels'
   | 'external'
 
-export function SettingsDialog({ open, onOpenChange, sessionId }: SettingsDialogProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+export function SettingsDialog({ open, onOpenChange, sessionId, initialTab }: SettingsDialogProps) {
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'general')
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    onOpenChange(nextOpen)
+  }
 
   const tabs = [
     { id: 'general' as const, label: '일반', icon: SlidersHorizontal },
@@ -50,22 +60,22 @@ export function SettingsDialog({ open, onOpenChange, sessionId }: SettingsDialog
   ]
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange} key={`${String(open)}-${initialTab ?? ''}`}>
       <DialogContent
-        className="flex h-[85vh] max-w-5xl flex-col gap-0 p-0"
+        className="flex h-[85vh] w-[min(90vw,760px)] max-w-none gap-0 overflow-hidden p-0"
         aria-describedby="settings-description"
       >
         <DialogTitle className="sr-only">설정</DialogTitle>
         <DialogDescription id="settings-description" className="sr-only">
           애플리케이션 설정을 관리합니다
         </DialogDescription>
-        <div className="flex min-h-0 flex-1">
+
+        <div className="flex h-full min-w-0 flex-1 overflow-hidden">
           {/* Left Sidebar */}
-          <div className="border-border bg-muted/30 flex w-48 flex-col border-r p-4">
+          <div className="border-border bg-muted/30 flex w-52 shrink-0 flex-col border-r p-4">
             <div className="mb-6">
               <h2 className="text-foreground text-lg font-semibold">설정</h2>
             </div>
-
             <div className="space-y-1">
               {tabs.map((tab) => (
                 <button
@@ -77,7 +87,7 @@ export function SettingsDialog({ open, onOpenChange, sessionId }: SettingsDialog
                       : 'text-muted-foreground hover:bg-muted'
                   }`}
                 >
-                  <tab.icon className="h-4 w-4 flex-shrink-0" />
+                  <tab.icon className="h-4 w-4 shrink-0" />
                   <span className="text-sm font-medium">{tab.label}</span>
                 </button>
               ))}
@@ -85,7 +95,7 @@ export function SettingsDialog({ open, onOpenChange, sessionId }: SettingsDialog
           </div>
 
           {/* Right Content */}
-          <div className="relative min-h-0 flex-1 overflow-y-auto p-8">
+          <div className="relative min-h-0 flex-1 overflow-y-auto p-6">
             <AnimatePresence mode="wait">
               <motion.div
                 key={activeTab}
@@ -557,50 +567,253 @@ function PersonalizationContent() {
 // ────────────────────────────────────────────────────────────────────────────
 // API Keys Content
 // ────────────────────────────────────────────────────────────────────────────
+const API_KEY_GUIDES = {
+  openai: {
+    placeholder: 'sk-proj-...',
+    steps: [
+      {
+        before: '',
+        linkLabel: 'OpenAI Platform',
+        href: 'https://platform.openai.com',
+        after: '에 접속합니다.',
+      },
+      { text: '로그인 후 우측 상단 메뉴에서 API Keys를 선택합니다.' },
+      { text: 'Create new secret key 버튼을 눌러 키를 생성합니다.' },
+      { text: '생성된 키는 한 번만 표시됩니다. 바로 복사해 안전한 곳에 저장하세요.' },
+    ],
+  },
+  anthropic: {
+    placeholder: 'sk-ant-...',
+    steps: [
+      {
+        before: '',
+        linkLabel: 'Anthropic Console',
+        href: 'https://console.anthropic.com',
+        after: '에 접속합니다.',
+      },
+      { text: '로그인 후 좌측 메뉴에서 API Keys를 선택합니다.' },
+      { text: 'Create Key 버튼을 눌러 키를 생성합니다.' },
+      { text: '생성된 키는 한 번만 표시됩니다. 바로 복사해 안전한 곳에 저장하세요.' },
+    ],
+  },
+  github: {
+    placeholder: 'ghp_...',
+    steps: [
+      {
+        before: '',
+        linkLabel: 'GitHub 토큰 설정 페이지',
+        href: 'https://github.com/settings/tokens',
+        after: '에 접속합니다.',
+      },
+      { text: 'Generate new token (classic) 버튼을 클릭합니다.' },
+      { text: '만료 기간과 필요한 권한(repo, workflow 등)을 선택합니다.' },
+      { text: '생성된 토큰은 다시 볼 수 없습니다. 바로 복사해 안전한 곳에 저장하세요.' },
+    ],
+  },
+} as const
+
+type OAuthStatus = 'idle' | 'loading' | 'success' | 'error'
+type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
+
 function ApiKeysContent() {
   const [apiKeys, setApiKeys] = useState([
-    { id: 'openai', name: 'OpenAI API', value: 'sk-proj-***************', visible: false },
-    { id: 'anthropic', name: 'Anthropic API', value: 'sk-ant-***************', visible: false },
-    { id: 'github', name: 'GitHub Token', value: '', visible: false },
+    { id: 'openai' as const, name: 'OpenAI API', value: '', visible: false },
+    { id: 'anthropic' as const, name: 'Anthropic API', value: '', visible: false },
+    { id: 'github' as const, name: 'GitHub Token', value: '', visible: false },
   ])
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [oauthStatus, setOauthStatus] = useState<OAuthStatus>('idle')
+  const [oauthError, setOauthError] = useState<string | null>(null)
+  const [saveStatuses, setSaveStatuses] = useState<Record<string, SaveStatus>>({})
+  const [saveErrors, setSaveErrors] = useState<Record<string, string | null>>({})
 
   const toggleVisibility = (id: string) => {
     setApiKeys((prev) => prev.map((k) => (k.id === id ? { ...k, visible: !k.visible } : k)))
+  }
+
+  const handleOpenAiOAuth = async () => {
+    setOauthStatus('loading')
+    setOauthError(null)
+    try {
+      const redirectUri = `${import.meta.env.VITE_API_BASE_URL}/api/v1/ai/openai/oauth/callback`
+      const result = await startOpenAiOAuth({ redirectUri, force: false })
+      window.location.href = result.authorizationUrl
+    } catch (e) {
+      setOauthStatus('error')
+      setOauthError(e instanceof Error ? e.message : 'OpenAI 연결을 시작하지 못했습니다.')
+    }
+  }
+
+  const handleSave = async (id: 'openai' | 'anthropic' | 'github') => {
+    const key = apiKeys.find((k) => k.id === id)
+    if (!key || !key.value.trim()) return
+    setSaveStatuses((prev) => ({ ...prev, [id]: 'saving' }))
+    setSaveErrors((prev) => ({ ...prev, [id]: null }))
+    try {
+      if (id === 'openai') {
+        await saveOpenAiApiKey({ apiKey: key.value.trim() })
+      }
+      // anthropic / github: API 미구현 — 추후 연결
+      setSaveStatuses((prev) => ({ ...prev, [id]: 'saved' }))
+      setTimeout(() => setSaveStatuses((prev) => ({ ...prev, [id]: 'idle' })), 2000)
+    } catch (e) {
+      setSaveStatuses((prev) => ({ ...prev, [id]: 'error' }))
+      setSaveErrors((prev) => ({
+        ...prev,
+        [id]: e instanceof Error ? e.message : '저장에 실패했습니다.',
+      }))
+    }
   }
 
   return (
     <div className="space-y-6">
       <div>
         <h3 className="text-foreground mb-2 text-xl font-semibold">API 키</h3>
-        <p className="text-muted-foreground text-sm">외부 서비스 연동을 위한 API 키를 관리합니다</p>
+        <p className="text-muted-foreground text-sm">
+          외부 서비스 연동을 위한 API 키를 입력해 주세요
+        </p>
       </div>
 
       <div className="space-y-3">
-        {apiKeys.map((key) => (
-          <div key={key.id} className="bg-muted/30 border-border rounded-xl border p-4">
-            <label className="text-foreground mb-2 block text-sm font-medium">{key.name}</label>
-            <div className="relative">
-              <input
-                type={key.visible ? 'text' : 'password'}
-                value={key.value}
-                onChange={(e) => {
-                  setApiKeys((prev) =>
-                    prev.map((k) => (k.id === key.id ? { ...k, value: e.target.value } : k)),
-                  )
-                }}
-                placeholder={`${key.name} 키를 입력하세요`}
-                className="border-border text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-lg border bg-white py-2 pr-10 pl-3 text-sm focus:ring-2 focus:outline-none"
-              />
-              <button
-                type="button"
-                onClick={() => toggleVisibility(key.id)}
-                className="text-muted-foreground hover:text-foreground absolute top-1/2 right-3 -translate-y-1/2 transition-colors"
-              >
-                {key.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-              </button>
+        {apiKeys.map((key) => {
+          const guide = API_KEY_GUIDES[key.id]
+          return (
+            <div key={key.id} className="bg-muted/30 border-border space-y-3 rounded-xl border p-4">
+              {/* 레이블 + 버튼 행 */}
+              <div className="flex items-center justify-between gap-4">
+                <label className="text-foreground shrink-0 text-sm font-medium">{key.name}</label>
+                <div className="flex shrink-0 items-center gap-2">
+                  {/* OpenAI 전용 OAuth 연결 버튼 */}
+                  {key.id === 'openai' && (
+                    <button
+                      type="button"
+                      onClick={() => void handleOpenAiOAuth()}
+                      disabled={oauthStatus === 'loading'}
+                      className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs whitespace-nowrap transition-colors disabled:opacity-50"
+                    >
+                      {oauthStatus === 'loading' ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : oauthStatus === 'success' ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                      ) : oauthStatus === 'error' ? (
+                        <AlertCircle className="text-destructive h-3.5 w-3.5" />
+                      ) : (
+                        <Link className="h-3.5 w-3.5" />
+                      )}
+                      <span>
+                        {oauthStatus === 'loading'
+                          ? '연결 중...'
+                          : oauthStatus === 'success'
+                            ? '연결됨'
+                            : 'OAuth 연결'}
+                      </span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setExpandedId(expandedId === key.id ? null : key.id)}
+                    className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs whitespace-nowrap transition-colors"
+                  >
+                    <span>{expandedId === key.id ? '접기' : '발급 방법 보기'}</span>
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 transition-transform duration-200 ${expandedId === key.id ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {/* OAuth 오류 메시지 */}
+              {key.id === 'openai' && oauthStatus === 'error' && oauthError && (
+                <p className="text-destructive text-xs">{oauthError}</p>
+              )}
+
+              {/* 입력창 */}
+              <div className="relative">
+                <input
+                  type={key.visible ? 'text' : 'password'}
+                  value={key.value}
+                  onChange={(e) =>
+                    setApiKeys((prev) =>
+                      prev.map((k) => (k.id === key.id ? { ...k, value: e.target.value } : k)),
+                    )
+                  }
+                  placeholder={guide.placeholder}
+                  className="border-border text-foreground placeholder:text-muted-foreground focus:ring-ring/20 w-full rounded-lg border bg-transparent py-2 pr-10 pl-3 text-sm focus:ring-2 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleVisibility(key.id)}
+                  className="text-muted-foreground hover:text-foreground absolute top-1/2 right-3 -translate-y-1/2 transition-colors"
+                >
+                  {key.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                </button>
+              </div>
+
+              {/* 저장 버튼 행 */}
+              <div className="flex items-center justify-between gap-2">
+                {saveStatuses[key.id] === 'error' && saveErrors[key.id] ? (
+                  <p className="text-destructive text-xs">{saveErrors[key.id]}</p>
+                ) : saveStatuses[key.id] === 'saved' ? (
+                  <p className="flex items-center gap-1 text-xs text-emerald-500">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    저장됐습니다
+                  </p>
+                ) : (
+                  <span />
+                )}
+                <button
+                  type="button"
+                  disabled={!key.value.trim() || saveStatuses[key.id] === 'saving'}
+                  onClick={() => void handleSave(key.id)}
+                  className="bg-foreground text-background hover:bg-foreground/85 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40"
+                >
+                  {saveStatuses[key.id] === 'saving' ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : null}
+                  {saveStatuses[key.id] === 'saving' ? '저장 중...' : '저장'}
+                </button>
+              </div>
+
+              {/* 아코디언 발급 안내 */}
+              {expandedId === key.id && (
+                <div className="border-border/60 space-y-3 border-t pt-3">
+                  <ol className="space-y-2">
+                    {guide.steps.map((step, i) => (
+                      <li key={i} className="flex gap-2.5 text-sm">
+                        <span className="text-muted-foreground shrink-0 font-medium">{i + 1}.</span>
+                        <span className="text-muted-foreground leading-5">
+                          {'href' in step ? (
+                            <>
+                              {step.before}
+                              <a
+                                href={step.href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-foreground underline underline-offset-2 transition-opacity hover:opacity-70"
+                              >
+                                {step.linkLabel}
+                              </a>
+                              {step.after}
+                            </>
+                          ) : (
+                            step.text
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                  <div className="bg-muted space-y-1 rounded-lg px-3 py-2.5">
+                    <p className="text-foreground text-xs font-medium">⚠️ 보안 주의사항</p>
+                    <ul className="text-muted-foreground space-y-0.5 text-xs leading-5">
+                      <li>• API 키는 비밀번호와 같습니다. 절대 타인과 공유하지 마세요.</li>
+                      <li>• 키가 노출되었다면 즉시 삭제 후 재발급받으세요.</li>
+                    </ul>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

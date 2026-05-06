@@ -145,9 +145,17 @@ export function ChatSessionPage() {
       ),
     [eventsByTaskRunId, taskRunIds, taskRunsById],
   )
+  const isPendingSession = sessionId.startsWith('pending_session_')
 
   const loadSessionData = useCallback(async () => {
     if (!sessionId) return
+    if (isPendingSession) {
+      // 첫 메시지 전송 직후에는 서버 세션 id가 아직 없어서 조회 명령을 보내지 않는다.
+      // optimistic 메시지가 들어간 pending 세션을 그대로 렌더링하고 accepted 후 실제 세션으로 교체한다.
+      setLoadState('ready')
+      setErrorMessage(null)
+      return
+    }
 
     if (!authenticatedReady || commandClient === null) {
       setLoadState(
@@ -192,6 +200,7 @@ export function ChatSessionPage() {
     accessToken,
     fetchActiveTaskRuns,
     fetchMessages,
+    isPendingSession,
     realtimeError,
     sessionId,
   ])

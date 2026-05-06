@@ -50,6 +50,7 @@ type ChatState = {
     content: string
     settings?: AiSessionSettingsPatch
     inputPayload?: JsonObject
+    clientMessageId?: string
   }) => Promise<AiRealtimeRawFrame>
   updateSession: (input: { sessionId: string; title?: string }) => Promise<RawAiSession | null>
   archiveSession: (sessionId: string) => Promise<void>
@@ -133,13 +134,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
       throw error
     }
   },
-  sendMessage: async ({ sessionId, content, settings, inputPayload }) => {
+  sendMessage: async ({
+    sessionId,
+    content,
+    settings,
+    inputPayload,
+    clientMessageId: inputClientMessageId,
+  }) => {
     const trimmedContent = content.trim()
     if (trimmedContent === '') {
       throw new Error('전송할 메시지를 입력해 주세요.')
     }
 
-    const clientMessageId = createClientMessageId()
+    const clientMessageId = inputClientMessageId ?? createClientMessageId()
     const optimisticSessionId = sessionId ?? `pending_session_${clientMessageId}`
     // 서버 accepted가 오기 전에도 사용자가 보낸 문장을 즉시 보여 주기 위한 임시 메시지다.
     // accepted를 받으면 서버/DB message id와 실제 session id로 치환한다.

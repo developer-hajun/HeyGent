@@ -1,4 +1,4 @@
-import { Bot, CheckCircle2, Clock3, Loader2, UserRound, XCircle } from 'lucide-react'
+import { Bot, CheckCircle2, Clock3, Loader2, XCircle } from 'lucide-react'
 import type { ChatMessageView } from '@/types/aiChat'
 import type {
   ActivityItemView,
@@ -45,12 +45,13 @@ export function ChatMessageItem({
           <Bot className="h-4 w-4" />
         </div>
       )}
-      <div className={`max-w-[78%] space-y-2 ${isUser ? 'items-end' : 'items-start'}`}>
+      <div className={`max-w-[78%] space-y-1 ${isUser ? 'items-end' : 'items-start'}`}>
+        {!isUser && <p className="text-muted-foreground px-1 text-xs font-medium">AI 어시스턴트</p>}
         {shouldShowMessageBody && (
           <div
             className={
               isUser
-                ? 'bg-primary text-primary-foreground rounded-2xl px-4 py-3 text-sm leading-6 [overflow-wrap:anywhere] break-words'
+                ? 'text-foreground rounded-2xl bg-zinc-200 px-4 py-3 text-sm leading-6 wrap-anywhere dark:bg-zinc-700'
                 : 'text-foreground rounded-2xl py-2 text-sm leading-7 [overflow-wrap:anywhere] break-words'
             }
           >
@@ -108,11 +109,6 @@ export function ChatMessageItem({
           </button>
         )}
       </div>
-      {isUser && (
-        <div className="bg-muted text-muted-foreground mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
-          <UserRound className="h-4 w-4" />
-        </div>
-      )}
     </article>
   )
 }

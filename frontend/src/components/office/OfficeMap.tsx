@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useState } from 'react'
 import { AgentSprite } from './AgentSprite'
 import type { AgentRuntime } from './types'
 
@@ -18,35 +18,14 @@ interface OfficeMapProps {
 
 export function OfficeMap({ agents, onAgentArrived, ceoMode }: OfficeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [scale, setScale] = useState(1)
-  const [offset, setOffset] = useState({ x: 0, y: 0 })
   const [debugCoord, setDebugCoord] = useState<{ x: number; y: number } | null>(null)
-
-  useEffect(() => {
-    const el = containerRef.current
-    if (!el) return
-
-    const observer = new ResizeObserver(([entry]) => {
-      const { width, height } = entry.contentRect
-      const s = Math.min(width / MAP_WIDTH, height / MAP_HEIGHT)
-      setScale(s)
-      setOffset({
-        x: Math.max(0, (width - MAP_WIDTH * s) / 2),
-        y: Math.max(0, (height - MAP_HEIGHT * s) / 2),
-      })
-    })
-
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [])
 
   const handleMapClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = containerRef.current?.getBoundingClientRect()
     if (!rect) return
 
-    // 스크린 좌표 → 맵 좌표 역변환 (offset 제거 후 scale 나누기)
-    const mapX = Math.round((e.clientX - rect.left - offset.x) / scale)
-    const mapY = Math.round((e.clientY - rect.top - offset.y) / scale)
+    const mapX = Math.round(e.clientX - rect.left)
+    const mapY = Math.round(e.clientY - rect.top)
 
     console.log(`맵 좌표: { x: ${mapX}, y: ${mapY} }`)
     setDebugCoord({ x: mapX, y: mapY })
@@ -65,8 +44,6 @@ export function OfficeMap({ agents, onAgentArrived, ceoMode }: OfficeMapProps) {
           left: 0,
           width: MAP_WIDTH,
           height: MAP_HEIGHT,
-          transformOrigin: 'top left',
-          transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
         }}
       >
         <img
