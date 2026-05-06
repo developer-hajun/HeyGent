@@ -144,8 +144,6 @@ class DelegationRuntime(RecordingRuntime):
         return {
             "ok": True,
             "child_session": {
-                "intent_type": "agent.loop",
-                "entry_handler_key": "agent.loop",
                 "goal": args["goal"],
                 "context": args.get("context"),
                 "toolsets": args.get("toolsets") or [],

@@ -178,6 +178,8 @@ class RedisTaskProjectionStore:
     @staticmethod
     def _restore_datetimes(payload: dict[str, Any], model_type: type[TaskRun] | type[StepRun]) -> dict[str, Any]:
         type_hints = get_type_hints(model_type)
+        field_names = {field.name for field in fields(model_type)}
+        payload = {key: value for key, value in payload.items() if key in field_names}
         datetime_fields = {field.name for field in fields(model_type) if RedisTaskProjectionStore._is_datetime_optional(type_hints.get(field.name))}
         for name in datetime_fields:
             if payload.get(name):

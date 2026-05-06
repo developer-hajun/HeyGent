@@ -227,7 +227,7 @@ class WebSocketCommandRouter:
         # token memory context는 durable payload에 넣지 않는다. backend 호출이 필요해지면
         # context.auth.access_token에서만 꺼내 쓰도록 경계를 고정한다.
 
-        handler = context.websocket.app.state.tool_registry.resolve(intent_type=payload.get("intentType", payload.get("intent_type", "agent.loop")))
+        handler = context.websocket.app.state.tool_registry.resolve()
         task = context.websocket.app.state.task_engine.planner.materialize_task(
             owner_key=context.auth.user_id,
             session_key=session_id,

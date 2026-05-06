@@ -7,7 +7,6 @@ metadata:
     tags: [skills, discovery, routing, index]
     related_skills:
       - web-search-fallback
-      - github-repo-management
       - parallel-cli
       - korea-weather
       - joseon-sillok-search
@@ -27,14 +26,10 @@ This skill is a discovery guide. It does not replace the target skill. After cho
 ## Categories
 
 - `web`: Web search, scraping, domain intelligence, and academic paper search.
-- `github`: GitHub repository, issue, pull request, and authentication workflows.
 - `research`: Parallel command-line research and blog monitoring.
-- `productivity`: Notion and Google Workspace workflows.
 - `software-development`: Planning and subagent-driven development guidance.
 - `browser`: Browser UX flow review.
 - `mcp`: Native MCP integration.
-- `devops`: Webhook subscription workflows.
-- `smart-home`: OpenHue smart home integration.
 - `k-skills`: Korean public data, Korean local information, Korean search surfaces, and Korean text utilities.
 
 ## Selection Guide
@@ -47,23 +42,15 @@ Read `academic-paper-search` when the user asks for papers, research literature,
 
 Read `domain-intelligence` when the user asks about domain ownership, DNS, website technology, or web footprint.
 
-Read `github-repo-management`, `github-issues`, `github-pr-workflow`, or `github-auth` for GitHub-specific repository work.
-
 Read `parallel-cli` when the task needs parallel command-line investigation.
 
 Read `blogwatcher` when the user asks to monitor or summarize blog feeds.
-
-Read `notion` or `google-workspace` for productivity integration tasks.
 
 Read `writing-plans` or `subagent-driven-development` for software planning and delegated development workflows.
 
 Read `ux-flow-review` when the user asks to inspect a browser flow or review UX behavior.
 
 Read `native-mcp` when the user asks about MCP tool or server integration.
-
-Read `webhook-subscriptions` when the user asks about webhook setup, subscription, or delivery flows.
-
-Read `openhue` for OpenHue or smart-light workflows.
 
 ## Korean Skills
 

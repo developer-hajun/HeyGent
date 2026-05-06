@@ -459,8 +459,6 @@ class LocalToolRuntime:
             input_payload["max_iterations"] = max_iterations
 
         child_session = {
-            "intent_type": "agent.loop",
-            "entry_handler_key": "agent.loop",
             "goal": goal,
             "context": context if context is not None else {},
             "toolsets": toolsets,

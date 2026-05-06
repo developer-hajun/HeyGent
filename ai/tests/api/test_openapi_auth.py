@@ -33,13 +33,13 @@ def test_openapi_documents_task_run_contract_in_plain_language():
     create_schema = schema["components"]["schemas"]["CreateTaskRequest"]["properties"]
     assert "TaskRun" in create_schema["sessionId"]["description"]
     assert "prompt" in create_schema["input_payload"]["description"]
-    assert "entry_handler_key" not in create_schema
+    assert "input_payload" in create_schema
 
     task_run_schema = schema["components"]["schemas"]["TaskRunResponse"]["properties"]
     assert "사용자 요청 하나의 실행 묶음" in task_run_schema["task_run_id"]["description"]
     assert "sessionId" in task_run_schema["session_key"]["description"]
     assert "승인" in task_run_schema["pendingApproval"]["description"]
-    assert "entry_handler_key" not in task_run_schema
+    assert "task_type" in task_run_schema
 
     active_params = schema["paths"]["/ai/api/v1/taskRuns/active"]["get"]["parameters"]
     active_param_names = {parameter["name"] for parameter in active_params}
