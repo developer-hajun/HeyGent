@@ -11,7 +11,6 @@ class CreateTaskRequest(BaseModel):
         extra="forbid",
         json_schema_extra={
             "example": {
-                "intent_type": "agent.loop",
                 "sessionId": "session_routine_test_001",
                 "input_payload": {
                     "routineId": "routine_morning_brief",
@@ -24,13 +23,6 @@ class CreateTaskRequest(BaseModel):
         },
     )
 
-    intent_type: str = Field(
-        default="agent.loop",
-        description=(
-            "AI가 요청을 처리하는 방식입니다. 루틴 즉시 실행도 일반적으로 기본값 `agent.loop`을 사용합니다. "
-            "intent(의도)는 Orchestrator(작업 시작/재개를 맡는 내부 실행 관리자)가 어떤 실행 흐름을 고를지 판단하는 값입니다."
-        ),
-    )
     input_payload: dict[str, Any] = Field(
         default_factory=dict,
         description=(

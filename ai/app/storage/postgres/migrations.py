@@ -51,6 +51,19 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """,
         ),
     ),
+    PostgresMigration(
+        migration_id="0004_remove_legacy_routing_columns",
+        statements=(
+            """
+            ALTER TABLE run_anchors
+            DROP COLUMN IF EXISTS entry_handler_key;
+            """,
+            """
+            ALTER TABLE step_anchors
+            DROP COLUMN IF EXISTS handler_key;
+            """,
+        ),
+    ),
 )
 
 

@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import com.ssafy.heygent.domain.iot.dto.DevicePairRequest;
 import com.ssafy.heygent.domain.iot.dto.DevicePairingSession;
+import com.ssafy.heygent.domain.iot.dto.DevicePairingStatusResponse;
 import com.ssafy.heygent.domain.iot.dto.DeviceResponse;
 import com.ssafy.heygent.domain.iot.dto.DisplayEventPayload;
 import com.ssafy.heygent.domain.iot.dto.DisplayEventType;
@@ -162,6 +163,34 @@ class DevicePairingServiceTest {
             .isEqualTo(ErrorCode.PAIR_CODE_EXPIRED);
 
         verify(pairingRedisRepository).deleteByCodeAndDeviceId("482913", DEVICE_ID);
+    }
+
+    @Test
+    void statusReturnsPairedWhenDeviceExists() {
+        IotDevice device = IotDevice.builder()
+            .user(User.builder().id(USER_ID).kakaoId(12345L).build())
+            .deviceId(DEVICE_ID)
+            .displayName("desk oled")
+            .status(IotDeviceStatus.ACTIVE)
+            .build();
+        when(iotDeviceRepository.findByDeviceId(DEVICE_ID)).thenReturn(Optional.of(device));
+
+        DevicePairingStatusResponse response = service.status(" " + DEVICE_ID + " ");
+
+        assertThat(response.deviceId()).isEqualTo(DEVICE_ID);
+        assertThat(response.paired()).isTrue();
+        assertThat(response.status()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void statusReturnsUnpairedWhenDeviceDoesNotExist() {
+        when(iotDeviceRepository.findByDeviceId(DEVICE_ID)).thenReturn(Optional.empty());
+
+        DevicePairingStatusResponse response = service.status(DEVICE_ID);
+
+        assertThat(response.deviceId()).isEqualTo(DEVICE_ID);
+        assertThat(response.paired()).isFalse();
+        assertThat(response.status()).isEqualTo("UNPAIRED");
     }
 
     private DevicePairingSession session(String pairCode, LocalDateTime expiresAt) {

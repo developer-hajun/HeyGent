@@ -27,7 +27,7 @@ def list_toolsets() -> list[str]:
     return sorted(TOOLSETS)
 
 
-def resolve_handler_keys(enabled_toolsets: Iterable[str] | None) -> set[str] | None:
+def resolve_tool_names(enabled_toolsets: Iterable[str] | None) -> set[str] | None:
     if enabled_toolsets is None:
         return None
 
