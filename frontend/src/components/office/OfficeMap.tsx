@@ -1,56 +1,169 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import { AgentSprite } from './AgentSprite'
 import type { AgentRuntime } from './types'
 
 const MAP_WIDTH = 1600
 const MAP_HEIGHT = 900
 
+function getOfficeMapSrc(): string {
+  const hour = new Date().getHours()
+  if (hour >= 8 && hour < 16) return '/assets/maps/office_map_day.png'
+  if (hour >= 16 && hour < 18) return '/assets/maps/office_map_sunset.png'
+  if (hour >= 6 && hour < 8) return '/assets/maps/office_map_sunset.png'
+  if (hour >= 18 && hour < 20) return '/assets/maps/office_map_dust.png'
+  return '/assets/maps/office_map_night.png'
+}
+
 const CEO_SPRITES = {
   desk: { src: '/assets/agents/ceo/ceo_desk.png', x: 310, y: 215, size: 230 },
   explain: { src: '/assets/agents/ceo/ceo_explain.png', x: 383, y: 493, size: 210 },
 }
 
+type Rect = { x1: number; y1: number; x2: number; y2: number }
+
 interface OfficeMapProps {
   agents: AgentRuntime[]
   onAgentArrived: (agentId: string) => void
   ceoMode: 'desk' | 'explain' | null
+  mapOverride?: string
+  obstacleMode?: boolean
+  obstacleRects?: Rect[]
+  onNewRect?: (rect: Rect) => void
+  obstacleLineMode?: boolean
+  obstacleLines?: Rect[]
+  onNewLine?: (line: Rect) => void
 }
 
-export function OfficeMap({ agents, onAgentArrived, ceoMode }: OfficeMapProps) {
+export function OfficeMap({
+  agents,
+  onAgentArrived,
+  ceoMode,
+  mapOverride,
+  obstacleMode,
+  obstacleRects,
+  onNewRect,
+  obstacleLineMode,
+  obstacleLines,
+  onNewLine,
+}: OfficeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [debugCoord, setDebugCoord] = useState<{ x: number; y: number } | null>(null)
   const [scale, setScale] = useState(1)
+  const [offset, setOffset] = useState({ x: 0, y: 0 })
+  const [mapSrc, setMapSrc] = useState(getOfficeMapSrc)
+  const [drag, setDrag] = useState<{ sx: number; sy: number; ex: number; ey: number } | null>(null)
+  const [linePending, setLinePending] = useState<{ x: number; y: number } | null>(null)
+  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null)
 
   useEffect(() => {
-    const updateScale = () => {
-      const el = containerRef.current
-      if (!el) return
-      const scaleX = el.clientWidth / MAP_WIDTH
-      const scaleY = el.clientHeight / MAP_HEIGHT
-      setScale(Math.min(scaleX, scaleY))
+    function scheduleNext() {
+      const now = new Date()
+      const boundaries = [6, 8, 16, 18, 20]
+      const totalMinutes = now.getHours() * 60 + now.getMinutes()
+      const nextBoundaryMinutes =
+        boundaries.map((h) => h * 60).find((m) => m > totalMinutes) ?? 6 * 60 + 24 * 60
+      const msUntilNext = (nextBoundaryMinutes - totalMinutes) * 60_000 - now.getSeconds() * 1000
+
+      return setTimeout(() => {
+        setMapSrc(getOfficeMapSrc())
+        scheduleNext()
+      }, msUntilNext)
     }
-    updateScale()
-    const ro = new ResizeObserver(updateScale)
-    if (containerRef.current) ro.observe(containerRef.current)
-    return () => ro.disconnect()
+
+    const timer = scheduleNext()
+    return () => clearTimeout(timer)
+  }, [])
+  const [debugCoord, setDebugCoord] = useState<{ x: number; y: number } | null>(null)
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      const s = Math.min(width / MAP_WIDTH, height / MAP_HEIGHT)
+      setScale(s)
+      setOffset({
+        x: Math.max(0, (width - MAP_WIDTH * s) / 2),
+        y: Math.max(0, (height - MAP_HEIGHT * s) / 2),
+      })
+    })
+
+    observer.observe(el)
+    return () => observer.disconnect()
   }, [])
 
+  const toMapCoords = (clientX: number, clientY: number) => {
+    const el = containerRef.current?.getBoundingClientRect()
+    if (!el) return null
+    return {
+      x: Math.round((clientX - el.left - offset.x) / scale),
+      y: Math.round((clientY - el.top - offset.y) / scale),
+    }
+  }
+
   const handleMapClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = containerRef.current?.getBoundingClientRect()
-    if (!rect) return
+    if (obstacleMode) return
+    const pos = toMapCoords(e.clientX, e.clientY)
+    if (!pos) return
 
-    const mapX = Math.round((e.clientX - rect.left) / scale)
-    const mapY = Math.round((e.clientY - rect.top) / scale)
+    if (obstacleLineMode) {
+      if (!linePending) {
+        setLinePending(pos)
+      } else {
+        onNewLine?.({ x1: linePending.x, y1: linePending.y, x2: pos.x, y2: pos.y })
+        setLinePending(null)
+        setHoverPos(null)
+      }
+      return
+    }
 
-    console.log(`맵 좌표: { x: ${mapX}, y: ${mapY} }`)
-    setDebugCoord({ x: mapX, y: mapY })
+    console.log(`맵 좌표: { x: ${pos.x}, y: ${pos.y} }`)
+    setDebugCoord(pos)
+  }
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!obstacleMode) return
+    const pos = toMapCoords(e.clientX, e.clientY)
+    if (!pos) return
+    e.preventDefault()
+    setDrag({ sx: pos.x, sy: pos.y, ex: pos.x, ey: pos.y })
+  }
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (obstacleMode && drag) {
+      const pos = toMapCoords(e.clientX, e.clientY)
+      if (!pos) return
+      setDrag((d) => (d ? { ...d, ex: pos.x, ey: pos.y } : null))
+      return
+    }
+    if (obstacleLineMode && linePending) {
+      const pos = toMapCoords(e.clientX, e.clientY)
+      if (pos) setHoverPos(pos)
+    }
+  }
+
+  const handleMouseUp = () => {
+    if (!obstacleMode || !drag) return
+    if (Math.abs(drag.ex - drag.sx) > 10 && Math.abs(drag.ey - drag.sy) > 10) {
+      onNewRect?.({
+        x1: Math.min(drag.sx, drag.ex),
+        y1: Math.min(drag.sy, drag.ey),
+        x2: Math.max(drag.sx, drag.ex),
+        y2: Math.max(drag.sy, drag.ey),
+      })
+    }
+    setDrag(null)
   }
 
   return (
     <div
       ref={containerRef}
-      className="relative flex-1 cursor-crosshair overflow-hidden bg-gray-900"
+      className={`relative flex-1 overflow-hidden bg-gray-900 ${obstacleMode || obstacleLineMode ? 'cursor-crosshair' : 'cursor-default'}`}
       onClick={handleMapClick}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
     >
       <div
         style={{
@@ -64,7 +177,7 @@ export function OfficeMap({ agents, onAgentArrived, ceoMode }: OfficeMapProps) {
         }}
       >
         <img
-          src="/assets/maps/office_map.png"
+          src={mapOverride ?? mapSrc}
           alt="Office Map"
           draggable={false}
           style={{
@@ -103,10 +216,88 @@ export function OfficeMap({ agents, onAgentArrived, ceoMode }: OfficeMapProps) {
               </div>
             )
           })()}
+
+        {/* 장애물 사각형 오버레이 */}
+        {obstacleRects?.map((r, i) => (
+          <div
+            key={i}
+            style={{
+              position: 'absolute',
+              left: r.x1,
+              top: r.y1,
+              width: r.x2 - r.x1,
+              height: r.y2 - r.y1,
+              background: 'rgba(239,68,68,0.25)',
+              border: '2px solid rgba(239,68,68,0.8)',
+              pointerEvents: 'none',
+              zIndex: 20,
+            }}
+          />
+        ))}
+
+        {/* 드래그 중 미리보기 */}
+        {drag && (
+          <div
+            style={{
+              position: 'absolute',
+              left: Math.min(drag.sx, drag.ex),
+              top: Math.min(drag.sy, drag.ey),
+              width: Math.abs(drag.ex - drag.sx),
+              height: Math.abs(drag.ey - drag.sy),
+              background: 'rgba(239,68,68,0.15)',
+              border: '2px dashed rgba(239,68,68,0.9)',
+              pointerEvents: 'none',
+              zIndex: 20,
+            }}
+          />
+        )}
+
+        {/* 선 장애물 오버레이 */}
+        {(obstacleLines?.length || (obstacleLineMode && linePending)) && (
+          <svg
+            style={{
+              position: 'absolute',
+              inset: 0,
+              width: MAP_WIDTH,
+              height: MAP_HEIGHT,
+              pointerEvents: 'none',
+              zIndex: 21,
+              overflow: 'visible',
+            }}
+          >
+            {obstacleLines?.map((l, i) => (
+              <line
+                key={i}
+                x1={l.x1}
+                y1={l.y1}
+                x2={l.x2}
+                y2={l.y2}
+                stroke="rgba(251,146,60,0.9)"
+                strokeWidth={4}
+                strokeLinecap="round"
+              />
+            ))}
+            {obstacleLineMode && linePending && (
+              <circle cx={linePending.x} cy={linePending.y} r={6} fill="rgba(251,146,60,1)" />
+            )}
+            {obstacleLineMode && linePending && hoverPos && (
+              <line
+                x1={linePending.x}
+                y1={linePending.y}
+                x2={hoverPos.x}
+                y2={hoverPos.y}
+                stroke="rgba(251,146,60,0.6)"
+                strokeWidth={3}
+                strokeDasharray="10 5"
+                strokeLinecap="round"
+              />
+            )}
+          </svg>
+        )}
       </div>
 
-      {/* 클릭 좌표 디버그 오버레이 */}
-      {debugCoord && (
+      {/* 클릭 좌표 디버그 오버레이 (일반 모드) */}
+      {!obstacleMode && debugCoord && (
         <div className="absolute top-4 left-1/2 z-30 -translate-x-1/2">
           <div className="flex items-center gap-3 rounded-xl border border-white/20 bg-black/70 px-4 py-2 shadow-xl backdrop-blur-md">
             <span className="font-mono text-sm text-yellow-300">
