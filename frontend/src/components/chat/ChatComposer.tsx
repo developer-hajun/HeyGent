@@ -9,6 +9,7 @@ import {
   Plus,
   Search,
   Send,
+  Square,
 } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -18,6 +19,7 @@ type ChatComposerProps = {
   isSending?: boolean
   placeholder?: string
   onSend: (content: string) => void
+  onStop?: () => void
   onVoiceMode?: () => void
 }
 
@@ -37,6 +39,7 @@ export function ChatComposer({
   isSending = false,
   placeholder = '무엇이든 물어보세요...',
   onSend,
+  onStop,
   onVoiceMode,
 }: ChatComposerProps) {
   const [value, setValue] = useState('')
@@ -130,15 +133,25 @@ export function ChatComposer({
             >
               <Mic className="h-4 w-4" />
             </button>
-            {value.trim() ? (
+            {isSending ? (
+              <button
+                type="button"
+                onClick={onStop}
+                aria-label="응답 중지"
+                title="응답 중지"
+                className="border-foreground text-foreground hover:bg-muted shrink-0 rounded-2xl border-2 bg-white p-2.5 transition-colors"
+              >
+                <Square className="h-4 w-4 fill-current" />
+              </button>
+            ) : value.trim() ? (
               <button
                 type="button"
                 onClick={submit}
-                disabled={disabled || isSending}
+                disabled={disabled}
                 aria-label="메시지 보내기"
-                className="bg-primary hover:bg-primary/90 shrink-0 rounded-2xl p-2 text-white transition-colors disabled:opacity-40"
+                className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 text-white transition-colors disabled:opacity-40"
               >
-                <Send className={`h-4 w-4 ${isSending ? 'animate-pulse' : ''}`} />
+                <Send className="h-4 w-4" />
               </button>
             ) : (
               <button
@@ -146,7 +159,7 @@ export function ChatComposer({
                 onClick={onVoiceMode}
                 aria-label="음성 대화 모드"
                 title="음성 대화 모드"
-                className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2 text-white transition-colors"
+                className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 text-white transition-colors"
               >
                 <AudioLines className="h-4 w-4" />
               </button>

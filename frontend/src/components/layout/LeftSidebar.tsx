@@ -211,7 +211,11 @@ export function LeftSidebar() {
         onConfirm={(config) => {
           storePendingSessionConfig(config)
           setNewSessionModalOpen(false)
-          navigate('/new-chat')
+          if (config) {
+            navigate('/agent-status')
+          } else {
+            navigate('/new-chat')
+          }
         }}
       />
       {sessionConfirm !== null && (
@@ -310,9 +314,7 @@ export function LeftSidebar() {
                           setSessionsPopoverOpen(false)
                         }}
                         className={`cursor-pointer rounded-lg p-2.5 transition-colors ${
-                          isActive
-                            ? 'bg-primary/8 border-primary/15 border'
-                            : 'hover:bg-muted border border-transparent'
+                          isActive ? 'bg-zinc-100' : 'hover:bg-muted'
                         }`}
                       >
                         <div className="mb-1 flex items-center justify-between gap-1">
@@ -330,7 +332,7 @@ export function LeftSidebar() {
                             }}
                             className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors ${
                               isChatActive
-                                ? 'bg-primary/10 text-primary'
+                                ? 'bg-zinc-800 text-white'
                                 : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                             }`}
                           >
@@ -460,9 +462,7 @@ export function LeftSidebar() {
                           navigate('/agent-status')
                         }}
                         className={`group flex cursor-pointer items-center gap-2 rounded-lg p-2.5 transition-colors ${
-                          isActive
-                            ? 'bg-primary/8 border-primary/15 border'
-                            : 'hover:bg-sidebar-accent border border-transparent'
+                          isActive ? 'bg-zinc-100' : 'hover:bg-sidebar-accent'
                         }`}
                       >
                         <div className="min-w-0 flex-1">
@@ -594,7 +594,7 @@ export function LeftSidebar() {
                             onClick={(event) => handleOpenChatSession(session.id, event)}
                             className={`relative flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
                               isChatActive
-                                ? 'bg-primary/10 text-primary'
+                                ? 'bg-zinc-800 text-white'
                                 : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
                             }`}
                           >
