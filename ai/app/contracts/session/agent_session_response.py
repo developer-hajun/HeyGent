@@ -54,6 +54,7 @@ class CreateSessionMessageRequest(BaseModel):
         ),
     )
     content: str = Field(min_length=1, description="사용자가 보낸 메시지 본문입니다. 이 값이 모델에 전달되는 기본 prompt가 됩니다.")
+    client_message_id: str | None = Field(default=None, alias="clientMessageId", description="HTTP 재시도 중복 실행을 막기 위한 클라이언트 메시지 ID입니다.")
     model: str | None = Field(default=None, max_length=100, description="이번 메시지 처리에 사용할 모델 이름입니다. 비워 두면 서버 기본 모델을 사용합니다.")
     input_payload: dict[str, Any] = Field(default_factory=dict, alias="inputPayload", description="첨부, 실행 옵션 같은 추가 입력입니다. 서버는 content를 기본 prompt로 넣습니다.")
 

@@ -30,6 +30,8 @@ class PostgresSessionStore:
         metadata: dict[str, Any] | None = None,
     ) -> str:
         metadata_payload = dict(metadata or {})
+        if system_prompt and not metadata_payload.get("system_prompt_snapshot"):
+            metadata_payload["system_prompt_snapshot"] = system_prompt
         metadata_payload.update(
             {
                 "source": source,
@@ -46,9 +48,10 @@ class PostgresSessionStore:
             INSERT INTO agent_sessions (
                 session_id, owner_key, session_key, parent_session_id,
                 parent_step_run_id, agent_profile_id, agent_profile_version, agent_config_snapshot,
-                session_role, status, title, metadata, created_at, updated_at
+                session_role, session_source, history_version, running_task_run_id, workspace_key,
+                status, title, metadata, created_at, updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, 'ACTIVE', %s, %s::jsonb, now(), now())
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, 0, NULL, %s, 'ACTIVE', %s, %s::jsonb, now(), now())
             ON CONFLICT (session_id) DO NOTHING
             """,
             (
@@ -61,6 +64,8 @@ class PostgresSessionStore:
                 int(metadata_payload.get("agent_profile_version") or 1),
                 _json(metadata_payload.get("agent_config_snapshot") or {}),
                 _session_role(source, metadata_payload),
+                source,
+                metadata_payload.get("workspace_key"),
                 title,
                 _json(metadata_payload),
             ),
@@ -191,19 +196,264 @@ class PostgresSessionStore:
         return [_message_from_row(row) for row in rows]
 
     def search_sessions(self, query: str, *, limit: int = 10) -> list[dict[str, Any]]:
+        raise ValueError("owner_key is required")
+
+    def append_user_message_and_start_task(
+        self,
+        *,
+        owner_key: str,
+        session_id: str,
+        content: str,
+        client_message_id: str,
+        task_run_id: str,
+        base_history_version: int,
+    ) -> dict[str, Any]:
+        connection = self.connection_factory()
+        session_row = connection.execute(
+            """
+            SELECT * FROM agent_sessions
+            WHERE session_id = %s AND owner_key = %s
+            FOR UPDATE
+            """,
+            (session_id, owner_key),
+        ).fetchone()
+        self._ensure_product_session_row(session_row, session_id=session_id)
+
+        duplicate_row = connection.execute(
+            """
+            SELECT * FROM agent_messages
+            WHERE session_id = %s
+              AND role = 'user'
+              AND metadata->>'client_message_id' = %s
+            ORDER BY message_sequence ASC
+            LIMIT 1
+            """,
+            (session_id, client_message_id),
+        ).fetchone()
+        if duplicate_row is not None:
+            metadata = _json_load(duplicate_row.get("metadata"), {})
+            current_version = int(session_row.get("history_version") or 0)
+            connection.commit()
+            return {
+                "duplicate": True,
+                "session_id": session_id,
+                "message_id": duplicate_row.get("message_sequence"),
+                "message_uuid": duplicate_row.get("message_id"),
+                "task_run_id": metadata.get("task_run_id") or task_run_id,
+                "base_history_version": max(0, current_version - 1),
+                "after_user_message_version": current_version,
+                "completion_expected_version": current_version,
+                "running_task_run_id": session_row.get("running_task_run_id"),
+            }
+
+        current_version = int(session_row.get("history_version") or 0)
+        if current_version != int(base_history_version):
+            raise ValueError("history version mismatch")
+        if session_row.get("running_task_run_id"):
+            raise ValueError("session already has a running task")
+
+        sequence = self._next_message_sequence(connection, session_id)
+        message_id = new_id("msg")
+        metadata_payload = {
+            "source": "api.session",
+            "client_message_id": client_message_id,
+            "task_run_id": task_run_id,
+        }
+        # product session row lock은 Redis projection보다 영속 기준에 가깝다.
+        # 프로세스가 죽어도 running_task_run_id가 남아 중복 append를 막고,
+        # 다음 명령은 TaskRun 상태를 확인한 뒤 stale guard만 정리한다.
+        connection.execute(
+            """
+            INSERT INTO agent_messages (
+                message_id, session_id, message_sequence, role, content, metadata, created_at
+            )
+            VALUES (%s, %s, %s, 'user', %s::jsonb, %s::jsonb, now())
+            """,
+            (message_id, session_id, sequence, _json({"text": content}), _json(metadata_payload)),
+        )
+        after_version = current_version + 1
+        connection.execute(
+            """
+            UPDATE agent_sessions
+            SET history_version = %s,
+                running_task_run_id = %s,
+                updated_at = now(),
+                metadata = jsonb_set(
+                    metadata,
+                    '{message_count}',
+                    to_jsonb(COALESCE((metadata->>'message_count')::int, 0) + 1),
+                    true
+                )
+            WHERE session_id = %s AND owner_key = %s
+            """,
+            (after_version, task_run_id, session_id, owner_key),
+        )
+        connection.commit()
+        return {
+            "duplicate": False,
+            "session_id": session_id,
+            "message_id": sequence,
+            "message_uuid": message_id,
+            "task_run_id": task_run_id,
+            "base_history_version": current_version,
+            "after_user_message_version": after_version,
+            "completion_expected_version": after_version,
+            "running_task_run_id": task_run_id,
+        }
+
+    def append_assistant_message_and_finish_task(
+        self,
+        *,
+        owner_key: str,
+        session_id: str,
+        task_run_id: str,
+        content: str,
+        completion_expected_version: int,
+        status: str,
+    ) -> dict[str, Any]:
+        connection = self.connection_factory()
+        session_row = connection.execute(
+            """
+            SELECT * FROM agent_sessions
+            WHERE session_id = %s AND owner_key = %s
+            FOR UPDATE
+            """,
+            (session_id, owner_key),
+        ).fetchone()
+        self._ensure_product_session_row(session_row, session_id=session_id)
+        if session_row.get("running_task_run_id") != task_run_id:
+            raise ValueError("task does not own session running guard")
+        current_version = int(session_row.get("history_version") or 0)
+        if current_version != int(completion_expected_version):
+            raise ValueError("history version mismatch")
+
+        sequence = self._next_message_sequence(connection, session_id)
+        message_id = new_id("msg")
+        metadata_payload = {"source": "api.session", "task_run_id": task_run_id, "status": status}
+        connection.execute(
+            """
+            INSERT INTO agent_messages (
+                message_id, session_id, message_sequence, role, content, metadata, created_at
+            )
+            VALUES (%s, %s, %s, 'assistant', %s::jsonb, %s::jsonb, now())
+            """,
+            (message_id, session_id, sequence, _json({"text": content}), _json(metadata_payload)),
+        )
+        result_version = current_version + 1
+        connection.execute(
+            """
+            UPDATE agent_sessions
+            SET history_version = %s,
+                running_task_run_id = NULL,
+                updated_at = now(),
+                metadata = jsonb_set(
+                    metadata,
+                    '{message_count}',
+                    to_jsonb(COALESCE((metadata->>'message_count')::int, 0) + 1),
+                    true
+                )
+            WHERE session_id = %s AND owner_key = %s
+            """,
+            (result_version, session_id, owner_key),
+        )
+        connection.commit()
+        return {
+            "session_id": session_id,
+            "message_id": sequence,
+            "message_uuid": message_id,
+            "task_run_id": task_run_id,
+            "completion_expected_version": completion_expected_version,
+            "completion_result_version": result_version,
+        }
+
+    def clear_stale_running_task(
+        self,
+        *,
+        owner_key: str,
+        session_id: str,
+        task_run_id: str,
+    ) -> bool:
+        connection = self.connection_factory()
+        row = connection.execute(
+            """
+            UPDATE agent_sessions
+            SET running_task_run_id = NULL,
+                updated_at = now()
+            WHERE session_id = %s
+              AND owner_key = %s
+              AND running_task_run_id = %s
+            RETURNING session_id
+            """,
+            (session_id, owner_key, task_run_id),
+        ).fetchone()
+        connection.commit()
+        return row is not None
+
+    def search_public_sessions(
+        self,
+        query: str,
+        *,
+        owner_key: str,
+        workspace_key: str | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        if not owner_key:
+            raise ValueError("owner_key is required")
+        return self._search_sessions_by_source(query, source="api.session", owner_key=owner_key, workspace_key=workspace_key, limit=limit)
+
+    def search_transcript_sessions(self, query: str, *, owner_key: str, limit: int = 10) -> list[dict[str, Any]]:
+        if not owner_key:
+            raise ValueError("owner_key is required")
+        return self._search_sessions_by_source(query, source="agent.loop", owner_key=owner_key, workspace_key=None, limit=limit)
+
+    def close(self) -> None:
+        """connection_factory가 요청마다 연결을 만들기 때문에 저장소 자체 close는 no-op이다."""
+
+    def _next_message_sequence(self, connection: Any, session_id: str) -> int:
+        sequence_row = connection.execute(
+            "SELECT COALESCE(MAX(message_sequence), 0) + 1 AS next_sequence FROM agent_messages WHERE session_id = %s",
+            (session_id,),
+        ).fetchone()
+        return int((sequence_row or {}).get("next_sequence") or 1)
+
+    def _ensure_product_session_row(self, row: Any, *, session_id: str) -> None:
+        if row is None:
+            raise KeyError(session_id)
+        metadata = _json_load(row.get("metadata"), {})
+        source = row.get("session_source") or metadata.get("source") or row.get("session_role")
+        if source != "api.session":
+            raise ValueError("session is not a public product session")
+
+    def _search_sessions_by_source(
+        self,
+        query: str,
+        *,
+        source: str,
+        owner_key: str | None,
+        workspace_key: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
         if not query.strip():
             return []
+        where = ["COALESCE(s.session_source, s.metadata->>'source') = %s", "COALESCE(m.content->>'text', '') ILIKE %s"]
+        params: list[Any] = [source, f"%{query}%"]
+        if owner_key is not None:
+            where.append("s.owner_key = %s")
+            params.append(owner_key)
+        if workspace_key is not None:
+            where.append("s.workspace_key = %s")
+            params.append(workspace_key)
         connection = self.connection_factory()
         rows = connection.execute(
-            """
+            f"""
             SELECT DISTINCT s.*, m.content->>'text' AS preview
             FROM agent_messages m
             JOIN agent_sessions s ON s.session_id = m.session_id
-            WHERE COALESCE(m.content->>'text', '') ILIKE %s
-            ORDER BY s.created_at DESC
+            WHERE {" AND ".join(where)}
+            ORDER BY s.updated_at DESC, s.created_at DESC
             LIMIT %s
             """,
-            (f"%{query}%", limit),
+            tuple([*params, limit]),
         ).fetchall()
         results = []
         for row in rows:
@@ -212,9 +462,6 @@ class PostgresSessionStore:
                 record["preview"] = row.get("preview")
                 results.append(record)
         return results
-
-    def close(self) -> None:
-        """connection_factory가 요청마다 연결을 만들기 때문에 저장소 자체 close는 no-op이다."""
 
 
 def _session_role(source: str, metadata: dict[str, Any]) -> str:
@@ -231,8 +478,10 @@ def _session_from_row(row: Any) -> dict[str, Any] | None:
     return {
         "id": row["session_id"],
         "session_key": row["session_key"],
-        "source": metadata.get("source") or row.get("session_role"),
+        "source": row.get("session_source") or metadata.get("source") or row.get("session_role"),
+        "session_source": row.get("session_source") or metadata.get("source") or row.get("session_role"),
         "user_id": metadata.get("user_id") or row.get("owner_key"),
+        "owner_key": row.get("owner_key"),
         "model": metadata.get("model"),
         "system_prompt": metadata.get("system_prompt"),
         "parent_session_id": row.get("parent_session_id"),
@@ -246,6 +495,9 @@ def _session_from_row(row: Any) -> dict[str, Any] | None:
         "ended_at": row.get("ended_at"),
         "end_reason": metadata.get("end_reason"),
         "message_count": int(metadata.get("message_count") or 0),
+        "history_version": int(row.get("history_version") or 0),
+        "running_task_run_id": row.get("running_task_run_id"),
+        "workspace_key": row.get("workspace_key"),
     }
 
 

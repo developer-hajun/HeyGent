@@ -26,7 +26,13 @@ export type RawAiMessage = {
   [key: string]: unknown
 }
 
-export type ChatMessageStatus = 'optimistic' | 'accepted' | 'streaming' | 'completed' | 'failed'
+export type ChatMessageStatus =
+  | 'optimistic'
+  | 'accepted'
+  | 'streaming'
+  | 'waiting'
+  | 'completed'
+  | 'failed'
 
 export type ChatMessageView = {
   id: string

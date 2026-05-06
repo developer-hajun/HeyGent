@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from app.domain.providers.model.base import AgentMessage
 from app.domain.orchestration.prompts.compression import compress_prompt_sections
 from app.domain.orchestration.prompts.gateway_context_prompt import build_gateway_context_prompt
 from app.domain.orchestration.prompts.project_context_prompt import build_project_context_prompt
@@ -10,6 +11,50 @@ from app.domain.orchestration.prompts.step_context_prompt import build_step_cont
 from app.domain.orchestration.prompts.step_run_boundary_prompt import build_step_run_boundary_prompt
 from app.domain.orchestration.prompts.step_run_prompt import build_step_run_prompt
 from app.domain.orchestration.prompts.task_context_prompt import build_task_context_prompt
+
+
+def assemble_agent_loop_messages(
+    *,
+    system_prompt_snapshot: str,
+    conversation_history: list[dict[str, str]],
+    current_user_prompt: str,
+    runtime_prompt_suffix: str,
+) -> list[AgentMessage]:
+    """provider에 넘길 native message 배열을 만든다.
+
+    이전 공개 대화는 user/assistant message로 보존하고, 현재 turn의 실행 지시는 마지막 user
+    message에만 붙인다. 이렇게 해야 현재 사용자 요청이 history와 prompt 양쪽에 중복되지 않는다.
+    """
+
+    messages: list[AgentMessage] = []
+    snapshot = str(system_prompt_snapshot or "").strip()
+    if snapshot:
+        messages.append(AgentMessage(role="system", content=snapshot))
+
+    for item in conversation_history or []:
+        role = str(item.get("role") or "").strip()
+        if role not in {"user", "assistant"}:
+            continue
+        content = str(item.get("content") or "").strip()
+        if content:
+            messages.append(AgentMessage(role=role, content=content))
+
+    current_parts = [str(current_user_prompt or "").strip(), str(runtime_prompt_suffix or "").strip()]
+    current_content = "\n\n".join(part for part in current_parts if part)
+    messages.append(AgentMessage(role="user", content=current_content or "현재 요청을 처리해 주세요."))
+    return messages
+
+
+def render_single_prompt_fallback(messages: list[AgentMessage]) -> str:
+    """native message를 지원하지 않는 provider에서만 사용하는 텍스트 fallback이다."""
+
+    sections: list[str] = []
+    for message in messages:
+        content = str(message.content or "").strip()
+        if not content:
+            continue
+        sections.append(f"[{message.role}]\n{content}")
+    return "\n\n".join(sections)
 
 
 class PromptBuilder:

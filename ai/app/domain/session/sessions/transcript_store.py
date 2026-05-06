@@ -69,6 +69,67 @@ class TranscriptStore(Protocol):
         """메시지 본문 기준으로 transcript/session을 검색한다."""
         ...
 
+    def append_user_message_and_start_task(
+        self,
+        *,
+        owner_key: str,
+        session_id: str,
+        content: str,
+        client_message_id: str,
+        task_run_id: str,
+        base_history_version: int,
+    ) -> dict[str, Any]:
+        """user message 저장과 running guard 획득은 하나의 상태 전이다.
+
+        같은 client_message_id가 이미 저장되어 있으면 새 TaskRun을 만들지 않고
+        기존 task 정보를 반환한다. 네트워크 재전송은 중복 실행이 아니라 같은 명령의 재확인이다.
+        """
+        ...
+
+    def append_assistant_message_and_finish_task(
+        self,
+        *,
+        owner_key: str,
+        session_id: str,
+        task_run_id: str,
+        content: str,
+        completion_expected_version: int,
+        status: str,
+    ) -> dict[str, Any]:
+        """assistant message 저장과 running guard 해제는 같은 transaction에서 끝낸다."""
+        ...
+
+    def clear_stale_running_task(
+        self,
+        *,
+        owner_key: str,
+        session_id: str,
+        task_run_id: str,
+    ) -> bool:
+        """완료/실패 TaskRun이 남긴 guard만 소유 확인 후 정리한다."""
+        ...
+
+    def search_public_sessions(
+        self,
+        query: str,
+        *,
+        owner_key: str,
+        workspace_key: str | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """사용자-facing session 검색이다. owner 없는 호출은 허용하지 않는다."""
+        ...
+
+    def search_transcript_sessions(
+        self,
+        query: str,
+        *,
+        owner_key: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """내부 실행 transcript 검색이다. owner 없는 호출은 허용하지 않는다."""
+        ...
+
     def close(self) -> None:
         """저장소 연결과 관련 자원을 닫는다."""
         ...

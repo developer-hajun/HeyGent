@@ -15,6 +15,10 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
         agent_profile_version INTEGER NOT NULL DEFAULT 1,
         agent_config_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
         session_role TEXT NOT NULL DEFAULT 'main' CHECK (session_role IN ('main', 'user_subagent', 'worker', 'domain')),
+        session_source TEXT NOT NULL DEFAULT 'agent.loop',
+        history_version BIGINT NOT NULL DEFAULT 0,
+        running_task_run_id TEXT,
+        workspace_key TEXT,
         status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'WAITING', 'COMPLETED', 'FAILED', 'CANCELED')),
         title TEXT,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -171,6 +175,19 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_agent_messages_session_created
     ON agent_messages(session_id, created_at);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_messages_session_sequence
+    ON agent_messages(session_id, message_sequence);
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_messages_public_client_id
+    ON agent_messages (session_id, (metadata->>'client_message_id'))
+    WHERE role = 'user' AND metadata ? 'client_message_id';
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_sessions_owner_source_updated
+    ON agent_sessions (owner_key, session_source, updated_at DESC);
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_run_anchors_owner_session

@@ -5,6 +5,8 @@ import {
   type RawSessionMessageCompletedPayload,
   type RawSessionMessageDeltaPayload,
   type RawSessionMessageFailedPayload,
+  type RawSessionMessageWaitingPayload,
+  type RawSessionUpdatedPayload,
   getFramePayload,
   getStringField,
   isJsonObject,
@@ -163,8 +165,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       case 'session.message.completed':
         mergeAssistantCompleted(frame, set)
         return
+      case 'session.message.waiting':
+        mergeAssistantWaiting(frame, set)
+        return
       case 'session.message.failed':
         mergeAssistantFailed(frame, set)
+        return
+      case 'session.updated':
+        mergeSessionUpdated(frame, set)
         return
       case 'task.event':
         mergeTaskEventCompletionPayload(getFramePayload(frame), set)
@@ -449,6 +457,40 @@ const mergeAssistantCompleted = (
   })
 }
 
+const mergeAssistantWaiting = (
+  frame: AiRealtimeRawFrame,
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
+) => {
+  const payload = getFramePayload(frame) as RawSessionMessageWaitingPayload
+  const sessionId = getStringField(payload, 'session_id', 'sessionId')
+  const taskRunId = getStringField(payload, 'task_run_id', 'taskRunId')
+  const messageId =
+    getStringField(payload, 'message_id', 'messageId') ??
+    (taskRunId === undefined ? undefined : `assistant_${taskRunId}`)
+
+  if (sessionId === undefined || messageId === undefined) {
+    return
+  }
+
+  set((state) => ({
+    messagesBySessionId: {
+      ...state.messagesBySessionId,
+      [sessionId]: upsertAssistantMessage(state.messagesBySessionId[sessionId] ?? [], {
+        id: messageId,
+        sessionId,
+        content: '',
+        status: 'waiting',
+        taskRunId,
+      }),
+    },
+    sessionsById: upsertSessionPreview(state, {
+      sessionId,
+      activeTaskRunId: taskRunId,
+      lastTaskRunStatus: 'WAITING',
+    }),
+  }))
+}
+
 const mergeAssistantFailed = (
   frame: AiRealtimeRawFrame,
   set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
@@ -483,6 +525,46 @@ const mergeAssistantFailed = (
       activeTaskRunId: null,
       lastTaskRunStatus: 'FAILED',
     }),
+  }))
+}
+
+const mergeSessionUpdated = (
+  frame: AiRealtimeRawFrame,
+  set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) => void,
+) => {
+  const payload = getFramePayload(frame) as RawSessionUpdatedPayload
+  const sessionId = getStringField(payload, 'session_id', 'sessionId')
+  const rawSession = isJsonObject(payload.session)
+    ? normalizeRawSession(payload.session)
+    : undefined
+  const rawMessages = Array.isArray(payload.messages)
+    ? payload.messages
+    : Array.isArray(payload.items)
+      ? payload.items
+      : undefined
+  const messages = rawMessages
+    ?.map(normalizeRawAiMessage)
+    .filter((message) => message !== null)
+    .map(toChatMessageView)
+
+  if (sessionId === undefined && rawSession === undefined) {
+    return
+  }
+
+  const resolvedSessionId = sessionId ?? rawSession?.session_id
+  if (resolvedSessionId === undefined) {
+    return
+  }
+
+  set((state) => ({
+    sessionsById:
+      rawSession === undefined
+        ? state.sessionsById
+        : { ...state.sessionsById, [rawSession.session_id]: rawSession },
+    messagesBySessionId:
+      messages === undefined
+        ? state.messagesBySessionId
+        : { ...state.messagesBySessionId, [resolvedSessionId]: messages },
   }))
 }
 
@@ -711,6 +793,24 @@ const upsertAssistantMessage = (
 
 const isRawAiSession = (value: unknown): value is RawAiSession =>
   isJsonObject(value) && typeof value.session_id === 'string'
+
+const normalizeRawSession = (value: Record<string, unknown>): RawAiSession | undefined => {
+  const sessionId = getStringField(value, 'session_id', 'sessionId')
+  if (sessionId === undefined) {
+    return undefined
+  }
+  return {
+    ...value,
+    session_id: sessionId,
+    title: typeof value.title === 'string' || value.title === null ? value.title : undefined,
+    active_task_run_id:
+      getStringField(value, 'active_task_run_id', 'activeTaskRunId') ??
+      (value.active_task_run_id === null ? null : undefined),
+    last_task_run_status:
+      getStringField(value, 'last_task_run_status', 'lastTaskRunStatus') ??
+      (value.last_task_run_status === null ? null : undefined),
+  }
+}
 
 const normalizeRawAiMessage = (value: unknown): RawAiMessage | null => {
   if (!isJsonObject(value)) {

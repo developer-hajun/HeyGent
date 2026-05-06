@@ -15,13 +15,18 @@ from app.contracts.session import (
     SessionMessagesResponse,
     SessionResponse,
 )
+from app.contracts.task.task_status import TaskStatus
 from app.core.utils.ids import new_id
 from app.domain.orchestration.contracts import OrchestrationRequest
+from app.domain.session.conversation_history import build_conversation_history
+from app.domain.session.history_compaction import compact_conversation_history
+from app.domain.session.session_runtime_state import get_system_prompt_snapshot
 
 router = APIRouter(prefix="/sessions", tags=["sessions"], dependencies=[Depends(document_bearer_auth)])
 
 _PUBLIC_SESSION_SOURCE = "api.session"
 _TASK_TRANSCRIPT_SOURCE = "agent.loop"
+_ACTIVE_TASK_STATUSES = {status.value for status in (TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.WAITING, TaskStatus.BLOCKED)}
 
 
 @router.post(
@@ -125,12 +130,11 @@ async def _create_message_in_session(
     sessionId = str(session["id"])
     owner_key = str(session.get("user_id") or user.user_id)
     session_store = request.app.state.session_store
+    session = _refresh_stale_running_guard(request, session, owner_key=owner_key)
 
-    user_message_id = session_store.append_message(
-        session_id=sessionId,
-        role="user",
-        content=payload.content,
-        metadata={"source": _PUBLIC_SESSION_SOURCE},
+    base_history_version = int(session.get("history_version") or 0)
+    conversation_history = compact_conversation_history(
+        build_conversation_history(session_store.list_messages(sessionId))
     )
     task_transcript_session_id = _create_task_transcript_session(
         session_store,
@@ -141,42 +145,79 @@ async def _create_message_in_session(
     )
     task_input = dict(payload.input_payload)
     if payload.model and not task_input.get("model"):
-        task_input["model"] = payload.model
+            task_input["model"] = payload.model
     task_input["prompt"] = payload.content
     task_input["transcript_session_id"] = task_transcript_session_id
+    task_input["conversation_history"] = conversation_history
+    task_input["system_prompt_snapshot"] = get_system_prompt_snapshot(session)
+    task_input["base_history_version"] = base_history_version
+    task_run_id = new_id("task")
+    client_message_id = payload.client_message_id or new_id("client_msg")
+    user_append = session_store.append_user_message_and_start_task(
+        owner_key=owner_key,
+        session_id=sessionId,
+        content=payload.content,
+        client_message_id=client_message_id,
+        task_run_id=task_run_id,
+        base_history_version=base_history_version,
+    )
+    if user_append.get("duplicate"):
+        messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
+        assistant_message_id = _find_assistant_message_id_for_task(session_store, sessionId, str(user_append["task_run_id"]))
+        task = request.app.state.repository.get_task(str(user_append["task_run_id"]))
+        return CreateSessionMessageResponse(
+            session_id=sessionId,
+            task_run_id=str(user_append["task_run_id"]),
+            status=str(getattr(task, "status", "PENDING")),
+            user_message=_message_response(messages_by_id[user_append["message_id"]]),
+            assistant_message=_message_response(messages_by_id[assistant_message_id])
+            if assistant_message_id is not None and assistant_message_id in messages_by_id
+            else None,
+        )
+    task_input["after_user_message_version"] = user_append["after_user_message_version"]
+    task_input["completion_expected_version"] = user_append["completion_expected_version"]
+    task_input["client_message_id"] = client_message_id
 
     try:
         task = await request.app.state.orchestrator.start(
             OrchestrationRequest(
+                task_run_id=task_run_id,
                 owner_key=owner_key,
                 session_key=sessionId,
                 input_payload=task_input,
             )
         )
     except KeyError as error:
+        session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
         raise HTTPException(status_code=404, detail=f"unknown execution route: {error.args[0]}") from error
     except ValueError as error:
+        session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
         raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception:
+        session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
+        raise
 
-    assistant_content = _assistant_content_from_task(task)
-    assistant_message_id = session_store.append_message(
-        session_id=sessionId,
-        role="assistant",
-        content=assistant_content,
-        metadata={
-            "source": _PUBLIC_SESSION_SOURCE,
-            "task_run_id": task.task_run_id,
-            "status": task.status,
-        },
-        finish_reason="stop" if task.status == "COMPLETED" else None,
-    )
+    assistant_message_id = None
+    if task.status == "COMPLETED":
+        assistant_content = _assistant_content_from_task(task)
+        assistant_append = session_store.append_assistant_message_and_finish_task(
+            owner_key=owner_key,
+            session_id=sessionId,
+            task_run_id=task.task_run_id,
+            content=assistant_content,
+            completion_expected_version=task_input["completion_expected_version"],
+            status=task.status,
+        )
+        assistant_message_id = assistant_append["message_id"]
+    elif task.status != "WAITING":
+        session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task.task_run_id)
     messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
     return CreateSessionMessageResponse(
         session_id=sessionId,
         task_run_id=task.task_run_id,
         status=task.status,
-        user_message=_message_response(messages_by_id[user_message_id]),
-        assistant_message=_message_response(messages_by_id[assistant_message_id]),
+        user_message=_message_response(messages_by_id[user_append["message_id"]]),
+        assistant_message=_message_response(messages_by_id[assistant_message_id]) if assistant_message_id is not None else None,
     )
 
 
@@ -274,6 +315,21 @@ def _get_public_session_or_404(request: Request, session_id: str) -> dict[str, A
     return session
 
 
+def _refresh_stale_running_guard(request: Request, session: dict[str, Any], *, owner_key: str) -> dict[str, Any]:
+    task_run_id = session.get("running_task_run_id")
+    if not task_run_id:
+        return session
+    task = request.app.state.repository.get_task(str(task_run_id))
+    if task is not None and str(task.status) in _ACTIVE_TASK_STATUSES:
+        raise HTTPException(status_code=409, detail="session has a running task")
+    request.app.state.session_store.clear_stale_running_task(
+        owner_key=owner_key,
+        session_id=str(session["id"]),
+        task_run_id=str(task_run_id),
+    )
+    return request.app.state.session_store.get_session(str(session["id"])) or session
+
+
 def _is_public_session(session: dict[str, Any]) -> bool:
     metadata = dict(session.get("metadata") or {})
     return session.get("source") == _PUBLIC_SESSION_SOURCE or metadata.get("source") == _PUBLIC_SESSION_SOURCE
@@ -326,6 +382,16 @@ def _assistant_content_from_task(task) -> str:
     return "요청 처리가 완료되었습니다."
 
 
+def _find_assistant_message_id_for_task(session_store, session_id: str, task_run_id: str) -> int | None:
+    for message in session_store.list_messages(session_id):
+        if str(message.get("role") or "") != "assistant":
+            continue
+        metadata = dict(message.get("metadata") or {})
+        if str(metadata.get("task_run_id") or metadata.get("taskRunId") or "") == task_run_id:
+            return int(message.get("id") or 0)
+    return None
+
+
 def _list_public_sessions(store, *, owner_key: str | None, limit: int, offset: int) -> tuple[list[dict[str, Any]], int]:
     if hasattr(store, "connection_factory"):
         return _list_postgres_public_sessions(store, owner_key=owner_key, limit=limit, offset=offset)
@@ -333,7 +399,7 @@ def _list_public_sessions(store, *, owner_key: str | None, limit: int, offset: i
 
 
 def _list_postgres_public_sessions(store, *, owner_key: str | None, limit: int, offset: int) -> tuple[list[dict[str, Any]], int]:
-    where = ["metadata->>'source' = %s"]
+    where = ["COALESCE(session_source, metadata->>'source') = %s"]
     params: list[Any] = [_PUBLIC_SESSION_SOURCE]
     if owner_key is not None:
         where.append("owner_key = %s")
@@ -353,7 +419,8 @@ def _postgres_session_from_row(row: Any) -> dict[str, Any]:
     return {
         "id": _row_get(row, "session_id"),
         "session_key": _row_get(row, "session_key"),
-        "source": metadata.get("source") or _row_get(row, "session_role"),
+        "source": _row_get(row, "session_source") or metadata.get("source") or _row_get(row, "session_role"),
+        "session_source": _row_get(row, "session_source") or metadata.get("source") or _row_get(row, "session_role"),
         "user_id": metadata.get("user_id") or _row_get(row, "owner_key"),
         "title": _row_get(row, "title"),
         "metadata": metadata,
@@ -361,6 +428,9 @@ def _postgres_session_from_row(row: Any) -> dict[str, Any]:
         "updated_at": _row_get(row, "updated_at"),
         "ended_at": _row_get(row, "ended_at"),
         "message_count": int(metadata.get("message_count") or 0),
+        "history_version": int(_row_get(row, "history_version") or 0),
+        "running_task_run_id": _row_get(row, "running_task_run_id"),
+        "workspace_key": _row_get(row, "workspace_key"),
     }
 
 

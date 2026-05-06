@@ -24,6 +24,10 @@ export type AiRealtimeCommandType =
   | 'session.list'
   | 'session.messages.list'
   | 'session.message.create'
+  | 'session.message.retry'
+  | 'session.message.undo'
+  | 'session.history.compact'
+  | 'session.update'
   | 'taskRuns.active.list'
   | 'taskRun.snapshot.get'
   | 'taskRun.events.replay'
@@ -42,7 +46,9 @@ export type AiRealtimeServerFrameType =
   | 'session.message.accepted'
   | 'session.message.delta'
   | 'session.message.completed'
+  | 'session.message.waiting'
   | 'session.message.failed'
+  | 'session.updated'
   | 'taskRuns.active.list.result'
   | 'taskRun.snapshot.result'
   | 'taskRun.events.replay.result'
@@ -125,6 +131,30 @@ export type SessionMessageCreatePayload = {
   metadata?: JsonObject
 }
 
+export type SessionMessageRetryPayload = {
+  sessionId: string
+  targetMessageId?: string
+  clientCommandId: string
+}
+
+export type SessionMessageUndoPayload = {
+  sessionId: string
+  untilMessageId?: string
+  clientCommandId: string
+}
+
+export type SessionHistoryCompactPayload = {
+  sessionId: string
+  clientCommandId: string
+}
+
+export type SessionUpdatePayload = {
+  sessionId: string
+  clientCommandId: string
+  title?: string
+  metadataPatch?: JsonObject
+}
+
 export type TaskRunsActiveListPayload = {
   sessionId?: string
   session_id?: string
@@ -171,6 +201,10 @@ export type AiRealtimeCommandPayloadMap = {
   'session.list': SessionListPayload
   'session.messages.list': SessionMessagesListPayload
   'session.message.create': SessionMessageCreatePayload
+  'session.message.retry': SessionMessageRetryPayload
+  'session.message.undo': SessionMessageUndoPayload
+  'session.history.compact': SessionHistoryCompactPayload
+  'session.update': SessionUpdatePayload
   'taskRuns.active.list': TaskRunsActiveListPayload
   'taskRun.snapshot.get': TaskRunSnapshotGetPayload
   'taskRun.events.replay': TaskRunEventsReplayPayload
@@ -231,6 +265,21 @@ export type RawSessionMessageCompletedPayload = {
   [key: string]: unknown
 }
 
+export type RawSessionMessageWaitingPayload = {
+  session_id?: string
+  sessionId?: string
+  message_id?: string
+  messageId?: string
+  user_message_id?: string
+  userMessageId?: string
+  task_run_id?: string
+  taskRunId?: string
+  status?: string
+  pending_approval?: unknown
+  pendingApproval?: unknown
+  [key: string]: unknown
+}
+
 export type RawSessionMessageFailedPayload = {
   session_id?: string
   sessionId?: string
@@ -242,6 +291,15 @@ export type RawSessionMessageFailedPayload = {
   taskRunId?: string
   status?: string
   error?: unknown
+  [key: string]: unknown
+}
+
+export type RawSessionUpdatedPayload = {
+  session_id?: string
+  sessionId?: string
+  session?: unknown
+  messages?: unknown
+  items?: unknown
   [key: string]: unknown
 }
 

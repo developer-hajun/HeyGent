@@ -116,6 +116,81 @@ def test_ws_session_message_create_returns_accepted_before_completed_and_stores_
         context.__exit__(None, None, None)
 
 
+def test_ws_followup_message_passes_previous_public_messages_without_current_user(client, monkeypatch):
+    provider_calls: list[dict] = []
+
+    def fake_respond(self, messages, tools, model, tool_choice=None):
+        provider_calls.append({"messages": messages, "tools": tools, "model": model, "tool_choice": tool_choice})
+        return AgentModelResponse(
+            provider_name="openai_api",
+            model=model,
+            message=AgentMessage(role="assistant", content="FOLLOWUP_DONE", tool_calls=[]),
+            output_text="FOLLOWUP_DONE",
+            tool_calls=[],
+            finish_reason="stop",
+            metadata={"model": model},
+        )
+
+    monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond", fake_respond)
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.respond", fake_respond)
+    context, websocket = _authenticated_socket(client, user_id="ws-followup-owner")
+    try:
+        session_store = client.app.state.session_store
+        session_store.create_session(
+            session_id="public_followup_session",
+            session_key="public_followup_session",
+            source="api.session",
+            user_id="ws-followup-owner",
+            metadata={"source": "api.session"},
+        )
+        session_store.append_message(
+            session_id="public_followup_session",
+            role="user",
+            content="강남역에서 지갑 잃어버렸어",
+            metadata={"source": "api.session"},
+        )
+        session_store.append_message(
+            session_id="public_followup_session",
+            role="assistant",
+            content="분실물 조회 경로를 확인했습니다.",
+            metadata={"source": "api.session"},
+        )
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.create",
+                "requestId": "req_followup",
+                "payload": {
+                    "sessionId": "public_followup_session",
+                    "content": "ㄴㄴ 분실물찾은거",
+                    "clientMessageId": "client_msg_ws_followup",
+                    "model": "gpt-test",
+                },
+            }
+        )
+
+        accepted = websocket.receive_json()
+        _receive_until(websocket, "session.message.completed")
+
+        task = client.app.state.repository.get_task(accepted["payload"]["task_run_id"])
+        assert task is not None
+        assert task.input_payload["conversation_history"] == [
+            {"role": "user", "content": "강남역에서 지갑 잃어버렸어"},
+            {"role": "assistant", "content": "분실물 조회 경로를 확인했습니다."},
+        ]
+        assert "ㄴㄴ 분실물찾은거" not in str(task.input_payload["conversation_history"])
+        assert [message.role for message in provider_calls[0]["messages"][:2]] == ["user", "assistant"]
+        current_user_count = sum(
+            str(message.content).count("ㄴㄴ 분실물찾은거")
+            for message in provider_calls[0]["messages"]
+            if message.role == "user"
+        )
+        assert current_user_count == 1
+    finally:
+        context.__exit__(None, None, None)
+
+
 def test_ws_session_message_create_sends_failed_frame_after_background_error(client, monkeypatch):
     _patch_respond_failure(monkeypatch)
     context, websocket = _authenticated_socket(client, user_id="ws-fail-owner")
@@ -264,6 +339,160 @@ def test_ws_task_runs_active_list_filters_authenticated_owner(client):
     assert response["requestId"] == "req_active"
     assert [item["task_run_id"] for item in response["payload"]["items"]] == ["task_active_ws_owner"]
     assert [item["task_run_id"] for item in response["payload"]["task_runs"]] == ["task_active_ws_owner"]
+
+
+def test_ws_session_undo_rejects_when_session_is_running(client):
+    context, websocket = _authenticated_socket(client, user_id="undo-owner")
+    try:
+        store = client.app.state.session_store
+        store.create_session(
+            session_id="undo_running_session",
+            session_key="undo_running_session",
+            source="api.session",
+            user_id="undo-owner",
+            metadata={"source": "api.session"},
+        )
+        store.append_user_message_and_start_task(
+            owner_key="undo-owner",
+            session_id="undo_running_session",
+            content="실행 중 메시지",
+            client_message_id="client_undo_running",
+            task_run_id="task_undo_running",
+            base_history_version=0,
+        )
+        client.app.state.repository.create_task(
+            TaskRun(
+                task_run_id="task_undo_running",
+                task_type="agent.loop",
+                owner_key="undo-owner",
+                session_key="undo_running_session",
+                status="RUNNING",
+                title="실행 중",
+            )
+        )
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.undo",
+                "requestId": "req_undo_running",
+                "payload": {
+                    "sessionId": "undo_running_session",
+                    "clientCommandId": "cmd_undo_running",
+                },
+            }
+        )
+
+        response = websocket.receive_json()
+
+        assert response["type"] == "command.error"
+        assert response["error"]["code"] == "conflict"
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_session_retry_reuses_last_user_message_without_duplicate_user_append(client, monkeypatch):
+    _patch_respond(monkeypatch, text="RETRY_DONE")
+    context, websocket = _authenticated_socket(client, user_id="retry-owner")
+    try:
+        store = client.app.state.session_store
+        store.create_session(
+            session_id="retry_session",
+            session_key="retry_session",
+            source="api.session",
+            user_id="retry-owner",
+            metadata={"source": "api.session"},
+        )
+        user_message_id = store.append_message(
+            session_id="retry_session",
+            role="user",
+            content="강남역 분실물 다시 확인해줘",
+            metadata={"source": "api.session"},
+        )
+        store.append_message(
+            session_id="retry_session",
+            role="assistant",
+            content="이전 답변",
+            metadata={"source": "api.session", "task_run_id": "task_old_retry"},
+        )
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.retry",
+                "requestId": "req_retry",
+                "payload": {
+                    "sessionId": "retry_session",
+                    "targetMessageId": str(user_message_id),
+                    "clientCommandId": "cmd_retry",
+                },
+            }
+        )
+
+        accepted = websocket.receive_json()
+        completed = _receive_until(websocket, "session.message.completed")
+        messages = store.list_messages("retry_session")
+
+        assert accepted["type"] == "session.message.accepted"
+        assert completed["payload"]["content"] == "RETRY_DONE"
+        assert [message["role"] for message in messages] == ["user", "assistant"]
+        assert [message["content"] for message in messages] == [
+            "강남역 분실물 다시 확인해줘",
+            "RETRY_DONE",
+        ]
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_session_retry_clears_running_guard_when_task_creation_fails(client, monkeypatch):
+    context, websocket = _authenticated_socket(client, user_id="retry-fail-owner")
+    try:
+        store = client.app.state.session_store
+        store.create_session(
+            session_id="retry_fail_session",
+            session_key="retry_fail_session",
+            source="api.session",
+            user_id="retry-fail-owner",
+            metadata={"source": "api.session"},
+        )
+        user_message_id = store.append_message(
+            session_id="retry_fail_session",
+            role="user",
+            content="실패해도 guard는 정리한다",
+            metadata={"source": "api.session"},
+        )
+        store.append_message(
+            session_id="retry_fail_session",
+            role="assistant",
+            content="이전 답변",
+            metadata={"source": "api.session", "task_run_id": "task_old_retry_fail"},
+        )
+
+        def fail_create_task(task):
+            raise RuntimeError("create_task failed")
+
+        monkeypatch.setattr(client.app.state.repository, "create_task", fail_create_task)
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.retry",
+                "requestId": "req_retry_fail",
+                "payload": {
+                    "sessionId": "retry_fail_session",
+                    "targetMessageId": str(user_message_id),
+                    "clientCommandId": "cmd_retry_fail",
+                },
+            }
+        )
+
+        response = websocket.receive_json()
+
+        assert response["type"] == "command.error"
+        assert response["error"]["code"] == "internal_error"
+        assert store.get_session("retry_fail_session")["running_task_run_id"] is None
+    finally:
+        context.__exit__(None, None, None)
 
 
 def test_ws_subscribe_task_preserves_request_id_when_provided(client):

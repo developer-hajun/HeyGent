@@ -56,6 +56,9 @@ export function ChatSessionPage() {
     sessionId === '' ? false : state.loadingSessionIds[sessionId] === true,
   )
   const chatError = useChatStore((state) => state.lastError)
+  const currentSession = useChatStore((state) =>
+    sessionId === '' ? undefined : state.sessionsById[sessionId],
+  )
   const fetchMessages = useChatStore((state) => state.fetchMessages)
   const sendMessage = useChatStore((state) => state.sendMessage)
 
@@ -350,8 +353,23 @@ export function ChatSessionPage() {
     setFocusedTaskRunTarget({ taskRunId, requestId: focusRequestIdRef.current })
   }
 
+  const activeSessionTaskRunId =
+    typeof currentSession?.active_task_run_id === 'string'
+      ? currentSession.active_task_run_id
+      : undefined
+  const hasActiveChatTurn =
+    activeSessionTaskRunId !== undefined ||
+    messages.some(
+      (message) =>
+        message.status === 'optimistic' ||
+        message.status === 'streaming' ||
+        message.status === 'waiting',
+    )
   const isComposerDisabled =
-    connectionState === 'auth-expired' || !authenticatedReady || commandClient === null
+    connectionState === 'auth-expired' ||
+    !authenticatedReady ||
+    commandClient === null ||
+    hasActiveChatTurn
   const loading = (loadState === 'loading' || isLoadingMessages) && messages.length === 0
   const displayErrorMessage =
     errorMessage ?? (loadState === 'error' ? null : (chatError ?? taskRunError))
