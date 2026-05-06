@@ -1,3 +1,3 @@
-from app.domain.session.sessions.session_store import SessionStore
+from app.domain.session.sessions.transcript_store import TranscriptStore
 
-__all__ = ["SessionStore"]
+__all__ = ["TranscriptStore"]

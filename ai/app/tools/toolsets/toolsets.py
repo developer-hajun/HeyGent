@@ -13,7 +13,7 @@ class ToolsetDefinition:
 
 TOOLSETS: dict[str, ToolsetDefinition] = {
     "core": ToolsetDefinition(
-        description="Canonical agent loop executor.",
+        description="Canonical agent loop handler.",
         tools=("agent.loop",),
     ),
 }
@@ -27,7 +27,7 @@ def list_toolsets() -> list[str]:
     return sorted(TOOLSETS)
 
 
-def resolve_executor_keys(enabled_toolsets: Iterable[str] | None) -> set[str] | None:
+def resolve_tool_names(enabled_toolsets: Iterable[str] | None) -> set[str] | None:
     if enabled_toolsets is None:
         return None
 

@@ -40,7 +40,7 @@ _OPERATION_KIND_ALIASES = {
 DEFAULT_STEP_DETAIL: dict[str, Any] = {
     "semanticDetail": {
         # semanticKey 는 StepRun 을 어떤 의미 단위로 묶는지 나타낸다.
-        # executor/step_type 이 바뀌어도 "사용자에게 설명되는 단계"를 이 값으로 계속 추적한다.
+        # handler/step_type 이 바뀌어도 "사용자에게 설명되는 단계"를 이 값으로 계속 추적한다.
         "semanticKey": None,
         # 화면과 이벤트 로그에서 보여 줄 semantic step 이름.
         # step.title 과 유사하지만, 나중에 실행 세부가 더 쪼개져도 대표 이름으로 유지할 수 있게 분리한다.
@@ -65,14 +65,16 @@ DEFAULT_STEP_DETAIL: dict[str, Any] = {
         # 호출한 agent 의 식별자.
         # 어떤 agent 에 위임됐는지 추적해야 디버깅과 상세 화면 연결이 가능하다.
         "agentId": None,
-        # agent 호출이 별도 child task 를 만들었다면 그 TaskRun ID.
-        # 부모 step 에서 자식 task 로 이어지는 관계를 복원하려고 저장한다.
-        "childTaskRunId": None,
-        # child agent 가 남긴 한 줄 요약.
-        # parent step 이 child 전체 로그를 열지 않아도 delegation 결과를 바로 보여 주기 위해 둔다.
+        # worker가 별도 transcript/session으로 실행되면 해당 agent_session ID를 저장한다.
+        # 부모 StepRun은 worker 중간 로그를 섞지 않고 이 세션 ID와 handoff summary만 참조한다.
+        "workerSessionId": None,
+        # worker profile key는 재시작 뒤에도 어떤 실행 설정이 주입됐는지 확인하는 힌트다.
+        "profileKey": None,
+        # worker agent 가 남긴 한 줄 요약.
+        # parent step 이 worker 전체 로그를 열지 않아도 delegation 결과를 바로 보여 주기 위해 둔다.
         "summary": None,
-        # child agent 의 최종 상태.
-        # parent step 이 linkage 만 보고도 child 성공/실패/대기를 바로 판단할 수 있게 남긴다.
+        # worker agent 의 최종 상태.
+        # parent step 이 linkage 만 보고도 worker 성공/실패/대기를 바로 판단할 수 있게 남긴다.
         "status": None,
     },
     "toolDetail": {
@@ -133,7 +135,7 @@ DEFAULT_STEP_DETAIL: dict[str, Any] = {
         # workflow handoff 시 raw payload 대신 먼저 참고할 수 있는 모델측 요약이다.
         "handoffSummary": None,
         # 현재 semantic 단계에 대한 soft hint.
-        # StepRun 경계는 엔진이 결정하고, 모델은 label/goal 수준의 힌트만 남긴다.
+        # agent.loop에서는 모델이 step 도구로 선언한 의미 단계만 StepRun 경계가 된다.
         "semanticHint": None,
     },
 }

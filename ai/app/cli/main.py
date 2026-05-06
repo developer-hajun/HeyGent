@@ -59,7 +59,7 @@ def _build_examples() -> str:
         "  python -m app.cli provider-refresh --provider openai_oauth\n"
         "  python -m app.cli provider-disconnect --provider openai_oauth\n"
         "  python -m app.cli list-providers\n"
-        "  python -m app.cli create-task --type agent.loop --prompt \"안녕하세요\"\n"
+        "  python -m app.cli create-task --prompt \"안녕하세요\"\n"
         "  python -m app.cli tasks --status WAITING\n"
         "  python -m app.cli resume-task --task-id task_xxx --payload '{\"approved\": true}'"
     )
@@ -161,9 +161,8 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     create_parser = subparsers.add_parser(
         "create-task",
         help="새 작업을 바로 실행합니다",
-        description="intent type 과 입력 payload 로 TaskRun 을 생성하고 즉시 실행합니다.",
+        description="입력 payload 로 TaskRun 을 생성하고 즉시 실행합니다.",
     )
-    create_parser.add_argument("--type", required=True, dest="intent_type", help="실행할 intent type")
     create_parser.add_argument("--payload", dest="payload", default=None, help="JSON 문자열 또는 JSON 파일 경로")
     create_parser.add_argument("--prompt", default=None, help="agent.loop 용 prompt 바로 입력")
     create_parser.add_argument("--owner-key", default="cli-user", help="작업 소유자 키, 기본값은 cli-user")
@@ -602,7 +601,7 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
         if task_response.is_success:
             print("\n온보딩 완료. 이제 바로 사용할 수 있어.")
             print("- 상태 확인: py -3.11 -m app.cli status")
-            print("- 빠른 테스트: py -3.11 -m app.cli create-task --type agent.loop --prompt \"안녕하세요\"")
+            print("- 빠른 테스트: py -3.11 -m app.cli create-task --prompt \"안녕하세요\"")
             return 0
         print("\n연결은 완료됐지만 테스트 작업은 실패했어. 응답을 보고 확인해 줘.")
         return 1
@@ -632,7 +631,6 @@ def _handle_remote_command(args, settings: Settings) -> int:
                 "POST",
                 _request_path(settings, "/taskRuns"),
                 json_body={
-                    "intent_type": args.intent_type,
                     "owner_key": args.owner_key,
                     "input_payload": _build_task_input_payload(args),
                 },

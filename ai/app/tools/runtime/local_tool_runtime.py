@@ -8,14 +8,22 @@ from pathlib import Path
 from typing import Any
 
 from app.core.utils.ids import new_id
+from app.domain.session.sessions.transcript_store import TranscriptStore
 from app.tools.runtime.registry import build_runtime_tool_entries, list_runtime_tool_definitions
 from app.tools.runtime.toolsets import resolve_runtime_tool_names
 
 
 FILE_TOOL_NAMES = {"read_file", "write_file", "patch", "search_files"}
+# PoC 단계 3: terminal + file 4개를 사용자 PC 브릿지로 위임한다.
+# 분기 자리는 한 곳뿐이라 호출자(tool_calling_loop, transcript 기록)는 결과 dict가 같으면 변경을 인지할 필요 없음.
+BRIDGE_ROUTABLE_TOOLS = {"terminal.run", "read_file", "write_file", "patch", "search_files"}
 MAX_TERMINAL_STREAM_CHARS = 12_000
 MAX_TOOL_RESULT_STRING_CHARS = 20_000
 MAX_TOOL_RESULT_TRUNCATED_FIELDS = 20
+SECRET_FILE_NAME_PATTERN = re.compile(
+    r"(^|[._-])(secret|secrets|token|password|passwd|credential|credentials|env)($|[._-])",
+    re.IGNORECASE,
+)
 
 
 class LocalToolRuntime:
@@ -28,11 +36,13 @@ class LocalToolRuntime:
         self,
         *,
         skill_registry,
-        session_store,
+        session_store: TranscriptStore,
         workspace_root: str | os.PathLike[str] | None = None,
+        bridge_session_manager=None,
     ) -> None:
         self.skill_registry = skill_registry
         self.session_store = session_store
+        self.bridge_session_manager = bridge_session_manager
         self.workspace_root = self._resolve_workspace_root(workspace_root)
         self._step_items: list[dict[str, str]] = []
         self._todo_items: list[dict[str, str]] = []
@@ -40,11 +50,27 @@ class LocalToolRuntime:
             {
                 "skills.list": self._list_skills,
                 "skills.read": self._read_skill,
+                "skill.execute": self._execute_skill,
                 "session.record": self._record_session_message,
                 "session.search": self._search_sessions,
                 "step": self._step,
                 "todo": self._todo,
+                "delegate_task": self._delegate_task,
                 "terminal.run": self._run_terminal_command,
+                "web_search": self._run_web_search,
+                "web_extract": self._run_web_extract,
+                "web_crawl": self._run_web_crawl,
+                "browser_navigate": self._run_browser_navigate,
+                "browser_snapshot": self._run_browser_snapshot,
+                "browser_click": self._run_browser_click,
+                "browser_type": self._run_browser_type,
+                "browser_scroll": self._run_browser_scroll,
+                "browser_back": self._run_browser_back,
+                "browser_press": self._run_browser_press,
+                "browser_get_images": self._run_browser_get_images,
+                "browser_vision": self._run_browser_vision,
+                "browser_console": self._run_browser_console,
+                "browser_cdp": self._run_browser_cdp,
                 "read_file": self._read_file,
                 "write_file": self._write_file,
                 "patch": self._patch_file,
@@ -69,6 +95,7 @@ class LocalToolRuntime:
             skill_registry=self.skill_registry,
             session_store=self.session_store,
             workspace_root=workspace_root,
+            bridge_session_manager=self.bridge_session_manager,
         )
         bound._step_items = [dict(item) for item in self._step_items]
         bound._todo_items = [dict(item) for item in self._todo_items]
@@ -129,6 +156,15 @@ class LocalToolRuntime:
             )
 
         trusted_args = self._bind_trusted_runtime_args(tool_name=normalized_name, args=args)
+
+        # ★ PoC 단계 2 분기 ★
+        # 로컬 자원 도구는 사용자 PC 브릿지에 위임. 분기 자리는 여기 한 곳뿐이라
+        # 호출자(tool_calling_loop, transcript 기록 등)는 결과 dict 형식이 그대로면 변경을 인지할 필요 없음.
+        if normalized_name in BRIDGE_ROUTABLE_TOOLS and self.bridge_session_manager is not None:
+            bridge_result = self._maybe_route_via_bridge(tool_name=normalized_name, args=trusted_args)
+            if bridge_result is not None:
+                return self._cap_tool_result(bridge_result)
+
         try:
             result = entry.handler(trusted_args)
         except Exception as error:
@@ -146,6 +182,37 @@ class LocalToolRuntime:
             raise KeyError(name)
         return entry.handler(dict(args))
 
+    def _maybe_route_via_bridge(self, *, tool_name: str, args: dict[str, Any]) -> dict[str, Any] | None:
+        """브릿지가 연결돼 있으면 도구 호출을 위임하고 결과 dict를 그대로 반환한다.
+
+        결과 형식은 기존 로컬 실행과 동일해야 한다 (브릿지 executor가 맞춤).
+        브릿지 미연결·타임아웃 등은 _tool_error 형식으로 변환.
+        """
+
+        manager = self.bridge_session_manager
+        if manager is None or not manager.is_alive():
+            return self._tool_error(
+                code="bridge_not_connected",
+                message="로컬 브릿지가 연결되어 있지 않습니다",
+                tool_name=tool_name,
+            )
+
+        # 순환 import 방지를 위해 함수 내부에서 import.
+        from app.bridge import BridgeDisconnected, BridgeError, BridgeTimeout
+
+        try:
+            return manager.execute_sync(name=tool_name, args=args)
+        except BridgeTimeout as error:
+            return self._tool_error(code="bridge_timeout", message=str(error), tool_name=tool_name)
+        except BridgeDisconnected as error:
+            return self._tool_error(code="bridge_disconnected", message=str(error), tool_name=tool_name)
+        except BridgeError as error:
+            return self._tool_error(
+                code="bridge_error",
+                message=f"{type(error).__name__}: {error}",
+                tool_name=tool_name,
+            )
+
     def _list_skills(self, args: dict[str, Any]) -> dict[str, object]:
         names = sorted(getattr(self.skill_registry, "_skills", {}).keys())
         return {
@@ -162,6 +229,41 @@ class LocalToolRuntime:
             "name": skill_name,
             "path": str(skill.get("path") or ""),
             "body": str(skill.get("body") or ""),
+        }
+
+    def _execute_skill(self, args: dict[str, Any]) -> dict[str, object]:
+        skill_name = str(args.get("skill_name") or "").strip()
+        action = str(args.get("action") or "").strip()
+        if action != "inspect":
+            return self._tool_error(
+                code="unsupported_skill_action",
+                message=f"unsupported skill action: {action}",
+                tool_name="skill.execute",
+            )
+
+        skill = getattr(self.skill_registry, "_skills", {}).get(skill_name)
+        if skill is None:
+            return self._tool_error(
+                code="skill_not_found",
+                message=f"unknown skill: {skill_name}",
+                tool_name="skill.execute",
+            )
+
+        document_path = self._resolve_skill_document_path(skill.get("path"))
+        if document_path is not None and not self._is_allowed_skill_path(document_path):
+            return self._tool_error(
+                code="skill_path_not_allowed",
+                message="skill document path must stay inside app/skills",
+                tool_name="skill.execute",
+            )
+
+        return {
+            "ok": True,
+            "skill_name": skill_name,
+            "action": action,
+            "path": str(skill.get("path") or ""),
+            "files": self._list_skill_files(document_path),
+            "content": str(skill.get("body") or ""),
         }
 
     def _record_session_message(self, args: dict[str, Any]) -> dict[str, object]:
@@ -224,12 +326,66 @@ class LocalToolRuntime:
     def _search_files(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_file_tool_handler("search_files_handler", args)
 
+    def _run_web_search(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.web.web_tools", "web_search_handler", args)
+
+    def _run_web_extract(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.web.web_tools", "web_extract_handler", args)
+
+    def _run_web_crawl(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.web.web_tools", "web_crawl_handler", args)
+
+    def _run_browser_navigate(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_navigate_handler", args)
+
+    def _run_browser_snapshot(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_snapshot_handler", args)
+
+    def _run_browser_click(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_click_handler", args)
+
+    def _run_browser_type(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_type_handler", args)
+
+    def _run_browser_scroll(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_scroll_handler", args)
+
+    def _run_browser_back(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_back_handler", args)
+
+    def _run_browser_press(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_press_handler", args)
+
+    def _run_browser_get_images(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_get_images_handler", args)
+
+    def _run_browser_vision(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_vision_handler", args)
+
+    def _run_browser_console(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_console_handler", args)
+
+    def _run_browser_cdp(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_cdp_handler", args)
+
     @staticmethod
     def _run_file_tool_handler(handler_name: str, args: dict[str, Any]) -> dict[str, Any]:
         from app.tools.file import file_tools
 
         # 파일 도구 구현은 별도 모듈 소유라 실행 시점에만 함수 존재를 확인한다.
         handler = getattr(file_tools, handler_name)
+        result = handler(dict(args))
+        if isinstance(result, dict):
+            return result
+        return {"ok": True, "result": result}
+
+    @staticmethod
+    def _run_external_tool_handler(module_name: str, handler_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        # 검색/브라우저 실행 모듈은 선택 의존성이 많아 호출 시점에만 불러온다.
+        import importlib
+
+        module = importlib.import_module(module_name)
+        handler = getattr(module, handler_name)
         result = handler(dict(args))
         if isinstance(result, dict):
             return result
@@ -281,6 +437,51 @@ class LocalToolRuntime:
             "summary": summary or title or normalized["content"],
             "goal": goal or summary or title or normalized["content"],
             "status": normalized["status"],
+        }
+
+    def _delegate_task(self, args: dict[str, Any]) -> dict[str, Any]:
+        """worker 위임 요청을 실행 엔진이 해석할 수 있는 handoff 계약으로 정규화한다."""
+
+        goal = str(args.get("goal") or "").strip()
+        context = args.get("context")
+        profile_key = self._optional_text(args.get("profile_key")) or "worker.default"
+        toolsets = self._normalize_delegate_toolsets(args.get("toolsets"))
+        max_iterations = self._optional_positive_int(args.get("max_iterations"))
+        input_payload = {
+            "prompt": goal,
+            "goal": goal,
+            "context": context if context is not None else {},
+            "enabled_toolsets": toolsets,
+            "toolsets": toolsets,
+            "profile_key": profile_key,
+        }
+        if max_iterations is not None:
+            input_payload["max_iterations"] = max_iterations
+
+        child_session = {
+            "goal": goal,
+            "context": context if context is not None else {},
+            "toolsets": toolsets,
+            "max_iterations": max_iterations,
+            "role": "worker",
+            "profile_key": profile_key,
+            "agent_id": self._optional_text(args.get("agent_id")),
+            "tasks": args.get("tasks") if isinstance(args.get("tasks"), list) else [],
+            "acp_command": self._optional_text(args.get("acp_command")),
+            "acp_args": dict(args.get("acp_args") or {}) if isinstance(args.get("acp_args"), dict) else {},
+            "input_payload": input_payload,
+            "metadata": {
+                "profile_key": profile_key,
+            },
+        }
+        if max_iterations is None:
+            child_session.pop("max_iterations", None)
+
+        # parent transcript에는 수락 메시지만 남기고, worker 실행 계약은 별도 필드로 넘긴다.
+        return {
+            "ok": True,
+            "content": f"worker delegation accepted: {goal}",
+            "child_session": child_session,
         }
 
     def _run_terminal_command(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -449,6 +650,49 @@ class LocalToolRuntime:
         return Path(str(raw_root)).expanduser().resolve()
 
     @staticmethod
+    def _resolve_skill_document_path(value: Any) -> Path | None:
+        raw_value = str(value or "").strip()
+        if not raw_value:
+            return None
+        candidate = Path(raw_value).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path.cwd() / candidate
+        return candidate.resolve(strict=False)
+
+    @classmethod
+    def _is_allowed_skill_path(cls, path: Path) -> bool:
+        return cls._is_relative_to(
+            path.resolve(strict=False),
+            cls._default_skills_root().resolve(strict=False),
+        )
+
+    @staticmethod
+    def _default_skills_root() -> Path:
+        return Path(__file__).resolve().parents[2] / "skills"
+
+    @classmethod
+    def _list_skill_files(cls, document_path: Path | None) -> list[str]:
+        if document_path is None:
+            return []
+        skill_dir = document_path.parent
+        if not skill_dir.exists() or not skill_dir.is_dir():
+            return []
+
+        files: list[str] = []
+        for path in sorted(item for item in skill_dir.rglob("*") if item.is_file()):
+            relative_path = path.relative_to(skill_dir)
+            if cls._is_secret_skill_file(relative_path):
+                continue
+            files.append(relative_path.as_posix())
+            if len(files) >= 200:
+                break
+        return files
+
+    @staticmethod
+    def _is_secret_skill_file(relative_path: Path) -> bool:
+        return any(SECRET_FILE_NAME_PATTERN.search(part) for part in relative_path.parts)
+
+    @staticmethod
     def _is_relative_to(path: Path, root: Path) -> bool:
         try:
             path.relative_to(root)
@@ -475,6 +719,58 @@ class LocalToolRuntime:
     def _dedupe_todos(items: list[dict[str, str]]) -> list[dict[str, str]]:
         last_index_by_id = {item["id"]: index for index, item in enumerate(items)}
         return [items[index] for index in sorted(last_index_by_id.values())]
+
+    @staticmethod
+    def _normalize_delegate_toolsets(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return ["skills", "terminal", "file", "web"]
+        tool_name_to_toolset = {
+            "web_search": "web",
+            "web_extract": "web",
+            "web_crawl": "web",
+            "read_file": "file",
+            "write_file": "file",
+            "patch": "file",
+            "search_files": "file",
+            "terminal.run": "terminal",
+            "browser_navigate": "browser",
+            "browser_snapshot": "browser",
+            "browser_click": "browser",
+            "browser_type": "browser",
+            "browser_scroll": "browser",
+            "browser_back": "browser",
+            "browser_press": "browser",
+            "browser_get_images": "browser",
+            "browser_vision": "browser",
+            "browser_console": "browser",
+            "browser_cdp": "browser",
+        }
+        normalized: list[str] = []
+        for item in value:
+            name = str(item or "").strip()
+            if not name or name in {"delegate", "delegation", "delegate_task"} or name in normalized:
+                continue
+            # 모델이 toolset 이름 대신 실제 도구 이름을 넣어도 worker에는 올바른 toolset 계약을 넘긴다.
+            name = tool_name_to_toolset.get(name, name)
+            if name in normalized:
+                continue
+            normalized.append(name)
+        return normalized or ["skills", "terminal", "file", "web"]
+
+    @staticmethod
+    def _optional_positive_int(value: Any) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    @staticmethod
+    def _optional_text(value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        stripped = value.strip()
+        return stripped or None
 
     @staticmethod
     def _todo_summary(items: list[dict[str, str]]) -> dict[str, int]:

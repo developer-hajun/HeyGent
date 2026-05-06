@@ -4,10 +4,6 @@ CREATE TABLE IF NOT EXISTS task_runs (
     task_run_id TEXT PRIMARY KEY,
     -- 사용자가 요청한 작업 종류. 목록/필터링/라우팅 기준으로 쓴다.
     task_type TEXT NOT NULL,
-    -- 사용자가 요청한 의도 타입. flow 제거 이후 canonical intent 기준점으로 쓴다.
-    intent_type TEXT,
-    -- 처음 진입한 executor key. executor 실행 계층의 canonical entry 기준이다.
-    entry_executor_key TEXT,
     -- 현재 루프가 붙잡고 있는 StepRun ID. exact resume/waiting anchor 로 사용한다.
     current_step_run_id TEXT,
     -- 작업 소유 주체를 구분하는 키. 사용자/세션 범위를 나눌 때 필요하다.

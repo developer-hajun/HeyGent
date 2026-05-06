@@ -4,7 +4,22 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 
+from app.clients.backend_auth import BackendAuthVerifyResult
+from app.contracts.event.task_events import TaskEventEnvelope
+from app.contracts.task.task_status import TaskStatus
+from app.domain.orchestration.delegation.spec import ChildSessionLaunchResult
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse, AssistantToolCall
+from app.domain.tasks.models import StepRun, TaskRun
+from app.storage.redis import FakeRedis, RedisTaskProjectionStore
+
+
+class FakeBackendAuthClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, str | None]] = []
+
+    async def verify_access_token(self, access_token: str, *, workspace_key: str | None = None) -> BackendAuthVerifyResult:
+        self.calls.append({"access_token": access_token, "workspace_key": workspace_key})
+        return BackendAuthVerifyResult(user_id=access_token)
 
 
 def _response(*, text: str = "", tool_calls: list[AssistantToolCall] | None = None, model: str = "gpt-test") -> AgentModelResponse:
@@ -22,6 +37,24 @@ def _response(*, text: str = "", tool_calls: list[AssistantToolCall] | None = No
 
 def _tool_call(call_id: str, name: str, arguments: dict) -> AssistantToolCall:
     return AssistantToolCall(id=call_id, name=name, arguments=arguments)
+
+
+def _step_tool_call(call_id: str, *, step_id: str = "execute", title: str = "도구 실행") -> AssistantToolCall:
+    return _tool_call(
+        call_id,
+        "step",
+        {
+            "steps": [
+                {
+                    "id": step_id,
+                    "title": title,
+                    "summary": f"{title} 중",
+                    "goal": title,
+                    "status": "in_progress",
+                }
+            ]
+        },
+    )
 
 
 def _patch_respond(monkeypatch, responses: list[AgentModelResponse | Exception]) -> list[dict]:
@@ -46,6 +79,21 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
         [
             _response(
                 tool_calls=[
+                    _tool_call(
+                        "call_step",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "check",
+                                    "title": "요청 도구 실행 점검",
+                                    "summary": "필요한 도구를 실행한다.",
+                                    "goal": "요청 처리에 필요한 runtime tool을 확인하고 실행한다.",
+                                    "status": "in_progress",
+                                }
+                            ]
+                        },
+                    ),
                     _tool_call("call_skills", "skills_list", {}),
                     _tool_call(
                         "call_todo",
@@ -65,9 +113,8 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     )
 
     response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "tool-user",
             "session_key": "sess_native_loop",
             "input_payload": {"prompt": "필요하면 도구를 사용해 정리해줘.", "model": "gpt-test"},
@@ -77,17 +124,18 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "COMPLETED"
-    assert body["entry_executor_key"] == "agent.loop"
+    assert "task_type" in body
     assert body["result_payload"]["text"] == "NATIVE_LOOP_DONE"
-    assert [item["name"] for item in body["result_payload"]["tool_results"]] == ["skills.list", "todo", "terminal.run"]
+    assert [item["name"] for item in body["result_payload"]["tool_results"]] == ["step", "skills.list", "todo", "terminal.run"]
     assert body["todo_state"]["currentKey"] is None
     exposed_tool_names = [tool["function"]["name"] for tool in provider_calls[0]["tools"]]
     assert "skills_list" in exposed_tool_names
     assert "terminal_run" in exposed_tool_names
     assert all("." not in name for name in exposed_tool_names)
 
-    steps = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
     assert len(steps) == 1
+    assert steps[0]["title"] == "요청 도구 실행 점검"
     assert steps[0]["input_payload"].get("todo_key") is None
     assert steps[0]["status"] == "COMPLETED"
     todo_items = steps[0]["detail_json"]["planningDetail"]["todoItems"]
@@ -96,12 +144,320 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
 
     transcript_session = client.app.state.session_store.get_latest_session_by_key("sess_native_loop")
     transcript = client.app.state.session_store.list_messages(transcript_session["id"])
-    assert [message["role"] for message in transcript] == ["user", "assistant", "tool", "tool", "tool", "assistant"]
-    assert transcript[1]["tool_calls"][0]["id"] == "call_skills"
-    assert transcript[2]["tool_call_id"] == "call_skills"
+    assert [message["role"] for message in transcript] == ["user", "assistant", "tool", "tool", "tool", "tool", "assistant"]
+    assert transcript[1]["tool_calls"][0]["id"] == "call_step"
+    assert transcript[2]["tool_call_id"] == "call_step"
 
 
-def test_agent_loop_declared_steps_materialize_multiple_stepruns(client, monkeypatch):
+def test_agent_loop_emits_runtime_tool_progress_events_before_completion(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "progress-workspace"
+    workspace.mkdir()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_todo",
+                        "todo",
+                        {
+                            "todos": [
+                                {"id": "research", "content": "이승엽 기록 자료 조사", "status": "in_progress"},
+                                {"id": "write", "content": "이승엽 조사 보고서 파일 작성", "status": "pending"},
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_write",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/progress.md",
+                            "content": "progress file\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(text="파일 작성 완료"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "progress-user",
+            "input_payload": {
+                "prompt": "이승엽 보고서를 tmp/testfile/progress.md 파일로 작성해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (workspace / "tmp/testfile/progress.md").read_text(encoding="utf-8") == "progress file\n"
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    event_types = [event.event_type for event in events]
+    assert "tool.started" in event_types
+    assert "tool.completed" in event_types
+    assert event_types.index("tool.completed") < event_types.index("task.completed")
+
+    tool_completed = [event for event in events if event.event_type == "tool.completed"]
+    assert [event.payload["tool_name"] for event in tool_completed] == ["todo", "write_file"]
+    assert [event.status for event in tool_completed] == ["COMPLETED", "COMPLETED"]
+    assert tool_completed[0].summary_message == "이승엽 기록 자료 조사"
+    assert tool_completed[1].payload["path"] == "tmp/testfile/progress.md"
+
+
+def test_agent_loop_keeps_tool_progress_run_scoped_without_step_declaration(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "run-scoped-tool-workspace"
+    workspace.mkdir()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_write",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/fallback.md",
+                            "content": "fallback step\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(text="fallback done"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "fallback-step-user",
+            "input_payload": {
+                "prompt": "파일을 바로 작성해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert (workspace / "tmp/testfile/fallback.md").read_text(encoding="utf-8") == "fallback step\n"
+
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert steps == []
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    tool_started = next(event for event in events if event.event_type == "tool.started")
+    assert "step.created" not in [event.event_type for event in events]
+    assert "step.started" not in [event.event_type for event in events]
+    assert tool_started.step_run_id is None
+    assert "internal_step_anchor" not in tool_started.payload
+    assert "step_visibility" not in tool_started.payload
+
+
+def test_agent_loop_materializes_only_llm_declared_steps_after_run_scoped_tool_events(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "run-scoped-to-semantic-workspace"
+    workspace.mkdir()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_probe",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/probe.md",
+                            "content": "probe\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "research",
+                                    "title": "자료 조사",
+                                    "summary": "자료 조사 완료",
+                                    "goal": "근거를 확인한다.",
+                                    "status": "completed",
+                                },
+                                {
+                                    "id": "write",
+                                    "title": "보고서 작성",
+                                    "summary": "보고서 작성 중",
+                                    "goal": "결과를 문서로 정리한다.",
+                                    "status": "in_progress",
+                                },
+                            ]
+                        },
+                    )
+                ]
+            ),
+            _response(text="semantic steps done"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "fallback-semantic-user",
+            "input_payload": {
+                "prompt": "먼저 확인한 뒤 의미 단계를 선언해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert [step["status"] for step in steps] == ["COMPLETED", "COMPLETED"]
+    assert [step["title"] for step in steps] == ["자료 조사", "보고서 작성"]
+    assert all(step["input_payload"].get("progress_fallback_step") is None for step in steps)
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    probe_started = next(
+        event
+        for event in events
+        if event.event_type == "tool.started" and event.payload.get("tool_name") == "write_file"
+    )
+    step_created = next(event for event in events if event.event_type == "step.created")
+    task_completed = next(event for event in events if event.event_type == "task.completed")
+    assert probe_started.step_run_id is None
+    assert events.index(probe_started) < events.index(step_created)
+    assert events.index(step_created) < events.index(task_completed)
+
+
+def test_agent_loop_does_not_create_steprun_before_first_provider_call(client, monkeypatch):
+    observed_step_counts: list[int] = []
+
+    def fake_respond(self, messages, tools, model, tool_choice=None):
+        _ = (self, messages, tools, model, tool_choice)
+        tasks = client.app.state.repository.list_tasks(limit=10)
+        assert len(tasks) == 1
+        observed_step_counts.append(len(client.app.state.repository.list_steps(tasks[0].task_run_id)))
+        return _response(text="FIRST_PROVIDER_DONE")
+
+    monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond", fake_respond)
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.respond", fake_respond)
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "first-provider-user",
+            "input_payload": {
+                "prompt": "관련 자료를 조사하고 파일 초안을 작성해줘.",
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert observed_step_counts == [0]
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    event_types = [event.event_type for event in events]
+    assert "step.created" not in event_types
+    assert len(client.app.state.repository.list_steps(body["task_run_id"])) == 0
+
+
+def test_agent_loop_runs_provider_response_off_event_loop(client, monkeypatch):
+    to_thread_calls: list[str] = []
+
+    async def fake_to_thread(func, /, *args, **kwargs):
+        to_thread_calls.append(getattr(func, "__name__", repr(func)))
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr("app.domain.orchestration.agent.tool_calling_loop.asyncio.to_thread", fake_to_thread)
+    _patch_respond(monkeypatch, [_response(text="THREAD_PROVIDER_DONE")])
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "provider-thread-user",
+            "input_payload": {
+                "prompt": "provider 호출 thread 경계 확인",
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "COMPLETED"
+    assert to_thread_calls == ["fake_respond"]
+
+
+def test_step_events_use_llm_declared_step_title_as_realtime_summary(client, monkeypatch):
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "lee-records",
+                                    "title": "이승엽 기록 근거 확인",
+                                    "summary": "이승엽 기록 근거 확인 중",
+                                    "goal": "요청한 인물 조사에 필요한 근거를 확인한다.",
+                                    "status": "in_progress",
+                                }
+                            ]
+                        },
+                    )
+                ]
+            ),
+            _response(text="STEP_DECLARED_DONE"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "step-summary-user",
+            "input_payload": {
+                "prompt": "관련 자료를 조사하고 파일 초안을 작성해줘.",
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    step_created = [event for event in events if event.event_type == "step.created"]
+    step_started = [event for event in events if event.event_type == "step.started"]
+    event_types = [event.event_type for event in events]
+
+    assert [event.summary_message for event in step_created] == ["이승엽 기록 근거 확인 중"]
+    assert [event.payload["step_title"] for event in step_started] == ["이승엽 기록 근거 확인"]
+    assert event_types.index("step.created") < event_types.index("tool.started")
+    assert event_types.index("tool.completed") < event_types.index("step.completed")
+    tool_events = [event for event in events if event.event_type.startswith("tool.")]
+    assert all(event.step_run_id == body["current_step_run_id"] for event in tool_events)
+
+
+def test_agent_loop_declared_steps_materialize_multiple_observed_stepruns(client, monkeypatch):
     provider_calls = _patch_respond(
         monkeypatch,
         [
@@ -143,11 +499,10 @@ def test_agent_loop_declared_steps_materialize_multiple_stepruns(client, monkeyp
     )
 
     response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "declared-step-user",
-            "input_payload": {"prompt": "자료 조사하고 문서 초안까지 정리해줘.", "model": "gpt-test"},
+            "input_payload": {"prompt": "진행 단계를 선언하면서 처리해줘.", "model": "gpt-test"},
         },
     )
 
@@ -159,23 +514,423 @@ def test_agent_loop_declared_steps_materialize_multiple_stepruns(client, monkeyp
     exposed_tool_names = [tool["function"]["name"] for tool in provider_calls[0]["tools"]]
     assert "step" in exposed_tool_names
 
-    steps = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
     assert len(steps) == 3
     assert [step["title"] for step in steps] == ["뉴스 근거 자료 조사", "뉴스 브리핑 문서 초안 작성", "뉴스 브리핑 결과 검토"]
-    assert [step["summary_message"] for step in steps] == ["뉴스 근거 자료 조사 중", "뉴스 브리핑 문서 초안 작성 중", "뉴스 브리핑 결과 검토 중"]
     assert [step["input_payload"].get("observed_step_key") for step in steps] == ["research", "draft", "review"]
-    assert [step["semantic"]["key"] for step in steps] == ["observed.research", "observed.draft", "observed.review"]
+    assert steps[2]["summary_message"] == "뉴스 브리핑 결과 검토 중"
+    assert steps[2]["semantic"]["key"] == "observed.review"
     assert all(step["input_payload"].get("todo_key") is None for step in steps)
     assert all(step["status"] == "COMPLETED" for step in steps)
 
 
-def test_agent_loop_provider_timeout_fails_task_and_materializes_failed_step(client, monkeypatch):
+def test_agent_loop_switches_active_steprun_when_llm_declares_next_step(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "declared-progress-workspace"
+    workspace.mkdir()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step_research",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "research",
+                                    "title": "이승엽 기록 근거 조사",
+                                    "summary": "이승엽 기록 근거 조사 중",
+                                    "goal": "공식 기록과 주요 이력을 확인한다.",
+                                    "status": "in_progress",
+                                },
+                                {
+                                    "id": "write",
+                                    "title": "이승엽 조사 문서 작성",
+                                    "summary": "이승엽 조사 문서 작성 준비 중",
+                                    "goal": "확인한 내용을 마크다운 문서로 저장한다.",
+                                    "status": "pending",
+                                },
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_todo_research",
+                        "todo",
+                        {
+                            "todos": [
+                                {
+                                    "content": "이승엽 관련 공식 기록 확인",
+                                    "status": "in_progress",
+                                }
+                            ]
+                        },
+                    ),
+                ]
+            ),
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step_write",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "research",
+                                    "title": "이승엽 기록 근거 조사",
+                                    "summary": "이승엽 기록 근거 조사 완료",
+                                    "goal": "공식 기록과 주요 이력을 확인한다.",
+                                    "status": "completed",
+                                },
+                                {
+                                    "id": "write",
+                                    "title": "이승엽 조사 문서 작성",
+                                    "summary": "이승엽 조사 문서 작성 중",
+                                    "goal": "확인한 내용을 마크다운 문서로 저장한다.",
+                                    "status": "in_progress",
+                                },
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_write_file",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/lee.md",
+                            "content": "# 이승엽\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(text="작성 완료"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "declared-progress-user",
+            "input_payload": {
+                "prompt": "이승엽 정보를 조사하고 tmp/testfile/lee.md 파일로 작성해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert [step["title"] for step in steps] == ["이승엽 기록 근거 조사", "이승엽 조사 문서 작성"]
+    assert [step["input_payload"].get("observed_step_key") for step in steps] == ["research", "write"]
+    assert all(step["status"] == "COMPLETED" for step in steps)
+    assert body["current_step_run_id"] == steps[1]["step_run_id"]
+    assert (workspace / "tmp/testfile/lee.md").read_text(encoding="utf-8") == "# 이승엽\n"
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    step_created_events = [event for event in events if event.event_type == "step.created"]
+    step_started_events = [event for event in events if event.event_type == "step.started"]
+    todo_started_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "tool.started" and event.payload.get("tool_name") == "todo"
+    )
+    write_started_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "tool.started" and event.payload.get("tool_name") == "write_file"
+    )
+    write_step_created_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "step.created" and event.payload.get("step_title") == "이승엽 조사 문서 작성"
+    )
+    write_step_started_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.event_type == "step.started" and event.payload.get("step_title") == "이승엽 조사 문서 작성"
+    )
+
+    assert [event.payload["step_title"] for event in step_created_events] == [
+        "이승엽 기록 근거 조사",
+        "이승엽 조사 문서 작성",
+    ]
+    assert [event.payload["step_title"] for event in step_started_events] == [
+        "이승엽 기록 근거 조사",
+        "이승엽 조사 문서 작성",
+    ]
+    # LLM이 선언한 다음 StepRun shell은 실제 다음 도구가 실행되기 전에 먼저 프론트로 내려가야 한다.
+    assert write_step_created_index < todo_started_index
+    # pending shell은 현재 단계의 실제 도구가 도는 동안에는 started 되면 안 된다.
+    assert todo_started_index < write_step_started_index
+    # 다음 단계가 active로 전환될 때만 running 상태가 되고, 그 뒤에 실제 파일 도구가 붙는다.
+    assert write_step_started_index < write_started_index
+
+    assert [event.summary_message for event in step_created_events] == [
+        "이승엽 기록 근거 조사 중",
+        "이승엽 조사 문서 작성 준비 중",
+    ]
+
+    write_events = [
+        event
+        for event in events
+        if event.event_type.startswith("tool.") and event.payload.get("tool_name") == "write_file"
+    ]
+    assert write_events
+    assert all(event.step_run_id == steps[1]["step_run_id"] for event in write_events)
+    assert write_events[0].payload["input"]["path"] == "tmp/testfile/lee.md"
+    assert write_events[-1].payload["result"]["path"] == "tmp/testfile/lee.md"
+    assert len({event.step_run_id for event in events if event.event_type == "step.completed"}) == 2
+
+
+def test_agent_loop_does_not_move_tool_to_pending_steprun_without_llm_step_update(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "pending-tool-workspace"
+    workspace.mkdir()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "research",
+                                    "title": "이승엽 자료 조사",
+                                    "summary": "이승엽 주요 이력 조사 중",
+                                    "goal": "문서 작성 전에 이승엽 관련 근거를 확인한다.",
+                                    "status": "in_progress",
+                                },
+                                {
+                                    "id": "write",
+                                    "title": "이승엽 Markdown 문서 작성 및 저장",
+                                    "summary": "조사 내용을 Markdown 문서로 저장 준비 중",
+                                    "goal": "확인한 내용을 마크다운 파일로 작성해 저장한다.",
+                                    "status": "pending",
+                                },
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_write_file",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/lee-pending.md",
+                            "content": "# 이승엽\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(text="작성 완료"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "pending-tool-user",
+            "input_payload": {
+                "prompt": "이승엽에 대하여 조사하고 tmp/testfile 여기에 md 파일로 저장해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert [step["title"] for step in steps] == ["이승엽 자료 조사", "이승엽 Markdown 문서 작성 및 저장"]
+    assert [step["status"] for step in steps] == ["COMPLETED", "CANCELED"]
+    assert (workspace / "tmp/testfile/lee-pending.md").read_text(encoding="utf-8") == "# 이승엽\n"
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    write_tool_started = next(
+        event
+        for event in events
+        if event.event_type == "tool.started" and event.payload.get("tool_name") == "write_file"
+    )
+
+    # pending 단계는 화면 shell일 뿐이다. LLM이 다시 step 호출로 in_progress 전환하기 전에는
+    # tool 이름이나 파일 경로를 보고 서버가 임의로 해당 단계에 붙이지 않는다.
+    assert write_tool_started.step_run_id == steps[0]["step_run_id"]
+    assert not any(
+        event.event_type == "step.started" and event.step_run_id == steps[1]["step_run_id"]
+        for event in events
+    )
+    assert [
+        event.step_run_id
+        for event in events
+        if event.event_type == "step.completed"
+    ] == [steps[0]["step_run_id"]]
+    assert [
+        event.step_run_id
+        for event in events
+        if event.event_type == "step.canceled"
+    ] == [steps[1]["step_run_id"]]
+
+
+def test_agent_loop_keeps_delegate_step_running_until_worker_result_before_file_write(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "delegate-order-workspace"
+    workspace.mkdir()
+
+    async def fake_worker_start(**kwargs):
+        return ChildSessionLaunchResult(
+            agent_id="agent_web_research",
+            status=TaskStatus.COMPLETED,
+            summary="웹 자료 조사, 실무 운영 관점, 아키텍처 관점, 사용자 경험 관점 검토 완료",
+            output_payload={
+                "tool_results": [
+                    {"tool_call_id": "worker_web", "name": "web_search", "result": {"ok": True}},
+                ]
+            },
+        )
+
+    client.app.state.child_session_launcher.bind_worker_start(fake_worker_start)
+    provider_calls = _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step_plan",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "write",
+                                    "title": "종합 보고서와 관점별 md 파일 작성",
+                                    "summary": "조사 결과를 파일로 저장한다.",
+                                    "goal": "최종 보고서와 관점별 요약 파일을 만든다.",
+                                    "status": "pending",
+                                },
+                                {
+                                    "id": "research",
+                                    "title": "AI 서브에이전트 depth1 설계 관점별 조사",
+                                    "summary": "worker 서브에이전트로 관점별 조사를 진행한다.",
+                                    "goal": "관점별 조사 결과를 모은다.",
+                                    "status": "in_progress",
+                                },
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_delegate",
+                        "delegate_task",
+                        {
+                            "goal": "AI 서브에이전트 depth1 설계 관점별 조사",
+                            "context": "웹 자료, 실무 운영, 아키텍처, 사용자 경험 관점을 분리해 검토한다.",
+                            "toolsets": ["web", "file"],
+                            "max_iterations": 5,
+                        },
+                    ),
+                    _tool_call(
+                        "call_write_too_early",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/depth1/report.md",
+                            "content": "# premature\n",
+                        },
+                    ),
+                ]
+            ),
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_step_write",
+                        "step",
+                        {
+                            "steps": [
+                                {
+                                    "id": "research",
+                                    "title": "AI 서브에이전트 depth1 설계 관점별 조사",
+                                    "summary": "worker 서브에이전트 조사 완료",
+                                    "goal": "관점별 조사 결과를 모은다.",
+                                    "status": "completed",
+                                },
+                                {
+                                    "id": "write",
+                                    "title": "종합 보고서와 관점별 md 파일 작성",
+                                    "summary": "조사 결과를 파일로 저장한다.",
+                                    "goal": "최종 보고서와 관점별 요약 파일을 만든다.",
+                                    "status": "in_progress",
+                                },
+                            ]
+                        },
+                    ),
+                    _tool_call(
+                        "call_write_after_worker",
+                        "write_file",
+                        {
+                            "path": "tmp/testfile/depth1/report.md",
+                            "content": "# AI 서브에이전트 depth1 설계\n\nworker 조사 완료 후 작성\n",
+                        },
+                    )
+                ]
+            ),
+            _response(text="보고서 저장 완료"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "delegate-order-user",
+            "input_payload": {
+                "prompt": "AI 서브에이전트를 depth1로만 두는 설계를 조사하고 tmp/testfile 아래에 md로 정리해줘.",
+                "workspace_root": str(workspace),
+                "enabled_toolsets": ["local-core", "delegation", "file", "web"],
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert (workspace / "tmp/testfile/depth1/report.md").read_text(encoding="utf-8").startswith("# AI 서브에이전트 depth1 설계")
+
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert [step["title"] for step in steps] == [
+        "AI 서브에이전트 depth1 설계 관점별 조사",
+        "종합 보고서와 관점별 md 파일 작성",
+    ]
+    research_step, write_step = steps
+    assert research_step["detail_json"]["agentDetail"]["workerSessionId"] is not None
+    assert research_step["detail_json"]["agentDetail"]["workers"][0]["status"] == TaskStatus.COMPLETED
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    delegate_update = next(
+        event
+        for event in events
+        if event.event_type == "step.updated"
+        and event.step_run_id == research_step["step_run_id"]
+        and event.payload.get("reason") == "delegate.started"
+    )
+    write_tool_started = next(
+        event
+        for event in events
+        if event.event_type == "tool.started" and event.payload.get("tool_call_id") == "call_write_after_worker"
+    )
+    assert events.index(delegate_update) < events.index(write_tool_started)
+    assert write_tool_started.step_run_id == write_step["step_run_id"]
+
+    first_turn_tool_messages = [
+        message for message in provider_calls[1]["messages"]
+        if getattr(message, "tool_call_id", None) in {"call_delegate", "call_write_too_early"}
+    ]
+    assert "관점 검토 완료" in first_turn_tool_messages[0].content
+    assert "이번 turn에서 실행하지 않았습니다" in first_turn_tool_messages[1].content
+
+
+def test_agent_loop_provider_timeout_fails_task_without_fallback_step(client, monkeypatch):
     _patch_respond(monkeypatch, [TimeoutError("provider read timeout")])
 
     response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "timeout-user",
             "input_payload": {"prompt": "provider timeout을 실패로 저장해줘.", "model": "gpt-test"},
         },
@@ -186,34 +941,28 @@ def test_agent_loop_provider_timeout_fails_task_and_materializes_failed_step(cli
     assert body["status"] == "FAILED"
     assert body["error_message"] == "TimeoutError: provider read timeout"
     assert body["progress_summary"] == "작업 처리 중 오류가 발생했습니다."
-    assert body["current_step_run_id"]
+    assert body["current_step_run_id"] is None
 
-    steps = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps").json()
-    assert len(steps) == 1
-    assert steps[0]["step_run_id"] == body["current_step_run_id"]
-    assert steps[0]["status"] == "FAILED"
-    assert steps[0]["error_message"] == "TimeoutError: provider read timeout"
-    assert steps[0]["summary_message"] == "작업 처리 중 오류가 발생했습니다."
-    operations = steps[0]["detail_json"]["operationDetail"]["operations"]
-    assert operations[-1]["key"] == "executor.failure"
-    assert operations[-1]["status"] == "failed"
-    assert operations[-1]["summary"] == "TimeoutError: provider read timeout"
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert steps == []
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    task_failed_event = next(event for event in events if event.event_type == "task.failed")
+    assert task_failed_event.step_run_id is None
+    assert task_failed_event.payload["error_message"] == "TimeoutError: provider read timeout"
 
 
-def test_agent_loop_explicit_task_plan_continues_across_plan_step_anchors(client, monkeypatch):
-    _patch_respond(
+def test_agent_loop_explicit_task_plan_is_reference_only_until_llm_declares_steps(client, monkeypatch):
+    provider_calls = _patch_respond(
         monkeypatch,
         [
-            _response(text="ANALYZE_DONE"),
-            _response(text="WRITE_DONE"),
-            _response(text="SHARE_DONE"),
+            _response(text="PLAN_REFERENCE_DONE"),
         ],
     )
 
     response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "explicit-plan-user",
             "input_payload": {
                 "prompt": "명시 계획을 순서대로 처리해줘.",
@@ -232,13 +981,89 @@ def test_agent_loop_explicit_task_plan_continues_across_plan_step_anchors(client
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "COMPLETED"
-    assert body["result_payload"]["text"] == "SHARE_DONE"
+    assert body["result_payload"]["text"] == "PLAN_REFERENCE_DONE"
+    assert len(provider_calls) == 1
 
-    steps = client.get(f"/api/v1/taskRuns/{body['task_run_id']}/steps").json()
-    assert len(steps) == 3
-    assert [step["input_payload"].get("plan_step_key") for step in steps] == ["analyze", "write", "share"]
-    assert [step["input_payload"].get("plan_step_title") for step in steps] == ["요청 분석", "초안 작성", "결과 공유"]
-    assert all(step["input_payload"].get("todo_key") is None for step in steps)
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert steps == []
+
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    assert [event.event_type for event in events if event.event_type == "step.created"] == []
+
+def test_agent_loop_does_not_inject_prompt_plan_from_keywords(client, monkeypatch):
+    provider_calls = _patch_respond(
+        monkeypatch,
+        [
+            _response(text="KEYWORD_PROMPT_DONE"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "prompt-plan-user",
+            "input_payload": {
+                "prompt": "관련 자료를 조사하고 파일 초안을 작성해줘.",
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert body["result_payload"]["text"] == "KEYWORD_PROMPT_DONE"
+    assert len(provider_calls) == 1
+    saved_task = client.app.state.repository.get_task(body["task_run_id"])
+    assert "task_plan" not in saved_task.input_payload
+    assert "task_plan_source" not in saved_task.input_payload
+
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert steps == []
+
+
+def test_agent_loop_todo_does_not_force_prompt_plan_step_boundary(client, monkeypatch):
+    provider_calls = _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _tool_call(
+                        "call_todo",
+                        "todo",
+                        {
+                            "todos": [
+                                {"id": "write", "content": "초안 작성", "status": "completed"},
+                            ]
+                        },
+                    )
+                ]
+            ),
+            _response(text="TODO_DONE"),
+        ],
+    )
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "prompt-plan-todo-user",
+            "input_payload": {
+                "prompt": "관련 자료를 조사하고 파일 초안을 작성해줘.",
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert body["result_payload"]["text"] == "TODO_DONE"
+    assert len(provider_calls) == 2
+
+    steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
+    assert steps == []
+    events = client.app.state.repository.list_events(body["task_run_id"])
+    assert [event.event_type for event in events if event.event_type == "step.completed"] == []
 
 
 def test_agent_loop_uses_input_workspace_root_for_file_and_terminal_runtime(client, monkeypatch, tmp_path):
@@ -278,9 +1103,8 @@ def test_agent_loop_uses_input_workspace_root_for_file_and_terminal_runtime(clie
     )
 
     response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "workspace-root-user",
             "input_payload": {
                 "prompt": "요청 workspace에서 파일과 터미널 작업을 실행해줘.",
@@ -306,20 +1130,49 @@ def test_agent_loop_uses_input_workspace_root_for_file_and_terminal_runtime(clie
     assert len(provider_calls) == 2
 
 
+def test_agent_loop_does_not_fail_file_prompt_with_static_intent_check(client, monkeypatch, tmp_path):
+    workspace = tmp_path / "missing-file-write-workspace"
+    workspace.mkdir()
+    _patch_respond(monkeypatch, [_response(text="파일 작성 완료")])
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "missing-file-write-user",
+            "input_payload": {
+                "prompt": "이승엽 조사 보고서를 tmp/testfile/missing.md 파일로 작성해줘.",
+                "workspace_root": str(workspace),
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "COMPLETED"
+    assert body["error_message"] is None
+    assert not (workspace / "tmp/testfile/missing.md").exists()
+    assert body["result_payload"]["tool_results"] == []
+
+
 def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch):
     _patch_respond(
         monkeypatch,
         [
-            _response(tool_calls=[_tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT_OK')"]})]),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_approval", title="승인 후 터미널 확인"),
+                    _tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT_OK')"]}),
+                ]
+            ),
             _response(tool_calls=[_tool_call("call_followup", "terminal_run", {"argv": [sys.executable, "-c", "print('FOLLOWUP_OK')"]})]),
             _response(text="APPROVED_DONE"),
         ],
     )
 
     create_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "approval-user",
             "input_payload": {
                 "prompt": "승인 후 터미널 확인을 진행해줘.",
@@ -336,12 +1189,12 @@ def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch
     assert created["wait_payload"]["pending_tool_name"] == "terminal.run"
     assert created["current_step_run_id"]
 
-    events = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/events").json()
+    events = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/events").json()
     approval_id = next(event["payload"]["approval_id"] for event in events if event["event_type"] == "approval.requested")
     waiting_step_id = created["current_step_run_id"]
 
     resume_response = client.post(
-        f"/api/v1/taskRuns/{created['task_run_id']}/resume",
+        f"/ai/api/v1/taskRuns/{created['task_run_id']}/resume",
         json={"approval_id": approval_id, "payload": {"approved": True}},
     )
 
@@ -352,7 +1205,7 @@ def test_agent_loop_waits_for_approval_and_resumes_same_step(client, monkeypatch
     assert resumed["result_payload"]["text"] == "APPROVED_DONE"
     assert [item["tool_call_id"] for item in resumed["result_payload"]["tool_results"]] == ["call_terminal", "call_followup"]
 
-    resumed_events = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/events").json()
+    resumed_events = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/events").json()
     assert [event["event_type"] for event in resumed_events].count("approval.requested") == 1
 
 
@@ -360,15 +1213,19 @@ def test_agent_loop_resume_provider_runtime_error_fails_existing_step(client, mo
     _patch_respond(
         monkeypatch,
         [
-            _response(tool_calls=[_tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_resume_error", title="승인 후 provider 오류 확인"),
+                    _tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT')"]}),
+                ]
+            ),
             RuntimeError("provider unavailable"),
         ],
     )
 
     create_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "resume-error-user",
             "input_payload": {
                 "prompt": "승인 후 provider 오류를 실패로 저장해줘.",
@@ -381,11 +1238,11 @@ def test_agent_loop_resume_provider_runtime_error_fails_existing_step(client, mo
     assert created["status"] == "WAITING"
     waiting_step_id = created["current_step_run_id"]
 
-    events = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/events").json()
+    events = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/events").json()
     approval_id = next(event["payload"]["approval_id"] for event in events if event["event_type"] == "approval.requested")
 
     resume_response = client.post(
-        f"/api/v1/taskRuns/{created['task_run_id']}/resume",
+        f"/ai/api/v1/taskRuns/{created['task_run_id']}/resume",
         json={"approval_id": approval_id, "payload": {"approved": True}},
     )
 
@@ -395,11 +1252,15 @@ def test_agent_loop_resume_provider_runtime_error_fails_existing_step(client, mo
     assert resumed["current_step_run_id"] == waiting_step_id
     assert resumed["error_message"] == "RuntimeError: provider unavailable"
 
-    steps = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/steps").json()
+    steps = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/steps").json()
     assert len(steps) == 1
     assert steps[0]["step_run_id"] == waiting_step_id
     assert steps[0]["status"] == "FAILED"
     assert steps[0]["error_message"] == "RuntimeError: provider unavailable"
+    operations = steps[0]["detail_json"]["operationDetail"]["operations"]
+    assert operations[-3]["key"] == "handler.diagnose"
+    assert operations[-2]["key"] == "handler.retry.unavailable"
+    assert operations[-1]["key"] == "handler.failure"
     approval_detail = steps[0]["detail_json"]["approvalDetail"]
     assert approval_detail["approvalRequested"] is False
     assert approval_detail["approvalId"] == approval_id
@@ -410,15 +1271,19 @@ def test_taskruns_resume_rejects_missing_approval_id_for_waiting_task(client, mo
     _patch_respond(
         monkeypatch,
         [
-            _response(tool_calls=[_tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_missing_approval", title="승인 대기 확인"),
+                    _tool_call("call_terminal", "terminal_run", {"argv": [sys.executable, "-c", "print('WAIT')"]}),
+                ]
+            ),
             _response(text="SHOULD_NOT_RESUME"),
         ],
     )
 
     create_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "approval-missing-user",
             "input_payload": {"prompt": "승인 대기", "approval_required": True},
         },
@@ -428,37 +1293,45 @@ def test_taskruns_resume_rejects_missing_approval_id_for_waiting_task(client, mo
     assert created["status"] == "WAITING"
 
     resume_response = client.post(
-        f"/api/v1/taskRuns/{created['task_run_id']}/resume",
+        f"/ai/api/v1/taskRuns/{created['task_run_id']}/resume",
         json={"payload": {"approved": True}},
     )
 
     assert resume_response.status_code == 409
     assert "approval id is required" in resume_response.json()["detail"]
-    assert client.get(f"/api/v1/taskRuns/{created['task_run_id']}").json()["status"] == "WAITING"
+    assert client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}").json()["status"] == "WAITING"
 
 
 def test_taskruns_resume_rejects_approval_id_from_other_waiting_task(client, monkeypatch):
     _patch_respond(
         monkeypatch,
         [
-            _response(tool_calls=[_tool_call("call_task_a", "terminal_run", {"argv": [sys.executable, "-c", "print('A')"]})]),
-            _response(tool_calls=[_tool_call("call_task_b", "terminal_run", {"argv": [sys.executable, "-c", "print('B')"]})]),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_task_a", title="A 작업 승인 대기"),
+                    _tool_call("call_task_a", "terminal_run", {"argv": [sys.executable, "-c", "print('A')"]}),
+                ]
+            ),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_task_b", title="B 작업 승인 대기"),
+                    _tool_call("call_task_b", "terminal_run", {"argv": [sys.executable, "-c", "print('B')"]}),
+                ]
+            ),
             _response(text="SHOULD_NOT_RESUME"),
         ],
     )
 
     task_a_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "approval-a",
             "input_payload": {"prompt": "A 작업", "approval_required": True},
         },
     )
     task_b_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "approval-b",
             "input_payload": {"prompt": "B 작업", "approval_required": True},
         },
@@ -468,31 +1341,35 @@ def test_taskruns_resume_rejects_approval_id_from_other_waiting_task(client, mon
     task_a = task_a_response.json()
     task_b = task_b_response.json()
 
-    task_b_events = client.get(f"/api/v1/taskRuns/{task_b['task_run_id']}/events").json()
+    task_b_events = client.get(f"/ai/api/v1/taskRuns/{task_b['task_run_id']}/events").json()
     task_b_approval_id = next(event["payload"]["approval_id"] for event in task_b_events if event["event_type"] == "approval.requested")
 
     resume_response = client.post(
-        f"/api/v1/taskRuns/{task_a['task_run_id']}/resume",
+        f"/ai/api/v1/taskRuns/{task_a['task_run_id']}/resume",
         json={"approval_id": task_b_approval_id, "payload": {"approved": True}},
     )
 
     assert resume_response.status_code == 409
     assert "does not match open approval" in resume_response.json()["detail"]
-    assert client.get(f"/api/v1/taskRuns/{task_a['task_run_id']}").json()["status"] == "WAITING"
+    assert client.get(f"/ai/api/v1/taskRuns/{task_a['task_run_id']}").json()["status"] == "WAITING"
 
 
 def test_taskruns_cancel_records_pending_tool_result_without_resuming_loop(client, monkeypatch):
     provider_calls = _patch_respond(
         monkeypatch,
         [
-            _response(tool_calls=[_tool_call("call_cancel", "terminal_run", {"argv": [sys.executable, "-c", "print('CANCEL')"]})]),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_cancel", title="취소될 터미널 실행"),
+                    _tool_call("call_cancel", "terminal_run", {"argv": [sys.executable, "-c", "print('CANCEL')"]}),
+                ]
+            ),
         ],
     )
 
     create_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "cancel-user",
             "session_key": "sess_cancel_pending",
             "input_payload": {
@@ -506,34 +1383,32 @@ def test_taskruns_cancel_records_pending_tool_result_without_resuming_loop(clien
     created = create_response.json()
     assert created["status"] == "WAITING"
 
-    cancel_response = client.post(f"/api/v1/taskRuns/{created['task_run_id']}/cancel")
+    cancel_response = client.post(f"/ai/api/v1/taskRuns/{created['task_run_id']}/cancel")
 
     assert cancel_response.status_code == 200
     canceled = cancel_response.json()
     assert canceled["status"] == "CANCELED"
     assert len(provider_calls) == 1
 
-    steps = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/steps").json()
+    steps = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/steps").json()
     step = next(item for item in steps if item["step_run_id"] == created["current_step_run_id"])
     tool_results = step["output_payload"]["tool_results"]
-    assert tool_results[0]["tool_call_id"] == "call_cancel"
-    assert tool_results[0]["name"] == "terminal.run"
-    assert tool_results[0]["result"]["ok"] is False
-    assert tool_results[0]["result"]["error"]["code"] == "tool_canceled"
+    canceled_tool = next(item for item in tool_results if item["tool_call_id"] == "call_cancel")
+    assert canceled_tool["name"] == "terminal.run"
+    assert canceled_tool["result"]["ok"] is False
+    assert canceled_tool["result"]["error"]["code"] == "tool_canceled"
 
     transcript_session = client.app.state.session_store.get_latest_session_by_key("sess_cancel_pending")
     transcript = client.app.state.session_store.list_messages(transcript_session["id"])
     tool_messages = [message for message in transcript if message["role"] == "tool"]
-    assert len(tool_messages) == 1
-    assert tool_messages[0]["tool_call_id"] == "call_cancel"
-    assert tool_messages[0]["tool_name"] == "terminal.run"
+    canceled_tool_message = next(message for message in tool_messages if message["tool_call_id"] == "call_cancel")
+    assert canceled_tool_message["tool_name"] == "terminal.run"
 
 
 def test_taskruns_resume_and_cancel_reject_non_waiting_task(client):
     create_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "non-waiting-user",
             "input_payload": {"prompt": "바로 완료되는 작업"},
         },
@@ -542,37 +1417,34 @@ def test_taskruns_resume_and_cancel_reject_non_waiting_task(client):
     created = create_response.json()
     assert created["status"] == "COMPLETED"
 
-    resume_response = client.post(f"/api/v1/taskRuns/{created['task_run_id']}/resume", json={"payload": {"approved": True}})
+    resume_response = client.post(f"/ai/api/v1/taskRuns/{created['task_run_id']}/resume", json={"payload": {"approved": True}})
     assert resume_response.status_code == 409
     assert resume_response.json()["detail"] == "task is not waiting"
 
-    cancel_response = client.post(f"/api/v1/taskRuns/{created['task_run_id']}/cancel")
+    cancel_response = client.post(f"/ai/api/v1/taskRuns/{created['task_run_id']}/cancel")
     assert cancel_response.status_code == 409
     assert cancel_response.json()["detail"] == "task is not waiting"
 
 
-def test_removed_legacy_routing_is_rejected(client):
+def test_removed_request_route_field_is_rejected(client):
     legacy_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "model.generate",
+            "removed_route": "model.generate",
             "owner_key": "legacy-user",
             "input_payload": {"prompt": "legacy"},
         },
     )
-    assert legacy_response.status_code == 400
-    assert "legacy intent routing has been removed" in legacy_response.json()["detail"]
+    assert legacy_response.status_code == 422
 
     workflow_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "workflow-user",
-            "input_payload": {"prompt": "workflow", "workflow_key": "workspace_publish_to_notion"},
+            "input_payload": {"prompt": "workflow", "workflow_hint": "legacy.workflow"},
         },
     )
-    assert workflow_response.status_code == 400
-    assert "workflow_key routing has been removed" in workflow_response.json()["detail"]
+    assert workflow_response.status_code == 200
 
 
 def test_runtime_tool_error_is_model_observation_not_immediate_task_failure(client, monkeypatch):
@@ -585,9 +1457,8 @@ def test_runtime_tool_error_is_model_observation_not_immediate_task_failure(clie
     )
 
     response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "restricted-tools-user",
             "input_payload": {
                 "prompt": "terminal tool should be reported as unavailable here.",
@@ -609,22 +1480,31 @@ def test_taskruns_active_supports_session_filter_and_recent_terminal(client, mon
         monkeypatch,
         [
             _response(text="DONE"),
-            _response(tool_calls=[_tool_call("call_terminal", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
-            _response(tool_calls=[_tool_call("call_terminal", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]})]),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_waiting", title="대기 작업 터미널 실행"),
+                    _tool_call("call_terminal", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]}),
+                ]
+            ),
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_other_waiting", title="다른 대기 작업 터미널 실행"),
+                    _tool_call("call_terminal", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]}),
+                ]
+            ),
         ],
     )
 
     completed_response = client.post(
-        "/api/v1/taskRuns",
-        json={"intent_type": "agent.loop", "owner_key": "completed-user", "input_payload": {"prompt": "완료 작업"}},
+        "/ai/api/v1/taskRuns",
+        json={"owner_key": "completed-user", "input_payload": {"prompt": "완료 작업"}},
     )
     assert completed_response.status_code == 200
     completed_task = completed_response.json()
 
     waiting_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "waiting-user",
             "session_key": "sess_a",
             "input_payload": {"prompt": "대기 작업", "approval_required": True},
@@ -634,7 +1514,7 @@ def test_taskruns_active_supports_session_filter_and_recent_terminal(client, mon
     waiting_task = waiting_response.json()
     assert waiting_task["status"] == "WAITING"
 
-    active_response = client.get("/api/v1/taskRuns/active", params={"sessionKey": "sess_a"})
+    active_response = client.get("/ai/api/v1/taskRuns/active", params={"sessionId": "sess_a"})
     assert active_response.status_code == 200
     active_body = active_response.json()
     assert active_body["total_count"] == 1
@@ -651,18 +1531,376 @@ def test_taskruns_active_supports_session_filter_and_recent_terminal(client, mon
 
     completed_at = datetime.fromisoformat(completed_task["updated_at"])
     monkeypatch.setattr("app.api.http.tasks.utc_now", lambda: completed_at + timedelta(seconds=301))
-    expired_active = client.get("/api/v1/taskRuns/active", params={"sessionKey": "missing"})
+    expired_active = client.get("/ai/api/v1/taskRuns/active", params={"sessionId": "missing"})
     assert expired_active.status_code == 200
     assert expired_active.json()["items"] == []
 
 
+def test_taskruns_active_filters_by_session_id(client):
+    client.app.state.repository.create_task(
+        TaskRun(
+            task_run_id="task_session_match",
+            task_type="agent.loop",
+            owner_key="session-user",
+            session_key="target_session",
+            status="RUNNING",
+            title="sessionId 작업",
+        )
+    )
+    client.app.state.repository.create_task(
+        TaskRun(
+            task_run_id="task_other_session",
+            task_type="agent.loop",
+            owner_key="other-user",
+            session_key="other_session",
+            status="RUNNING",
+            title="다른 세션 작업",
+        )
+    )
+
+    response = client.get(
+        "/ai/api/v1/taskRuns/active",
+        params={"sessionId": "target_session"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 1
+    assert body["items"][0]["task_run_id"] == "task_session_match"
+    assert body["items"][0]["session_key"] == "target_session"
+
+
+def test_taskruns_rejects_removed_session_aliases(client):
+    create_response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "alias-user",
+            "sessionKey": "legacy_create_session",
+            "productSessionId": "removed_create_session",
+            "input_payload": {"prompt": "옛 세션 alias는 거절한다.", "model": "gpt-test"},
+        },
+    )
+    active_response = client.get(
+        "/ai/api/v1/taskRuns/active",
+        params={"sessionKey": "legacy_session", "productSessionId": "removed_session"},
+    )
+
+    assert create_response.status_code == 422
+    assert active_response.status_code == 422
+
+
+def test_public_session_message_creates_taskrun_and_stores_public_transcript(client, monkeypatch):
+    _patch_respond(monkeypatch, [_response(text="PUBLIC_SESSION_DONE")])
+
+    message_response = client.post(
+        "/ai/api/v1/sessions/messages",
+        json={"content": "공개 세션 메시지를 처리해줘.", "model": "gpt-test"},
+    )
+
+    assert message_response.status_code == 200
+    body = message_response.json()
+    session_id = body["sessionId"]
+    assert body["sessionId"] == session_id
+    assert body["status"] == "COMPLETED"
+    assert body["taskRunId"].startswith("task_")
+    assert body["assistantMessage"]["content"] == "PUBLIC_SESSION_DONE"
+    assert body["assistantMessage"]["taskRunId"] == body["taskRunId"]
+    assert body["userMessage"]["role"] == "user"
+
+    messages = client.get(f"/ai/api/v1/sessions/{session_id}/messages").json()
+    assert [message["role"] for message in messages["items"]] == ["user", "assistant"]
+    assert [message["content"] for message in messages["items"]] == ["공개 세션 메시지를 처리해줘.", "PUBLIC_SESSION_DONE"]
+
+    task = client.get(f"/ai/api/v1/taskRuns/{body['taskRunId']}").json()
+    assert task["session_key"] == session_id
+
+
+def test_public_session_message_rejects_new_session_over_limit(client, monkeypatch):
+    _patch_respond(monkeypatch, [_response(text="LIMIT_TEST")])
+    client.app.state.settings.public_session_limit_per_user = 1
+    session_store = client.app.state.session_store
+    session_store.create_session(
+        session_id="existing_public_session",
+        session_key="existing_public_session",
+        source="api.session",
+        user_id="local-user",
+        title="이미 있는 세션",
+    )
+
+    response = client.post(
+        "/ai/api/v1/sessions/messages",
+        json={"content": "새 세션을 하나 더 만들려고 한다.", "model": "gpt-test"},
+    )
+
+    assert response.status_code == 409
+    assert "public session limit exceeded" in response.json()["detail"]
+
+
+def test_public_sessions_list_and_get_only_public_sessions(client):
+    session_store = client.app.state.session_store
+    session_store.create_session(
+        session_id="public_session_visible",
+        session_key="public_session_visible",
+        source="api.session",
+        user_id="local-user",
+        title="보이는 세션",
+    )
+    session_store.create_session(
+        session_id="agent_session_hidden",
+        session_key="public_session_visible",
+        source="agent.loop",
+        user_id="local-user",
+        title="숨겨진 내부 세션",
+    )
+
+    list_response = client.get("/ai/api/v1/sessions")
+    detail_response = client.get("/ai/api/v1/sessions/public_session_visible")
+    hidden_response = client.get("/ai/api/v1/sessions/agent_session_hidden")
+
+    assert list_response.status_code == 200
+    assert [item["sessionId"] for item in list_response.json()["items"]] == ["public_session_visible"]
+    assert detail_response.status_code == 200
+    assert detail_response.json()["title"] == "보이는 세션"
+    assert hidden_response.status_code == 404
+
+
+def test_agent_session_messages_returns_wrapper_after_numeric_message_id(client):
+    session_store = client.app.state.session_store
+    session_store.create_session(
+        session_id="agent_session_messages_api",
+        session_key="session_messages",
+        source="agent.loop",
+        user_id="messages-user",
+        model="gpt-test",
+        title="messages API",
+    )
+    first_id = session_store.append_message(session_id="agent_session_messages_api", role="user", content="첫 메시지")
+    second_id = session_store.append_message(session_id="agent_session_messages_api", role="assistant", content="둘째 메시지")
+    session_store.append_message(session_id="agent_session_messages_api", role="tool", content="셋째 메시지", tool_name="terminal.run")
+
+    response = client.get(
+        "/ai/api/v1/agentSessions/agent_session_messages_api/messages",
+        params={"afterMessageId": first_id, "limit": 1},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["agentSessionId"] == "agent_session_messages_api"
+    assert body["afterMessageId"] == first_id
+    assert body["limit"] == 1
+    assert body["totalCount"] == 1
+    assert body["nextAfterMessageId"] == second_id
+    assert [message["id"] for message in body["items"]] == [second_id]
+    assert body["items"][0]["role"] == "assistant"
+    assert body["items"][0]["content"] == "둘째 메시지"
+
+
+def test_agent_session_messages_returns_not_found_for_authenticated_missing_session(client):
+    client.app.state.backend_auth_client = FakeBackendAuthClient()
+
+    response = client.get(
+        "/ai/api/v1/agentSessions/missing_agent_session/messages",
+        headers={"Authorization": "Bearer messages-user"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "agent session not found"
+
+
+def test_authenticated_http_request_passes_workspace_key_hint_to_backend(client):
+    auth_client = FakeBackendAuthClient()
+    client.app.state.backend_auth_client = auth_client
+
+    response = client.get(
+        "/ai/api/v1/taskRuns/active",
+        params={"sessionId": "workspace-hint-session", "workspaceKey": "workspace-a"},
+        headers={"Authorization": "Bearer owner-a", "X-Workspace-Key": "workspace-header"},
+    )
+
+    assert response.status_code == 200
+    assert auth_client.calls == [{"access_token": "owner-a", "workspace_key": "workspace-header"}]
+
+
+def test_taskruns_create_rejects_second_active_task_in_same_session(client, monkeypatch):
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_active_lock", title="첫 작업 승인 대기"),
+                    _tool_call("call_active_lock", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]}),
+                ]
+            ),
+            _response(text="SHOULD_NOT_START"),
+        ],
+    )
+
+    first_response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "active-lock-user",
+            "session_key": "sess_active_lock",
+            "input_payload": {"prompt": "첫 작업은 승인 대기", "approval_required": True},
+        },
+    )
+    assert first_response.status_code == 200
+    assert first_response.json()["status"] == "WAITING"
+
+    second_response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "active-lock-user",
+            "session_key": "sess_active_lock",
+            "input_payload": {"prompt": "동일 세션 두 번째 작업"},
+        },
+    )
+
+    assert second_response.status_code == 409
+    assert "active task already exists" in second_response.json()["detail"]
+
+
+def test_taskruns_create_active_lock_is_scoped_by_authenticated_owner(client, monkeypatch):
+    client.app.state.backend_auth_client = FakeBackendAuthClient()
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                tool_calls=[
+                    _step_tool_call("call_step_owner_a", title="owner-a 승인 대기"),
+                    _tool_call("call_owner_a_wait", "terminal.run", {"argv": [sys.executable, "-c", "print('WAIT')"]}),
+                ]
+            ),
+            _response(text="OWNER_B_DONE"),
+        ],
+    )
+
+    first_response = client.post(
+        "/ai/api/v1/taskRuns",
+        headers={"Authorization": "Bearer owner-a"},
+        json={
+            "owner_key": "ignored-owner",
+            "session_key": "shared_session",
+            "input_payload": {"prompt": "owner-a 작업은 승인 대기", "approval_required": True},
+        },
+    )
+    assert first_response.status_code == 200
+    assert first_response.json()["status"] == "WAITING"
+
+    second_response = client.post(
+        "/ai/api/v1/taskRuns",
+        headers={"Authorization": "Bearer owner-b"},
+        json={
+            "owner_key": "ignored-owner",
+            "session_key": "shared_session",
+            "input_payload": {"prompt": "owner-b는 같은 sessionId라도 별도 사용자"},
+        },
+    )
+
+    assert second_response.status_code == 200
+    body = second_response.json()
+    assert body["session_key"] == "shared_session"
+    assert body["status"] == "COMPLETED"
+    assert client.app.state.repository.get_task(body["task_run_id"]).owner_key == "owner-b"
+
+
+def test_taskruns_create_uses_redis_active_session_lock_before_start(client, monkeypatch):
+    _patch_respond(monkeypatch, [_response(text="SHOULD_NOT_START")])
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
+    client.app.state.task_projection_store = projection
+    assert projection.acquire_active_session_lock("sess_locked_by_redis", "existing_task", owner_key="active-lock-user") is True
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        json={
+            "owner_key": "active-lock-user",
+            "session_key": "sess_locked_by_redis",
+            "input_payload": {"prompt": "Redis lock이 있으면 시작하면 안 됨"},
+        },
+    )
+
+    assert response.status_code == 409
+    assert "active task already exists" in response.json()["detail"]
+
+
+def test_taskruns_active_prefers_redis_projection_for_live_session(client):
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
+    client.app.state.task_projection_store = projection
+    task = TaskRun(
+        task_run_id="task_projection_active",
+        task_type="agent.loop",
+        owner_key="projection-user",
+        session_key="sess_projection",
+        status="RUNNING",
+        title="projection 작업",
+        progress_summary="projection 실행 중",
+    )
+    step = StepRun(
+        step_run_id="step_projection_active",
+        task_run_id=task.task_run_id,
+        step_order=1,
+        step_type="agent.loop.execute",
+        status="RUNNING",
+        title="projection 단계",
+    )
+    task.current_step_run_id = step.step_run_id
+    projection.save_task_snapshot(task)
+    projection.save_step_snapshot(step)
+
+    response = client.get("/ai/api/v1/taskRuns/active", params={"sessionId": "sess_projection"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 1
+    assert body["items"][0]["task_run_id"] == "task_projection_active"
+    assert body["items"][0]["source"] == "active"
+    assert body["items"][0]["current_step"]["step_run_id"] == "step_projection_active"
+
+
+def test_taskruns_events_reads_redis_recent_projection_with_sequence_window(client):
+    projection = RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60)
+    client.app.state.task_projection_store = projection
+    for index in range(3):
+        projection.append_event(
+            TaskEventEnvelope(
+                event_id=f"event_projection_{index}",
+                event_type="task.updated",
+                task_run_id="task_projection_events",
+                step_run_id="step_projection_events",
+                producer="test",
+                occurred_at=f"2026-04-29T00:00:0{index}+00:00",
+                status="RUNNING",
+                summary_message=f"event {index}",
+            )
+        )
+
+    response = client.get(
+        "/ai/api/v1/taskRuns/task_projection_events/events",
+        params={"afterSequence": 1, "limit": 1},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["event_id"] == "event_projection_1"
+    assert body[0]["sequence"] == 2
+
+
 def test_taskruns_flow_returns_observed_step_node(client, monkeypatch):
-    _patch_respond(monkeypatch, [_response(text="FLOW_OK")])
+    _patch_respond(
+        monkeypatch,
+        [
+            _response(
+                text=(
+                    "안녕하세요. 현재 연결은 정상으로 보이며, 로컬 도구 호출도 가능한 상태입니다.\n"
+                    "지금 바로 파일 조회, 검색, 터미널 실행, 계획 단계 설정 등을 진행할 수 있습니다."
+                )
+            )
+        ],
+    )
 
     create_response = client.post(
-        "/api/v1/taskRuns",
+        "/ai/api/v1/taskRuns",
         json={
-            "intent_type": "agent.loop",
             "owner_key": "flow-user",
             "input_payload": {"prompt": "흐름 확인", "model": "gpt-test"},
         },
@@ -670,10 +1908,9 @@ def test_taskruns_flow_returns_observed_step_node(client, monkeypatch):
 
     assert create_response.status_code == 200
     created = create_response.json()
-    flow_response = client.get(f"/api/v1/taskRuns/{created['task_run_id']}/flow")
+    flow_response = client.get(f"/ai/api/v1/taskRuns/{created['task_run_id']}/flow")
     assert flow_response.status_code == 200
     flow = flow_response.json()
-    assert flow["entry_executor_key"] == "agent.loop"
-    assert len(flow["nodes"]) == 1
-    assert flow["nodes"][0]["semantic"]["key"] == "agent.loop"
-    assert flow["nodes"][0]["is_current"] is True
+    assert "nodes" in flow
+    assert flow["nodes"] == []
+    assert "현재 연결은 정상" in flow["summary"]

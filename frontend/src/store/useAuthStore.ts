@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { UserInfo } from '@/apis/users'
+import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
+import { useChatStore } from '@/store/useChatStore'
+import { useTaskRunStore } from '@/store/useTaskRunStore'
 
 interface AuthState {
   accessToken: string | null
@@ -22,13 +25,22 @@ export const useAuthStore = create<AuthState>()(
       setTokens: (accessToken, refreshToken) =>
         set({ accessToken, refreshToken, isAuthenticated: true }),
       setUserInfo: (userInfo) => set({ userInfo }),
-      clearTokens: () =>
-        set({ accessToken: null, refreshToken: null, isAuthenticated: false, userInfo: null }),
+      clearTokens: () => {
+        useAiRealtimeStore.getState().resetRealtimeState()
+        useChatStore.getState().clearChatState()
+        useTaskRunStore.getState().clearTaskRunState()
+        set({ accessToken: null, refreshToken: null, isAuthenticated: false, userInfo: null })
+      },
     }),
     {
       name: 'heygent-auth',
-      // accessToken은 메모리에만, refreshToken만 localStorage에 유지
-      partialize: (state) => ({ refreshToken: state.refreshToken }),
+      // 새로고침 후에도 AI WebSocket auth.start를 바로 보낼 수 있게 accessToken도 로그아웃 전까지 유지한다.
+      partialize: (state) => ({
+        accessToken: state.accessToken,
+        refreshToken: state.refreshToken,
+        isAuthenticated: state.isAuthenticated,
+        userInfo: state.userInfo,
+      }),
     },
   ),
 )

@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 from app.domain.providers.model import BaseProvider
-from app.tools.contracts import ExecutorSpec, OperationTemplate
+from app.tools.contracts import HandlerSpec, OperationTemplate
 
 
-class AgentLoopExecutor:
-    """TaskRun 을 agent.loop 중심 실행으로 연결하는 executor 다."""
+class AgentLoopHandler:
+    """TaskRun 을 agent.loop 중심 실행으로 연결하는 handler 다."""
 
-    spec = ExecutorSpec(
-        intent_type="agent.loop",
-        entry_executor_key="agent.loop",
-        executor_key="agent.loop",
+    spec = HandlerSpec(
         task_type="agent.loop",
         task_title="agent loop 요청",
         step_type="agent.loop.execute",
@@ -23,13 +20,13 @@ class AgentLoopExecutor:
     )
 
     def __init__(self, provider: BaseProvider, prompt_manager, tool_runtime, tool_catalog, session_store=None) -> None:
-        from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopExecutor
+        from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopHandler
 
         self.provider = provider
         self.prompt_manager = prompt_manager
         self.tool_runtime = tool_runtime
         self.tool_catalog = tool_catalog
-        self.loop_executor = ToolCallingLoopExecutor(
+        self.loop_handler = ToolCallingLoopHandler(
             provider=provider,
             prompt_builder=prompt_manager,
             tool_runtime=tool_runtime,
@@ -38,4 +35,13 @@ class AgentLoopExecutor:
         )
 
     def execute(self, *, task, step=None, resume_payload=None):
-        return self.loop_executor.execute(task=task, step=step, resume_payload=resume_payload)
+        return self.loop_handler.execute(task=task, step=step, resume_payload=resume_payload)
+
+    async def execute_async(self, *, task, step=None, resume_payload=None, progress_sink=None, delegate_executor=None):
+        return await self.loop_handler.execute_async(
+            task=task,
+            step=step,
+            resume_payload=resume_payload,
+            progress_sink=progress_sink,
+            delegate_executor=delegate_executor,
+        )

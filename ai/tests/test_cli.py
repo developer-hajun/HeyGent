@@ -62,10 +62,10 @@ def _make_test_access_token() -> str:
 
 
 def test_remote_client_does_not_duplicate_api_prefix():
-    client = RemoteCLIClient(base_url="http://127.0.0.1:8000/api/v1", timeout_seconds=10)
+    client = RemoteCLIClient(base_url="http://127.0.0.1:8000/ai/api/v1", timeout_seconds=10)
 
-    assert client._normalize_request_path("/api/v1/providers/openai_oauth/auth") == "/providers/openai_oauth/auth"
-    assert client._normalize_request_path("/api/v1/ready") == "/ready"
+    assert client._normalize_request_path("/ai/api/v1/providers/openai_oauth/auth") == "/providers/openai_oauth/auth"
+    assert client._normalize_request_path("/ai/api/v1/ready") == "/ready"
 
 
 def test_slash_command_completer_matches_prefix():
@@ -108,7 +108,7 @@ def test_render_box_keeps_terminal_width_aligned():
         [
             ("model", "gpt-5.4"),
             ("directory", r"C:\Users\Jun\Desktop\saffy\Openclaw\S14P31E105\ai"),
-            ("base-url", "http://127.0.0.1:8000/api/v1"),
+            ("base-url", "http://127.0.0.1:8000/ai/api/v1"),
         ],
         inner_padding=2,
         vertical_padding=1,
@@ -176,7 +176,7 @@ def test_tasks_browser_renders_task_step_and_step_detail_views(monkeypatch):
         detail_task={
             "task_run_id": "task_wait",
             "task_type": "approval.wait",
-            "entry_executor_key": "approval.wait",
+            "step_type": "approval.wait",
             "status": "WAITING",
             "title": "승인 대기 태스크",
             "input_payload": {"subject": "배포 전 승인해줘"},
@@ -315,8 +315,6 @@ def test_tasks_browser_navigation_works_without_extra_prompt(monkeypatch):
                             {
                                 "task_run_id": "task_1",
                                 "task_type": "agent.loop",
-                                "intent_type": "agent.loop",
-                                "entry_executor_key": "agent.loop",
                                 "status": "COMPLETED",
                                 "title": "모델 생성 요청",
                                 "input_summary": "헤르메스 알아?",
@@ -360,8 +358,6 @@ def test_tasks_browser_navigation_works_without_extra_prompt(monkeypatch):
                 {
                     "task_run_id": "task_1",
                     "task_type": "agent.loop",
-                    "intent_type": "agent.loop",
-                    "entry_executor_key": "agent.loop",
                     "status": "COMPLETED",
                     "title": "agent loop 요청",
                     "input_payload": {"prompt": "헤르메스 알아?"},
@@ -664,7 +660,7 @@ def test_initial_login_choice_uses_windows_console_arrows(monkeypatch, capsys):
 def test_remote_client_keeps_origin_base_url_paths():
     client = RemoteCLIClient(base_url="http://127.0.0.1:8000", timeout_seconds=10)
 
-    assert client._normalize_request_path("/api/v1/providers/openai_oauth/auth") == "/api/v1/providers/openai_oauth/auth"
+    assert client._normalize_request_path("/ai/api/v1/providers/openai_oauth/auth") == "/ai/api/v1/providers/openai_oauth/auth"
 
 
 def test_shell_slash_tasks_runs_browser(monkeypatch):
@@ -689,7 +685,7 @@ def test_cli_create_task_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    exit_code = main(["--mode", "local", "create-task", "--type", "agent.loop", "--prompt", "cli"])
+    exit_code = main(["--mode", "local", "create-task", "--prompt", "cli"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
@@ -701,11 +697,10 @@ def test_cli_create_task_prompt_shortcut(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-prompt.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    exit_code = main(["--mode", "local", "create-task", "--type", "agent.loop", "--prompt", "한 줄 요약해줘"])
+    exit_code = main(["--mode", "local", "create-task", "--prompt", "한 줄 요약해줘"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
-    assert '"intent_type": "agent.loop"' in captured
     assert '"status": "COMPLETED"' in captured
 
 
@@ -832,8 +827,6 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
                 {
                     "task_run_id": "task_test",
                     "task_type": "agent.loop",
-                    "intent_type": "agent.loop",
-                    "entry_executor_key": "agent.loop",
                     "status": "COMPLETED",
                     "input_payload": {"prompt": "테스트"},
                     "result_payload": {"provider_name": "openai_oauth", "text": "연결 확인 완료", "metadata": {"mode": "live"}},
@@ -848,7 +841,7 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
 
     class FakeListener:
         def wait(self, timeout, *, poll_interval=0.2):
-            return {"ok": True, "payload": fake_client.request("POST", "/api/v1/providers/openai_oauth/callback").json()}
+            return {"ok": True, "payload": fake_client.request("POST", "/ai/api/v1/providers/openai_oauth/callback").json()}
 
         def close(self):
             return None
@@ -982,8 +975,6 @@ def test_cli_shell_interrupt(monkeypatch, tmp_path, capsys):
             {
                 "task_run_id": "task_interrupt",
                 "task_type": "agent.loop",
-                "intent_type": "agent.loop",
-                "entry_executor_key": "agent.loop",
                 "status": "COMPLETED",
                 "input_payload": {"prompt": prompt},
                 "result_payload": {"provider_name": "openai_oauth", "text": "늦게 도착한 응답", "metadata": {"mode": "live", "model": "gpt-5.4"}},
@@ -1047,7 +1038,7 @@ def test_cli_shell_auth_asks_before_reconnect(monkeypatch, capsys):
 
     monkeypatch.setattr(CLI_MAIN_MODULE, "_handle_openai_onboarding", fail_onboarding)
 
-    exit_code = main(["--base-url", "http://127.0.0.1:8000/api/v1"])
+    exit_code = main(["--base-url", "http://127.0.0.1:8000/ai/api/v1"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
@@ -1125,7 +1116,7 @@ def test_cli_shell_initial_login_runs_before_banner(monkeypatch, capsys):
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     monkeypatch.setattr(CLI_MAIN_MODULE, "_build_transport", lambda args: fake_client)
 
-    exit_code = main(["--base-url", "http://127.0.0.1:8000/api/v1"])
+    exit_code = main(["--base-url", "http://127.0.0.1:8000/ai/api/v1"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
@@ -1161,7 +1152,7 @@ def test_cli_shell_initial_login_ctrl_c_exits(monkeypatch, capsys):
     monkeypatch.setattr(PROMPT_UI, "_supports_windows_console_choice", lambda: False)
     monkeypatch.setattr(PROMPT_UI, "supports_interactive_choice", lambda: False)
 
-    exit_code = main(["--base-url", "http://127.0.0.1:8000/api/v1"])
+    exit_code = main(["--base-url", "http://127.0.0.1:8000/ai/api/v1"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
@@ -1194,7 +1185,7 @@ def test_cli_shell_initial_login_wait_cancel_exits_without_banner(monkeypatch, c
     monkeypatch.setattr(PROMPT_UI, "_supports_windows_console_choice", lambda: False)
     monkeypatch.setattr(PROMPT_UI, "supports_interactive_choice", lambda: False)
 
-    exit_code = main(["--base-url", "http://127.0.0.1:8000/api/v1"])
+    exit_code = main(["--base-url", "http://127.0.0.1:8000/ai/api/v1"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
@@ -1229,5 +1220,5 @@ def test_cli_command_help(capsys):
 
     assert exit_code == 0
     assert "[HeyGent CLI] create-task 도움말" in captured
-    assert "--type" in captured
+    assert "--prompt" in captured
 

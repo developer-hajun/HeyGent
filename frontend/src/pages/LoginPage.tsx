@@ -48,9 +48,9 @@ export function LoginPage() {
   }
 
   return (
-    <div className="flex h-screen w-full flex-col items-center justify-center bg-[#f2f3f8] px-6 dark:bg-[#0f1117]">
+    <div className="flex h-screen w-full flex-col items-center justify-center bg-[#f2f3f8] px-4 sm:px-6 dark:bg-[#0f1117]">
       {/* Card */}
-      <div className="w-full max-w-sm space-y-8 rounded-3xl border border-black/[0.06] bg-white px-8 py-10 shadow-xl dark:border-white/[0.08] dark:bg-white/[0.05]">
+      <div className="w-full max-w-sm space-y-8 rounded-3xl border border-black/6 bg-white px-6 py-8 shadow-xl sm:px-8 sm:py-10 dark:border-white/8 dark:bg-white/5">
         {/* Logo */}
         <div className="flex flex-col items-center gap-1">
           <span

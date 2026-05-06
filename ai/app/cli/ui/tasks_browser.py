@@ -55,7 +55,7 @@ STEP_TITLE_FALLBACKS = {
 }
 SUMMARY_FALLBACKS = {
     "agent loop completed": "agent loop 완료",
-    "echo executor completed": "입력 메시지 반영 완료",
+    "echo handler completed": "입력 메시지 반영 완료",
     "child delegation completed": "Child 세션 위임 완료",
     "approval required": "사용자 승인이 필요함",
     "approval completed": "사용자 승인 완료",
@@ -202,10 +202,9 @@ def _style_line(text: str, *, selected: bool = False, muted: bool = False, accen
 def _friendly_task_title(payload: dict[str, Any]) -> str:
     title = str(payload.get("title") or "").strip()
     task_type = str(payload.get("task_type") or "").strip()
-    intent_type = str(payload.get("intent_type") or "").strip()
-    if title and title not in {task_type, intent_type}:
+    if title and title != task_type:
         return _truncate_text(title, limit=42)
-    return _truncate_text(TASK_TITLE_FALLBACKS.get(task_type) or TASK_TITLE_FALLBACKS.get(intent_type) or intent_type or task_type or "Task", limit=42)
+    return _truncate_text(TASK_TITLE_FALLBACKS.get(task_type) or task_type or "Task", limit=42)
 
 
 
@@ -472,7 +471,7 @@ def render_task_detail(state: TaskBrowserState) -> str:
         f"상태: {task.get('status') or '-'}",
         f"입력: {_task_detail_input_summary(task)}",
         "TaskRun = 전체 작업 / StepRun = 한 단계 / detail_json = step 저장 실행 정보",
-        f"step: {len(steps)}개   executor: {task.get('entry_executor_key') or '-'}",
+        f"step: {len(steps)}개",
         f"최근 갱신: {_format_time(task.get('updated_at') or task.get('created_at'))}",
         "",
         *_render_step_preview_lines(state),
@@ -544,8 +543,8 @@ def _step_detail_summary_lines(step: dict[str, Any]) -> list[str]:
         f"- LLM 호출: {llm_detail.get('callCount') or 0}회 ({llm_detail.get('model') or '-'})",
         f"- Operation: {operation_detail.get('completedCount') or 0}/{operation_detail.get('totalCount') or 0}",
         f"- 남은 todo: {planning_detail.get('currentKey') or '없음'}",
-        f"- Child task: {agent_detail.get('childTaskRunId') or '없음'}",
-        f"- Child 요약: {agent_detail.get('summary') or '없음'}",
+        f"- 작업 세션: {agent_detail.get('workerSessionId') or '없음'}",
+        f"- 작업 요약: {agent_detail.get('summary') or '없음'}",
     ]
 
 

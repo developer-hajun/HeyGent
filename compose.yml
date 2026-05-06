@@ -31,7 +31,19 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: heygent-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - ${MOSQUITTO_CONF:-./docker/mosquitto/mosquitto.conf}:/mosquitto/config/mosquitto.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_pub -h localhost -p 1883 -t healthcheck -m ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   # 앱
   backend:
     build:
@@ -48,10 +60,15 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-heygent}
       SPRING_DATA_REDIS_HOST: redis
       SPRING_DATA_REDIS_PORT: 6379
+      IOT_MQTT_ENABLED: "true"
+      IOT_MQTT_HOST: mosquitto
+      IOT_MQTT_PORT: 1883
     depends_on:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      mosquitto:
         condition: service_healthy
     # actuator 가 아직 의존성에 없어서 8080 포트가 LISTEN 상태인지로 대신 검사한다.
     # 운영 단계에서는 actuator 도입 후 /actuator/health 로 옮긴다.
@@ -70,6 +87,18 @@ services:
     ports:
       - "8000:8000"
     env_file: ./ai/.env
+    # AI runtime 파일 도구가 컨테이너 내부 임시 경로가 아니라
+    # docker compose를 실행한 프로젝트 루트를 작업 공간으로 보게 한다.
+    # 현재는 실제 파일 읽기/쓰기 흐름을 우선 검증하기 위한 연결이며,
+    # 작업 범위를 좁혀야 하면 별도 workspace 디렉터리만 mount한다.
+    volumes:
+      - .:/workspace
+    environment:
+      # 컨테이너 내부에서 AI 파일 도구가 기준으로 삼는 작업 루트.
+      - HEYGENT_WORKSPACE_ROOT=/workspace
+      # Windows 절대 경로가 들어왔을 때 프로젝트 루트명을 기준으로
+      # /workspace 하위 상대 경로로 정규화하기 위한 힌트.
+      - HEYGENT_HOST_WORKSPACE_BASENAME=S14P31E105
     depends_on:
       backend:
         condition: service_healthy
