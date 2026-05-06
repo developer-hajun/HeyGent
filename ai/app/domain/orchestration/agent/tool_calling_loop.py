@@ -10,6 +10,7 @@ from app.contracts.task.task_status import TaskStatus
 from app.core.utils.ids import new_id
 from app.domain.orchestration.agent.tool_guard import ToolGuard, ToolGuardDecision, ToolGuardResult
 from app.domain.providers.model.base import AgentMessage, ToolResultMessage
+from app.domain.orchestration.prompts.prompt_builder import assemble_agent_loop_messages
 from app.domain.session.sessions.transcript_store import TranscriptStore
 from app.domain.orchestration.runtime_planning.todo_state import (
     apply_tool_results_to_todo_state,
@@ -44,7 +45,10 @@ class ToolCallingLoopHandler:
     async def execute_async(self, *, task, step, resume_payload=None, progress_sink=None, delegate_executor=None) -> dict[str, Any]:
         task_input = dict(task.input_payload or {})
         # 요청 payload의 workspace_root는 API 호출자가 선택한 이번 실행 root로 바인딩한다.
-        request_tool_runtime = self._bind_request_tool_runtime(task_input.get("workspace_root"))
+        request_tool_runtime = self._bind_request_tool_runtime(
+            workspace_root=task_input.get("workspace_root"),
+            owner_key=getattr(task, "owner_key", None),
+        )
         requested_toolsets = self._requested_toolsets(task_input)
         available_tools = self.tool_catalog.list_available_tools(requested_toolsets=requested_toolsets)
         operation_counters: dict[str, int] = {}
@@ -122,9 +126,10 @@ class ToolCallingLoopHandler:
                 )
                 messages = self._order_tool_results_for_replay(messages)
                 current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
-        user_message = AgentMessage(role="user", content=prompt)
-        messages.append(user_message)
-        self._append_transcript_message(transcript_session_id, user_message)
+        new_turn_messages = self._new_turn_messages(task_input=task_input, prompt=prompt, replay_messages=messages)
+        messages.extend(new_turn_messages)
+        for message in new_turn_messages:
+            self._append_transcript_message(transcript_session_id, message)
         generated = None
         llm_call_count = 0
 
@@ -313,6 +318,32 @@ class ToolCallingLoopHandler:
             resume_payload=resume_payload,
             todo_state=current_todo_state,
             operation_counters=operation_counters,
+        )
+
+    def _new_turn_messages(
+        self,
+        *,
+        task_input: dict[str, Any],
+        prompt: str,
+        replay_messages: list[AgentMessage | ToolResultMessage],
+    ) -> list[AgentMessage]:
+        """새 user turn에 필요한 provider message를 만든다.
+
+        transcript replay가 이미 있으면 approval 재개나 tool_call continuation 상태이므로 공개 대화
+        history를 다시 섞지 않는다. 새 공개 대화 턴에서만 product history를 native message로 앞에 붙인다.
+        """
+
+        if replay_messages:
+            return [AgentMessage(role="user", content=prompt)]
+        history = task_input.get("conversation_history")
+        if not isinstance(history, list) or not history:
+            return [AgentMessage(role="user", content=prompt)]
+        system_prompt_snapshot = self._optional_text(task_input.get("system_prompt_snapshot")) or ""
+        return assemble_agent_loop_messages(
+            system_prompt_snapshot=system_prompt_snapshot,
+            conversation_history=[item for item in history if isinstance(item, dict)],
+            current_user_prompt="",
+            runtime_prompt_suffix=prompt,
         )
 
     @classmethod
@@ -739,7 +770,10 @@ class ToolCallingLoopHandler:
             return text[:80]
         return cls._optional_text(args.get("command"))
 
-    def _bind_request_tool_runtime(self, workspace_root: Any):
+    def _bind_request_tool_runtime(self, *, workspace_root: Any, owner_key: Any):
+        context_binder = getattr(self.tool_runtime, "bind_request_context", None)
+        if callable(context_binder):
+            return context_binder(workspace_root=workspace_root, owner_key=owner_key)
         binder = getattr(self.tool_runtime, "bind_workspace_root", None)
         if callable(binder):
             return binder(workspace_root)

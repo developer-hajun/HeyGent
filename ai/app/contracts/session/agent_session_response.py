@@ -12,14 +12,19 @@ class SessionResponse(BaseModel):
     session_id: str = Field(alias="sessionId", description="AI 세션 ID입니다. 메시지 전송과 조회에 사용합니다.")
     title: str | None = Field(default=None, description="세션 제목입니다.")
     owner_key: str | None = Field(default=None, alias="ownerKey", description="세션 소유자 ID입니다.")
+    owner_user_id: int | None = Field(default=None, alias="ownerUserId", description="DB users(id)와 연결된 세션 소유자 ID입니다.")
     status: str | None = Field(default=None, description="세션 상태입니다. 예: ACTIVE, COMPLETED, FAILED.")
     source: str | None = Field(default=None, description="세션 종류입니다. main은 일반 사용자 대화, worker는 격리된 하위 작업 세션입니다.")
     parent_session_id: str | None = Field(default=None, alias="parentSessionId", description="worker 세션이면 부모 세션 ID가 들어갑니다.")
     message_count: int = Field(default=0, alias="messageCount", description="세션에 저장된 메시지 개수입니다.")
     metadata: dict[str, Any] = Field(default_factory=dict, description="세션 부가 정보입니다.")
+    settings: dict[str, Any] = Field(default_factory=dict, description="다음 메시지 실행에 복사할 세션별 실행 설정입니다.")
     created_at: datetime | float | str | None = Field(default=None, alias="createdAt", description="세션 생성 시각입니다.")
     updated_at: datetime | float | str | None = Field(default=None, alias="updatedAt", description="마지막 메시지나 상태 변경 시각입니다.")
     ended_at: datetime | float | str | None = Field(default=None, alias="endedAt", description="세션 종료 시각입니다. 진행 중이면 비어 있습니다.")
+    archived_at: datetime | float | str | None = Field(default=None, alias="archivedAt", description="세션이 아카이브된 시각입니다.")
+    deleted_at: datetime | float | str | None = Field(default=None, alias="deletedAt", description="세션 삭제 요청이 기록된 시각입니다.")
+    purge_after: datetime | float | str | None = Field(default=None, alias="purgeAfter", description="보존 기간이 끝난 뒤 물리 정리 가능한 시각입니다.")
 
 
 class SessionListResponse(BaseModel):
@@ -54,8 +59,31 @@ class CreateSessionMessageRequest(BaseModel):
         ),
     )
     content: str = Field(min_length=1, description="사용자가 보낸 메시지 본문입니다. 이 값이 모델에 전달되는 기본 prompt가 됩니다.")
+    client_message_id: str | None = Field(default=None, alias="clientMessageId", description="HTTP 재시도 중복 실행을 막기 위한 클라이언트 메시지 ID입니다.")
     model: str | None = Field(default=None, max_length=100, description="이번 메시지 처리에 사용할 모델 이름입니다. 비워 두면 서버 기본 모델을 사용합니다.")
     input_payload: dict[str, Any] = Field(default_factory=dict, alias="inputPayload", description="첨부, 실행 옵션 같은 추가 입력입니다. 서버는 content를 기본 prompt로 넣습니다.")
+
+
+class UpdateSessionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=120, description="변경할 세션 제목입니다.")
+    metadata_patch: dict[str, Any] | None = Field(default=None, alias="metadataPatch", description="서버가 허용한 표시용 metadata만 변경합니다.")
+    client_command_id: str | None = Field(default=None, alias="clientCommandId", description="클라이언트 재시도 추적용 command ID입니다.")
+
+
+class ArchiveSessionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    archived: bool = Field(default=True, description="true면 아카이브하고 false면 기본 목록으로 복원합니다.")
+    client_command_id: str | None = Field(default=None, alias="clientCommandId", description="클라이언트 재시도 추적용 command ID입니다.")
+
+
+class UpdateSessionSettingsRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    settings: dict[str, Any] = Field(default_factory=dict, description="model, systemPrompt, toolsets, delegationPolicy만 저장할 수 있습니다.")
+    client_command_id: str | None = Field(default=None, alias="clientCommandId", description="클라이언트 재시도 추적용 command ID입니다.")
 
 
 class SessionMessageResponse(BaseModel):

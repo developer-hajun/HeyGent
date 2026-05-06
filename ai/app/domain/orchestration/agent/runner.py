@@ -41,6 +41,7 @@ class AgentLoopRunner:
             session_key=request.session_key,
             input_payload=request.input_payload,
             handler=handler,
+            task_run_id=request.task_run_id,
         )
         return await self.task_engine.run(task=task, handler=handler)
 

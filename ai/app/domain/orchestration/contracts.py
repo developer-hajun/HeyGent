@@ -11,6 +11,7 @@ class OrchestrationRequest:
     owner_key: str
     session_key: str | None
     input_payload: dict[str, Any]
+    task_run_id: str | None = None
 
 
 ORCHESTRATION_DETAIL_KEY = "orchestration"
