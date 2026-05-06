@@ -39,10 +39,12 @@ class LocalToolRuntime:
         session_store: TranscriptStore,
         workspace_root: str | os.PathLike[str] | None = None,
         bridge_session_manager=None,
+        owner_key: str | None = None,
     ) -> None:
         self.skill_registry = skill_registry
         self.session_store = session_store
         self.bridge_session_manager = bridge_session_manager
+        self.owner_key = str(owner_key) if owner_key else None
         self.workspace_root = self._resolve_workspace_root(workspace_root)
         self._step_items: list[dict[str, str]] = []
         self._todo_items: list[dict[str, str]] = []
@@ -96,6 +98,24 @@ class LocalToolRuntime:
             session_store=self.session_store,
             workspace_root=workspace_root,
             bridge_session_manager=self.bridge_session_manager,
+            owner_key=self.owner_key,
+        )
+        bound._step_items = [dict(item) for item in self._step_items]
+        bound._todo_items = [dict(item) for item in self._todo_items]
+        return bound
+
+    def bind_request_context(
+        self,
+        *,
+        workspace_root: str | os.PathLike[str] | None = None,
+        owner_key: str | None = None,
+    ) -> "LocalToolRuntime":
+        bound = self.__class__(
+            skill_registry=self.skill_registry,
+            session_store=self.session_store,
+            workspace_root=workspace_root if workspace_root is not None else self.workspace_root,
+            bridge_session_manager=self.bridge_session_manager,
+            owner_key=owner_key or self.owner_key,
         )
         bound._step_items = [dict(item) for item in self._step_items]
         bound._todo_items = [dict(item) for item in self._todo_items]
@@ -293,7 +313,17 @@ class LocalToolRuntime:
 
     def _search_sessions(self, args: dict[str, Any]) -> dict[str, object]:
         limit = int(args.get("limit") or 5)
-        results = self.session_store.search_sessions(str(args.get("query") or ""), limit=limit)
+        if not self.owner_key:
+            return self._tool_error(
+                code="owner_required",
+                message="session.search requires a bound owner",
+                tool_name="session.search",
+            )
+        results = self.session_store.search_transcript_sessions(
+            str(args.get("query") or ""),
+            owner_key=self.owner_key,
+            limit=limit,
+        )
         return {
             "count": len(results),
             "items": results,

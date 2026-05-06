@@ -43,7 +43,8 @@ public class SecurityConfig {
                                 "/swagger-ui.html",
                                 "/auth/notion/callback",
                                 "/api/v1/ai/openai/oauth/callback",
-                                "/api/v1/iot/pairing/start"
+                                "/api/v1/iot/pairing/start",
+                                "/api/v1/iot/pairing/devices/*/status"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )

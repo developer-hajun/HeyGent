@@ -28,8 +28,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalContext
 import com.example.mob.common.AppTopBar
+import com.example.mob.data.remote.RetrofitClient
+import com.example.mob.data.remote.UpdateUserRequest
 import com.example.mob.feature.health.HealthViewModel
 import com.example.mob.ui.theme.*
+import kotlinx.coroutines.launch
 
 @Composable
 fun ProfileScreen(
@@ -44,9 +47,49 @@ fun ProfileScreen(
     val activity = context as? android.app.Activity
     
     var showSettings by remember { mutableStateOf(false) }
-    var agentCallName by remember { mutableStateOf("James Anderson") }
+    var agentCallName by remember { mutableStateOf("") }
+    var isLoadingProfile by remember { mutableStateOf(true) }
     var isEditingName by remember { mutableStateOf(false) }
-    var nameInput by remember { mutableStateOf(agentCallName) }
+    var nameInput by remember { mutableStateOf("") }
+    var isSavingName by remember { mutableStateOf(false) }
+    var saveNameError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        try {
+            val response = RetrofitClient.userApiService.getMe()
+            if (response.status == 200) {
+                agentCallName = response.data?.nickname ?: ""
+            }
+        } catch (_: Exception) {
+        } finally {
+            isLoadingProfile = false
+        }
+    }
+    val saveName = {
+        val trimmed = nameInput.trim()
+        if (trimmed.isNotBlank()) {
+            scope.launch {
+                isSavingName = true
+                saveNameError = null
+                try {
+                    val response = RetrofitClient.userApiService.updateMe(
+                        UpdateUserRequest(nickname = trimmed)
+                    )
+                    if (response.status == 200) {
+                        agentCallName = response.data?.nickname ?: trimmed
+                        isEditingName = false
+                    } else {
+                        saveNameError = response.message
+                    }
+                } catch (e: Exception) {
+                    saveNameError = "저장에 실패했습니다."
+                } finally {
+                    isSavingName = false
+                }
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -114,12 +157,20 @@ fun ProfileScreen(
                         )
                     }
                     Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        "James Anderson",
-                        color = Color.White,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    if (isLoadingProfile) {
+                        CircularProgressIndicator(
+                            color = Color.White.copy(alpha = 0.7f),
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Text(
+                            agentCallName.ifBlank { "사용자" },
+                            color = Color.White,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 }
             }
 
@@ -135,42 +186,54 @@ fun ProfileScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     if (isEditingName) {
-                        OutlinedTextField(
-                            value = nameInput,
-                            onValueChange = { nameInput = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true,
-                            shape = RoundedCornerShape(10.dp),
-                            textStyle =
-                                TextStyle(
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = TextPrimary,
-                                ),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                            keyboardActions =
-                                KeyboardActions(onDone = {
-                                    agentCallName = nameInput.ifBlank { agentCallName }
-                                    isEditingName = false
-                                }),
-                            trailingIcon = {
-                                IconButton(onClick = {
-                                    agentCallName = nameInput.ifBlank { agentCallName }
-                                    isEditingName = false
-                                }) {
-                                    Icon(
-                                        Icons.Default.Check,
-                                        contentDescription = "저장",
-                                        tint = NavyPrimary,
-                                    )
-                                }
-                            },
-                            colors =
-                                OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = NavyPrimary,
-                                    unfocusedBorderColor = DividerColor,
-                                ),
-                        )
+                        Column {
+                            OutlinedTextField(
+                                value = nameInput,
+                                onValueChange = { nameInput = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                enabled = !isSavingName,
+                                shape = RoundedCornerShape(10.dp),
+                                textStyle =
+                                    TextStyle(
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = TextPrimary,
+                                    ),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(onDone = { saveName() }),
+                                trailingIcon = {
+                                    if (isSavingName) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(24.dp),
+                                            strokeWidth = 2.dp,
+                                            color = NavyPrimary,
+                                        )
+                                    } else {
+                                        IconButton(onClick = { saveName() }) {
+                                            Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = "저장",
+                                                tint = NavyPrimary,
+                                            )
+                                        }
+                                    }
+                                },
+                                colors =
+                                    OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = NavyPrimary,
+                                        unfocusedBorderColor = DividerColor,
+                                    ),
+                            )
+                            if (saveNameError != null) {
+                                Text(
+                                    text = saveNameError!!,
+                                    fontSize = 12.sp,
+                                    color = HealthRed,
+                                    modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+                                )
+                            }
+                        }
                     } else {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -294,7 +357,20 @@ fun ProfileScreen(
                         label = "로그아웃",
                         labelColor = HealthRed,
                         showArrow = false,
-                        onClick = { onLogout() },
+                        onClick = {
+                            scope.launch {
+                                try {
+                                    val token = RetrofitClient.getRefreshToken()
+                                    if (token.isNotBlank()) {
+                                        RetrofitClient.authApiService.logout(token)
+                                    }
+                                } catch (_: Exception) {
+                                } finally {
+                                    RetrofitClient.clearTokens()
+                                    onLogout()
+                                }
+                            }
+                        },
                     )
                 }
             }
