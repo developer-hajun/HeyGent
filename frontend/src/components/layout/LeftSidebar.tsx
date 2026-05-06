@@ -47,6 +47,7 @@ export function LeftSidebar() {
     sidebarCollapsed: collapsed,
     sidebarWidth: width,
     settingsOpen,
+    settingsInitialTab,
     setSidebarCollapsed,
     clampSidebarWidth,
     setSettingsOpen,
@@ -138,7 +139,11 @@ export function LeftSidebar() {
 
   return (
     <>
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        initialTab={settingsInitialTab as 'apiKeys'}
+      />
       <NewSessionModal
         open={newSessionModalOpen}
         onOpenChange={setNewSessionModalOpen}
@@ -475,11 +480,11 @@ export function LeftSidebar() {
             </div>
 
             {/* ── Profile Footer (Fixed) ── */}
-            <div className="border-sidebar-border shrink-0 border-t p-3">
+            <div className="border-sidebar-border shrink-0 border-t px-3 py-2">
               <Popover open={profileOpen} onOpenChange={setProfileOpen}>
                 <PopoverTrigger asChild>
-                  <button className="hover:bg-sidebar-accent flex w-full items-center gap-3 rounded-lg p-2.5 transition-colors">
-                    <ProfileAvatar size={36} />
+                  <button className="hover:bg-sidebar-accent flex w-full items-center gap-3 rounded-lg p-2 transition-colors">
+                    <ProfileAvatar size={32} />
                     <div className="min-w-0 flex-1 text-left">
                       <p className="text-foreground truncate text-sm font-medium">
                         <ProfileName />
