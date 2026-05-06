@@ -28,6 +28,8 @@ import {
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import type { CustomAgentConfig } from '@/components/NewSessionModal'
+import { createClientMessageId } from '@/utils/requestId'
 
 const suggestedPrompts = [
   { text: '이 PR 검토해줘', icon: Code },
@@ -94,7 +96,31 @@ export function NewChatPage() {
     setSendError(null)
 
     try {
-      const acceptedFrame = await sendMessage({ content })
+      const clientMessageId = createClientMessageId()
+      const pendingSessionId = `pending_session_${clientMessageId}`
+      const pendingConfig = readPendingSessionConfig()
+      // 첫 대화는 아직 서버 세션 id가 없어서 accepted 응답 전까지는 pending 세션을 화면에 보여 준다.
+      // sendMessage가 같은 clientMessageId로 optimistic 메시지를 먼저 넣기 때문에 즉시 스피너가 렌더링된다.
+      const acceptedPromise = sendMessage({
+        content,
+        clientMessageId,
+        settings: pendingConfig?.persona.trim()
+          ? { systemPrompt: pendingConfig.persona.trim() }
+          : undefined,
+        inputPayload:
+          pendingConfig === null
+            ? undefined
+            : {
+                sessionConfigSnapshot: {
+                  agentName: pendingConfig.agentName,
+                  persona: pendingConfig.persona,
+                  callName: pendingConfig.callName,
+                  profileImageProvided: pendingConfig.profileImage !== null,
+                },
+              },
+      })
+      navigate(`/session/${pendingSessionId}`)
+      const acceptedFrame = await acceptedPromise
       const payload = getFramePayload(acceptedFrame)
       const acceptedSessionId =
         getStringField(payload, 'session_id', 'sessionId') ??
@@ -104,7 +130,8 @@ export function NewChatPage() {
         throw new Error('accepted 응답에 sessionId가 없습니다.')
       }
 
-      navigate(`/session/${acceptedSessionId}`)
+      navigate(`/session/${acceptedSessionId}`, { replace: true })
+      clearPendingSessionConfig()
     } catch (error) {
       setSendError(error instanceof Error ? error.message : '새 채팅을 시작하지 못했습니다.')
     } finally {
@@ -273,6 +300,26 @@ function isRealtimePending(connectionStatus: AiRealtimeConnectionStatus) {
     connectionStatus === 'open' ||
     connectionStatus === 'reconnecting'
   )
+}
+
+function readPendingSessionConfig(): CustomAgentConfig | null {
+  const raw = sessionStorage.getItem('ai-new-session-config')
+  if (raw === null) {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(raw)
+    if (typeof parsed === 'object' && parsed !== null && typeof parsed.persona === 'string') {
+      return parsed as CustomAgentConfig
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+function clearPendingSessionConfig() {
+  sessionStorage.removeItem('ai-new-session-config')
 }
 
 function getRealtimeUnavailableMessage(

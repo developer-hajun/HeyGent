@@ -1,5 +1,3 @@
 <resources>
     <string name="app_name">MOB</string>
-    <string name="kakao_app_key">ed2a13b48dc4fd8711608a552ca7a91e</string>
-    <string name="kakao_redirect_scheme">kakaoed2a13b48dc4fd8711608a552ca7a91e</string>
 </resources>

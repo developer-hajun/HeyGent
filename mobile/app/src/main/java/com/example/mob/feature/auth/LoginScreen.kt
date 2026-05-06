@@ -64,7 +64,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                     Log.d("AUTH_API", "serviceJwt: ${serviceJwt.take(20)}...")
                     Log.d("AUTH_API", "refreshToken: ${refreshToken.take(20)}...")
                     RetrofitClient.setToken(serviceJwt)
-                    // TODO: refreshToken을 SharedPreferences/DataStore에 저장하여 자동 로그인에 활용
+                    RetrofitClient.setRefreshToken(refreshToken)
                     onLoginSuccess()
                 } else {
                     Log.e("AUTH_API", "로그인 실패: status=${response.status}, message=${response.message}, data=${response.data}")

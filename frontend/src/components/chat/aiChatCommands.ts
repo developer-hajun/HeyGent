@@ -166,6 +166,13 @@ export const sendSessionMessageCreate = ({
         return
       }
 
+      if (frame.type === 'session.message.waiting' || frame.type === 'session.message.failed') {
+        completedSeen = true
+        clearStreamTimer()
+        unsubscribe()
+        return
+      }
+
       if (frame.type === 'task.event') {
         callbacks?.onTaskEvent?.(payload as never)
       }
@@ -298,6 +305,13 @@ export const sendSessionMessageCreate = ({
         completed = true
         window.clearTimeout(streamTimer)
         callbacks?.onCompleted?.(finalContent)
+        closeQuietly(socket)
+        return
+      }
+
+      if (frame.type === 'session.message.waiting' || frame.type === 'session.message.failed') {
+        completed = true
+        window.clearTimeout(streamTimer)
         closeQuietly(socket)
         return
       }
