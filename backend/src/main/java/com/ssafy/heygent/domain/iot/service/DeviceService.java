@@ -3,6 +3,8 @@ package com.ssafy.heygent.domain.iot.service;
 import com.ssafy.heygent.domain.iot.dto.DeviceRegisterRequest;
 import com.ssafy.heygent.domain.iot.dto.DeviceResponse;
 import com.ssafy.heygent.domain.iot.dto.DisplayEventPayload;
+import com.ssafy.heygent.domain.iot.dto.DisplayEventType;
+import com.ssafy.heygent.domain.iot.dto.DisplayIcon;
 import com.ssafy.heygent.domain.iot.dto.DisplayPublishResult;
 import com.ssafy.heygent.domain.iot.dto.DisplayPublishTestRequest;
 import com.ssafy.heygent.domain.iot.entity.IotDevice;
@@ -22,6 +24,10 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class DeviceService {
+
+    private static final String PAIRING_SESSION_ID = "pairing";
+    private static final String RESET_STEP_RUN_ID = "reset";
+    private static final String UNPAIRED_TEXT = "unpaired";
 
     private final IotDeviceRepository iotDeviceRepository;
     private final UserRepository userRepository;
@@ -65,6 +71,13 @@ public class DeviceService {
         return DeviceResponse.from(device);
     }
 
+    @Transactional
+    public void unpair(Long userId, String deviceId) {
+        IotDevice device = findOwnedDevice(userId, deviceId);
+        publishUnpairedReset(device.getDeviceId());
+        iotDeviceRepository.delete(device);
+    }
+
     @Transactional(readOnly = true)
     public DisplayPublishResult publishTest(Long userId, String deviceId, DisplayPublishTestRequest request) {
         IotDevice device = findOwnedDevice(userId, deviceId);
@@ -86,6 +99,17 @@ public class DeviceService {
     private IotDevice findOwnedDevice(Long userId, String deviceId) {
         return iotDeviceRepository.findByDeviceIdAndUserId(deviceId, userId)
             .orElseThrow(() -> new CustomException(ErrorCode.RESOURCE_NOT_FOUND));
+    }
+
+    private void publishUnpairedReset(String deviceId) {
+        DisplayEventPayload payload = displayEventMapper.toPayload(
+            DisplayEventType.INFO,
+            DisplayIcon.INFO,
+            PAIRING_SESSION_ID,
+            RESET_STEP_RUN_ID,
+            UNPAIRED_TEXT
+        );
+        mqttDisplayPublisher.publish(deviceId, payload);
     }
 
     private String resolveDisplayName(DeviceRegisterRequest request) {

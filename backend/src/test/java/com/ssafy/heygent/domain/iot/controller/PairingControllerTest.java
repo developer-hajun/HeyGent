@@ -2,11 +2,13 @@ package com.ssafy.heygent.domain.iot.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ssafy.heygent.domain.iot.dto.DevicePairingStatusResponse;
 import com.ssafy.heygent.domain.iot.dto.DisplayPairingStartRequest;
 import com.ssafy.heygent.domain.iot.dto.DisplayPairingStartResponse;
 import com.ssafy.heygent.domain.iot.service.DevicePairingService;
@@ -61,5 +63,17 @@ class PairingControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.pairCode").value("482913"))
             .andExpect(jsonPath("$.data.expiresInSeconds").value(300L));
+    }
+
+    @Test
+    void statusIsAllowedWithoutAuthentication() throws Exception {
+        when(devicePairingService.status("deskmate-c3-a1b2c3"))
+            .thenReturn(DevicePairingStatusResponse.unpaired("deskmate-c3-a1b2c3"));
+
+        mockMvc.perform(get("/api/v1/iot/pairing/devices/{deviceId}/status", "deskmate-c3-a1b2c3"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.deviceId").value("deskmate-c3-a1b2c3"))
+            .andExpect(jsonPath("$.data.paired").value(false))
+            .andExpect(jsonPath("$.data.status").value("UNPAIRED"));
     }
 }

@@ -35,10 +35,7 @@ class AgentLoopRunner:
         self.resume_target_resolver = ResumeTargetResolver()
 
     async def start(self, request: OrchestrationRequest) -> TaskRun:
-        handler = self.tool_registry.resolve(
-            intent_type=request.intent_type,
-            entry_handler_key=request.entry_handler_key,
-        )
+        handler = self.tool_registry.resolve()
         task = self.planner.materialize_task(
             owner_key=request.owner_key,
             session_key=request.session_key,
@@ -55,11 +52,7 @@ class AgentLoopRunner:
         if step is None:
             raise KeyError(step_run_id)
 
-        handler_key = step.handler_key or task.entry_handler_key
-        if not handler_key:
-            raise ValueError("step handler key is missing")
-
-        handler = self.tool_registry.get(handler_key)
+        handler = self.tool_registry.resolve()
         boundary = decide_handler_step_boundary(
             current_detail=step.detail_json,
             next_semantic_key=handler.spec.semantic_key or step.step_type,
@@ -80,13 +73,8 @@ class AgentLoopRunner:
         owner_key: str,
         session_key: str | None,
         input_payload: dict,
-        intent_type: str,
-        entry_handler_key: str,
     ) -> ChildSessionLaunchResult:
-        handler = self.tool_registry.resolve(
-            intent_type=intent_type,
-            entry_handler_key=entry_handler_key,
-        )
+        handler = self.tool_registry.resolve()
         task = self.planner.materialize_task(
             owner_key=owner_key,
             session_key=session_key,
@@ -128,7 +116,7 @@ class AgentLoopRunner:
         for value in (input_payload.get("agent_id"), metadata.get("agent_id")):
             if isinstance(value, str) and value.strip():
                 return value.strip()
-        return f"{spec.parent_step_run_id}:{spec.child_entry_handler_key}"
+        return f"{spec.parent_step_run_id}:worker"
 
     @staticmethod
     def _worker_summary(*, outcome: dict[str, Any], summary_prompt: str | None) -> str | None:

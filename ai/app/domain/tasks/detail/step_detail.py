@@ -135,7 +135,7 @@ DEFAULT_STEP_DETAIL: dict[str, Any] = {
         # workflow handoff 시 raw payload 대신 먼저 참고할 수 있는 모델측 요약이다.
         "handoffSummary": None,
         # 현재 semantic 단계에 대한 soft hint.
-        # StepRun 경계는 엔진이 결정하고, 모델은 label/goal 수준의 힌트만 남긴다.
+        # agent.loop에서는 모델이 step 도구로 선언한 의미 단계만 StepRun 경계가 된다.
         "semanticHint": None,
     },
 }

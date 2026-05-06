@@ -51,7 +51,6 @@ class TaskRunResponse(BaseModel):
 
     task_run_id: str = Field(description="TaskRun ID(사용자 요청 하나의 실행 묶음 ID)입니다. 상세/flow/events/resume/cancel 호출에 사용합니다.")
     task_type: str = Field(description="실제로 실행된 TaskRun 종류입니다. 보통 `agent.loop`입니다.")
-    intent_type: str | None = Field(default=None, description="요청 시 전달한 intent(처리 의도)입니다. Orchestrator가 실행 흐름을 고르는 데 사용합니다.")
     session_key: str | None = Field(default=None, description="sessionId의 내부 저장명입니다. 같은 AI 세션의 실행을 묶는 값입니다.")
     current_step_run_id: str | None = Field(default=None, description="현재 실행 중이거나 마지막으로 진행된 StepRun ID입니다.")
     status: str = Field(description="TaskRun 상태입니다. `PENDING`, `RUNNING`, `WAITING`, `BLOCKED`, `COMPLETED`, `FAILED`, `CANCELED` 중 하나입니다.")
@@ -83,7 +82,6 @@ class StepRunSummaryResponse(BaseModel):
 class TaskRunListItemResponse(BaseModel):
     task_run_id: str = Field(description="TaskRun ID(사용자 요청 하나의 실행 묶음 ID)입니다.")
     task_type: str = Field(description="실제로 실행된 TaskRun 종류입니다.")
-    intent_type: str | None = Field(default=None, description="요청 의도 값입니다.")
     session_key: str | None = Field(default=None, description="sessionId의 내부 저장명입니다.")
     status: str = Field(description="TaskRun 상태입니다.")
     title: str | None = Field(default=None, description="목록에 표시할 작업 제목입니다.")

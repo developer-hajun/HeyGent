@@ -10,6 +10,7 @@ import { NewChatPage } from '@/pages/NewChatPage'
 import { ChatSessionPage } from '@/pages/ChatSessionPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { KakaoCallbackPage } from '@/pages/KakaoCallbackPage'
+import { NotionCallbackPage } from '@/pages/NotionCallbackPage'
 import { AiRealtimeProvider } from '@/providers/AiRealtimeProvider'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useUIStore } from '@/store/useUIStore'
@@ -97,6 +98,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/auth/kakao/callback" element={<KakaoCallbackPage />} />
+        <Route path="/auth/notion/callback" element={<NotionCallbackPage />} />
         <Route
           path="*"
           element={

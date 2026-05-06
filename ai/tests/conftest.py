@@ -24,6 +24,7 @@ def configure_test_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("HEYGENT_OPENAI_API_KEY", "")
     monkeypatch.setenv("HEYGENT_POSTGRES_DSN", "postgresql://test")
     monkeypatch.setenv("HEYGENT_REDIS_URL", "redis://test")
+    monkeypatch.setenv("HEYGENT_BRIDGE_TOKEN", "")
     # 로컬 AI/.env의 WebSocket Origin 제한이 TestClient 기본 Origin을 막지 않도록
     # 테스트 런타임에서는 각 테스트가 필요한 경우에만 허용 목록을 직접 설정한다.
     monkeypatch.setenv("HEYGENT_WS_ALLOWED_ORIGINS", "")
@@ -93,12 +94,19 @@ def client() -> TestClient:
 def _patch_app_runtime(app_main, monkeypatch: pytest.MonkeyPatch) -> None:
     from app.storage.redis import FakeRedis, RedisTaskProjectionStore
 
+    real_local_tool_runtime = app_main.LocalToolRuntime
+
+    def local_tool_runtime_without_bridge(*args, **kwargs):
+        kwargs["bridge_session_manager"] = None
+        return real_local_tool_runtime(*args, **kwargs)
+
     monkeypatch.setattr(app_main, "apply_configured_postgres_migrations", lambda **_kwargs: [])
     monkeypatch.setattr(app_main, "connect_postgres", lambda _dsn: None)
     monkeypatch.setattr(app_main, "PostgresTaskRepository", lambda _connection_factory: InMemoryTaskRepository())
     monkeypatch.setattr(app_main, "PostgresSessionStore", lambda _connection_factory: InMemoryTranscriptStore())
     monkeypatch.setattr(app_main, "build_task_projection_store", lambda **_kwargs: RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60))
     monkeypatch.setattr(app_main, "BackendAuthClient", lambda settings: FakeBackendAuthClient())
+    monkeypatch.setattr(app_main, "LocalToolRuntime", local_tool_runtime_without_bridge)
     build_memory_connection_registry = app_main.build_connection_registry
     monkeypatch.setattr(app_main, "build_connection_registry", lambda **_kwargs: build_memory_connection_registry(redis_url=None, ttl_seconds=60))
 
@@ -108,8 +116,6 @@ def task_run() -> TaskRun:
     return TaskRun(
         task_run_id="task_test",
         task_type="agent.loop",
-        intent_type="agent.loop",
-        entry_handler_key="agent.loop",
         owner_key="tester",
         status="PENDING",
         title="모델 생성 요청",
@@ -124,7 +130,6 @@ def step_run() -> StepRun:
         task_run_id="task_test",
         step_order=1,
         step_type="agent.loop.execute",
-        handler_key="agent.loop",
         status="PENDING",
         title="모델 응답 생성",
         input_payload={"prompt": "hello"},

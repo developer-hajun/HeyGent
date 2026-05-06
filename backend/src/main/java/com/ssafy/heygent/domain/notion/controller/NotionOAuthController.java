@@ -1,13 +1,21 @@
 package com.ssafy.heygent.domain.notion.controller;
 
+import java.util.List;
+
+import jakarta.validation.Valid;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.ssafy.heygent.domain.notion.dto.request.NotionExecuteRequest;
 import com.ssafy.heygent.domain.notion.dto.response.NotionConnectUrlResponse;
+import com.ssafy.heygent.domain.notion.dto.response.NotionExecuteCommandResponse;
 import com.ssafy.heygent.domain.notion.dto.response.NotionStatusResponse;
+import com.ssafy.heygent.domain.notion.service.NotionApiService;
 import com.ssafy.heygent.domain.notion.service.NotionOAuthService;
 import com.ssafy.heygent.global.config.security.CustomUserPrincipal;
 import com.ssafy.heygent.global.exception.ApiResponse;
@@ -23,6 +31,7 @@ import lombok.RequiredArgsConstructor;
 public class NotionOAuthController {
 
     private final NotionOAuthService notionOAuthService;
+    private final NotionApiService notionApiService;
 
     @Operation(summary = "Notion 연결 URL 조회", description = "Composio를 통한 Notion OAuth 연결 URL을 반환합니다.")
     @GetMapping("/connect-url")
@@ -47,6 +56,19 @@ public class NotionOAuthController {
     ) {
         notionOAuthService.disconnect(resolveUserId(user));
         return ApiResponse.success();
+    }
+
+    @Operation(summary = "Notion 명령 배치 실행", description = "여러 Notion API 프록시 명령을 순서대로 실행하고 각 결과를 반환합니다.")
+    @PostMapping("/execute")
+    public ApiResponse<List<NotionExecuteCommandResponse>> execute(
+        @AuthenticationPrincipal CustomUserPrincipal user,
+        @Valid @RequestBody NotionExecuteRequest request
+    ) {
+        return ApiResponse.success(notionApiService.executeBatch(
+            resolveUserId(user),
+            request.getUserId(),
+            request.getCommands()
+        ));
     }
 
     private Long resolveUserId(CustomUserPrincipal user) {

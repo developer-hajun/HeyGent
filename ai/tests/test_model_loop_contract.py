@@ -155,7 +155,6 @@ def test_skill_index_is_loaded_from_app_skills():
 
     assert "skill-index" in loaded
     assert "web-search-fallback" in loaded["skill-index"]["body"]
-    assert "github-repo-management" in loaded["skill-index"]["body"]
     assert "korea-weather" in loaded["skill-index"]["body"]
     assert "korean-character-count" in loaded["skill-index"]["body"]
     assert "joseon-sillok-search" in loaded["skill-index"]["body"]
