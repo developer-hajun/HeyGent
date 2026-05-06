@@ -171,6 +171,28 @@ class DeviceServiceTest {
         verify(mqttDisplayPublisher, never()).publish(DEVICE_ID, payload());
     }
 
+    @Test
+    void unpairDeletesOwnedDevice() {
+        IotDevice device = device(IotDeviceStatus.ACTIVE);
+        when(iotDeviceRepository.findByDeviceIdAndUserId(DEVICE_ID, USER_ID)).thenReturn(Optional.of(device));
+
+        deviceService.unpair(USER_ID, DEVICE_ID);
+
+        verify(iotDeviceRepository).delete(device);
+    }
+
+    @Test
+    void unpairFailsWhenDeviceIsNotOwnedByUser() {
+        when(iotDeviceRepository.findByDeviceIdAndUserId(DEVICE_ID, USER_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> deviceService.unpair(USER_ID, DEVICE_ID))
+            .isInstanceOf(CustomException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+
+        verify(iotDeviceRepository, never()).delete(any(IotDevice.class));
+    }
+
     private DisplayPublishTestRequest request() {
         return new DisplayPublishTestRequest(
             DisplayEventType.STEP,
