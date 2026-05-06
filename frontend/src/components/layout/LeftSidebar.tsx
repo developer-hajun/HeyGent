@@ -18,12 +18,15 @@ import {
   MoreHorizontal,
   Pin,
   PinOff,
-  DoorOpen,
+  Archive,
+  ArchiveRestore,
+  Trash2,
+  EyeOff,
 } from 'lucide-react'
 import { useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SettingsDialog } from '@/components/SettingsDialog'
-import { NewSessionModal } from '@/components/NewSessionModal'
+import { NewSessionModal, type CustomAgentConfig } from '@/components/NewSessionModal'
 import { useUIStore } from '@/store/useUIStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -40,6 +43,13 @@ type SidebarSession = {
   time: string
   isRunning: boolean
   raw: RawAiSession
+}
+
+type SessionConfirmAction = 'archive' | 'unarchive' | 'delete' | 'hide'
+
+type SessionConfirmState = {
+  sessionId: string
+  action: SessionConfirmAction
 }
 
 export function LeftSidebar() {
@@ -63,12 +73,18 @@ export function LeftSidebar() {
   const [profileOpen, setProfileOpen] = useState(false)
   const [sessionsPopoverOpen, setSessionsPopoverOpen] = useState(false)
   const [newSessionModalOpen, setNewSessionModalOpen] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [sessionConfirm, setSessionConfirm] = useState<SessionConfirmState | null>(null)
+  const [showArchivedSessions, setShowArchivedSessions] = useState(false)
   const commandClient = useAiRealtimeStore((state) => state.commandClient)
   const realtimeStatus = useAiRealtimeStore((state) => state.connectionStatus)
   const sessionsById = useChatStore((state) => state.sessionsById)
-  const chatError = useChatStore((state) => state.lastError)
+  const sessionListLoading = useChatStore((state) => state.sessionListLoading)
+  const chatError = useChatStore((state) => state.sessionListError ?? state.lastError)
   const fetchSessions = useChatStore((state) => state.fetchSessions)
+  const updateSession = useChatStore((state) => state.updateSession)
+  const archiveSession = useChatStore((state) => state.archiveSession)
+  const unarchiveSession = useChatStore((state) => state.unarchiveSession)
+  const deleteSession = useChatStore((state) => state.deleteSession)
   const isResizing = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
@@ -77,12 +93,14 @@ export function LeftSidebar() {
   const sidebarSessions = useMemo(() => {
     const all = Object.values(sessionsById)
       .map(toSidebarSession)
-      .filter((s) => !hiddenSessionIds.has(s.id))
+      .filter(
+        (s) => !hiddenSessionIds.has(s.id) && !isRemovedSidebarSession(s.raw, showArchivedSessions),
+      )
       .sort((first, second) => getSessionTime(second.raw) - getSessionTime(first.raw))
     const pinned = all.filter((s) => pinnedSessionIds.has(s.id))
     const unpinned = all.filter((s) => !pinnedSessionIds.has(s.id))
     return [...pinned, ...unpinned]
-  }, [sessionsById, hiddenSessionIds, pinnedSessionIds])
+  }, [sessionsById, hiddenSessionIds, pinnedSessionIds, showArchivedSessions])
   const runningSessions = useMemo(
     () => sidebarSessions.filter((session) => session.isRunning),
     [sidebarSessions],
@@ -93,8 +111,8 @@ export function LeftSidebar() {
       return
     }
 
-    void fetchSessions().catch(() => undefined)
-  }, [commandClient, fetchSessions])
+    void fetchSessions({ includeArchived: showArchivedSessions }).catch(() => undefined)
+  }, [commandClient, fetchSessions, showArchivedSessions])
 
   const handleNewChat = () => {
     setNewSessionModalOpen(true)
@@ -103,6 +121,46 @@ export function LeftSidebar() {
   const handleOpenChatSession = (sessionId: string, event?: React.MouseEvent) => {
     event?.stopPropagation()
     navigate(`/session/${sessionId}`)
+  }
+
+  const handleRenameSession = async (session: SidebarSession) => {
+    const nextTitle = window.prompt('새 이름을 입력하세요.', session.title)?.trim()
+    if (nextTitle === undefined || nextTitle === '' || nextTitle === session.title) {
+      return
+    }
+
+    try {
+      await updateSession({ sessionId: session.id, title: nextTitle })
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '이름 변경에 실패했습니다.')
+    }
+  }
+
+  const handleConfirmSessionAction = async () => {
+    if (sessionConfirm === null) {
+      return
+    }
+
+    const { sessionId, action } = sessionConfirm
+    try {
+      if (action === 'archive') {
+        await archiveSession(sessionId)
+      } else if (action === 'unarchive') {
+        await unarchiveSession(sessionId)
+      } else if (action === 'delete') {
+        await deleteSession(sessionId)
+      } else {
+        hideSession(sessionId)
+      }
+
+      if (location.pathname === `/session/${sessionId}` && action !== 'hide') {
+        navigate('/new-chat')
+      }
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '세션 작업에 실패했습니다.')
+    } finally {
+      setSessionConfirm(null)
+    }
   }
 
   const startResize = useCallback(
@@ -142,12 +200,16 @@ export function LeftSidebar() {
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
+        sessionId={
+          location.pathname.startsWith('/session/') ? location.pathname.slice(9) : undefined
+        }
         initialTab={settingsInitialTab as 'apiKeys'}
       />
       <NewSessionModal
         open={newSessionModalOpen}
         onOpenChange={setNewSessionModalOpen}
         onConfirm={(config) => {
+          storePendingSessionConfig(config)
           setNewSessionModalOpen(false)
           if (config) {
             navigate('/agent-status')
@@ -156,29 +218,31 @@ export function LeftSidebar() {
           }
         }}
       />
-      {/* Leave confirmation dialog */}
-      {deleteConfirm !== null && (
+      {sessionConfirm !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-card border-border w-80 rounded-2xl border p-6 shadow-xl">
-            <h3 className="text-foreground mb-2 text-base font-semibold">채팅 나가기</h3>
+            <h3 className="text-foreground mb-2 text-base font-semibold">
+              {getSessionConfirmTitle(sessionConfirm.action)}
+            </h3>
             <p className="text-muted-foreground mb-5 text-sm">
-              이 채팅 세션을 나가시겠습니까? 목록에서 사라집니다.
+              {getSessionConfirmMessage(sessionConfirm.action)}
             </p>
             <div className="flex gap-2">
               <button
-                onClick={() => setDeleteConfirm(null)}
+                onClick={() => setSessionConfirm(null)}
                 className="bg-muted text-foreground hover:bg-muted/80 flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
               >
                 취소
               </button>
               <button
-                onClick={() => {
-                  hideSession(deleteConfirm)
-                  setDeleteConfirm(null)
-                }}
-                className="flex-1 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-600"
+                onClick={() => void handleConfirmSessionAction()}
+                className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors ${
+                  sessionConfirm.action === 'delete'
+                    ? 'bg-red-500 hover:bg-red-600'
+                    : 'bg-primary hover:bg-primary/90'
+                }`}
               >
-                나가기
+                {getSessionConfirmButtonLabel(sessionConfirm.action)}
               </button>
             </div>
           </div>
@@ -287,7 +351,11 @@ export function LeftSidebar() {
                     )
                   })}
                   {sidebarSessions.length === 0 && (
-                    <EmptySessionNotice realtimeStatus={realtimeStatus} error={chatError} />
+                    <EmptySessionNotice
+                      realtimeStatus={realtimeStatus}
+                      loading={sessionListLoading}
+                      error={chatError}
+                    />
                   )}
                 </div>
               </PopoverContent>
@@ -346,6 +414,19 @@ export function LeftSidebar() {
               </div>
               <div className="flex items-center gap-1">
                 <button
+                  type="button"
+                  onClick={() => setShowArchivedSessions((value) => !value)}
+                  aria-pressed={showArchivedSessions}
+                  aria-label={showArchivedSessions ? '아카이브 숨기기' : '아카이브 보기'}
+                  className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+                    showArchivedSessions
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
+                  }`}
+                >
+                  <Archive className="h-3.5 w-3.5" />
+                </button>
+                <button
                   onClick={() => setSidebarCollapsed(true)}
                   className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-7 w-7 items-center justify-center rounded-md transition-colors"
                 >
@@ -372,6 +453,7 @@ export function LeftSidebar() {
                       location.pathname === '/agent-status' && selectedSessionId === session.id
                     const isChatActive = location.pathname === `/session/${session.id}`
                     const isPinned = pinnedSessionIds.has(session.id)
+                    const isArchived = isArchivedSidebarSession(session.raw)
                     return (
                       <div
                         key={session.id}
@@ -386,6 +468,9 @@ export function LeftSidebar() {
                         <div className="min-w-0 flex-1">
                           <div className="mb-0.5 flex items-center gap-1">
                             {isPinned && <Pin className="text-primary h-3 w-3 shrink-0" />}
+                            {isArchived && (
+                              <Archive className="text-muted-foreground h-3 w-3 shrink-0" />
+                            )}
                             <p
                               className={`truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
                             >
@@ -423,6 +508,17 @@ export function LeftSidebar() {
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation()
+                                  void handleRenameSession(session)
+                                }}
+                                className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
+                              >
+                                <Edit3 className="text-muted-foreground h-4 w-4 shrink-0" />
+                                <span>이름 변경</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
                                   togglePinSession(session.id)
                                 }}
                                 className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
@@ -439,16 +535,55 @@ export function LeftSidebar() {
                                   </>
                                 )}
                               </button>
+                              {isArchived ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setSessionConfirm({
+                                      sessionId: session.id,
+                                      action: 'unarchive',
+                                    })
+                                  }}
+                                  className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
+                                >
+                                  <ArchiveRestore className="text-muted-foreground h-4 w-4 shrink-0" />
+                                  <span>아카이브 해제</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setSessionConfirm({ sessionId: session.id, action: 'archive' })
+                                  }}
+                                  className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
+                                >
+                                  <Archive className="text-muted-foreground h-4 w-4 shrink-0" />
+                                  <span>아카이브</span>
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  setDeleteConfirm(session.id)
+                                  setSessionConfirm({ sessionId: session.id, action: 'hide' })
+                                }}
+                                className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
+                              >
+                                <EyeOff className="text-muted-foreground h-4 w-4 shrink-0" />
+                                <span>이 기기에서 숨김</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setSessionConfirm({ sessionId: session.id, action: 'delete' })
                                 }}
                                 className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-red-500 transition-colors hover:bg-red-50"
                               >
-                                <DoorOpen className="h-4 w-4 shrink-0" />
-                                <span>나가기</span>
+                                <Trash2 className="h-4 w-4 shrink-0" />
+                                <span>삭제</span>
                               </button>
                             </PopoverContent>
                           </Popover>
@@ -473,7 +608,11 @@ export function LeftSidebar() {
                     )
                   })}
                   {sidebarSessions.length === 0 && (
-                    <EmptySessionNotice realtimeStatus={realtimeStatus} error={chatError} />
+                    <EmptySessionNotice
+                      realtimeStatus={realtimeStatus}
+                      loading={sessionListLoading}
+                      error={chatError}
+                    />
                   )}
                 </div>
               </section>
@@ -520,15 +659,26 @@ export function LeftSidebar() {
   )
 }
 
+function storePendingSessionConfig(config: CustomAgentConfig | undefined) {
+  if (config === undefined) {
+    sessionStorage.removeItem('ai-new-session-config')
+    return
+  }
+  sessionStorage.setItem('ai-new-session-config', JSON.stringify(config))
+}
+
 function EmptySessionNotice({
   realtimeStatus,
+  loading,
   error,
 }: {
   realtimeStatus: string
+  loading: boolean
   error: string | null
 }) {
   const message =
     error ??
+    (loading ? '세션 목록을 불러오는 중입니다.' : null) ??
     (realtimeStatus === 'authenticated' ? '아직 표시할 대화 세션이 없습니다.' : 'AI 연결 준비 중')
 
   return (
@@ -536,6 +686,45 @@ function EmptySessionNotice({
       {message}
     </div>
   )
+}
+
+function getSessionConfirmTitle(action: SessionConfirmAction) {
+  if (action === 'archive') {
+    return '채팅 아카이브'
+  }
+  if (action === 'unarchive') {
+    return '아카이브 해제'
+  }
+  if (action === 'delete') {
+    return '채팅 삭제'
+  }
+  return '이 기기에서 숨김'
+}
+
+function getSessionConfirmMessage(action: SessionConfirmAction) {
+  if (action === 'archive') {
+    return '이 채팅을 기본 목록에서 숨기고 서버 아카이브 상태로 변경합니다.'
+  }
+  if (action === 'unarchive') {
+    return '이 채팅을 기본 목록에 다시 표시합니다.'
+  }
+  if (action === 'delete') {
+    return '이 채팅을 삭제하시겠습니까? 서버의 삭제 정책에 따라 복구가 제한될 수 있습니다.'
+  }
+  return '서버 상태는 바꾸지 않고 이 브라우저의 목록에서만 숨깁니다.'
+}
+
+function getSessionConfirmButtonLabel(action: SessionConfirmAction) {
+  if (action === 'archive') {
+    return '아카이브'
+  }
+  if (action === 'unarchive') {
+    return '해제'
+  }
+  if (action === 'delete') {
+    return '삭제'
+  }
+  return '숨김'
 }
 
 function toSidebarSession(session: RawAiSession): SidebarSession {
@@ -605,6 +794,18 @@ function formatSessionTime(session: RawAiSession) {
 
 function isRunningTaskRunStatus(status: string | undefined) {
   return status === 'PENDING' || status === 'RUNNING' || status === 'WAITING'
+}
+
+function isRemovedSidebarSession(session: RawAiSession, includeArchived = false) {
+  return (
+    session.deleted_at != null ||
+    session.status === 'DELETED' ||
+    (!includeArchived && isArchivedSidebarSession(session))
+  )
+}
+
+function isArchivedSidebarSession(session: RawAiSession) {
+  return session.archived_at != null || session.status === 'ARCHIVED'
 }
 
 // ────────────────────────────────────────────────────────────────────────────

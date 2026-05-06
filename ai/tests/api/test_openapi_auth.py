@@ -20,6 +20,10 @@ def test_openapi_documents_bearer_auth_for_task_runs():
     assert "post" not in schema["paths"]["/ai/api/v1/sessions"]
     assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/messages"]["post"]["security"]
     assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/{sessionId}/messages"]["post"]["security"]
+    assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/{sessionId}/update"]["post"]["security"]
+    assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/{sessionId}/archive"]["post"]["security"]
+    assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/{sessionId}/settings/update"]["post"]["security"]
+    assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/{sessionId}"]["delete"]["security"]
     assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/taskRuns"]["post"]["security"]
     assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/agentSessions/{agentSessionId}/messages"]["get"]["security"]
 
@@ -104,6 +108,10 @@ def test_openapi_documents_public_sessions_without_product_session_alias():
     assert "productSessionId" not in rendered_session_docs
     assert "/ai/api/v1/sessions/messages" in session_paths
     assert "/ai/api/v1/sessions/{sessionId}/messages" in session_paths
+    assert "/ai/api/v1/sessions/{sessionId}/update" in session_paths
+    assert "/ai/api/v1/sessions/{sessionId}/archive" in session_paths
+    assert "/ai/api/v1/sessions/{sessionId}/settings/update" in session_paths
+    assert "delete" in session_paths["/ai/api/v1/sessions/{sessionId}"]
 
     message_request = schema["components"]["schemas"]["CreateSessionMessageRequest"]["properties"]
     assert "content" in message_request

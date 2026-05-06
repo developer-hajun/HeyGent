@@ -1,7 +1,9 @@
 package com.example.mob.feature.profile
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -17,6 +19,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.mob.data.remote.OpenAiModelsResponse
+import com.example.mob.data.remote.OpenAiProvider
+import com.example.mob.data.remote.OpenAiUsageResponse
+import com.example.mob.data.remote.RetrofitClient
 import com.example.mob.ui.theme.NavyPrimary
 import com.example.mob.ui.theme.TextPrimary
 import com.example.mob.ui.theme.TextSecondary
@@ -174,34 +180,181 @@ private fun SkillContent() {
 
 @Composable
 private fun ModelContent() {
-    data class ModelInfo(val name: String, val used: Int, val total: Int)
-    val models = listOf(
-        ModelInfo("GPT-4 Turbo", 1250, 5000),
-        ModelInfo("Claude 3 Sonnet", 840, 3000),
-        ModelInfo("Gemini Pro", 320, 2000)
-    )
+    var isLoadingProviders by remember { mutableStateOf(true) }
+    var providers by remember { mutableStateOf<List<OpenAiProvider>>(emptyList()) }
+    var selectedProvider by remember { mutableStateOf<OpenAiProvider?>(null) }
+    var isLoadingUsage by remember { mutableStateOf(false) }
+    var usageData by remember { mutableStateOf<OpenAiUsageResponse?>(null) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    var modelsData by remember { mutableStateOf<OpenAiModelsResponse?>(null) }
+
+    // 1단계: providers + models 병렬 로드
+    LaunchedEffect(Unit) {
+        try {
+            val providersResponse = RetrofitClient.aiApiService.getOpenAiProviders()
+            if (providersResponse.status == 200) {
+                providers = providersResponse.data?.providers ?: emptyList()
+                selectedProvider = providers.firstOrNull { it.connected && it.available }
+            } else {
+                errorMsg = providersResponse.message
+            }
+        } catch (_: Exception) {
+            errorMsg = "Provider 조회에 실패했습니다."
+        } finally {
+            isLoadingProviders = false
+        }
+        try {
+            val modelsResponse = RetrofitClient.aiApiService.getOpenAiModels()
+            if (modelsResponse.status == 200) {
+                modelsData = modelsResponse.data
+            }
+        } catch (_: Exception) { }
+    }
+
+    // 2단계: 선택된 provider 바뀌면 사용량 조회
+    LaunchedEffect(selectedProvider) {
+        val provider = selectedProvider ?: return@LaunchedEffect
+        isLoadingUsage = true
+        usageData = null
+        errorMsg = null
+        try {
+            val response = RetrofitClient.aiApiService.getOpenAiUsage(
+                providerName = provider.providerName
+            )
+            if (response.status == 200) {
+                usageData = response.data
+            } else {
+                errorMsg = response.message
+            }
+        } catch (_: Exception) {
+            errorMsg = "사용량 조회에 실패했습니다."
+        } finally {
+            isLoadingUsage = false
+        }
+    }
 
     Text("사용 중인 AI 모델과 사용량을 확인합니다", fontSize = 13.sp, color = TextSecondary)
     Spacer(modifier = Modifier.height(16.dp))
 
-    models.forEach { model ->
-        val usageRate = model.used.toFloat() / model.total * 100
+    if (isLoadingProviders) {
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(color = NavyPrimary, modifier = Modifier.size(32.dp))
+        }
+        return
+    }
+
+    if (providers.isEmpty()) {
+        Text(
+            text = errorMsg ?: "연결된 provider가 없습니다.",
+            fontSize = 13.sp,
+            color = Color(0xFFE53935)
+        )
+        return
+    }
+
+    // Provider 선택 카드 목록
+    providers.forEach { provider ->
+        val isSelected = selectedProvider?.providerName == provider.providerName
+        val statusColor = when (provider.status) {
+            "connected" -> Color(0xFF4CAF50)
+            "expired"   -> Color(0xFFFF9800)
+            else        -> Color(0xFF9E9E9E)
+        }
         Card(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F8F8)),
-            elevation = CardDefaults.cardElevation(0.dp)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(model.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
-                    Text("${model.used} / ${model.total} 요청", fontSize = 12.sp, color = TextSecondary)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            onClick = {
+                if (provider.connected && provider.available) {
+                    selectedProvider = provider
                 }
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("사용률: ${"%.1f".format(usageRate)}%", fontSize = 12.sp, color = TextSecondary)
-                    Text("남은 요청: ${model.total - model.used}", fontSize = 12.sp, color = TextSecondary)
+            },
+            colors = CardDefaults.cardColors(
+                containerColor = if (isSelected) Color(0xFFE8EAF6) else Color(0xFFF8F8F8)
+            ),
+            elevation = CardDefaults.cardElevation(0.dp),
+            border = if (isSelected) androidx.compose.foundation.BorderStroke(1.5.dp, NavyPrimary) else null
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(provider.providerName, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                    Text(provider.authType, fontSize = 11.sp, color = TextSecondary)
+                }
+                Text(provider.status, fontSize = 11.sp, color = statusColor, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
+
+    // 사용 가능한 모델 목록
+    if (modelsData != null) {
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("사용 가능한 모델", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+        Spacer(modifier = Modifier.height(8.dp))
+        modelsData!!.models.forEach { model ->
+            val isDefault = model == modelsData!!.defaultModel
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = model,
+                    fontSize = 13.sp,
+                    color = if (isDefault) NavyPrimary else TextPrimary,
+                    fontWeight = if (isDefault) FontWeight.SemiBold else FontWeight.Normal,
+                    modifier = Modifier.weight(1f)
+                )
+                if (isDefault) {
+                    Text(
+                        text = "기본",
+                        fontSize = 10.sp,
+                        color = Color.White,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .background(NavyPrimary, shape = androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
                 }
             }
+        }
+    }
+
+    // 선택된 provider 사용량
+    if (selectedProvider != null) {
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("사용량", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary)
+        Spacer(modifier = Modifier.height(8.dp))
+
+        if (isLoadingUsage) {
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = NavyPrimary, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+            }
+        } else if (usageData != null) {
+            val usageCount = usageData!!.usage.getAsJsonArray("data")?.size() ?: 0
+            val costsCount = usageData!!.costs.getAsJsonArray("data")?.size() ?: 0
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F8F8)),
+                elevation = CardDefaults.cardElevation(0.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("사용 기록", fontSize = 12.sp, color = TextSecondary)
+                        Text("${usageCount}건", fontSize = 12.sp, color = TextPrimary, fontWeight = FontWeight.Medium)
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("비용 기록", fontSize = 12.sp, color = TextSecondary)
+                        Text("${costsCount}건", fontSize = 12.sp, color = TextPrimary, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
+        } else if (errorMsg != null) {
+            Text(text = errorMsg!!, fontSize = 13.sp, color = Color(0xFFE53935))
         }
     }
 }

@@ -10,7 +10,13 @@ export type ChatConnectionState =
 
 export type ChatMessageRole = 'user' | 'assistant'
 
-export type ChatMessageStatus = 'optimistic' | 'accepted' | 'streaming' | 'completed' | 'failed'
+export type ChatMessageStatus =
+  | 'optimistic'
+  | 'accepted'
+  | 'streaming'
+  | 'waiting'
+  | 'completed'
+  | 'failed'
 
 export type ChatMessageView = {
   id: string

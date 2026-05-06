@@ -56,6 +56,9 @@ export function ChatSessionPage() {
     sessionId === '' ? false : state.loadingSessionIds[sessionId] === true,
   )
   const chatError = useChatStore((state) => state.lastError)
+  const currentSession = useChatStore((state) =>
+    sessionId === '' ? undefined : state.sessionsById[sessionId],
+  )
   const fetchMessages = useChatStore((state) => state.fetchMessages)
   const sendMessage = useChatStore((state) => state.sendMessage)
 
@@ -68,7 +71,6 @@ export function ChatSessionPage() {
   const fetchSnapshot = useTaskRunStore((state) => state.fetchSnapshot)
   const replayEvents = useTaskRunStore((state) => state.replayEvents)
 
-  const title = useMemo(() => '현재 대화', [])
   const connectionState = useMemo(
     () => toChatConnectionState(connectionStatus, authStatus),
     [authStatus, connectionStatus],
@@ -78,6 +80,18 @@ export function ChatSessionPage() {
       storeMessages.filter((message) => message.role === 'user' || message.role === 'assistant'),
     [storeMessages],
   )
+  const title = useMemo(() => {
+    const sessionTitle = getNonEmptyString(currentSession?.title)
+    if (sessionTitle !== undefined) {
+      return sessionTitle
+    }
+
+    const preview =
+      getNonEmptyString(currentSession?.last_message) ??
+      getNonEmptyString(messages.find((message) => message.role === 'user')?.content)
+
+    return preview ?? '새 대화'
+  }, [currentSession?.last_message, currentSession?.title, messages])
   const taskRunIds = useMemo(() => {
     const ids = new Set<string>()
 
@@ -131,9 +145,17 @@ export function ChatSessionPage() {
       ),
     [eventsByTaskRunId, taskRunIds, taskRunsById],
   )
+  const isPendingSession = sessionId.startsWith('pending_session_')
 
   const loadSessionData = useCallback(async () => {
     if (!sessionId) return
+    if (isPendingSession) {
+      // 첫 메시지 전송 직후에는 서버 세션 id가 아직 없어서 조회 명령을 보내지 않는다.
+      // optimistic 메시지가 들어간 pending 세션을 그대로 렌더링하고 accepted 후 실제 세션으로 교체한다.
+      setLoadState('ready')
+      setErrorMessage(null)
+      return
+    }
 
     if (!authenticatedReady || commandClient === null) {
       setLoadState(
@@ -178,6 +200,7 @@ export function ChatSessionPage() {
     accessToken,
     fetchActiveTaskRuns,
     fetchMessages,
+    isPendingSession,
     realtimeError,
     sessionId,
   ])
@@ -350,11 +373,26 @@ export function ChatSessionPage() {
     setFocusedTaskRunTarget({ taskRunId, requestId: focusRequestIdRef.current })
   }
 
-  const isComposerDisabled =
-    connectionState === 'auth-expired' || !authenticatedReady || commandClient === null
+  const activeSessionTaskRunId =
+    typeof currentSession?.active_task_run_id === 'string'
+      ? currentSession.active_task_run_id
+      : undefined
+  const hasActiveChatTurn =
+    activeSessionTaskRunId !== undefined ||
+    messages.some(
+      (message) =>
+        message.status === 'optimistic' ||
+        message.status === 'streaming' ||
+        message.status === 'waiting',
+    )
   const isStreaming = messages.some(
     (message) => message.role === 'assistant' && message.status === 'streaming',
   )
+  const isComposerDisabled =
+    connectionState === 'auth-expired' ||
+    !authenticatedReady ||
+    commandClient === null ||
+    hasActiveChatTurn
   const loading = (loadState === 'loading' || isLoadingMessages) && messages.length === 0
   const displayErrorMessage =
     errorMessage ?? (loadState === 'error' ? null : (chatError ?? taskRunError))
@@ -525,4 +563,8 @@ const getChatStepOrder = (stepRun: { step_order?: number | null; stepOrder?: num
     return stepRun.stepOrder
   }
   return undefined
+}
+
+function getNonEmptyString(value: unknown) {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
 }

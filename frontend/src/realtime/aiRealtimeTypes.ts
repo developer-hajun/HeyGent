@@ -24,6 +24,14 @@ export type AiRealtimeCommandType =
   | 'session.list'
   | 'session.messages.list'
   | 'session.message.create'
+  | 'session.message.retry'
+  | 'session.message.undo'
+  | 'session.history.compact'
+  | 'session.update'
+  | 'session.archive'
+  | 'session.delete'
+  | 'session.settings.update'
+  | 'model.options'
   | 'taskRuns.active.list'
   | 'taskRun.snapshot.get'
   | 'taskRun.events.replay'
@@ -42,7 +50,16 @@ export type AiRealtimeServerFrameType =
   | 'session.message.accepted'
   | 'session.message.delta'
   | 'session.message.completed'
+  | 'session.message.waiting'
   | 'session.message.failed'
+  | 'session.updated'
+  | 'session.archived'
+  | 'session.deleted'
+  | 'session.settings.updated'
+  | 'session.archive.result'
+  | 'session.delete.result'
+  | 'session.settings.update.result'
+  | 'model.options.result'
   | 'taskRuns.active.list.result'
   | 'taskRun.snapshot.result'
   | 'taskRun.events.replay.result'
@@ -108,6 +125,7 @@ export type SubscribeTaskPayload = {
 export type SessionListPayload = {
   cursor?: string
   limit?: number
+  includeArchived?: boolean
 }
 
 export type SessionMessagesListPayload = {
@@ -122,7 +140,75 @@ export type SessionMessageCreatePayload = {
   session_id?: string
   content: string
   clientMessageId: string
+  settings?: JsonObject
+  inputPayload?: JsonObject
   metadata?: JsonObject
+}
+
+export type SessionMessageRetryPayload = {
+  sessionId: string
+  targetMessageId?: string
+  clientCommandId: string
+}
+
+export type SessionMessageUndoPayload = {
+  sessionId: string
+  untilMessageId?: string
+  clientCommandId: string
+}
+
+export type SessionHistoryCompactPayload = {
+  sessionId: string
+  clientCommandId: string
+}
+
+export type SessionUpdatePayload = {
+  sessionId: string
+  clientCommandId: string
+  title?: string
+  metadataPatch?: JsonObject
+}
+
+export type SessionArchivePayload = {
+  sessionId: string
+  archived?: boolean
+  clientCommandId: string
+}
+
+export type SessionDeletePayload = {
+  sessionId: string
+  clientCommandId: string
+}
+
+export type SessionSettingsUpdatePayload = {
+  sessionId: string
+  clientCommandId: string
+  settings: JsonObject
+}
+
+export type ModelOptionsPayload = {
+  sessionId?: string
+}
+
+export type SessionMutationResultPayload = {
+  session_id?: string
+  sessionId?: string
+  session?: unknown
+  [key: string]: unknown
+}
+
+export type SessionDeleteResultPayload = {
+  session_id?: string
+  sessionId?: string
+  deleted?: boolean
+  [key: string]: unknown
+}
+
+export type ModelOptionsRawResultPayload = {
+  model?: string | null
+  providers?: unknown[]
+  models?: unknown[]
+  [key: string]: unknown
 }
 
 export type TaskRunsActiveListPayload = {
@@ -171,11 +257,27 @@ export type AiRealtimeCommandPayloadMap = {
   'session.list': SessionListPayload
   'session.messages.list': SessionMessagesListPayload
   'session.message.create': SessionMessageCreatePayload
+  'session.message.retry': SessionMessageRetryPayload
+  'session.message.undo': SessionMessageUndoPayload
+  'session.history.compact': SessionHistoryCompactPayload
+  'session.update': SessionUpdatePayload
+  'session.archive': SessionArchivePayload
+  'session.delete': SessionDeletePayload
+  'session.settings.update': SessionSettingsUpdatePayload
+  'model.options': ModelOptionsPayload
   'taskRuns.active.list': TaskRunsActiveListPayload
   'taskRun.snapshot.get': TaskRunSnapshotGetPayload
   'taskRun.events.replay': TaskRunEventsReplayPayload
   'taskRun.resume': TaskRunResumePayload
   'taskRun.cancel': TaskRunCancelPayload
+}
+
+export type AiRealtimeCommandResultPayloadMap = {
+  'session.update': SessionMutationResultPayload
+  'session.archive': SessionMutationResultPayload
+  'session.delete': SessionDeleteResultPayload
+  'session.settings.update': SessionMutationResultPayload
+  'model.options': ModelOptionsRawResultPayload
 }
 
 // task.event raw payload. snake_case 필드는 디버깅과 서버 frame 비교를 위해 그대로 유지한다.
@@ -231,6 +333,21 @@ export type RawSessionMessageCompletedPayload = {
   [key: string]: unknown
 }
 
+export type RawSessionMessageWaitingPayload = {
+  session_id?: string
+  sessionId?: string
+  message_id?: string
+  messageId?: string
+  user_message_id?: string
+  userMessageId?: string
+  task_run_id?: string
+  taskRunId?: string
+  status?: string
+  pending_approval?: unknown
+  pendingApproval?: unknown
+  [key: string]: unknown
+}
+
 export type RawSessionMessageFailedPayload = {
   session_id?: string
   sessionId?: string
@@ -242,6 +359,15 @@ export type RawSessionMessageFailedPayload = {
   taskRunId?: string
   status?: string
   error?: unknown
+  [key: string]: unknown
+}
+
+export type RawSessionUpdatedPayload = {
+  session_id?: string
+  sessionId?: string
+  session?: unknown
+  messages?: unknown
+  items?: unknown
   [key: string]: unknown
 }
 

@@ -1615,6 +1615,123 @@ def test_public_session_message_creates_taskrun_and_stores_public_transcript(cli
     assert task["session_key"] == session_id
 
 
+def test_http_followup_message_uses_previous_public_messages_without_current_user(client, monkeypatch):
+    provider_calls = _patch_respond(monkeypatch, [_response(text="HTTP_FOLLOWUP_DONE")])
+    session_store = client.app.state.session_store
+    session_store.create_session(
+        session_id="http_followup_session",
+        session_key="http_followup_session",
+        source="api.session",
+        user_id="local-user",
+        title="후속 메시지",
+        metadata={"source": "api.session"},
+    )
+    session_store.append_message(
+        session_id="http_followup_session",
+        role="user",
+        content="강남역에서 지갑 잃어버렸어",
+        metadata={"source": "api.session"},
+    )
+    session_store.append_message(
+        session_id="http_followup_session",
+        role="assistant",
+        content="공식 조회 경로를 확인했습니다.",
+        metadata={"source": "api.session"},
+    )
+
+    response = client.post(
+        "/ai/api/v1/sessions/http_followup_session/messages",
+        json={"content": "ㄴㄴ 분실물찾은거", "model": "gpt-test"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    task = client.app.state.repository.get_task(body["taskRunId"])
+    assert task is not None
+    assert task.input_payload["conversation_history"] == [
+        {"role": "user", "content": "강남역에서 지갑 잃어버렸어"},
+        {"role": "assistant", "content": "공식 조회 경로를 확인했습니다."},
+    ]
+    assert "ㄴㄴ 분실물찾은거" not in str(task.input_payload["conversation_history"])
+    assert [message.role for message in provider_calls[0]["messages"][:2]] == ["user", "assistant"]
+
+
+def test_http_session_message_reuses_client_message_id_without_duplicate_user_append(client, monkeypatch):
+    _patch_respond(monkeypatch, [_response(text="HTTP_IDEMPOTENT_DONE")])
+    session_store = client.app.state.session_store
+    session_store.create_session(
+        session_id="http_idempotent_session",
+        session_key="http_idempotent_session",
+        source="api.session",
+        user_id="local-user",
+        title="중복 방지",
+        metadata={"source": "api.session"},
+    )
+
+    first = client.post(
+        "/ai/api/v1/sessions/http_idempotent_session/messages",
+        json={
+            "content": "같은 HTTP 메시지",
+            "clientMessageId": "client_http_idempotent",
+            "model": "gpt-test",
+        },
+    )
+    second = client.post(
+        "/ai/api/v1/sessions/http_idempotent_session/messages",
+        json={
+            "content": "같은 HTTP 메시지",
+            "clientMessageId": "client_http_idempotent",
+            "model": "gpt-test",
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["taskRunId"] == second.json()["taskRunId"]
+    messages = session_store.list_messages("http_idempotent_session")
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+
+
+def test_http_session_message_clears_stale_running_guard_before_append(client, monkeypatch):
+    _patch_respond(monkeypatch, [_response(text="HTTP_STALE_DONE")])
+    session_store = client.app.state.session_store
+    session_store.create_session(
+        session_id="http_stale_guard_session",
+        session_key="http_stale_guard_session",
+        source="api.session",
+        user_id="local-user",
+        title="stale guard",
+        metadata={"source": "api.session"},
+    )
+    session_store.append_user_message_and_start_task(
+        owner_key="local-user",
+        session_id="http_stale_guard_session",
+        content="이전 실행 입력",
+        client_message_id="client_http_stale_old",
+        task_run_id="task_http_stale_terminal",
+        base_history_version=0,
+    )
+    client.app.state.repository.create_task(
+        TaskRun(
+            task_run_id="task_http_stale_terminal",
+            task_type="agent.loop",
+            owner_key="local-user",
+            session_key="http_stale_guard_session",
+            status="FAILED",
+            title="끝난 실행",
+        )
+    )
+
+    response = client.post(
+        "/ai/api/v1/sessions/http_stale_guard_session/messages",
+        json={"content": "새 입력은 막히면 안 된다", "model": "gpt-test"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["assistantMessage"]["content"] == "HTTP_STALE_DONE"
+    assert session_store.get_session("http_stale_guard_session")["running_task_run_id"] is None
+
+
 def test_public_session_message_rejects_new_session_over_limit(client, monkeypatch):
     _patch_respond(monkeypatch, [_response(text="LIMIT_TEST")])
     client.app.state.settings.public_session_limit_per_user = 1
