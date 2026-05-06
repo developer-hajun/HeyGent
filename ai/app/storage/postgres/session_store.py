@@ -296,7 +296,7 @@ class PostgresSessionStore:
                 updated_at = now(),
                 metadata = jsonb_set(
                     metadata,
-                    '{message_count}',
+                    '{{message_count}}',
                     to_jsonb(COALESCE((metadata->>'message_count')::int, 0) + 1),
                     true
                 )
@@ -365,7 +365,7 @@ class PostgresSessionStore:
                 updated_at = now(),
                 metadata = jsonb_set(
                     metadata,
-                    '{message_count}',
+                    '{{message_count}}',
                     to_jsonb(COALESCE((metadata->>'message_count')::int, 0) + 1),
                     true
                 )

@@ -14,7 +14,7 @@ from app.storage.postgres.connection import apply_configured_postgres_migrations
 from app.storage.postgres.durable_repository import PostgresDurableRepository, PostgresTaskRepository
 from app.storage.postgres.migrations import POSTGRES_MIGRATIONS, apply_postgres_migrations
 from tests.fakes import InMemoryTaskRepository
-from app.storage.postgres.session_store import _owner_filter_params, _owner_filter_sql
+from app.storage.postgres.session_store import PostgresSessionStore, _owner_filter_params, _owner_filter_sql
 
 
 def test_in_memory_repository_satisfies_task_boundary_protocols():
@@ -200,6 +200,119 @@ class _FakePostgresConnection:
 
     def commit(self):
         self.committed = True
+
+
+class _FakeSessionConnection:
+    def __init__(self):
+        self.session = {
+            "session_id": "pg_message_session",
+            "owner_key": "owner-a",
+            "owner_user_id": None,
+            "session_source": "api.session",
+            "session_role": "api.session",
+            "metadata": {"source": "api.session", "message_count": 0},
+            "history_version": 0,
+            "running_task_run_id": None,
+            "deleted_at": None,
+        }
+        self.messages: list[dict] = []
+        self.commits = 0
+
+    def execute(self, sql: str, params: tuple | None = None):
+        normalized = " ".join(sql.split())
+        if normalized.startswith("SELECT * FROM agent_sessions"):
+            return _FakeCursor([self.session])
+        if normalized.startswith("SELECT * FROM agent_messages") and "metadata->>'client_message_id'" in normalized:
+            return _FakeCursor([])
+        if normalized.startswith("SELECT COALESCE(MAX(message_sequence), 0) + 1"):
+            return _FakeCursor([{"next_sequence": len(self.messages) + 1}])
+        if normalized.startswith("INSERT INTO agent_messages"):
+            message_id, session_id, sequence, content, metadata = params
+            role = "assistant" if "'assistant'" in normalized else "user"
+            self.messages.append(
+                {
+                    "message_id": message_id,
+                    "session_id": session_id,
+                    "message_sequence": sequence,
+                    "role": role,
+                    "content": content,
+                    "metadata": metadata,
+                }
+            )
+            return _FakeCursor()
+        if (
+            normalized.startswith("UPDATE agent_sessions SET history_version")
+            and "running_task_run_id = NULL" in normalized
+        ):
+            history_version, session_id, owner_key = params
+            assert session_id == self.session["session_id"]
+            assert owner_key == self.session["owner_key"]
+            self.session["history_version"] = history_version
+            self.session["running_task_run_id"] = None
+            self.session["metadata"]["message_count"] += 1
+            return _FakeCursor()
+        if normalized.startswith("UPDATE agent_sessions SET history_version"):
+            history_version, task_run_id, session_id, owner_key = params
+            assert session_id == self.session["session_id"]
+            assert owner_key == self.session["owner_key"]
+            self.session["history_version"] = history_version
+            self.session["running_task_run_id"] = task_run_id
+            self.session["metadata"]["message_count"] += 1
+            return _FakeCursor()
+        return _FakeCursor()
+
+    def commit(self):
+        self.commits += 1
+
+
+def test_postgres_session_store_starts_task_and_updates_message_count():
+    connection = _FakeSessionConnection()
+    store = PostgresSessionStore(lambda: connection)
+
+    result = store.append_user_message_and_start_task(
+        owner_key="owner-a",
+        session_id="pg_message_session",
+        content="실제 전송 경로 확인",
+        client_message_id="client-pg-message-1",
+        task_run_id="task_pg_message_1",
+        base_history_version=0,
+    )
+
+    assert result["duplicate"] is False
+    assert result["message_id"] == 1
+    assert result["after_user_message_version"] == 1
+    assert connection.session["metadata"]["message_count"] == 1
+    assert connection.session["running_task_run_id"] == "task_pg_message_1"
+    assert connection.commits == 1
+
+
+def test_postgres_session_store_finishes_task_and_clears_running_guard():
+    connection = _FakeSessionConnection()
+    store = PostgresSessionStore(lambda: connection)
+    started = store.append_user_message_and_start_task(
+        owner_key="owner-a",
+        session_id="pg_message_session",
+        content="질문",
+        client_message_id="client-pg-message-2",
+        task_run_id="task_pg_message_2",
+        base_history_version=0,
+    )
+
+    result = store.append_assistant_message_and_finish_task(
+        owner_key="owner-a",
+        session_id="pg_message_session",
+        task_run_id="task_pg_message_2",
+        content="답변",
+        completion_expected_version=started["completion_expected_version"],
+        status="COMPLETED",
+    )
+
+    assert result["message_id"] == 2
+    assert result["completion_result_version"] == 2
+    assert [message["role"] for message in connection.messages] == ["user", "assistant"]
+    assert connection.session["metadata"]["message_count"] == 2
+    assert connection.session["running_task_run_id"] is None
+    assert connection.commits == 2
 
 
 def test_postgres_migration_runner_applies_unapplied_migrations_once():
