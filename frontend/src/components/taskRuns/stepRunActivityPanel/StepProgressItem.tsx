@@ -1,79 +1,34 @@
-import { ChevronDown, UsersRound } from 'lucide-react'
-import type { ActivityItemView, RawStepRun } from '@/types/taskRuns'
+import { UsersRound } from 'lucide-react'
+import type { ActivityItemView } from '@/types/taskRuns'
+import type { RawStepRun } from '@/types/taskRuns'
 import { toTaskRunStatusText, toTaskRunStatusTone } from '@/utils/taskRunStatusView'
-import { ActivityEventItem } from './ActivityEventItem'
 import { toStepProgressSentence, toUserFacingTaskTitle } from './activityPanelText'
 import { TaskRunStatusIcon } from './TaskRunStatusIcon'
 
 export function StepProgressItem({
   step,
   activities,
-  taskRunFinished = false,
 }: {
   step: RawStepRun
   activities: ActivityItemView[]
-  taskRunFinished?: boolean
 }) {
   const workerItems = getStepWorkerItems(step, activities)
-  const previewActivities = activities.slice(-2)
-  const hiddenActivityCount = Math.max(0, activities.length - previewActivities.length)
 
   return (
-    <li className="bg-card border-border rounded-lg border">
-      <details className="group">
-        <summary className="hover:bg-muted/60 flex min-h-20 cursor-pointer list-none items-center gap-3 rounded-lg p-3 transition-colors">
-          <TaskRunStatusIcon tone={toTaskRunStatusTone(step.status)} />
-          <span className="min-w-0 flex-1">
-            <span className="text-foreground line-clamp-2 block text-sm font-medium [overflow-wrap:anywhere] break-words">
-              {toUserFacingTaskTitle(step.title ?? step.goal ?? '답변 준비')}
-            </span>
-            <span className="text-muted-foreground mt-1 line-clamp-1 block text-xs">
-              {toStepProgressSentence(step.status)}
-            </span>
+    <li className="bg-card border-border rounded-lg border p-3">
+      <div className="flex min-h-14 items-center gap-3">
+        <TaskRunStatusIcon tone={toTaskRunStatusTone(step.status)} />
+        <span className="min-w-0 flex-1">
+          <span className="text-foreground line-clamp-2 block text-sm font-medium [overflow-wrap:anywhere] break-words">
+            {toUserFacingTaskTitle(step.title ?? step.goal ?? '답변 준비')}
           </span>
-          <span className="text-muted-foreground text-[11px]">{activities.length}개</span>
-          <ChevronDown className="text-muted-foreground h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
-        </summary>
-        <div className="border-border space-y-3 border-t p-3">
-          {workerItems.length > 0 && <WorkerStatusList workers={workerItems} />}
+          <span className="text-muted-foreground mt-1 line-clamp-1 block text-xs">
+            {toStepProgressSentence(step.status)}
+          </span>
+        </span>
+      </div>
 
-          {activities.length === 0 ? (
-            <p className="text-muted-foreground text-xs">아직 세부 기록이 없습니다.</p>
-          ) : (
-            <div className="space-y-2">
-              <ol className="space-y-2">
-                {previewActivities.map((activity) => (
-                  <ActivityEventItem
-                    key={activity.id}
-                    activity={activity}
-                    compact
-                    taskRunFinished={taskRunFinished || step.status === 'COMPLETED'}
-                  />
-                ))}
-              </ol>
-
-              {hiddenActivityCount > 0 && (
-                <details className="group/all">
-                  <summary className="text-muted-foreground hover:text-foreground hover:bg-muted flex cursor-pointer list-none items-center justify-between rounded px-2 py-1.5 text-[11px] transition-colors">
-                    <span>이전 세부 기록 {hiddenActivityCount}개 더 보기</span>
-                    <ChevronDown className="h-3 w-3 shrink-0 transition-transform group-open/all:rotate-180" />
-                  </summary>
-                  <ol className="mt-2 space-y-2">
-                    {activities.slice(0, -2).map((activity) => (
-                      <ActivityEventItem
-                        key={activity.id}
-                        activity={activity}
-                        compact
-                        taskRunFinished={taskRunFinished || step.status === 'COMPLETED'}
-                      />
-                    ))}
-                  </ol>
-                </details>
-              )}
-            </div>
-          )}
-        </div>
-      </details>
+      {workerItems.length > 0 && <WorkerStatusList workers={workerItems} />}
     </li>
   )
 }
@@ -87,7 +42,7 @@ type WorkerStatusItem = {
 
 function WorkerStatusList({ workers }: { workers: WorkerStatusItem[] }) {
   return (
-    <section className="bg-muted/20 border-border rounded-lg border px-3 py-2">
+    <section className="border-border bg-muted/20 mt-3 rounded-lg border px-3 py-2">
       <div className="text-muted-foreground mb-2 flex items-center gap-1.5 text-[11px] font-medium">
         <UsersRound className="h-3.5 w-3.5" />
         worker 실행 상태
@@ -118,6 +73,11 @@ function getStepWorkerItems(step: RawStepRun, activities: ActivityItemView[]) {
   getAgentDetailWorkers(step).forEach((worker, index) => {
     mergeWorker(workers, worker, index, delegateTitles[index])
   })
+
+  const workerSession = asRecord(step.worker_session) ?? asRecord(step.workerSession)
+  if (workerSession !== undefined) {
+    mergeWorker(workers, workerSession, workers.size)
+  }
 
   activities.forEach((activity, index) => {
     const payload = asRecord(activity.raw.payload)
@@ -179,7 +139,7 @@ function mergeWorker(
   index: number,
   fallbackTitle?: string,
 ) {
-  const workerSessionId = pickString(rawWorker, 'workerSessionId', 'worker_session_id')
+  const workerSessionId = pickString(rawWorker, 'workerSessionId', 'worker_session_id', 'id')
   const agentId = pickString(rawWorker, 'agentId', 'agent_id')
   const id = workerSessionId ?? agentId ?? `worker-${index}`
   const existing = workers.get(id)
@@ -187,7 +147,7 @@ function mergeWorker(
   const firstTask = asRecord(tasks[0])
   const title =
     pickString(firstTask, 'title', 'goal', 'name') ??
-    pickString(rawWorker, 'goal', 'title') ??
+    pickString(rawWorker, 'goal', 'title', 'name') ??
     fallbackTitle ??
     pickString(rawWorker, 'profileKey', 'profile_key') ??
     `worker ${index + 1}`

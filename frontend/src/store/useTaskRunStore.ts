@@ -590,50 +590,69 @@ const inferRealtimeStepRunStatus = (
   event: RawTaskEventPayload,
   existingStatus?: RawStepRun['status'] | null,
 ): RawStepRun['status'] | undefined => {
+  const normalizedExistingStatus = normalizeRealtimeStepRunStatus(existingStatus)
   switch (event.event_type) {
     case 'step.created':
-      return typeof event.status === 'string' ? event.status : 'PENDING'
+      return normalizeRealtimeStepRunStatus(event.status) ?? 'PENDING'
     case 'step.started':
+      return 'RUNNING'
     case 'step.waiting':
+      return 'WAITING'
     case 'step.completed':
+      return 'COMPLETED'
     case 'step.failed':
+      return 'FAILED'
     case 'step.canceled':
     case 'step.cancelled':
-      return event.event_type
+      return 'CANCELED'
     case 'tool.started':
     case 'search.started':
+      return normalizedExistingStatus ?? 'RUNNING'
     case 'tool.completed':
     case 'search.completed':
-      return event.event_type
+      return normalizedExistingStatus ?? 'RUNNING'
     default:
-      return typeof event.status === 'string' ? event.status : existingStatus
+      return normalizeRealtimeStepRunStatus(event.status) ?? normalizedExistingStatus
+  }
+}
+
+const normalizeRealtimeStepRunStatus = (
+  status?: string | null,
+): RawStepRun['status'] | undefined => {
+  switch (status) {
+    case 'PENDING':
+    case 'RUNNING':
+    case 'WAITING':
+    case 'BLOCKED':
+    case 'COMPLETED':
+    case 'FAILED':
+    case 'CANCELED':
+    case 'CANCELLED':
+      return status
+    case 'step.started':
+    case 'tool.started':
+    case 'search.started':
+      return 'RUNNING'
+    case 'step.waiting':
+      return 'WAITING'
+    case 'step.completed':
+      return 'COMPLETED'
+    case 'step.failed':
+      return 'FAILED'
+    case 'step.canceled':
+    case 'step.cancelled':
+      return 'CANCELED'
+    default:
+      return undefined
   }
 }
 
 const inferRealtimeStepRunTitle = (event: RawTaskEventPayload) =>
-  getMeaningfulTaskEventSummary(event.summary_message) ??
-  pickTaskEventString(event.payload, [
-    'step_title',
-    'stepTitle',
-    'title',
-    'goal',
-    'name',
-    'label',
-    'tool_name',
-    'toolName',
-    'query',
-  ]) ??
-  pickTaskEventString(event.detail_json, [
-    'step_title',
-    'stepTitle',
-    'title',
-    'goal',
-    'name',
-    'label',
-    'tool_name',
-    'toolName',
-    'query',
-  ]) ??
+  (event.event_type.startsWith('step.')
+    ? getMeaningfulTaskEventSummary(event.summary_message)
+    : undefined) ??
+  pickTaskEventString(event.payload, ['step_title', 'stepTitle', 'goal']) ??
+  pickTaskEventString(event.detail_json, ['step_title', 'stepTitle', 'goal']) ??
   getRealtimeStepRunFallbackTitle(event.event_type)
 
 const getMeaningfulTaskEventSummary = (value?: string | null) => {
