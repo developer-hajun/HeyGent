@@ -7,6 +7,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     CREATE TABLE IF NOT EXISTS agent_sessions (
         session_id TEXT PRIMARY KEY,
         owner_key TEXT NOT NULL,
+        owner_user_id BIGINT REFERENCES users(id),
         session_key TEXT NOT NULL,
         task_run_id TEXT,
         parent_session_id TEXT REFERENCES agent_sessions(session_id) ON DELETE SET NULL,
@@ -15,12 +16,23 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
         agent_profile_version INTEGER NOT NULL DEFAULT 1,
         agent_config_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
         session_role TEXT NOT NULL DEFAULT 'main' CHECK (session_role IN ('main', 'user_subagent', 'worker', 'domain')),
+        session_source TEXT NOT NULL DEFAULT 'agent.loop',
+        history_version BIGINT NOT NULL DEFAULT 0,
+        running_task_run_id TEXT,
+        workspace_key TEXT,
         status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'WAITING', 'COMPLETED', 'FAILED', 'CANCELED')),
         title TEXT,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+        archived_at TIMESTAMPTZ,
+        deleted_at TIMESTAMPTZ,
+        deleted_by BIGINT REFERENCES users(id),
+        purge_after TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-        ended_at TIMESTAMPTZ
+        ended_at TIMESTAMPTZ,
+        CONSTRAINT agent_sessions_public_owner_user_required
+            CHECK (session_source <> 'api.session' OR owner_user_id IS NOT NULL)
     );
     """,
     """
@@ -42,8 +54,21 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     );
     """,
     """
+    CREATE TABLE IF NOT EXISTS session_command_receipts (
+        session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+        client_command_id TEXT NOT NULL,
+        owner_key TEXT NOT NULL,
+        owner_user_id BIGINT REFERENCES users(id),
+        command_signature TEXT NOT NULL,
+        response_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (session_id, client_command_id)
+    );
+    """,
+    """
     CREATE TABLE IF NOT EXISTS approval_requests (
         approval_id TEXT PRIMARY KEY,
+        owner_user_id BIGINT REFERENCES users(id),
         task_run_id TEXT NOT NULL,
         step_run_id TEXT NOT NULL,
         tool_call_id TEXT,
@@ -59,8 +84,8 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
         task_run_id TEXT PRIMARY KEY,
         session_id TEXT REFERENCES agent_sessions(session_id) ON DELETE SET NULL,
         owner_key TEXT NOT NULL,
+        owner_user_id BIGINT REFERENCES users(id),
         session_key TEXT,
-        entry_handler_key TEXT,
         current_step_run_id TEXT,
         durable_status TEXT NOT NULL DEFAULT 'OPEN' CHECK (durable_status IN ('OPEN', 'WAITING', 'TERMINAL')),
         anchor_generation BIGINT NOT NULL DEFAULT 1,
@@ -83,7 +108,6 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
         worker_session_id TEXT REFERENCES agent_sessions(session_id) ON DELETE SET NULL,
         step_order INTEGER NOT NULL,
         step_type TEXT NOT NULL,
-        handler_key TEXT,
         durable_status TEXT NOT NULL DEFAULT 'OPEN' CHECK (durable_status IN ('OPEN', 'WAITING', 'TERMINAL')),
         anchor_generation BIGINT NOT NULL DEFAULT 1,
         revision BIGINT NOT NULL DEFAULT 0,
@@ -113,6 +137,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     CREATE TABLE IF NOT EXISTS ai_agent_profiles (
         profile_id TEXT PRIMARY KEY,
         owner_key TEXT NOT NULL,
+        owner_user_id BIGINT REFERENCES users(id),
         profile_key TEXT NOT NULL,
         profile_version INTEGER NOT NULL DEFAULT 1,
         agent_type TEXT NOT NULL CHECK (agent_type IN ('main', 'user_subagent', 'worker', 'domain')),
@@ -173,6 +198,33 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_agent_messages_session_created
     ON agent_messages(session_id, created_at);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_messages_session_sequence
+    ON agent_messages(session_id, message_sequence);
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_messages_public_client_id
+    ON agent_messages (session_id, (metadata->>'client_message_id'))
+    WHERE role = 'user' AND metadata ? 'client_message_id';
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_sessions_owner_source_updated
+    ON agent_sessions (owner_key, session_source, updated_at DESC);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_sessions_owner_user_source_updated
+    ON agent_sessions (owner_user_id, session_source, updated_at DESC)
+    WHERE deleted_at IS NULL;
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_agent_sessions_purge_after
+    ON agent_sessions (purge_after)
+    WHERE deleted_at IS NOT NULL AND purge_after IS NOT NULL;
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_session_command_receipts_owner
+    ON session_command_receipts(owner_user_id, session_id, created_at DESC);
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_run_anchors_owner_session

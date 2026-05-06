@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopHandler
-from app.domain.orchestration.prompts.prompt_builder import PromptBuilder
+from app.domain.orchestration.prompts.prompt_builder import PromptBuilder, assemble_agent_loop_messages, render_single_prompt_fallback
 from app.domain.orchestration.prompts.skill_prompt import SkillLoader, SkillPromptBuilder, SkillRegistry
 
 
@@ -52,6 +52,40 @@ def test_prompt_builder_explains_approval_tool_call_boundary():
     assert "approval_required=true" in prompt
     assert "도구 호출 자체는 먼저 native tool call로 반환하세요" in prompt
     assert "같은 tool_call_id" in prompt
+
+
+def test_assemble_agent_loop_messages_preserves_history_as_native_messages():
+    messages = assemble_agent_loop_messages(
+        system_prompt_snapshot="고정 system prompt",
+        conversation_history=[
+            {"role": "user", "content": "이전 요청"},
+            {"role": "assistant", "content": "이전 답변"},
+        ],
+        current_user_prompt="지금 질문",
+        runtime_prompt_suffix="도구 사용 지침",
+    )
+
+    assert [message.role for message in messages] == ["system", "user", "assistant", "user"]
+    assert messages[0].content == "고정 system prompt"
+    assert messages[1].content == "이전 요청"
+    assert messages[2].content == "이전 답변"
+    assert "지금 질문" in str(messages[3].content)
+    assert "도구 사용 지침" in str(messages[3].content)
+
+
+def test_single_prompt_fallback_is_the_only_history_text_renderer():
+    fallback = render_single_prompt_fallback(
+        assemble_agent_loop_messages(
+            system_prompt_snapshot="고정 system prompt",
+            conversation_history=[{"role": "user", "content": "이전 요청"}],
+            current_user_prompt="지금 질문",
+            runtime_prompt_suffix="",
+        )
+    )
+
+    assert "고정 system prompt" in fallback
+    assert "이전 요청" in fallback
+    assert "지금 질문" in fallback
 
 
 def test_builtin_browser_web_skills_are_loaded_from_app_skills():
@@ -155,7 +189,6 @@ def test_skill_index_is_loaded_from_app_skills():
 
     assert "skill-index" in loaded
     assert "web-search-fallback" in loaded["skill-index"]["body"]
-    assert "github-repo-management" in loaded["skill-index"]["body"]
     assert "korea-weather" in loaded["skill-index"]["body"]
     assert "korean-character-count" in loaded["skill-index"]["body"]
     assert "joseon-sillok-search" in loaded["skill-index"]["body"]

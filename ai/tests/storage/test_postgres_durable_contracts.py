@@ -6,11 +6,15 @@ from app.domain.tasks.repository import (
     TaskRepository,
     TaskRunRepository,
 )
+from app.domain.tasks.models import TaskRun
+from app.storage.queries.approval_queries import CREATE_APPROVAL_REQUESTS
+from app.storage.queries.task_queries import CREATE_TASK_RUNS
 from app.storage.postgres.schema import POSTGRES_SCHEMA_STATEMENTS, render_postgres_schema
 from app.storage.postgres.connection import apply_configured_postgres_migrations
 from app.storage.postgres.durable_repository import PostgresDurableRepository, PostgresTaskRepository
 from app.storage.postgres.migrations import POSTGRES_MIGRATIONS, apply_postgres_migrations
 from tests.fakes import InMemoryTaskRepository
+from app.storage.postgres.session_store import PostgresSessionStore, _owner_filter_params, _owner_filter_sql
 
 
 def test_in_memory_repository_satisfies_task_boundary_protocols():
@@ -46,6 +50,7 @@ def test_postgres_schema_contains_required_durable_tables():
         "agent_sessions",
         "agent_messages",
         "approval_requests",
+        "session_command_receipts",
         "run_anchors",
         "step_anchors",
         "worker_handoffs",
@@ -90,6 +95,57 @@ def test_postgres_schema_contains_anchor_profile_and_worker_linkage_columns():
         "WHERE status = 'PENDING'",
     ]:
         assert expected in schema_sql
+
+
+def test_postgres_schema_contains_user_owner_and_session_lifecycle_columns():
+    schema_sql = render_postgres_schema()
+    migration_sql = "\n".join(statement for migration in POSTGRES_MIGRATIONS for statement in migration.statements)
+
+    for expected in [
+        "owner_user_id BIGINT REFERENCES users(id)",
+        "archived_at TIMESTAMPTZ",
+        "deleted_at TIMESTAMPTZ",
+        "deleted_by BIGINT REFERENCES users(id)",
+        "purge_after TIMESTAMPTZ",
+        "settings JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "CONSTRAINT agent_sessions_public_owner_user_required",
+        "CREATE INDEX IF NOT EXISTS idx_agent_sessions_owner_user_source_updated",
+        "CREATE INDEX IF NOT EXISTS idx_agent_sessions_purge_after",
+        "CREATE INDEX IF NOT EXISTS idx_session_command_receipts_owner",
+    ]:
+        assert expected in schema_sql
+
+    for table_name in ("agent_sessions", "run_anchors", "approval_requests", "ai_agent_profiles"):
+        table_start = schema_sql.index(f"CREATE TABLE IF NOT EXISTS {table_name}")
+        table_end = schema_sql.index(");", table_start)
+        table_sql = schema_sql[table_start:table_end]
+        assert "owner_user_id BIGINT REFERENCES users(id)" in table_sql
+
+    for table_name in ("ai_agent_templates", "provider_tokens", "provider_oauth_states"):
+        table_start = schema_sql.index(f"CREATE TABLE IF NOT EXISTS {table_name}")
+        table_end = schema_sql.index(");", table_start)
+        table_sql = schema_sql[table_start:table_end]
+        assert "owner_user_id" not in table_sql
+
+    assert "0006_session_owner_lifecycle_settings" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "0007_session_command_receipts" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "ALTER TABLE agent_sessions" in migration_sql
+    assert "ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id)" in migration_sql
+    assert "ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}'::jsonb" in migration_sql
+    assert "agent_sessions_public_owner_user_required" in migration_sql
+    assert "CREATE TABLE IF NOT EXISTS session_command_receipts" in migration_sql
+
+
+def test_sqlite_task_and_approval_contracts_keep_owner_user_columns():
+    assert "owner_user_id INTEGER REFERENCES users(id)" in CREATE_TASK_RUNS
+    assert "owner_user_id INTEGER REFERENCES users(id)" in CREATE_APPROVAL_REQUESTS
+
+
+def test_postgres_session_owner_filter_prefers_user_fk_when_user_id_is_numeric():
+    assert _owner_filter_sql("42") == "owner_user_id = %s"
+    assert _owner_filter_params("42") == [42]
+    assert _owner_filter_sql("local-user") == "owner_key = %s"
+    assert _owner_filter_params("local-user") == ["local-user"]
 
 
 def test_postgres_schema_seeds_builtin_agent_profiles():
@@ -146,6 +202,119 @@ class _FakePostgresConnection:
         self.committed = True
 
 
+class _FakeSessionConnection:
+    def __init__(self):
+        self.session = {
+            "session_id": "pg_message_session",
+            "owner_key": "owner-a",
+            "owner_user_id": None,
+            "session_source": "api.session",
+            "session_role": "api.session",
+            "metadata": {"source": "api.session", "message_count": 0},
+            "history_version": 0,
+            "running_task_run_id": None,
+            "deleted_at": None,
+        }
+        self.messages: list[dict] = []
+        self.commits = 0
+
+    def execute(self, sql: str, params: tuple | None = None):
+        normalized = " ".join(sql.split())
+        if normalized.startswith("SELECT * FROM agent_sessions"):
+            return _FakeCursor([self.session])
+        if normalized.startswith("SELECT * FROM agent_messages") and "metadata->>'client_message_id'" in normalized:
+            return _FakeCursor([])
+        if normalized.startswith("SELECT COALESCE(MAX(message_sequence), 0) + 1"):
+            return _FakeCursor([{"next_sequence": len(self.messages) + 1}])
+        if normalized.startswith("INSERT INTO agent_messages"):
+            message_id, session_id, sequence, content, metadata = params
+            role = "assistant" if "'assistant'" in normalized else "user"
+            self.messages.append(
+                {
+                    "message_id": message_id,
+                    "session_id": session_id,
+                    "message_sequence": sequence,
+                    "role": role,
+                    "content": content,
+                    "metadata": metadata,
+                }
+            )
+            return _FakeCursor()
+        if (
+            normalized.startswith("UPDATE agent_sessions SET history_version")
+            and "running_task_run_id = NULL" in normalized
+        ):
+            history_version, session_id, owner_key = params
+            assert session_id == self.session["session_id"]
+            assert owner_key == self.session["owner_key"]
+            self.session["history_version"] = history_version
+            self.session["running_task_run_id"] = None
+            self.session["metadata"]["message_count"] += 1
+            return _FakeCursor()
+        if normalized.startswith("UPDATE agent_sessions SET history_version"):
+            history_version, task_run_id, session_id, owner_key = params
+            assert session_id == self.session["session_id"]
+            assert owner_key == self.session["owner_key"]
+            self.session["history_version"] = history_version
+            self.session["running_task_run_id"] = task_run_id
+            self.session["metadata"]["message_count"] += 1
+            return _FakeCursor()
+        return _FakeCursor()
+
+    def commit(self):
+        self.commits += 1
+
+
+def test_postgres_session_store_starts_task_and_updates_message_count():
+    connection = _FakeSessionConnection()
+    store = PostgresSessionStore(lambda: connection)
+
+    result = store.append_user_message_and_start_task(
+        owner_key="owner-a",
+        session_id="pg_message_session",
+        content="실제 전송 경로 확인",
+        client_message_id="client-pg-message-1",
+        task_run_id="task_pg_message_1",
+        base_history_version=0,
+    )
+
+    assert result["duplicate"] is False
+    assert result["message_id"] == 1
+    assert result["after_user_message_version"] == 1
+    assert connection.session["metadata"]["message_count"] == 1
+    assert connection.session["running_task_run_id"] == "task_pg_message_1"
+    assert connection.commits == 1
+
+
+def test_postgres_session_store_finishes_task_and_clears_running_guard():
+    connection = _FakeSessionConnection()
+    store = PostgresSessionStore(lambda: connection)
+    started = store.append_user_message_and_start_task(
+        owner_key="owner-a",
+        session_id="pg_message_session",
+        content="질문",
+        client_message_id="client-pg-message-2",
+        task_run_id="task_pg_message_2",
+        base_history_version=0,
+    )
+
+    result = store.append_assistant_message_and_finish_task(
+        owner_key="owner-a",
+        session_id="pg_message_session",
+        task_run_id="task_pg_message_2",
+        content="답변",
+        completion_expected_version=started["completion_expected_version"],
+        status="COMPLETED",
+    )
+
+    assert result["message_id"] == 2
+    assert result["completion_result_version"] == 2
+    assert [message["role"] for message in connection.messages] == ["user", "assistant"]
+    assert connection.session["metadata"]["message_count"] == 2
+    assert connection.session["running_task_run_id"] is None
+    assert connection.commits == 2
+
+
 def test_postgres_migration_runner_applies_unapplied_migrations_once():
     connection = _FakePostgresConnection()
 
@@ -185,20 +354,32 @@ class _FakeDurableConnection:
     def execute(self, sql: str, params: tuple | None = None):
         normalized = " ".join(sql.split())
         if normalized.startswith("INSERT INTO run_anchors"):
-            task_run_id, session_id, owner_key, session_key, current_step_run_id, durable_status, anchor_payload = params
+            (
+                task_run_id,
+                session_id,
+                owner_key,
+                owner_user_id,
+                session_key,
+                current_step_run_id,
+                durable_status,
+                agent_config_snapshot,
+                anchor_payload,
+            ) = params
             self.run_anchors[task_run_id] = {
                 "task_run_id": task_run_id,
                 "session_id": session_id,
                 "owner_key": owner_key,
+                "owner_user_id": owner_user_id,
                 "session_key": session_key,
                 "current_step_run_id": current_step_run_id,
                 "durable_status": durable_status,
+                "agent_config_snapshot": agent_config_snapshot,
                 "anchor_payload": anchor_payload,
             }
         elif normalized.startswith("SELECT * FROM run_anchors"):
             return _FakeCursor([self.run_anchors[params[0]]] if params[0] in self.run_anchors else [])
         elif normalized.startswith("INSERT INTO step_anchors"):
-            step_run_id, task_run_id, parent_step_run_id, worker_session_id, step_order, step_type, handler_key, durable_status, anchor_payload = params
+            step_run_id, task_run_id, parent_step_run_id, worker_session_id, step_order, step_type, durable_status, anchor_payload = params
             self.step_anchors[step_run_id] = {
                 "step_run_id": step_run_id,
                 "task_run_id": task_run_id,
@@ -206,7 +387,6 @@ class _FakeDurableConnection:
                 "worker_session_id": worker_session_id,
                 "step_order": step_order,
                 "step_type": step_type,
-                "handler_key": handler_key,
                 "durable_status": durable_status,
                 "anchor_payload": anchor_payload,
             }
@@ -234,6 +414,7 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
             "session_key": "session_pg",
             "current_step_run_id": "step_pg_anchor",
             "durable_status": "WAITING",
+            "agent_config_snapshot": {"model": "gpt-session", "enabled_toolsets": ["session"]},
             "anchor_payload": {"reason": "approval"},
         },
     )
@@ -243,17 +424,45 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
             "task_run_id": "task_pg_anchor",
             "step_order": 3,
             "step_type": "agent.loop.execute",
-            "handler_key": "agent.loop",
             "durable_status": "WAITING",
             "anchor_payload": {"tool": "terminal.run"},
         },
     )
 
     assert run_anchor["owner_key"] == "user_pg"
+    assert run_anchor["agent_config_snapshot"] == {"model": "gpt-session", "enabled_toolsets": ["session"]}
     assert run_anchor["anchor_payload"] == {"reason": "approval"}
     assert step_anchor["step_order"] == 3
     assert step_anchor["anchor_payload"] == {"tool": "terminal.run"}
     assert connection.commits == 2
+
+
+def test_postgres_task_repository_copies_task_settings_to_run_anchor_config_snapshot():
+    connection = _FakeDurableConnection()
+    repository = PostgresTaskRepository(lambda: connection)
+
+    repository.create_task(
+        TaskRun(
+            task_run_id="task_pg_settings_anchor",
+            task_type="agent.loop",
+            owner_key="42",
+            status="RUNNING",
+            input_payload={
+                "settings_snapshot": {"model": "gpt-session", "systemPrompt": "세션 프롬프트"},
+                "enabled_toolsets": ["session", "planning"],
+                "delegation_policy": {"canDelegate": False},
+            },
+        )
+    )
+
+    anchor = repository.get_run_anchor("task_pg_settings_anchor")
+    assert anchor is not None
+    assert anchor["agent_config_snapshot"] == {
+        "model": "gpt-session",
+        "systemPrompt": "세션 프롬프트",
+        "toolsets": ["session", "planning"],
+        "delegationPolicy": {"canDelegate": False},
+    }
 
 
 def test_postgres_task_repository_reads_agent_profile_by_key():

@@ -25,37 +25,40 @@ export function ChatSessionHeader({
   const isError = connectionState === 'error' || connectionState === 'auth-expired'
 
   return (
-    <header className="border-border bg-background/95 supports-[backdrop-filter]:bg-background/80 flex h-14 shrink-0 items-center justify-between border-b px-4 backdrop-blur">
-      <div className="flex min-w-0 items-center gap-3">
-        <div className="bg-muted text-muted-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
-          <MessageCircle className="h-4 w-4" />
-        </div>
-        <div className="min-w-0">
-          <h1 className="text-foreground truncate text-sm font-semibold">{title}</h1>
-          <div
-            className={`flex items-center gap-1.5 text-xs ${
-              isError ? 'text-destructive' : 'text-muted-foreground'
-            }`}
-          >
-            {isBusy ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : isError ? (
-              <AlertCircle className="h-3 w-3" />
-            ) : (
-              <Wifi className="h-3 w-3" />
-            )}
-            <span>{connectionText[connectionState]}</span>
+    <header className="bg-background/95 supports-backdrop-filter:bg-background/80 relative flex h-12 shrink-0 flex-col justify-center backdrop-blur">
+      <div className="flex items-center justify-between px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="bg-muted text-muted-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
+            <MessageCircle className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-foreground truncate text-sm font-semibold">{title}</h1>
+            <div
+              className={`flex items-center gap-1.5 text-xs ${
+                isError ? 'text-destructive' : 'text-muted-foreground'
+              }`}
+            >
+              {isBusy ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : isError ? (
+                <AlertCircle className="h-3 w-3" />
+              ) : (
+                <Wifi className="h-3 w-3" />
+              )}
+              <span>{connectionText[connectionState]}</span>
+            </div>
           </div>
         </div>
+        <button
+          type="button"
+          onClick={onOpenActivity}
+          className="hover:bg-muted text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+          aria-label="활동 패널 열기"
+        >
+          <PanelRightOpen className="h-4 w-4" />
+        </button>
       </div>
-      <button
-        type="button"
-        onClick={onOpenActivity}
-        className="hover:bg-muted text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
-        aria-label="활동 패널 열기"
-      >
-        <PanelRightOpen className="h-4 w-4" />
-      </button>
+      <div className="border-border/60 absolute right-4 bottom-0 left-4 border-b" />
     </header>
   )
 }

@@ -28,9 +28,6 @@ class OperationTemplate:
 class HandlerSpec:
     """loop 가 실행자를 이해하는 데 필요한 최소 정적 정보다."""
 
-    intent_type: str
-    entry_handler_key: str
-    handler_key: str
     task_type: str
     task_title: str
     step_type: str

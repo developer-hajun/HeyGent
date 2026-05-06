@@ -3,6 +3,7 @@ package com.ssafy.heygent.domain.iot.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -24,6 +25,7 @@ import com.ssafy.heygent.global.exception.ErrorCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -171,6 +173,46 @@ class DeviceServiceTest {
         verify(mqttDisplayPublisher, never()).publish(DEVICE_ID, payload());
     }
 
+    @Test
+    void unpairPublishesResetAndDeletesOwnedDevice() {
+        IotDevice device = device(IotDeviceStatus.ACTIVE);
+        DisplayEventPayload payload = resetPayload();
+        when(iotDeviceRepository.findByDeviceIdAndUserId(DEVICE_ID, USER_ID)).thenReturn(Optional.of(device));
+        when(displayEventMapper.toPayload(
+            DisplayEventType.INFO,
+            DisplayIcon.INFO,
+            "pairing",
+            "reset",
+            "unpaired"
+        )).thenReturn(payload);
+
+        deviceService.unpair(USER_ID, DEVICE_ID);
+
+        InOrder inOrder = inOrder(mqttDisplayPublisher, iotDeviceRepository);
+        inOrder.verify(mqttDisplayPublisher).publish(DEVICE_ID, payload);
+        inOrder.verify(iotDeviceRepository).delete(device);
+    }
+
+    @Test
+    void unpairFailsWhenDeviceIsNotOwnedByUser() {
+        when(iotDeviceRepository.findByDeviceIdAndUserId(DEVICE_ID, USER_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> deviceService.unpair(USER_ID, DEVICE_ID))
+            .isInstanceOf(CustomException.class)
+            .extracting("errorCode")
+            .isEqualTo(ErrorCode.RESOURCE_NOT_FOUND);
+
+        verify(iotDeviceRepository, never()).delete(any(IotDevice.class));
+        verify(displayEventMapper, never()).toPayload(
+            DisplayEventType.INFO,
+            DisplayIcon.INFO,
+            "pairing",
+            "reset",
+            "unpaired"
+        );
+        verify(mqttDisplayPublisher, never()).publish(any(), any());
+    }
+
     private DisplayPublishTestRequest request() {
         return new DisplayPublishTestRequest(
             DisplayEventType.STEP,
@@ -190,6 +232,18 @@ class DeviceServiceTest {
             "searching",
             3000L,
             12L
+        );
+    }
+
+    private DisplayEventPayload resetPayload() {
+        return new DisplayEventPayload(
+            DisplayEventType.INFO,
+            "pairing",
+            "reset",
+            DisplayIcon.INFO,
+            "unpaired",
+            3000L,
+            13L
         );
     }
 

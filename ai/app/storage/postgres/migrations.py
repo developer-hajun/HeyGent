@@ -51,6 +51,146 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """,
         ),
     ),
+    PostgresMigration(
+        migration_id="0004_remove_legacy_routing_columns",
+        statements=(
+            """
+            ALTER TABLE run_anchors
+            DROP COLUMN IF EXISTS entry_handler_key;
+            """,
+            """
+            ALTER TABLE step_anchors
+            DROP COLUMN IF EXISTS handler_key;
+            """,
+        ),
+    ),
+    PostgresMigration(
+        migration_id="0005_session_runtime_state",
+        statements=(
+            """
+            ALTER TABLE agent_sessions
+            ADD COLUMN IF NOT EXISTS session_source TEXT NOT NULL DEFAULT 'agent.loop';
+            """,
+            """
+            ALTER TABLE agent_sessions
+            ADD COLUMN IF NOT EXISTS history_version BIGINT NOT NULL DEFAULT 0;
+            """,
+            """
+            ALTER TABLE agent_sessions
+            ADD COLUMN IF NOT EXISTS running_task_run_id TEXT;
+            """,
+            """
+            ALTER TABLE agent_sessions
+            ADD COLUMN IF NOT EXISTS workspace_key TEXT;
+            """,
+            """
+            UPDATE agent_sessions
+            SET session_source = COALESCE(metadata->>'source', session_source, 'agent.loop')
+            WHERE session_source = 'agent.loop'
+               OR session_source IS NULL;
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_messages_public_client_id
+            ON agent_messages (session_id, (metadata->>'client_message_id'))
+            WHERE role = 'user' AND metadata ? 'client_message_id';
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_agent_sessions_owner_source_updated
+            ON agent_sessions (owner_key, session_source, updated_at DESC);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_agent_messages_session_sequence
+            ON agent_messages(session_id, message_sequence);
+            """,
+        ),
+    ),
+    PostgresMigration(
+        migration_id="0006_session_owner_lifecycle_settings",
+        statements=(
+            """
+            ALTER TABLE agent_sessions
+            ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id);
+            """,
+            """
+            ALTER TABLE agent_sessions
+            ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}'::jsonb;
+            """,
+            """
+            ALTER TABLE agent_sessions
+            ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+            """,
+            """
+            ALTER TABLE agent_sessions
+            ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+            """,
+            """
+            ALTER TABLE agent_sessions
+            ADD COLUMN IF NOT EXISTS deleted_by BIGINT REFERENCES users(id);
+            """,
+            """
+            ALTER TABLE agent_sessions
+            ADD COLUMN IF NOT EXISTS purge_after TIMESTAMPTZ;
+            """,
+            """
+            ALTER TABLE run_anchors
+            ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id);
+            """,
+            """
+            ALTER TABLE approval_requests
+            ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id);
+            """,
+            """
+            ALTER TABLE ai_agent_profiles
+            ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_agent_sessions_owner_user_source_updated
+            ON agent_sessions (owner_user_id, session_source, updated_at DESC)
+            WHERE deleted_at IS NULL;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_agent_sessions_purge_after
+            ON agent_sessions (purge_after)
+            WHERE deleted_at IS NOT NULL AND purge_after IS NOT NULL;
+            """,
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'agent_sessions_public_owner_user_required'
+                ) THEN
+                    ALTER TABLE agent_sessions
+                    ADD CONSTRAINT agent_sessions_public_owner_user_required
+                    CHECK (session_source <> 'api.session' OR owner_user_id IS NOT NULL)
+                    NOT VALID;
+                END IF;
+            END $$;
+            """,
+        ),
+    ),
+    PostgresMigration(
+        migration_id="0007_session_command_receipts",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS session_command_receipts (
+                session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+                client_command_id TEXT NOT NULL,
+                owner_key TEXT NOT NULL,
+                owner_user_id BIGINT REFERENCES users(id),
+                command_signature TEXT NOT NULL,
+                response_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (session_id, client_command_id)
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_session_command_receipts_owner
+            ON session_command_receipts(owner_user_id, session_id, created_at DESC);
+            """,
+        ),
+    ),
 )
 
 

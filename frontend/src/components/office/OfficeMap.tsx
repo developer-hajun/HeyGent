@@ -172,8 +172,6 @@ export function OfficeMap({
           left: 0,
           width: MAP_WIDTH,
           height: MAP_HEIGHT,
-          transformOrigin: 'top left',
-          transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})`,
         }}
       >
         <img

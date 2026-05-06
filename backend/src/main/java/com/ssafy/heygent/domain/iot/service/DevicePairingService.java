@@ -2,6 +2,7 @@ package com.ssafy.heygent.domain.iot.service;
 
 import com.ssafy.heygent.domain.iot.dto.DevicePairRequest;
 import com.ssafy.heygent.domain.iot.dto.DevicePairingSession;
+import com.ssafy.heygent.domain.iot.dto.DevicePairingStatusResponse;
 import com.ssafy.heygent.domain.iot.dto.DevicePairingStatus;
 import com.ssafy.heygent.domain.iot.dto.DeviceResponse;
 import com.ssafy.heygent.domain.iot.dto.DisplayEventPayload;
@@ -66,6 +67,17 @@ public class DevicePairingService {
 
         pairingRedisRepository.savePendingSession(pairCode, session, PAIRING_TTL);
         return new DisplayPairingStartResponse(pairCode, PAIRING_TTL.toSeconds());
+    }
+
+    @Transactional(readOnly = true)
+    public DevicePairingStatusResponse status(String deviceId) {
+        String normalizedDeviceId = normalizeDeviceId(deviceId);
+        return iotDeviceRepository.findByDeviceId(normalizedDeviceId)
+            .map(device -> DevicePairingStatusResponse.paired(
+                device.getDeviceId(),
+                device.getStatus().name()
+            ))
+            .orElseGet(() -> DevicePairingStatusResponse.unpaired(normalizedDeviceId));
     }
 
     @Transactional

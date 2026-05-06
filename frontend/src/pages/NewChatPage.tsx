@@ -1,7 +1,24 @@
-import { Sparkles, Send, Code, Calendar, Apple, Activity, Mic, Bot, AudioLines } from 'lucide-react'
+import {
+  Activity,
+  Apple,
+  AudioLines,
+  Bot,
+  Calendar,
+  ChevronRight,
+  Code,
+  FileImage,
+  Globe,
+  ImagePlus,
+  Mic,
+  MoreHorizontal,
+  Plus,
+  Search,
+  Send,
+} from 'lucide-react'
 import { motion } from 'motion/react'
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
   type AiRealtimeAuthStatus,
   type AiRealtimeConnectionStatus,
@@ -11,28 +28,25 @@ import {
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import type { CustomAgentConfig } from '@/components/NewSessionModal'
+import { createClientMessageId } from '@/utils/requestId'
 
 const suggestedPrompts = [
-  {
-    text: '이 PR 검토해줘',
-    icon: Code,
-    bg: 'hover:bg-accent hover:border-border hover:text-accent-foreground',
-  },
-  {
-    text: '오후 5시에 알려줘',
-    icon: Calendar,
-    bg: 'hover:bg-accent hover:border-border hover:text-accent-foreground',
-  },
-  {
-    text: '저녁 메뉴 추천해줘',
-    icon: Apple,
-    bg: 'hover:bg-accent hover:border-border hover:text-accent-foreground',
-  },
-  {
-    text: '운동 끝나면 알려줘',
-    icon: Activity,
-    bg: 'hover:bg-accent hover:border-border hover:text-accent-foreground',
-  },
+  { text: '이 PR 검토해줘', icon: Code },
+  { text: '오후 5시에 알려줘', icon: Calendar },
+  { text: '저녁 메뉴 추천해줘', icon: Apple },
+  { text: '운동 끝나면 알려줘', icon: Activity },
+]
+
+const attachMenuItems = [
+  { icon: FileImage, label: '사진 및 파일 추가', hasArrow: false },
+  { icon: FileImage, label: '최근 파일', hasArrow: true },
+  null,
+  { icon: ImagePlus, label: '이미지 만들기', hasArrow: false },
+  { icon: Search, label: '심층 리서치', hasArrow: false },
+  { icon: Globe, label: '웹 검색', hasArrow: false },
+  null,
+  { icon: MoreHorizontal, label: '더 보기', hasArrow: true },
 ]
 
 export function NewChatPage() {
@@ -40,6 +54,15 @@ export function NewChatPage() {
   const [isRecording, setIsRecording] = useState(false)
   const [isSending, setIsSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
+  const [attachOpen, setAttachOpen] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current
+    if (textarea === null) return
+    textarea.style.height = '0px'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 144)}px`
+  }, [inputValue])
   const navigate = useNavigate()
   const commandClient = useAiRealtimeStore((state) => state.commandClient)
   const connectionStatus = useAiRealtimeStore((state) => state.connectionStatus)
@@ -73,7 +96,31 @@ export function NewChatPage() {
     setSendError(null)
 
     try {
-      const acceptedFrame = await sendMessage({ content })
+      const clientMessageId = createClientMessageId()
+      const pendingSessionId = `pending_session_${clientMessageId}`
+      const pendingConfig = readPendingSessionConfig()
+      // 첫 대화는 아직 서버 세션 id가 없어서 accepted 응답 전까지는 pending 세션을 화면에 보여 준다.
+      // sendMessage가 같은 clientMessageId로 optimistic 메시지를 먼저 넣기 때문에 즉시 스피너가 렌더링된다.
+      const acceptedPromise = sendMessage({
+        content,
+        clientMessageId,
+        settings: pendingConfig?.persona.trim()
+          ? { systemPrompt: pendingConfig.persona.trim() }
+          : undefined,
+        inputPayload:
+          pendingConfig === null
+            ? undefined
+            : {
+                sessionConfigSnapshot: {
+                  agentName: pendingConfig.agentName,
+                  persona: pendingConfig.persona,
+                  callName: pendingConfig.callName,
+                  profileImageProvided: pendingConfig.profileImage !== null,
+                },
+              },
+      })
+      navigate(`/session/${pendingSessionId}`)
+      const acceptedFrame = await acceptedPromise
       const payload = getFramePayload(acceptedFrame)
       const acceptedSessionId =
         getStringField(payload, 'session_id', 'sessionId') ??
@@ -83,7 +130,8 @@ export function NewChatPage() {
         throw new Error('accepted 응답에 sessionId가 없습니다.')
       }
 
-      navigate(`/session/${acceptedSessionId}`)
+      navigate(`/session/${acceptedSessionId}`, { replace: true })
+      clearPendingSessionConfig()
     } catch (error) {
       setSendError(error instanceof Error ? error.message : '새 채팅을 시작하지 못했습니다.')
     } finally {
@@ -91,8 +139,11 @@ export function NewChatPage() {
     }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') void handleSend()
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      void handleSend()
+    }
   }
 
   return (
@@ -124,28 +175,62 @@ export function NewChatPage() {
         >
           <div className="border-border bg-card overflow-hidden rounded-2xl border shadow-sm transition-shadow duration-200 hover:shadow-md">
             {/* Input row */}
-            <div className="flex items-center gap-3 px-5 py-4">
-              <Sparkles className="text-primary/60 h-5 w-5 shrink-0" />
-              <input
-                type="text"
+            <div className="flex items-center gap-3 px-5 py-2">
+              <Popover open={attachOpen} onOpenChange={setAttachOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="파일 또는 이미지 추가"
+                    className="bg-muted text-muted-foreground hover:bg-muted/80 shrink-0 rounded-full p-1 transition-colors"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  side="top"
+                  align="start"
+                  sideOffset={8}
+                  className="w-52 rounded-2xl p-1.5"
+                >
+                  {attachMenuItems.map((item, i) =>
+                    item === null ? (
+                      <div key={i} className="border-border/60 my-1 border-t" />
+                    ) : (
+                      <button
+                        key={item.label}
+                        type="button"
+                        onClick={() => setAttachOpen(false)}
+                        className="hover:bg-muted flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors"
+                      >
+                        <item.icon className="text-muted-foreground h-4 w-4 shrink-0" />
+                        <span className="text-foreground flex-1 text-sm">{item.label}</span>
+                        {item.hasArrow && (
+                          <ChevronRight className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+                        )}
+                      </button>
+                    ),
+                  )}
+                </PopoverContent>
+              </Popover>
+              <textarea
+                ref={textareaRef}
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="무엇이든 물어보세요..."
-                className="text-foreground placeholder:text-muted-foreground flex-1 bg-transparent outline-none"
-                style={{ fontSize: '15px' }}
+                rows={1}
                 autoFocus
+                className="text-foreground placeholder:text-muted-foreground max-h-36 min-h-6 flex-1 resize-none bg-transparent py-0 text-[15px] outline-none"
               />
               <button
                 type="button"
                 onClick={handleVoiceInput}
                 aria-label={isRecording ? '음성 입력 중지' : '음성 입력 시작'}
-                className={`shrink-0 rounded-xl p-2.5 transition-colors ${
+                className={`shrink-0 rounded-2xl p-2.5 transition-colors ${
                   isRecording
                     ? 'animate-pulse bg-red-500 text-white'
                     : 'bg-muted text-muted-foreground hover:bg-muted/80'
                 }`}
-                title="음성 입력"
               >
                 <Mic className="h-4 w-4" />
               </button>
@@ -154,8 +239,8 @@ export function NewChatPage() {
                   type="button"
                   onClick={() => void handleSend()}
                   aria-label="새 대화 메시지 보내기"
-                  className="bg-primary hover:bg-primary/90 shrink-0 rounded-xl p-2 text-white transition-colors disabled:opacity-40"
                   disabled={isSending || commandClient === null}
+                  className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2 text-white transition-colors disabled:opacity-40"
                 >
                   <Send className={`h-4 w-4 ${isSending ? 'animate-pulse' : ''}`} />
                 </button>
@@ -165,7 +250,7 @@ export function NewChatPage() {
                   onClick={() => navigate('/session/voice', { state: { voiceMode: true } })}
                   aria-label="음성 대화 모드"
                   title="음성 대화 모드"
-                  className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-xl p-2 text-white transition-colors"
+                  className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2 text-white transition-colors"
                 >
                   <AudioLines className="h-4 w-4" />
                 </button>
@@ -181,27 +266,28 @@ export function NewChatPage() {
                 {providerMessage}
               </p>
             )}
-
-            {/* Divider */}
-            <div className="border-border/60 mx-5 border-t" />
-
-            {/* Prompt chips */}
-            <div className="flex flex-wrap items-center gap-2 px-5 py-3">
-              {suggestedPrompts.map((prompt, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => setInputValue(prompt.text)}
-                  aria-label={`추천 프롬프트 선택: ${prompt.text}`}
-                  className={`bg-muted text-muted-foreground flex items-center gap-1.5 rounded-lg border border-transparent px-3 py-1.5 transition-all duration-150 ${prompt.bg}`}
-                  style={{ fontSize: '13px' }}
-                >
-                  <prompt.icon className="h-3.5 w-3.5" />
-                  <span>{prompt.text}</span>
-                </button>
-              ))}
-            </div>
           </div>
+        </motion.div>
+
+        {/* Suggested prompts */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, delay: 0.16 }}
+          className="flex flex-wrap items-center justify-center gap-2"
+        >
+          {suggestedPrompts.map((prompt) => (
+            <button
+              key={prompt.text}
+              type="button"
+              onClick={() => setInputValue(prompt.text)}
+              aria-label={`추천 프롬프트 선택: ${prompt.text}`}
+              className="bg-card border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[13px] transition-colors"
+            >
+              <prompt.icon className="h-3.5 w-3.5 shrink-0" />
+              <span>{prompt.text}</span>
+            </button>
+          ))}
         </motion.div>
       </div>
     </div>
@@ -214,6 +300,26 @@ function isRealtimePending(connectionStatus: AiRealtimeConnectionStatus) {
     connectionStatus === 'open' ||
     connectionStatus === 'reconnecting'
   )
+}
+
+function readPendingSessionConfig(): CustomAgentConfig | null {
+  const raw = sessionStorage.getItem('ai-new-session-config')
+  if (raw === null) {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(raw)
+    if (typeof parsed === 'object' && parsed !== null && typeof parsed.persona === 'string') {
+      return parsed as CustomAgentConfig
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+function clearPendingSessionConfig() {
+  sessionStorage.removeItem('ai-new-session-config')
 }
 
 function getRealtimeUnavailableMessage(

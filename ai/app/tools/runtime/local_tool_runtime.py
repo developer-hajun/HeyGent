@@ -20,6 +20,10 @@ BRIDGE_ROUTABLE_TOOLS = {"terminal.run", "read_file", "write_file", "patch", "se
 MAX_TERMINAL_STREAM_CHARS = 12_000
 MAX_TOOL_RESULT_STRING_CHARS = 20_000
 MAX_TOOL_RESULT_TRUNCATED_FIELDS = 20
+SECRET_FILE_NAME_PATTERN = re.compile(
+    r"(^|[._-])(secret|secrets|token|password|passwd|credential|credentials|env)($|[._-])",
+    re.IGNORECASE,
+)
 
 
 class LocalToolRuntime:
@@ -35,10 +39,12 @@ class LocalToolRuntime:
         session_store: TranscriptStore,
         workspace_root: str | os.PathLike[str] | None = None,
         bridge_session_manager=None,
+        owner_key: str | None = None,
     ) -> None:
         self.skill_registry = skill_registry
         self.session_store = session_store
         self.bridge_session_manager = bridge_session_manager
+        self.owner_key = str(owner_key) if owner_key else None
         self.workspace_root = self._resolve_workspace_root(workspace_root)
         self._step_items: list[dict[str, str]] = []
         self._todo_items: list[dict[str, str]] = []
@@ -46,6 +52,7 @@ class LocalToolRuntime:
             {
                 "skills.list": self._list_skills,
                 "skills.read": self._read_skill,
+                "skill.execute": self._execute_skill,
                 "session.record": self._record_session_message,
                 "session.search": self._search_sessions,
                 "step": self._step,
@@ -91,6 +98,24 @@ class LocalToolRuntime:
             session_store=self.session_store,
             workspace_root=workspace_root,
             bridge_session_manager=self.bridge_session_manager,
+            owner_key=self.owner_key,
+        )
+        bound._step_items = [dict(item) for item in self._step_items]
+        bound._todo_items = [dict(item) for item in self._todo_items]
+        return bound
+
+    def bind_request_context(
+        self,
+        *,
+        workspace_root: str | os.PathLike[str] | None = None,
+        owner_key: str | None = None,
+    ) -> "LocalToolRuntime":
+        bound = self.__class__(
+            skill_registry=self.skill_registry,
+            session_store=self.session_store,
+            workspace_root=workspace_root if workspace_root is not None else self.workspace_root,
+            bridge_session_manager=self.bridge_session_manager,
+            owner_key=owner_key or self.owner_key,
         )
         bound._step_items = [dict(item) for item in self._step_items]
         bound._todo_items = [dict(item) for item in self._todo_items]
@@ -226,6 +251,41 @@ class LocalToolRuntime:
             "body": str(skill.get("body") or ""),
         }
 
+    def _execute_skill(self, args: dict[str, Any]) -> dict[str, object]:
+        skill_name = str(args.get("skill_name") or "").strip()
+        action = str(args.get("action") or "").strip()
+        if action != "inspect":
+            return self._tool_error(
+                code="unsupported_skill_action",
+                message=f"unsupported skill action: {action}",
+                tool_name="skill.execute",
+            )
+
+        skill = getattr(self.skill_registry, "_skills", {}).get(skill_name)
+        if skill is None:
+            return self._tool_error(
+                code="skill_not_found",
+                message=f"unknown skill: {skill_name}",
+                tool_name="skill.execute",
+            )
+
+        document_path = self._resolve_skill_document_path(skill.get("path"))
+        if document_path is not None and not self._is_allowed_skill_path(document_path):
+            return self._tool_error(
+                code="skill_path_not_allowed",
+                message="skill document path must stay inside app/skills",
+                tool_name="skill.execute",
+            )
+
+        return {
+            "ok": True,
+            "skill_name": skill_name,
+            "action": action,
+            "path": str(skill.get("path") or ""),
+            "files": self._list_skill_files(document_path),
+            "content": str(skill.get("body") or ""),
+        }
+
     def _record_session_message(self, args: dict[str, Any]) -> dict[str, object]:
         session_key = str(args.get("session_key") or "runtime-probe")
         latest = self.session_store.get_latest_session_by_key(session_key)
@@ -253,7 +313,17 @@ class LocalToolRuntime:
 
     def _search_sessions(self, args: dict[str, Any]) -> dict[str, object]:
         limit = int(args.get("limit") or 5)
-        results = self.session_store.search_sessions(str(args.get("query") or ""), limit=limit)
+        if not self.owner_key:
+            return self._tool_error(
+                code="owner_required",
+                message="session.search requires a bound owner",
+                tool_name="session.search",
+            )
+        results = self.session_store.search_transcript_sessions(
+            str(args.get("query") or ""),
+            owner_key=self.owner_key,
+            limit=limit,
+        )
         return {
             "count": len(results),
             "items": results,
@@ -419,8 +489,6 @@ class LocalToolRuntime:
             input_payload["max_iterations"] = max_iterations
 
         child_session = {
-            "intent_type": "agent.loop",
-            "entry_handler_key": "agent.loop",
             "goal": goal,
             "context": context if context is not None else {},
             "toolsets": toolsets,
@@ -610,6 +678,49 @@ class LocalToolRuntime:
     def _resolve_workspace_root(value: str | os.PathLike[str] | None = None) -> Path:
         raw_root = value or os.environ.get("HEYGENT_WORKSPACE_ROOT") or os.environ.get("TERMINAL_CWD") or os.getcwd()
         return Path(str(raw_root)).expanduser().resolve()
+
+    @staticmethod
+    def _resolve_skill_document_path(value: Any) -> Path | None:
+        raw_value = str(value or "").strip()
+        if not raw_value:
+            return None
+        candidate = Path(raw_value).expanduser()
+        if not candidate.is_absolute():
+            candidate = Path.cwd() / candidate
+        return candidate.resolve(strict=False)
+
+    @classmethod
+    def _is_allowed_skill_path(cls, path: Path) -> bool:
+        return cls._is_relative_to(
+            path.resolve(strict=False),
+            cls._default_skills_root().resolve(strict=False),
+        )
+
+    @staticmethod
+    def _default_skills_root() -> Path:
+        return Path(__file__).resolve().parents[2] / "skills"
+
+    @classmethod
+    def _list_skill_files(cls, document_path: Path | None) -> list[str]:
+        if document_path is None:
+            return []
+        skill_dir = document_path.parent
+        if not skill_dir.exists() or not skill_dir.is_dir():
+            return []
+
+        files: list[str] = []
+        for path in sorted(item for item in skill_dir.rglob("*") if item.is_file()):
+            relative_path = path.relative_to(skill_dir)
+            if cls._is_secret_skill_file(relative_path):
+                continue
+            files.append(relative_path.as_posix())
+            if len(files) >= 200:
+                break
+        return files
+
+    @staticmethod
+    def _is_secret_skill_file(relative_path: Path) -> bool:
+        return any(SECRET_FILE_NAME_PATTERN.search(part) for part in relative_path.parts)
 
     @staticmethod
     def _is_relative_to(path: Path, root: Path) -> bool:

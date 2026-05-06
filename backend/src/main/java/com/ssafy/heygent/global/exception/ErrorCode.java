@@ -39,7 +39,6 @@ public enum ErrorCode {
     // 502 BAD_GATEWAY
     EXTERNAL_AUTH_FAILED(HttpStatus.BAD_GATEWAY, "외부 인증 처리 중 오류가 발생했습니다."),
     BAD_GATEWAY(HttpStatus.BAD_GATEWAY, "외부 서비스 처리 중 오류가 발생했습니다."),
-    OPENAI_CALL_FAILED(HttpStatus.BAD_GATEWAY, "OpenAI 호출 처리 중 오류가 발생했습니다."),
     OPENAI_OAUTH_TOKEN_EXCHANGE_FAILED(HttpStatus.BAD_GATEWAY, "OpenAI OAuth token 교환 중 오류가 발생했습니다."),
     OPENAI_USAGE_QUERY_FAILED(HttpStatus.BAD_GATEWAY, "OpenAI 사용량 조회 중 오류가 발생했습니다."),
 

@@ -116,6 +116,81 @@ def test_ws_session_message_create_returns_accepted_before_completed_and_stores_
         context.__exit__(None, None, None)
 
 
+def test_ws_followup_message_passes_previous_public_messages_without_current_user(client, monkeypatch):
+    provider_calls: list[dict] = []
+
+    def fake_respond(self, messages, tools, model, tool_choice=None):
+        provider_calls.append({"messages": messages, "tools": tools, "model": model, "tool_choice": tool_choice})
+        return AgentModelResponse(
+            provider_name="openai_api",
+            model=model,
+            message=AgentMessage(role="assistant", content="FOLLOWUP_DONE", tool_calls=[]),
+            output_text="FOLLOWUP_DONE",
+            tool_calls=[],
+            finish_reason="stop",
+            metadata={"model": model},
+        )
+
+    monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond", fake_respond)
+    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.respond", fake_respond)
+    context, websocket = _authenticated_socket(client, user_id="ws-followup-owner")
+    try:
+        session_store = client.app.state.session_store
+        session_store.create_session(
+            session_id="public_followup_session",
+            session_key="public_followup_session",
+            source="api.session",
+            user_id="ws-followup-owner",
+            metadata={"source": "api.session"},
+        )
+        session_store.append_message(
+            session_id="public_followup_session",
+            role="user",
+            content="강남역에서 지갑 잃어버렸어",
+            metadata={"source": "api.session"},
+        )
+        session_store.append_message(
+            session_id="public_followup_session",
+            role="assistant",
+            content="분실물 조회 경로를 확인했습니다.",
+            metadata={"source": "api.session"},
+        )
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.create",
+                "requestId": "req_followup",
+                "payload": {
+                    "sessionId": "public_followup_session",
+                    "content": "ㄴㄴ 분실물찾은거",
+                    "clientMessageId": "client_msg_ws_followup",
+                    "model": "gpt-test",
+                },
+            }
+        )
+
+        accepted = websocket.receive_json()
+        _receive_until(websocket, "session.message.completed")
+
+        task = client.app.state.repository.get_task(accepted["payload"]["task_run_id"])
+        assert task is not None
+        assert task.input_payload["conversation_history"] == [
+            {"role": "user", "content": "강남역에서 지갑 잃어버렸어"},
+            {"role": "assistant", "content": "분실물 조회 경로를 확인했습니다."},
+        ]
+        assert "ㄴㄴ 분실물찾은거" not in str(task.input_payload["conversation_history"])
+        assert [message.role for message in provider_calls[0]["messages"][:2]] == ["user", "assistant"]
+        current_user_count = sum(
+            str(message.content).count("ㄴㄴ 분실물찾은거")
+            for message in provider_calls[0]["messages"]
+            if message.role == "user"
+        )
+        assert current_user_count == 1
+    finally:
+        context.__exit__(None, None, None)
+
+
 def test_ws_session_message_create_sends_failed_frame_after_background_error(client, monkeypatch):
     _patch_respond_failure(monkeypatch)
     context, websocket = _authenticated_socket(client, user_id="ws-fail-owner")
@@ -199,8 +274,8 @@ def test_ws_list_snapshot_and_replay_happy_path(client, monkeypatch):
         assert snapshot["requestId"] == "req_snapshot"
         assert snapshot["payload"]["task"]["task_run_id"] == task_run_id
         assert snapshot["payload"]["task_run"]["task_run_id"] == task_run_id
-        assert snapshot["payload"]["steps"]
-        assert snapshot["payload"]["step_runs"]
+        assert snapshot["payload"]["steps"] == []
+        assert snapshot["payload"]["step_runs"] == []
         assert snapshot["payload"]["approvals"] == []
         assert snapshot["payload"]["events"]
         assert snapshot["payload"]["events"][0]["task_run_id"] == task_run_id
@@ -228,8 +303,6 @@ def test_ws_task_runs_active_list_filters_authenticated_owner(client):
         TaskRun(
             task_run_id="task_active_ws_owner",
             task_type="agent.loop",
-            intent_type="agent.loop",
-            entry_handler_key="agent.loop",
             owner_key="active-owner",
             session_key="session_active_ws",
             status="RUNNING",
@@ -240,8 +313,6 @@ def test_ws_task_runs_active_list_filters_authenticated_owner(client):
         TaskRun(
             task_run_id="task_active_ws_other",
             task_type="agent.loop",
-            intent_type="agent.loop",
-            entry_handler_key="agent.loop",
             owner_key="other-owner",
             session_key="session_active_ws",
             status="RUNNING",
@@ -270,14 +341,614 @@ def test_ws_task_runs_active_list_filters_authenticated_owner(client):
     assert [item["task_run_id"] for item in response["payload"]["task_runs"]] == ["task_active_ws_owner"]
 
 
+def test_ws_session_undo_rejects_when_session_is_running(client):
+    context, websocket = _authenticated_socket(client, user_id="undo-owner")
+    try:
+        store = client.app.state.session_store
+        store.create_session(
+            session_id="undo_running_session",
+            session_key="undo_running_session",
+            source="api.session",
+            user_id="undo-owner",
+            metadata={"source": "api.session"},
+        )
+        store.append_user_message_and_start_task(
+            owner_key="undo-owner",
+            session_id="undo_running_session",
+            content="실행 중 메시지",
+            client_message_id="client_undo_running",
+            task_run_id="task_undo_running",
+            base_history_version=0,
+        )
+        client.app.state.repository.create_task(
+            TaskRun(
+                task_run_id="task_undo_running",
+                task_type="agent.loop",
+                owner_key="undo-owner",
+                session_key="undo_running_session",
+                status="RUNNING",
+                title="실행 중",
+            )
+        )
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.undo",
+                "requestId": "req_undo_running",
+                "payload": {
+                    "sessionId": "undo_running_session",
+                    "clientCommandId": "cmd_undo_running",
+                },
+            }
+        )
+
+        response = websocket.receive_json()
+
+        assert response["type"] == "command.error"
+        assert response["error"]["code"] == "conflict"
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_session_retry_reuses_last_user_message_without_duplicate_user_append(client, monkeypatch):
+    _patch_respond(monkeypatch, text="RETRY_DONE")
+    context, websocket = _authenticated_socket(client, user_id="retry-owner")
+    try:
+        store = client.app.state.session_store
+        store.create_session(
+            session_id="retry_session",
+            session_key="retry_session",
+            source="api.session",
+            user_id="retry-owner",
+            metadata={"source": "api.session"},
+        )
+        user_message_id = store.append_message(
+            session_id="retry_session",
+            role="user",
+            content="강남역 분실물 다시 확인해줘",
+            metadata={"source": "api.session"},
+        )
+        store.append_message(
+            session_id="retry_session",
+            role="assistant",
+            content="이전 답변",
+            metadata={"source": "api.session", "task_run_id": "task_old_retry"},
+        )
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.retry",
+                "requestId": "req_retry",
+                "payload": {
+                    "sessionId": "retry_session",
+                    "targetMessageId": str(user_message_id),
+                    "clientCommandId": "cmd_retry",
+                },
+            }
+        )
+
+        accepted = websocket.receive_json()
+        completed = _receive_until(websocket, "session.message.completed")
+        messages = store.list_messages("retry_session")
+
+        assert accepted["type"] == "session.message.accepted"
+        assert completed["payload"]["content"] == "RETRY_DONE"
+        assert [message["role"] for message in messages] == ["user", "assistant"]
+        assert [message["content"] for message in messages] == [
+            "강남역 분실물 다시 확인해줘",
+            "RETRY_DONE",
+        ]
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_session_retry_clears_running_guard_when_task_creation_fails(client, monkeypatch):
+    context, websocket = _authenticated_socket(client, user_id="retry-fail-owner")
+    try:
+        store = client.app.state.session_store
+        store.create_session(
+            session_id="retry_fail_session",
+            session_key="retry_fail_session",
+            source="api.session",
+            user_id="retry-fail-owner",
+            metadata={"source": "api.session"},
+        )
+        user_message_id = store.append_message(
+            session_id="retry_fail_session",
+            role="user",
+            content="실패해도 guard는 정리한다",
+            metadata={"source": "api.session"},
+        )
+        store.append_message(
+            session_id="retry_fail_session",
+            role="assistant",
+            content="이전 답변",
+            metadata={"source": "api.session", "task_run_id": "task_old_retry_fail"},
+        )
+
+        def fail_create_task(task):
+            raise RuntimeError("create_task failed")
+
+        monkeypatch.setattr(client.app.state.repository, "create_task", fail_create_task)
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.retry",
+                "requestId": "req_retry_fail",
+                "payload": {
+                    "sessionId": "retry_fail_session",
+                    "targetMessageId": str(user_message_id),
+                    "clientCommandId": "cmd_retry_fail",
+                },
+            }
+        )
+
+        response = websocket.receive_json()
+
+        assert response["type"] == "command.error"
+        assert response["error"]["code"] == "internal_error"
+        assert store.get_session("retry_fail_session")["running_task_run_id"] is None
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_session_update_changes_title_for_owner(client):
+    context, websocket = _authenticated_socket(client, user_id="update-owner")
+    try:
+        store = client.app.state.session_store
+        store.create_session(
+            session_id="update_title_session",
+            session_key="update_title_session",
+            source="api.session",
+            user_id="update-owner",
+            title="이전 제목",
+            metadata={"source": "api.session"},
+        )
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.update",
+                "requestId": "req_update_title",
+                "payload": {
+                    "sessionId": "update_title_session",
+                    "clientCommandId": "cmd_update_title",
+                    "title": "변경된 제목",
+                },
+            }
+        )
+
+        response = websocket.receive_json()
+
+        assert response["type"] == "session.updated"
+        assert response["payload"]["session"]["title"] == "변경된 제목"
+        assert store.get_session("update_title_session")["title"] == "변경된 제목"
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_session_update_rejects_protected_metadata_patch(client):
+    context, websocket = _authenticated_socket(client, user_id="metadata-owner")
+    try:
+        store = client.app.state.session_store
+        store.create_session(
+            session_id="metadata_patch_session",
+            session_key="metadata_patch_session",
+            source="api.session",
+            user_id="metadata-owner",
+            metadata={"source": "api.session"},
+        )
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.update",
+                "requestId": "req_metadata_patch",
+                "payload": {
+                    "sessionId": "metadata_patch_session",
+                    "clientCommandId": "cmd_metadata_patch",
+                    "metadataPatch": {
+                        "owner_key": "other-user",
+                        "source": "api.session",
+                        "message_count": 999,
+                        "running_task_run_id": "task_injected",
+                        "history_version": 999,
+                    },
+                },
+            }
+        )
+
+        response = websocket.receive_json()
+
+        assert response["type"] == "command.error"
+        assert response["error"]["code"] == "invalid_payload"
+        assert store.get_session("metadata_patch_session")["user_id"] == "metadata-owner"
+        assert store.get_session("metadata_patch_session")["running_task_run_id"] is None
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_session_update_denies_cross_user_session(client):
+    store = client.app.state.session_store
+    store.create_session(
+        session_id="cross_user_update_session",
+        session_key="cross_user_update_session",
+        source="api.session",
+        user_id="session-owner",
+        title="원래 제목",
+        metadata={"source": "api.session"},
+    )
+    context, websocket = _authenticated_socket(client, user_id="other-user")
+    try:
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.update",
+                "requestId": "req_cross_user_update",
+                "payload": {
+                    "sessionId": "cross_user_update_session",
+                    "clientCommandId": "cmd_cross_user_update",
+                    "title": "바꾸면 안 되는 제목",
+                },
+            }
+        )
+
+        response = websocket.receive_json()
+
+        assert response["type"] == "command.error"
+        assert response["error"]["code"] == "forbidden"
+        assert store.get_session("cross_user_update_session")["title"] == "원래 제목"
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_session_update_rejects_running_session(client):
+    context, websocket = _authenticated_socket(client, user_id="running-update-owner")
+    try:
+        store = client.app.state.session_store
+        store.create_session(
+            session_id="running_update_session",
+            session_key="running_update_session",
+            source="api.session",
+            user_id="running-update-owner",
+            title="실행 중",
+            metadata={"source": "api.session"},
+        )
+        store.append_user_message_and_start_task(
+            owner_key="running-update-owner",
+            session_id="running_update_session",
+            content="작업 중",
+            client_message_id="client_running_update",
+            task_run_id="task_running_update",
+            base_history_version=0,
+        )
+        client.app.state.repository.create_task(
+            TaskRun(
+                task_run_id="task_running_update",
+                task_type="agent.loop",
+                owner_key="running-update-owner",
+                session_key="running_update_session",
+                status="RUNNING",
+                title="실행 중",
+            )
+        )
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.update",
+                "requestId": "req_running_update",
+                "payload": {
+                    "sessionId": "running_update_session",
+                    "clientCommandId": "cmd_running_update",
+                    "title": "실행 중 변경",
+                },
+            }
+        )
+
+        response = websocket.receive_json()
+
+        assert response["type"] == "command.error"
+        assert response["error"]["code"] == "conflict"
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_session_archive_and_delete_exclude_from_default_list(client):
+    context, websocket = _authenticated_socket(client, user_id="lifecycle-owner")
+    try:
+        store = client.app.state.session_store
+        for session_id in ("active_lifecycle_session", "archive_lifecycle_session", "delete_lifecycle_session"):
+            store.create_session(
+                session_id=session_id,
+                session_key=session_id,
+                source="api.session",
+                user_id="lifecycle-owner",
+                title=session_id,
+                metadata={"source": "api.session"},
+            )
+        store.append_message(
+            session_id="delete_lifecycle_session",
+            role="user",
+            content="삭제 후에도 보존될 메시지",
+            metadata={"source": "api.session"},
+        )
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.archive",
+                "requestId": "req_archive_session",
+                "payload": {
+                    "sessionId": "archive_lifecycle_session",
+                    "clientCommandId": "cmd_archive_session",
+                    "archived": True,
+                },
+            }
+        )
+        archived = websocket.receive_json()
+        assert archived["type"] == "session.archived"
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.delete",
+                "requestId": "req_delete_session",
+                "payload": {
+                    "sessionId": "delete_lifecycle_session",
+                    "clientCommandId": "cmd_delete_session",
+                },
+            }
+        )
+        deleted = websocket.receive_json()
+        assert deleted["type"] == "session.deleted"
+
+        websocket.send_json({"protocolVersion": 1, "type": "session.list", "requestId": "req_lifecycle_list", "payload": {}})
+        listed = websocket.receive_json()
+        listed_ids = [item["session_id"] for item in listed["payload"]["items"]]
+
+        assert listed_ids == ["active_lifecycle_session"]
+        assert store.get_session("archive_lifecycle_session")["archived_at"] is not None
+        assert store.get_session("delete_lifecycle_session")["deleted_at"] is not None
+        assert [message["content"] for message in store.list_messages("delete_lifecycle_session")] == ["삭제 후에도 보존될 메시지"]
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.list",
+                "requestId": "req_lifecycle_archived_list",
+                "payload": {"includeArchived": True},
+            }
+        )
+        archived_listed = websocket.receive_json()
+        archived_listed_ids = [item["session_id"] for item in archived_listed["payload"]["items"]]
+        assert archived_listed_ids == ["archive_lifecycle_session", "active_lifecycle_session"]
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.archive",
+                "requestId": "req_restore_session",
+                "payload": {
+                    "sessionId": "archive_lifecycle_session",
+                    "clientCommandId": "cmd_restore_session",
+                    "archived": False,
+                },
+            }
+        )
+        restored = websocket.receive_json()
+        assert restored["type"] == "session.archived"
+        assert restored["payload"]["archived"] is False
+        assert store.get_session("archive_lifecycle_session")["archived_at"] is None
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_session_settings_snapshot_wins_over_message_overrides(client, monkeypatch):
+    _patch_respond(monkeypatch, text="SETTINGS_DONE")
+    context, websocket = _authenticated_socket(client, user_id="settings-owner")
+    try:
+        store = client.app.state.session_store
+        store.create_session(
+            session_id="settings_snapshot_session",
+            session_key="settings_snapshot_session",
+            source="api.session",
+            user_id="settings-owner",
+            title="설정 스냅샷",
+            metadata={"source": "api.session"},
+        )
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.settings.update",
+                "requestId": "req_settings_update",
+                "payload": {
+                    "sessionId": "settings_snapshot_session",
+                    "clientCommandId": "cmd_settings_update",
+                    "settings": {
+                        "model": "gpt-session",
+                        "systemPrompt": "세션에 저장된 시스템 프롬프트",
+                        "toolsets": ["session", "planning"],
+                        "delegationPolicy": {"canDelegate": False, "maxWorkerDepth": 1},
+                    },
+                },
+            }
+        )
+        settings_response = websocket.receive_json()
+        assert settings_response["type"] == "session.settings.updated"
+        first_history_version = settings_response["payload"]["session"]["history_version"]
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.settings.update",
+                "requestId": "req_settings_update_repeat",
+                "payload": {
+                    "sessionId": "settings_snapshot_session",
+                    "clientCommandId": "cmd_settings_update",
+                    "settings": {
+                        "model": "gpt-session",
+                        "systemPrompt": "세션에 저장된 시스템 프롬프트",
+                        "toolsets": ["session", "planning"],
+                        "delegationPolicy": {"canDelegate": False, "maxWorkerDepth": 1},
+                    },
+                },
+            }
+        )
+        repeated_settings_response = websocket.receive_json()
+        assert repeated_settings_response["type"] == "session.settings.updated"
+        assert repeated_settings_response["payload"]["session"]["history_version"] == first_history_version
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.settings.update",
+                "requestId": "req_settings_update_conflict",
+                "payload": {
+                    "sessionId": "settings_snapshot_session",
+                    "clientCommandId": "cmd_settings_update",
+                    "settings": {"model": "gpt-conflict"},
+                },
+            }
+        )
+        conflict_response = websocket.receive_json()
+        assert conflict_response["type"] == "command.error"
+        assert conflict_response["error"]["code"] == "conflict"
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.settings.update",
+                "requestId": "req_settings_update_forbidden_toolset",
+                "payload": {
+                    "sessionId": "settings_snapshot_session",
+                    "clientCommandId": "cmd_settings_update_forbidden_toolset",
+                    "settings": {"toolsets": ["all"]},
+                },
+            }
+        )
+        invalid_toolset_response = websocket.receive_json()
+        assert invalid_toolset_response["type"] == "command.error"
+        assert invalid_toolset_response["error"]["code"] == "invalid_payload"
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.settings.update",
+                "requestId": "req_settings_update_patch",
+                "payload": {
+                    "sessionId": "settings_snapshot_session",
+                    "clientCommandId": "cmd_settings_update_patch",
+                    "settings": {"model": "gpt-session-patch"},
+                },
+            }
+        )
+        patched_settings_response = websocket.receive_json()
+        assert patched_settings_response["type"] == "session.settings.updated"
+        assert patched_settings_response["payload"]["settings"]["model"] == "gpt-session-patch"
+        assert patched_settings_response["payload"]["settings"]["toolsets"] == ["session", "planning"]
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.create",
+                "requestId": "req_settings_message",
+                "payload": {
+                    "sessionId": "settings_snapshot_session",
+                    "content": "설정 스냅샷으로 실행해줘",
+                    "clientMessageId": "client_settings_snapshot",
+                    "model": "gpt-request",
+                    "inputPayload": {
+                        "model": "gpt-input-payload",
+                        "systemPrompt": "요청 본문 프롬프트",
+                        "toolsets": ["web"],
+                        "delegationPolicy": {"canDelegate": True},
+                    },
+                },
+            }
+        )
+
+        accepted = websocket.receive_json()
+        _receive_until(websocket, "session.message.completed")
+        task = client.app.state.repository.get_task(accepted["payload"]["task_run_id"])
+
+        assert task is not None
+        assert task.input_payload["model"] == "gpt-session-patch"
+        assert task.input_payload["system_prompt_snapshot"] == "세션에 저장된 시스템 프롬프트"
+        assert task.input_payload["toolsets"] == ["session", "planning"]
+        assert task.input_payload["enabled_toolsets"] == ["session", "planning"]
+        assert task.input_payload["delegation_policy"] == {"canDelegate": False, "maxWorkerDepth": 1}
+        assert task.input_payload["settings_snapshot"]["model"] == "gpt-session-patch"
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_model_options_returns_provider_model_choices(client):
+    context, websocket = _authenticated_socket(client, user_id="model-options-owner")
+    try:
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "model.options",
+                "requestId": "req_model_options",
+                "payload": {},
+            }
+        )
+
+        response = websocket.receive_json()
+
+        assert response["type"] == "model.options.result"
+        assert response["payload"]["model"]
+        assert response["payload"]["providers"]
+        assert all("models" in provider for provider in response["payload"]["providers"])
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_new_session_message_can_seed_safe_session_settings(client, monkeypatch):
+    _patch_respond(monkeypatch, text="NEW_SETTINGS_DONE")
+    context, websocket = _authenticated_socket(client, user_id="new-settings-owner")
+    try:
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.create",
+                "requestId": "req_new_settings_message",
+                "payload": {
+                    "content": "새 설정 세션을 시작해줘",
+                    "clientMessageId": "client_new_settings_message",
+                    "settings": {
+                        "systemPrompt": "새 세션에서만 적용할 프롬프트",
+                        "toolsets": ["session", "planning"],
+                    },
+                },
+            }
+        )
+
+        accepted = websocket.receive_json()
+        _receive_until(websocket, "session.message.completed")
+        session = client.app.state.session_store.get_session(accepted["payload"]["session_id"])
+        task = client.app.state.repository.get_task(accepted["payload"]["task_run_id"])
+
+        assert session is not None
+        assert session["settings"]["systemPrompt"] == "새 세션에서만 적용할 프롬프트"
+        assert task is not None
+        assert task.input_payload["system_prompt_snapshot"] == "새 세션에서만 적용할 프롬프트"
+        assert task.input_payload["enabled_toolsets"] == ["session", "planning"]
+    finally:
+        context.__exit__(None, None, None)
+
+
 def test_ws_subscribe_task_preserves_request_id_when_provided(client):
     client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="subscribe-owner")
     client.app.state.repository.create_task(
         TaskRun(
             task_run_id="task_subscribe_request_id",
             task_type="agent.loop",
-            intent_type="agent.loop",
-            entry_handler_key="agent.loop",
             owner_key="subscribe-owner",
             status="RUNNING",
             title="subscribe command",

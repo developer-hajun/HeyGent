@@ -20,6 +20,10 @@ def test_openapi_documents_bearer_auth_for_task_runs():
     assert "post" not in schema["paths"]["/ai/api/v1/sessions"]
     assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/messages"]["post"]["security"]
     assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/{sessionId}/messages"]["post"]["security"]
+    assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/{sessionId}/update"]["post"]["security"]
+    assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/{sessionId}/archive"]["post"]["security"]
+    assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/{sessionId}/settings/update"]["post"]["security"]
+    assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/{sessionId}"]["delete"]["security"]
     assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/taskRuns"]["post"]["security"]
     assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/agentSessions/{agentSessionId}/messages"]["get"]["security"]
 
@@ -33,13 +37,13 @@ def test_openapi_documents_task_run_contract_in_plain_language():
     create_schema = schema["components"]["schemas"]["CreateTaskRequest"]["properties"]
     assert "TaskRun" in create_schema["sessionId"]["description"]
     assert "prompt" in create_schema["input_payload"]["description"]
-    assert "entry_handler_key" not in create_schema
+    assert "input_payload" in create_schema
 
     task_run_schema = schema["components"]["schemas"]["TaskRunResponse"]["properties"]
     assert "사용자 요청 하나의 실행 묶음" in task_run_schema["task_run_id"]["description"]
     assert "sessionId" in task_run_schema["session_key"]["description"]
     assert "승인" in task_run_schema["pendingApproval"]["description"]
-    assert "entry_handler_key" not in task_run_schema
+    assert "task_type" in task_run_schema
 
     active_params = schema["paths"]["/ai/api/v1/taskRuns/active"]["get"]["parameters"]
     active_param_names = {parameter["name"] for parameter in active_params}
@@ -104,6 +108,10 @@ def test_openapi_documents_public_sessions_without_product_session_alias():
     assert "productSessionId" not in rendered_session_docs
     assert "/ai/api/v1/sessions/messages" in session_paths
     assert "/ai/api/v1/sessions/{sessionId}/messages" in session_paths
+    assert "/ai/api/v1/sessions/{sessionId}/update" in session_paths
+    assert "/ai/api/v1/sessions/{sessionId}/archive" in session_paths
+    assert "/ai/api/v1/sessions/{sessionId}/settings/update" in session_paths
+    assert "delete" in session_paths["/ai/api/v1/sessions/{sessionId}"]
 
     message_request = schema["components"]["schemas"]["CreateSessionMessageRequest"]["properties"]
     assert "content" in message_request

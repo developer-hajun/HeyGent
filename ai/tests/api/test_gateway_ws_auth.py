@@ -88,8 +88,6 @@ def task_for_owner(task_run_id: str, owner_key: str) -> TaskRun:
     return TaskRun(
         task_run_id=task_run_id,
         task_type="agent.loop",
-        intent_type="agent.loop",
-        entry_handler_key="agent.loop",
         owner_key=owner_key,
         status="RUNNING",
         title="웹소켓 테스트 작업",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import date, datetime
+import json
 import logging
 from typing import Any, Awaitable, Callable
 
@@ -11,6 +12,9 @@ from pydantic import BaseModel
 from app.contracts.task.task_status import TaskStatus
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
+from app.domain.session.conversation_history import build_conversation_history
+from app.domain.session.history_compaction import compact_conversation_history
+from app.domain.session.session_runtime_state import get_system_prompt_snapshot
 logger = logging.getLogger(__name__)
 
 _PUBLIC_SESSION_SOURCE = "api.session"
@@ -19,6 +23,33 @@ _ACTIVE_TASK_STATUSES = [status.value for status in (TaskStatus.PENDING, TaskSta
 _TERMINAL_TASK_STATUSES = {status.value for status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELED)}
 _SESSION_MESSAGES_LIST_RESULT_TYPE = "session.messages.list.result"
 _TASK_RUNS_ACTIVE_LIST_RESULT_TYPE = "taskRuns.active.list.result"
+_PROTECTED_SESSION_METADATA_KEYS = {
+    "owner_key",
+    "ownerUserId",
+    "owner_user_id",
+    "userId",
+    "user_id",
+    "source",
+    "session_source",
+    "messageCount",
+    "message_count",
+    "runningTaskRunId",
+    "running_task_run_id",
+    "historyVersion",
+    "history_version",
+    "archivedAt",
+    "archived_at",
+    "deletedAt",
+    "deleted_at",
+    "deletedBy",
+    "deleted_by",
+    "purgeAfter",
+    "purge_after",
+    "settings",
+}
+_SESSION_METADATA_PATCH_ALLOWLIST = {"pinned", "color", "tags", "description", "lastViewedAt", "last_viewed_at", "ui"}
+_SESSION_SETTINGS_ALLOWLIST = {"model", "systemPrompt", "system_prompt", "toolsets", "delegationPolicy", "delegation_policy"}
+_PUBLIC_SESSION_TOOLSETS = {"skills", "session", "planning", "web", "safe"}
 
 
 class WebSocketCommandError(Exception):
@@ -80,6 +111,7 @@ class WebSocketCommandRouter:
         self._accepted_messages: dict[tuple[str, str, str], dict[str, Any]] = {}
         self._accepted_resumes: dict[tuple[str, str], dict[str, Any]] = {}
         self._accepted_cancels: dict[tuple[str, str], dict[str, Any]] = {}
+        self._accepted_session_commands: dict[tuple[str, str, str], tuple[str, str, dict[str, Any]]] = {}
 
     async def handle(self, message: dict[str, Any], context: WebSocketCommandContext) -> bool:
         message_type = message.get("type")
@@ -90,6 +122,14 @@ class WebSocketCommandRouter:
             "session.list": self._session_list,
             "session.messages.list": self._session_messages_list,
             "session.message.create": self._session_message_create,
+            "session.message.retry": self._session_message_retry,
+            "session.message.undo": self._session_message_undo,
+            "session.history.compact": self._session_history_compact,
+            "session.update": self._session_update,
+            "session.archive": self._session_archive,
+            "session.delete": self._session_delete,
+            "session.settings.update": self._session_settings_update,
+            "model.options": self._model_options,
             "taskRuns.active.list": self._task_runs_active_list,
             "taskRun.snapshot.get": self._task_run_snapshot_get,
             "taskRun.events.replay": self._task_run_events_replay,
@@ -134,14 +174,76 @@ class WebSocketCommandRouter:
             f"unsupported command type: {message_type}",
         )
 
+    def _replay_session_command(
+        self,
+        context: WebSocketCommandContext,
+        *,
+        session_id: str,
+        command_id: str,
+        signature: str,
+    ) -> tuple[str, dict[str, Any]] | None:
+        key = (context.auth.user_id, session_id, command_id)
+        session_store = context.websocket.app.state.session_store
+        if hasattr(session_store, "get_session_command_receipt"):
+            receipt = session_store.get_session_command_receipt(
+                owner_key=context.auth.user_id,
+                session_id=session_id,
+                client_command_id=command_id,
+            )
+            if receipt is not None:
+                if receipt.get("command_signature") != signature:
+                    raise WebSocketCommandError("conflict", "clientCommandId was already used with a different payload")
+                response_payload = dict(receipt.get("response_payload") or {})
+                response_type = str(response_payload.pop("_response_type"))
+                return response_type, response_payload
+        existing = self._accepted_session_commands.get(key)
+        if existing is None:
+            return None
+        existing_signature, response_type, response_payload = existing
+        if existing_signature != signature:
+            raise WebSocketCommandError("conflict", "clientCommandId was already used with a different payload")
+        return response_type, dict(response_payload)
+
+    def _remember_session_command(
+        self,
+        context: WebSocketCommandContext,
+        *,
+        session_id: str,
+        command_id: str,
+        signature: str,
+        response: tuple[str, dict[str, Any]],
+    ) -> None:
+        response_type, response_payload = response
+        session_store = context.websocket.app.state.session_store
+        durable_payload = {"_response_type": response_type, **_jsonable(response_payload)}
+        if hasattr(session_store, "remember_session_command_receipt"):
+            session_store.remember_session_command_receipt(
+                owner_key=context.auth.user_id,
+                session_id=session_id,
+                client_command_id=command_id,
+                command_signature=signature,
+                response_payload=durable_payload,
+            )
+        self._accepted_session_commands[(context.auth.user_id, session_id, command_id)] = (
+            signature,
+            response_type,
+            _jsonable(response_payload),
+        )
+
     async def _session_list(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
         page = _positive_int(payload.get("page"), default=1, maximum=10_000)
         page_size = _positive_int(payload.get("pageSize", payload.get("page_size")), default=20, maximum=50)
+        include_archived = bool(payload.get("includeArchived", payload.get("include_archived", False)))
         offset = (page - 1) * page_size
         session_store = context.websocket.app.state.session_store
         sessions = [
             session
-            for session in session_store.list_sessions(user_id=context.auth.user_id, limit=10_000, offset=0)
+            for session in session_store.list_sessions(
+                user_id=context.auth.user_id,
+                limit=10_000,
+                offset=0,
+                include_archived=include_archived,
+            )
             if _is_public_session(session)
         ]
         selected = sessions[offset : offset + page_size]
@@ -188,6 +290,10 @@ class WebSocketCommandRouter:
         input_payload = payload.get("inputPayload", payload.get("input_payload")) or {}
         if not isinstance(input_payload, dict):
             raise WebSocketCommandError("invalid_payload", "inputPayload must be an object")
+        initial_settings_payload = payload.get("settings")
+        if initial_settings_payload is not None and not isinstance(initial_settings_payload, dict):
+            raise WebSocketCommandError("invalid_payload", "settings must be an object")
+        initial_settings = _normalize_session_settings(initial_settings_payload) if isinstance(initial_settings_payload, dict) else {}
 
         idempotency_key = (context.auth.user_id, session_id or "", client_message_id)
         existing = self._accepted_messages.get(idempotency_key)
@@ -205,48 +311,83 @@ class WebSocketCommandRouter:
             return "session.message.accepted", dict(durable_existing)
 
         if session_id:
+            if initial_settings:
+                raise WebSocketCommandError("invalid_payload", "settings can only be used when creating a new session")
             session = _get_public_session(context, session_id)
             _ensure_owner(context, session.get("user_id"))
+            session = _refresh_stale_running_guard(context, session)
+            _ensure_session_idle(session)
         else:
-            session = _create_public_session(context, content=content, model=model)
+            session = _create_public_session(context, content=content, model=model, settings=initial_settings)
             session_id = str(session["id"])
 
         session_store = context.websocket.app.state.session_store
+        base_history_version = int(session.get("history_version") or 0)
+        conversation_history = compact_conversation_history(
+            build_conversation_history(session_store.list_messages(session_id))
+        )
+        settings_snapshot = _session_settings_snapshot(session)
+        effective_model = str(settings_snapshot.get("model") or model or "").strip() or None
         transcript_session_id = _create_task_transcript_session(
             session_store,
             session_id=session_id,
             owner_key=context.auth.user_id,
             title=session.get("title") or content[:120],
-            model=model,
+            model=effective_model,
         )
         task_input = dict(input_payload)
-        if model and not task_input.get("model"):
-            task_input["model"] = model
+        if effective_model and not task_input.get("model"):
+            task_input["model"] = effective_model
         task_input["prompt"] = content
         task_input["transcript_session_id"] = transcript_session_id
+        task_input["conversation_history"] = conversation_history
+        task_input["system_prompt_snapshot"] = get_system_prompt_snapshot(session)
+        task_input["base_history_version"] = base_history_version
+        _apply_session_settings_snapshot(task_input, settings_snapshot, session=session)
         # token memory context는 durable payload에 넣지 않는다. backend 호출이 필요해지면
         # context.auth.access_token에서만 꺼내 쓰도록 경계를 고정한다.
 
-        handler = context.websocket.app.state.tool_registry.resolve(intent_type=payload.get("intentType", payload.get("intent_type", "agent.loop")))
+        handler = context.websocket.app.state.tool_registry.resolve()
         task = context.websocket.app.state.task_engine.planner.materialize_task(
             owner_key=context.auth.user_id,
             session_key=session_id,
             input_payload=task_input,
             handler=handler,
         )
-        context.websocket.app.state.repository.create_task(task)
-        user_message_ref = session_store.append_message(
+        user_append = session_store.append_user_message_and_start_task(
+            owner_key=context.auth.user_id,
             session_id=session_id,
-            role="user",
             content=content,
-            metadata={
-                "source": _PUBLIC_SESSION_SOURCE,
-                # clientMessageId는 재전송/낙관적 UI 병합을 추적하기 위한 idempotency 키다.
-                # accessToken과 달리 비밀값이 아니며, durable 저장되어도 보안 경계가 흔들리지 않는다.
-                "client_message_id": client_message_id,
-                "task_run_id": task.task_run_id,
-            },
+            client_message_id=client_message_id,
+            task_run_id=task.task_run_id,
+            base_history_version=base_history_version,
         )
+        if user_append.get("duplicate"):
+            accepted = {
+                "session_id": session_id,
+                "user_message_id": _stored_message_id(session_store, session_id=session_id, stored_ref=user_append["message_id"]),
+                "assistant_message_id": _find_assistant_message_id_for_task(session_store, session_id, str(user_append["task_run_id"])),
+                "task_run_id": str(user_append["task_run_id"]),
+                "status": _task_status_for_payload(context, str(user_append["task_run_id"])),
+                "client_message_id": client_message_id,
+                "history_version": user_append["after_user_message_version"],
+            }
+            self._accepted_messages[idempotency_key] = accepted
+            return "session.message.accepted", dict(accepted)
+        task.input_payload = {
+            **dict(task.input_payload or {}),
+            "after_user_message_version": user_append["after_user_message_version"],
+            "completion_expected_version": user_append["completion_expected_version"],
+        }
+        try:
+            context.websocket.app.state.repository.create_task(task)
+        except Exception:
+            session_store.clear_stale_running_task(
+                owner_key=context.auth.user_id,
+                session_id=session_id,
+                task_run_id=task.task_run_id,
+            )
+            raise
         context.session_service.subscribe_task(
             session_id=context.gateway_session_id,
             websocket=context.websocket,
@@ -255,11 +396,12 @@ class WebSocketCommandRouter:
 
         accepted = {
             "session_id": session_id,
-            "user_message_id": _stored_message_id(session_store, session_id=session_id, stored_ref=user_message_ref),
+            "user_message_id": _stored_message_id(session_store, session_id=session_id, stored_ref=user_append["message_id"]),
             "assistant_message_id": None,
             "task_run_id": task.task_run_id,
             "status": task.status,
             "client_message_id": client_message_id,
+            "history_version": user_append["after_user_message_version"],
         }
         self._accepted_messages[idempotency_key] = accepted
 
@@ -269,7 +411,7 @@ class WebSocketCommandRouter:
                 self._run_created_message_task(
                     context=background_context,
                     session_id=session_id,
-                    user_message_id=user_message_ref,
+                    user_message_id=int(user_append["message_id"]),
                     task=task,
                     handler=handler,
                 )
@@ -280,6 +422,344 @@ class WebSocketCommandRouter:
         # accepted frame을 먼저 보낸 뒤 agent.loop/task.event fan-out을 시작한다.
         context.after_response_callbacks.append(start_background_task)
         return "session.message.accepted", dict(accepted)
+
+    async def _session_message_retry(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
+        session_id = _required_str(payload, "sessionId", "session_id")
+        command_id = _required_str(payload, "clientCommandId", "client_command_id")
+        target_message_id = _optional_str(payload.get("targetMessageId", payload.get("target_message_id")))
+        model = _optional_str(payload.get("model"))
+        session = _get_public_session(context, session_id)
+        _ensure_owner(context, session.get("user_id"))
+        session = _refresh_stale_running_guard(context, session)
+        _ensure_session_idle(session)
+
+        session_store = context.websocket.app.state.session_store
+        retry_state = _prepare_retry_turn(
+            session_store,
+            owner_key=context.auth.user_id,
+            session_id=session_id,
+            target_message_id=target_message_id,
+        )
+        content = retry_state["content"]
+        conversation_history = compact_conversation_history(build_conversation_history(retry_state["history_rows"]))
+        try:
+            settings_snapshot = _session_settings_snapshot(session)
+            effective_model = str(settings_snapshot.get("model") or model or "").strip() or None
+            transcript_session_id = _create_task_transcript_session(
+                session_store,
+                session_id=session_id,
+                owner_key=context.auth.user_id,
+                title=session.get("title") or str(content)[:120],
+                model=effective_model,
+            )
+            task_input = {
+                "prompt": content,
+                "transcript_session_id": transcript_session_id,
+                "conversation_history": conversation_history,
+                "system_prompt_snapshot": get_system_prompt_snapshot(session),
+                "base_history_version": retry_state["base_history_version"],
+                "after_user_message_version": retry_state["completion_expected_version"],
+                "completion_expected_version": retry_state["completion_expected_version"],
+                "retry_source_message_id": retry_state["user_message_id"],
+                "client_command_id": command_id,
+            }
+            if effective_model:
+                task_input["model"] = effective_model
+            _apply_session_settings_snapshot(task_input, settings_snapshot, session=session)
+            handler = context.websocket.app.state.tool_registry.resolve()
+            task = context.websocket.app.state.task_engine.planner.materialize_task(
+                owner_key=context.auth.user_id,
+                session_key=session_id,
+                input_payload=task_input,
+                handler=handler,
+                task_run_id=retry_state["task_run_id"],
+            )
+            context.websocket.app.state.repository.create_task(task)
+            context.session_service.subscribe_task(
+                session_id=context.gateway_session_id,
+                websocket=context.websocket,
+                task_run_id=task.task_run_id,
+            )
+        except Exception:
+            session_store.clear_stale_running_task(
+                owner_key=context.auth.user_id,
+                session_id=session_id,
+                task_run_id=str(retry_state["task_run_id"]),
+            )
+            raise
+        accepted = {
+            "session_id": session_id,
+            "user_message_id": str(retry_state["user_message_id"]),
+            "assistant_message_id": None,
+            "task_run_id": task.task_run_id,
+            "status": task.status,
+            "client_command_id": command_id,
+            "history_version": retry_state["completion_expected_version"],
+        }
+
+        def start_background_task() -> None:
+            background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
+            background_task = asyncio.create_task(
+                self._run_created_message_task(
+                    context=background_context,
+                    session_id=session_id,
+                    user_message_id=int(retry_state["user_message_id"]),
+                    task=task,
+                    handler=handler,
+                )
+            )
+            context.background_tasks.add(background_task)
+            background_task.add_done_callback(context.background_tasks.discard)
+
+        context.after_response_callbacks.append(start_background_task)
+        return "session.message.accepted", accepted
+
+    async def _session_message_undo(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
+        session_id = _required_str(payload, "sessionId", "session_id")
+        command_id = _required_str(payload, "clientCommandId", "client_command_id")
+        until_message_id = _optional_str(payload.get("untilMessageId", payload.get("until_message_id")))
+        session = _get_public_session(context, session_id)
+        _ensure_owner(context, session.get("user_id"))
+        session = _refresh_stale_running_guard(context, session)
+        _ensure_session_idle(session)
+        result = _truncate_public_session_tail(
+            context.websocket.app.state.session_store,
+            owner_key=context.auth.user_id,
+            session_id=session_id,
+            keep_through_message_id=until_message_id,
+            default_remove_last=True,
+        )
+        return (
+            "session.updated",
+            {
+                "session_id": session_id,
+                "client_command_id": command_id,
+                "history_version": result["history_version"],
+                "messages": [_message_payload(message) for message in context.websocket.app.state.session_store.list_messages(session_id)],
+            },
+        )
+
+    async def _session_history_compact(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
+        session_id = _required_str(payload, "sessionId", "session_id")
+        command_id = _required_str(payload, "clientCommandId", "client_command_id")
+        session = _get_public_session(context, session_id)
+        _ensure_owner(context, session.get("user_id"))
+        session = _refresh_stale_running_guard(context, session)
+        _ensure_session_idle(session)
+        history = compact_conversation_history(build_conversation_history(context.websocket.app.state.session_store.list_messages(session_id)))
+        updated = _patch_public_session_metadata(
+            context.websocket.app.state.session_store,
+            owner_key=context.auth.user_id,
+            session_id=session_id,
+            metadata_patch={
+                "compaction_count": int((session.get("metadata") or {}).get("compaction_count") or 0) + 1,
+                "last_compacted_at": utc_now().isoformat(),
+            },
+            bump_history_version=True,
+        )
+        return (
+            "session.updated",
+            {
+                "session_id": session_id,
+                "client_command_id": command_id,
+                "history_version": updated.get("history_version"),
+                "history_preview": history,
+                "messages": [_message_payload(message) for message in context.websocket.app.state.session_store.list_messages(session_id)],
+            },
+        )
+
+    async def _session_update(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
+        session_id = _required_str(payload, "sessionId", "session_id")
+        command_id = _required_str(payload, "clientCommandId", "client_command_id")
+        title = _optional_str(payload.get("title"))
+        metadata_patch = payload.get("metadataPatch", payload.get("metadata_patch"))
+        if metadata_patch is not None and not isinstance(metadata_patch, dict):
+            raise WebSocketCommandError("invalid_payload", "metadataPatch must be an object")
+        if metadata_patch:
+            _validate_metadata_patch(metadata_patch)
+        signature = _session_command_signature("session.update", {"title": title, "metadataPatch": metadata_patch})
+        replay = self._replay_session_command(context, session_id=session_id, command_id=command_id, signature=signature)
+        if replay is not None:
+            return replay
+        session = _get_public_session(context, session_id)
+        _ensure_owner(context, session.get("user_id"))
+        session = _refresh_stale_running_guard(context, session)
+        _ensure_session_idle(session)
+        if title:
+            try:
+                _update_public_session_title(context.websocket.app.state.session_store, owner_key=context.auth.user_id, session_id=session_id, title=title)
+            except ValueError as error:
+                raise WebSocketCommandError("conflict", str(error), retryable=True) from error
+            except PermissionError as error:
+                raise WebSocketCommandError("forbidden", "forbidden") from error
+            except KeyError as error:
+                raise WebSocketCommandError("not_found", "session not found") from error
+        if metadata_patch:
+            _patch_public_session_metadata(
+                context.websocket.app.state.session_store,
+                owner_key=context.auth.user_id,
+                session_id=session_id,
+                metadata_patch=dict(metadata_patch),
+                bump_history_version=True,
+            )
+        session = _get_public_session(context, session_id)
+        response = (
+            "session.updated",
+            {
+                "session_id": session_id,
+                "client_command_id": command_id,
+                "history_version": session.get("history_version"),
+                "session": _public_session_payload(session, context=context),
+                "messages": [_message_payload(message) for message in context.websocket.app.state.session_store.list_messages(session_id)],
+            },
+        )
+        self._remember_session_command(context, session_id=session_id, command_id=command_id, signature=signature, response=response)
+        return response
+
+    async def _session_archive(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
+        session_id = _required_str(payload, "sessionId", "session_id")
+        command_id = _required_str(payload, "clientCommandId", "client_command_id")
+        archived = bool(payload.get("archived", True))
+        signature = _session_command_signature("session.archive", {"archived": archived})
+        replay = self._replay_session_command(context, session_id=session_id, command_id=command_id, signature=signature)
+        if replay is not None:
+            return replay
+        session = _get_public_session(context, session_id)
+        _ensure_owner(context, session.get("user_id"))
+        session = _refresh_stale_running_guard(context, session)
+        _ensure_session_idle(session)
+        try:
+            updated = context.websocket.app.state.session_store.archive_session(
+                owner_key=context.auth.user_id,
+                session_id=session_id,
+                archived=archived,
+            )
+        except ValueError as error:
+            raise WebSocketCommandError("conflict", str(error), retryable=True) from error
+        except PermissionError as error:
+            raise WebSocketCommandError("forbidden", "forbidden") from error
+        except KeyError as error:
+            raise WebSocketCommandError("not_found", "session not found") from error
+        response = (
+            "session.archived",
+            {
+                "session_id": session_id,
+                "client_command_id": command_id,
+                "archived": bool(updated.get("archived_at")),
+                "session": _public_session_payload(updated, context=context),
+            },
+        )
+        self._remember_session_command(context, session_id=session_id, command_id=command_id, signature=signature, response=response)
+        return response
+
+    async def _session_delete(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
+        session_id = _required_str(payload, "sessionId", "session_id")
+        command_id = _required_str(payload, "clientCommandId", "client_command_id")
+        signature = _session_command_signature("session.delete", {})
+        replay = self._replay_session_command(context, session_id=session_id, command_id=command_id, signature=signature)
+        if replay is not None:
+            return replay
+        session = _get_public_session(context, session_id, allow_deleted=True)
+        _ensure_owner(context, session.get("user_id"))
+        session = _refresh_stale_running_guard(context, session)
+        _ensure_session_idle(session)
+        try:
+            deleted = context.websocket.app.state.session_store.delete_session(
+                owner_key=context.auth.user_id,
+                session_id=session_id,
+                deleted_by=context.auth.user_id,
+            )
+        except ValueError as error:
+            raise WebSocketCommandError("conflict", str(error), retryable=True) from error
+        except PermissionError as error:
+            raise WebSocketCommandError("forbidden", "forbidden") from error
+        except KeyError as error:
+            raise WebSocketCommandError("not_found", "session not found") from error
+        response = (
+            "session.deleted",
+            {
+                "session_id": session_id,
+                "client_command_id": command_id,
+                "deleted_at": deleted.get("deleted_at"),
+                "purge_after": deleted.get("purge_after"),
+            },
+        )
+        self._remember_session_command(context, session_id=session_id, command_id=command_id, signature=signature, response=response)
+        return response
+
+    async def _session_settings_update(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
+        session_id = _required_str(payload, "sessionId", "session_id")
+        command_id = _required_str(payload, "clientCommandId", "client_command_id")
+        settings_payload = payload.get("settings")
+        if not isinstance(settings_payload, dict):
+            raise WebSocketCommandError("invalid_payload", "settings must be an object")
+        settings = _normalize_session_settings(settings_payload)
+        signature = _session_command_signature("session.settings.update", settings)
+        replay = self._replay_session_command(context, session_id=session_id, command_id=command_id, signature=signature)
+        if replay is not None:
+            return replay
+        session = _get_public_session(context, session_id)
+        _ensure_owner(context, session.get("user_id"))
+        session = _refresh_stale_running_guard(context, session)
+        _ensure_session_idle(session)
+        try:
+            updated = context.websocket.app.state.session_store.update_session_settings(
+                owner_key=context.auth.user_id,
+                session_id=session_id,
+                settings=settings,
+            )
+        except ValueError as error:
+            raise WebSocketCommandError("conflict", str(error), retryable=True) from error
+        except PermissionError as error:
+            raise WebSocketCommandError("forbidden", "forbidden") from error
+        except KeyError as error:
+            raise WebSocketCommandError("not_found", "session not found") from error
+        response = (
+            "session.settings.updated",
+            {
+                "session_id": session_id,
+                "client_command_id": command_id,
+                "settings": dict(updated.get("settings") or settings),
+                "session": _public_session_payload(updated, context=context),
+            },
+        )
+        self._remember_session_command(context, session_id=session_id, command_id=command_id, signature=signature, response=response)
+        return response
+
+    async def _model_options(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
+        session_id = _optional_str(payload.get("sessionId", payload.get("session_id")))
+        current_model = None
+        if session_id:
+            session = _get_public_session(context, session_id)
+            _ensure_owner(context, session.get("user_id"))
+            current_model = (_session_settings_snapshot(session).get("model") or session.get("model"))
+        settings = context.websocket.app.state.settings
+        default_model = str(current_model or getattr(settings, "openai_response_model", "") or "gpt-5.4")
+        providers = []
+        registry = context.websocket.app.state.provider_registry
+        for provider in registry.health():
+            payload_item = provider.model_dump(mode="json") if hasattr(provider, "model_dump") else dict(provider)
+            provider_name = str(payload_item.get("provider_name") or "default")
+            provider_models = [
+                {
+                    "id": default_model,
+                    "label": default_model,
+                    "provider": provider_name,
+                    "is_current": default_model == current_model or current_model is None,
+                }
+            ]
+            providers.append(
+                {
+                    "slug": provider_name,
+                    "provider_name": provider_name,
+                    "models": provider_models,
+                    "is_current": any(model["is_current"] for model in provider_models),
+                    "total_models": len(provider_models),
+                    "warning": None if payload_item.get("healthy") or payload_item.get("configured") or payload_item.get("connected") else payload_item.get("detail"),
+                    "health": payload_item,
+                }
+            )
+        return ("model.options.result", {"model": default_model, "providers": providers, "models": [model for provider in providers for model in provider["models"]]})
 
     async def _task_runs_active_list(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
         session_id = _optional_str(payload.get("sessionId", payload.get("session_id")))
@@ -428,6 +908,9 @@ class WebSocketCommandRouter:
         _ensure_owner(context, task.owner_key)
         if task.status != TaskStatus.WAITING:
             raise WebSocketCommandError("conflict", "task is not waiting")
+        approval = context.websocket.app.state.repository.get_open_approval(task_run_id)
+        if approval is None or str(approval.get("approval_id") or "") != approval_id:
+            raise WebSocketCommandError("conflict", "approval is not pending for this task")
 
         accepted = {
             "task_run_id": task_run_id,
@@ -484,18 +967,59 @@ class WebSocketCommandRouter:
                 handler=handler,
                 resume_payload=None,
             )
+            completed_status = str(completed_task.status)
+            completion_expected_version = int((task.input_payload or {}).get("completion_expected_version") or 0)
+            if completed_status == TaskStatus.WAITING.value:
+                # WAITING은 사용자가 볼 최종 assistant 응답이 아니라 approval 대기 상태다.
+                # running guard를 유지해야 resume이 같은 task ownership으로 이어진다.
+                await context.send_json(
+                    _event_frame(
+                        "session.message.waiting",
+                        {
+                            "session_id": session_id,
+                            "message_id": f"waiting:{completed_task.task_run_id}",
+                            "user_message_id": str(user_message_id),
+                            "task_run_id": completed_task.task_run_id,
+                            "status": completed_status,
+                            "pending_approval": _pending_approval_payload(
+                                context.websocket.app.state.repository.get_open_approval(completed_task.task_run_id)
+                            ),
+                        },
+                    )
+                )
+                return
+            if completed_status != TaskStatus.COMPLETED.value:
+                context.websocket.app.state.session_store.clear_stale_running_task(
+                    owner_key=completed_task.owner_key,
+                    session_id=session_id,
+                    task_run_id=completed_task.task_run_id,
+                )
+                await context.send_json(
+                    _event_frame(
+                        "session.message.failed",
+                        {
+                            "session_id": session_id,
+                            "message_id": f"failed:{completed_task.task_run_id}",
+                            "user_message_id": str(user_message_id),
+                            "task_run_id": completed_task.task_run_id,
+                            "status": completed_status,
+                            "error": {
+                                "code": "task_not_completed",
+                                "message": _assistant_content_from_task(completed_task),
+                                "retryable": completed_status in {TaskStatus.FAILED.value, TaskStatus.CANCELED.value},
+                            },
+                        },
+                    )
+                )
+                return
             content = _assistant_content_from_task(completed_task)
-            assistant_message_ref = context.websocket.app.state.session_store.append_message(
+            assistant_append = context.websocket.app.state.session_store.append_assistant_message_and_finish_task(
+                owner_key=completed_task.owner_key,
                 session_id=session_id,
-                role="assistant",
+                task_run_id=completed_task.task_run_id,
                 content=content,
-                metadata={
-                    "source": _PUBLIC_SESSION_SOURCE,
-                    "task_run_id": completed_task.task_run_id,
-                    "status": completed_task.status,
-                    "user_message_id": str(user_message_id),
-                },
-                finish_reason="stop" if completed_task.status in _TERMINAL_TASK_STATUSES else None,
+                completion_expected_version=completion_expected_version,
+                status=completed_status,
             )
             # 현재 Task Engine에는 토큰 단위 streaming hook이 없으므로 delta를 합성하지 않는다.
             # 프론트에는 durable assistant 메시지가 저장된 뒤 completed frame만 보낸다.
@@ -507,17 +1031,26 @@ class WebSocketCommandRouter:
                         "message_id": _stored_message_id(
                             context.websocket.app.state.session_store,
                             session_id=session_id,
-                            stored_ref=assistant_message_ref,
+                            stored_ref=assistant_append["message_id"],
                         ),
                         "content": content,
                         "task_run_id": completed_task.task_run_id,
-                        "status": completed_task.status,
-                        "finish_reason": "stop" if completed_task.status in _TERMINAL_TASK_STATUSES else None,
+                        "status": completed_status,
+                        "finish_reason": "stop",
+                        "history_version": assistant_append["completion_result_version"],
                     },
                 )
             )
         except Exception:
             logger.exception("session.message.create background 실행에 실패했습니다.")
+            try:
+                context.websocket.app.state.session_store.clear_stale_running_task(
+                    owner_key=task.owner_key,
+                    session_id=session_id,
+                    task_run_id=task.task_run_id,
+                )
+            except Exception:
+                logger.exception("session.message.create 실패 후 running guard 정리에 실패했습니다.")
             # accepted 이후 background 실행이 실패해도 client가 placeholder를 무기한 기다리면 안 된다.
             # 실패 frame은 durable TaskRun event와 별개로 현재 대화 UI의 pending assistant 상태를 닫는 역할을 한다.
             try:
@@ -543,15 +1076,90 @@ class WebSocketCommandRouter:
 
     async def _run_resume_task(self, *, context: WebSocketBackgroundContext, task_run_id: str, approval_id: str, payload: dict[str, Any]) -> None:
         try:
-            await context.websocket.app.state.orchestrator.resume(task_run_id=task_run_id, approval_id=approval_id, payload=payload)
+            completed_task = await context.websocket.app.state.orchestrator.resume(task_run_id=task_run_id, approval_id=approval_id, payload=payload)
+            await self._finalize_resumed_or_canceled_task(context=context, task=completed_task)
         except Exception:
             logger.exception("taskRun.resume background 실행에 실패했습니다.")
 
     async def _run_cancel_task(self, *, context: WebSocketBackgroundContext, task_run_id: str) -> None:
         try:
-            await context.websocket.app.state.orchestrator.cancel(task_run_id=task_run_id)
+            completed_task = await context.websocket.app.state.orchestrator.cancel(task_run_id=task_run_id)
+            await self._finalize_resumed_or_canceled_task(context=context, task=completed_task)
         except Exception:
             logger.exception("taskRun.cancel background 실행에 실패했습니다.")
+
+    async def _finalize_resumed_or_canceled_task(self, *, context: WebSocketBackgroundContext, task: Any) -> None:
+        session_id = str(getattr(task, "session_key", "") or "")
+        if not session_id:
+            return
+        session_store = context.websocket.app.state.session_store
+        session = session_store.get_session(session_id)
+        if session is None or not _is_public_session(session):
+            return
+        status = str(getattr(task, "status", ""))
+        if status == TaskStatus.WAITING.value:
+            await context.send_json(
+                _event_frame(
+                    "session.message.waiting",
+                    {
+                        "session_id": session_id,
+                        "message_id": f"waiting:{task.task_run_id}",
+                        "task_run_id": task.task_run_id,
+                        "status": status,
+                        "pending_approval": _pending_approval_payload(
+                            context.websocket.app.state.repository.get_open_approval(task.task_run_id)
+                        ),
+                    },
+                )
+            )
+            return
+        if status == TaskStatus.COMPLETED.value:
+            content = _assistant_content_from_task(task)
+            expected_version = int((getattr(task, "input_payload", {}) or {}).get("completion_expected_version") or session.get("history_version") or 0)
+            assistant_append = session_store.append_assistant_message_and_finish_task(
+                owner_key=str(getattr(task, "owner_key", "") or session.get("user_id") or ""),
+                session_id=session_id,
+                task_run_id=task.task_run_id,
+                content=content,
+                completion_expected_version=expected_version,
+                status=status,
+            )
+            await context.send_json(
+                _event_frame(
+                    "session.message.completed",
+                    {
+                        "session_id": session_id,
+                        "message_id": _stored_message_id(session_store, session_id=session_id, stored_ref=assistant_append["message_id"]),
+                        "content": content,
+                        "task_run_id": task.task_run_id,
+                        "status": status,
+                        "finish_reason": "stop",
+                        "history_version": assistant_append["completion_result_version"],
+                    },
+                )
+            )
+            return
+        session_store.clear_stale_running_task(
+            owner_key=str(getattr(task, "owner_key", "") or session.get("user_id") or ""),
+            session_id=session_id,
+            task_run_id=task.task_run_id,
+        )
+        await context.send_json(
+            _event_frame(
+                "session.message.failed",
+                {
+                    "session_id": session_id,
+                    "message_id": f"failed:{task.task_run_id}",
+                    "task_run_id": task.task_run_id,
+                    "status": status,
+                    "error": {
+                        "code": "task_not_completed",
+                        "message": _assistant_content_from_task(task),
+                        "retryable": status in {TaskStatus.FAILED.value, TaskStatus.CANCELED.value},
+                    },
+                },
+            )
+        )
 
     async def _send_result(self, context: WebSocketCommandContext, response_type: str, request_id: Any, payload: dict[str, Any]) -> None:
         await context.send_json(
@@ -597,7 +1205,7 @@ def _event_frame(frame_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _create_public_session(context: WebSocketCommandContext, *, content: str, model: str | None) -> dict[str, Any]:
+def _create_public_session(context: WebSocketCommandContext, *, content: str, model: str | None, settings: dict[str, Any] | None = None) -> dict[str, Any]:
     session_id = new_id("session")
     context.websocket.app.state.session_store.create_session(
         session_id=session_id,
@@ -607,6 +1215,7 @@ def _create_public_session(context: WebSocketCommandContext, *, content: str, mo
         model=model,
         title=_derive_session_title(content),
         metadata={"source": _PUBLIC_SESSION_SOURCE},
+        settings=settings or {},
     )
     session = context.websocket.app.state.session_store.get_session(session_id)
     if session is None:
@@ -629,16 +1238,445 @@ def _create_task_transcript_session(session_store: Any, *, session_id: str, owne
     return transcript_session_id
 
 
-def _get_public_session(context: WebSocketCommandContext, session_id: str) -> dict[str, Any]:
+def _get_public_session(context: WebSocketCommandContext, session_id: str, *, allow_deleted: bool = False) -> dict[str, Any]:
     session = context.websocket.app.state.session_store.get_session(session_id)
-    if session is None or not _is_public_session(session):
+    if session is None or not _is_public_session(session, allow_deleted=allow_deleted):
         raise WebSocketCommandError("not_found", "session not found")
     return session
 
 
-def _is_public_session(session: dict[str, Any]) -> bool:
+def _ensure_session_idle(session: dict[str, Any]) -> None:
+    if session.get("running_task_run_id"):
+        raise WebSocketCommandError("conflict", "session has a running task", retryable=True)
+
+
+def _refresh_stale_running_guard(context: WebSocketCommandContext, session: dict[str, Any]) -> dict[str, Any]:
+    task_run_id = session.get("running_task_run_id")
+    if not task_run_id:
+        return session
+    task = context.websocket.app.state.repository.get_task(str(task_run_id))
+    if task is not None and str(task.status) in _ACTIVE_TASK_STATUSES:
+        return session
+    # Postgres의 running_task_run_id는 재시작 뒤에도 남는 영속 guard다.
+    # TaskRun이 이미 terminal이거나 projection/task row를 잃은 경우에는 다음 명령을 막지 않도록
+    # 같은 task_run_id 소유 guard만 정리한다.
+    context.websocket.app.state.session_store.clear_stale_running_task(
+        owner_key=str(session.get("user_id") or context.auth.user_id),
+        session_id=str(session["id"]),
+        task_run_id=str(task_run_id),
+    )
+    refreshed = context.websocket.app.state.session_store.get_session(str(session["id"]))
+    return refreshed or session
+
+
+def _is_public_session(session: dict[str, Any], *, allow_deleted: bool = False) -> bool:
     metadata = dict(session.get("metadata") or {})
+    if session.get("deleted_at") is not None and not allow_deleted:
+        return False
     return session.get("source") == _PUBLIC_SESSION_SOURCE or metadata.get("source") == _PUBLIC_SESSION_SOURCE
+
+
+def _prepare_retry_turn(session_store: Any, *, owner_key: str, session_id: str, target_message_id: str | None) -> dict[str, Any]:
+    messages = session_store.list_messages(session_id)
+    user_message = _select_retry_user_message(messages, target_message_id=target_message_id)
+    if user_message is None:
+        raise WebSocketCommandError("not_found", "retry target user message not found")
+    user_sequence = int(user_message.get("id") or user_message.get("message_sequence") or 0)
+    if user_sequence <= 0:
+        raise WebSocketCommandError("invalid_state", "retry target message has no sequence")
+    trimmed = _truncate_public_session_tail(
+        session_store,
+        owner_key=owner_key,
+        session_id=session_id,
+        keep_through_message_id=str(user_sequence),
+        default_remove_last=False,
+    )
+    task_run_id = new_id("task")
+    _start_existing_user_message_task(
+        session_store,
+        owner_key=owner_key,
+        session_id=session_id,
+        task_run_id=task_run_id,
+        expected_history_version=trimmed["history_version"],
+    )
+    refreshed = session_store.list_messages(session_id)
+    return {
+        "task_run_id": task_run_id,
+        "user_message_id": user_sequence,
+        "content": str(user_message.get("content") or ""),
+        "history_rows": [message for message in refreshed if int(message.get("id") or 0) < user_sequence],
+        "base_history_version": trimmed["history_version"],
+        "completion_expected_version": trimmed["history_version"],
+    }
+
+
+def _select_retry_user_message(messages: list[dict[str, Any]], *, target_message_id: str | None) -> dict[str, Any] | None:
+    if target_message_id:
+        for message in messages:
+            if _message_matches_client_ref(message, target_message_id) and message.get("role") == "user":
+                return message
+        return None
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return message
+    return None
+
+
+def _message_matches_client_ref(message: dict[str, Any], message_ref: str) -> bool:
+    candidates = {
+        str(message.get("id") or ""),
+        str(message.get("message_id") or ""),
+        str(message.get("messageId") or ""),
+        str(message.get("message_sequence") or ""),
+    }
+    return message_ref in candidates
+
+
+def _truncate_public_session_tail(
+    session_store: Any,
+    *,
+    owner_key: str,
+    session_id: str,
+    keep_through_message_id: str | None,
+    default_remove_last: bool,
+) -> dict[str, Any]:
+    if hasattr(session_store, "connection_factory"):
+        return _truncate_postgres_public_session_tail(
+            session_store,
+            owner_key=owner_key,
+            session_id=session_id,
+            keep_through_message_id=keep_through_message_id,
+            default_remove_last=default_remove_last,
+        )
+    return _truncate_memory_public_session_tail(
+        session_store,
+        owner_key=owner_key,
+        session_id=session_id,
+        keep_through_message_id=keep_through_message_id,
+        default_remove_last=default_remove_last,
+    )
+
+
+def _truncate_memory_public_session_tail(
+    session_store: Any,
+    *,
+    owner_key: str,
+    session_id: str,
+    keep_through_message_id: str | None,
+    default_remove_last: bool,
+) -> dict[str, Any]:
+    session = session_store.get_session(session_id)
+    if session is None:
+        raise WebSocketCommandError("not_found", "session not found")
+    if str(session.get("user_id") or session.get("owner_key") or "") != str(owner_key):
+        raise WebSocketCommandError("forbidden", "forbidden")
+    messages = session_store.messages.get(session_id, [])
+    if keep_through_message_id is None and default_remove_last:
+        keep_count = max(0, len(messages) - 1)
+    else:
+        keep_sequence = _resolve_memory_message_sequence(messages, keep_through_message_id)
+        keep_count = len([message for message in messages if int(message.get("id") or 0) <= keep_sequence])
+    session_store.messages[session_id] = messages[:keep_count]
+    mutable_session = session_store.sessions[session_id]
+    mutable_session["message_count"] = keep_count
+    mutable_session["history_version"] = int(mutable_session.get("history_version") or 0) + 1
+    mutable_session["running_task_run_id"] = None
+    mutable_session["updated_at"] = utc_now()
+    return {"history_version": mutable_session["history_version"]}
+
+
+def _resolve_memory_message_sequence(messages: list[dict[str, Any]], message_ref: str | None) -> int:
+    if not message_ref:
+        return 0
+    for message in messages:
+        if _message_matches_client_ref(message, message_ref):
+            return int(message.get("id") or message.get("message_sequence") or 0)
+    try:
+        return int(message_ref)
+    except ValueError as error:
+        raise WebSocketCommandError("not_found", "message not found") from error
+
+
+def _truncate_postgres_public_session_tail(
+    session_store: Any,
+    *,
+    owner_key: str,
+    session_id: str,
+    keep_through_message_id: str | None,
+    default_remove_last: bool,
+) -> dict[str, Any]:
+    connection = session_store.connection_factory()
+    owner_sql, owner_params = _owner_filter(owner_key)
+    session_row = connection.execute(
+        f"SELECT * FROM agent_sessions WHERE session_id = %s AND {owner_sql} FOR UPDATE",
+        tuple([session_id, *owner_params]),
+    ).fetchone()
+    if session_row is None:
+        raise WebSocketCommandError("not_found", "session not found")
+    if session_row.get("running_task_run_id"):
+        raise WebSocketCommandError("conflict", "session has a running task", retryable=True)
+    if keep_through_message_id is None and default_remove_last:
+        row = connection.execute(
+            "SELECT COALESCE(MAX(message_sequence), 0) - 1 AS keep_sequence FROM agent_messages WHERE session_id = %s",
+            (session_id,),
+        ).fetchone()
+        keep_sequence = max(0, int((row or {}).get("keep_sequence") or 0))
+    else:
+        keep_sequence = _resolve_postgres_message_sequence(connection, session_id=session_id, message_ref=keep_through_message_id)
+    connection.execute(
+        "DELETE FROM agent_messages WHERE session_id = %s AND message_sequence > %s",
+        (session_id, keep_sequence),
+    )
+    count_row = connection.execute(
+        "SELECT COUNT(*) AS count FROM agent_messages WHERE session_id = %s",
+        (session_id,),
+    ).fetchone()
+    next_version = int(session_row.get("history_version") or 0) + 1
+    connection.execute(
+        f"""
+        UPDATE agent_sessions
+        SET history_version = %s,
+            running_task_run_id = NULL,
+            updated_at = now(),
+            metadata = jsonb_set(metadata, '{message_count}', to_jsonb(%s::int), true)
+        WHERE session_id = %s AND {owner_sql}
+        """,
+        tuple([next_version, int((count_row or {}).get("count") or 0), session_id, *owner_params]),
+    )
+    connection.commit()
+    return {"history_version": next_version}
+
+
+def _resolve_postgres_message_sequence(connection: Any, *, session_id: str, message_ref: str | None) -> int:
+    if not message_ref:
+        return 0
+    row = connection.execute(
+        """
+        SELECT message_sequence
+        FROM agent_messages
+        WHERE session_id = %s
+          AND (message_id = %s OR message_sequence::text = %s)
+        ORDER BY message_sequence ASC
+        LIMIT 1
+        """,
+        (session_id, message_ref, message_ref),
+    ).fetchone()
+    if row is not None:
+        return int(row.get("message_sequence") or 0)
+    try:
+        return int(message_ref)
+    except ValueError as error:
+        raise WebSocketCommandError("not_found", "message not found") from error
+
+
+def _start_existing_user_message_task(
+    session_store: Any,
+    *,
+    owner_key: str,
+    session_id: str,
+    task_run_id: str,
+    expected_history_version: int,
+) -> None:
+    if hasattr(session_store, "connection_factory"):
+        connection = session_store.connection_factory()
+        owner_sql, owner_params = _owner_filter(owner_key)
+        row = connection.execute(
+            f"""
+            UPDATE agent_sessions
+            SET running_task_run_id = %s,
+                updated_at = now()
+            WHERE session_id = %s
+              AND {owner_sql}
+              AND history_version = %s
+              AND running_task_run_id IS NULL
+            RETURNING session_id
+            """,
+            tuple([task_run_id, session_id, *owner_params, expected_history_version]),
+        ).fetchone()
+        connection.commit()
+        if row is None:
+            raise WebSocketCommandError("conflict", "session history changed", retryable=True)
+        return
+    session = session_store.sessions.get(session_id)
+    if session is None or str(session.get("user_id") or "") != str(owner_key):
+        raise WebSocketCommandError("not_found", "session not found")
+    if int(session.get("history_version") or 0) != expected_history_version or session.get("running_task_run_id"):
+        raise WebSocketCommandError("conflict", "session history changed", retryable=True)
+    session["running_task_run_id"] = task_run_id
+
+
+def _update_public_session_title(session_store: Any, *, owner_key: str, session_id: str, title: str) -> None:
+    if hasattr(session_store, "update_title"):
+        session_store.update_title(owner_key=owner_key, session_id=session_id, title=title)
+        return
+    if hasattr(session_store, "connection_factory"):
+        connection = session_store.connection_factory()
+        owner_sql, owner_params = _owner_filter(owner_key)
+        connection.execute(
+            f"UPDATE agent_sessions SET title = %s, updated_at = now() WHERE session_id = %s AND {owner_sql} AND deleted_at IS NULL",
+            tuple([title, session_id, *owner_params]),
+        )
+        connection.commit()
+        return
+    session = session_store.sessions.get(session_id)
+    if session is not None and str(session.get("user_id") or "") == str(owner_key):
+        session["title"] = title
+        session["updated_at"] = utc_now()
+
+
+def _patch_public_session_metadata(
+    session_store: Any,
+    *,
+    owner_key: str,
+    session_id: str,
+    metadata_patch: dict[str, Any],
+    bump_history_version: bool,
+) -> dict[str, Any]:
+    if hasattr(session_store, "connection_factory"):
+        connection = session_store.connection_factory()
+        owner_sql, owner_params = _owner_filter(owner_key)
+        row = connection.execute(
+            f"SELECT metadata, history_version FROM agent_sessions WHERE session_id = %s AND {owner_sql} FOR UPDATE",
+            tuple([session_id, *owner_params]),
+        ).fetchone()
+        if row is None:
+            raise WebSocketCommandError("not_found", "session not found")
+        metadata = _json_load(row.get("metadata"), {})
+        metadata.update(metadata_patch)
+        next_version = int(row.get("history_version") or 0) + (1 if bump_history_version else 0)
+        connection.execute(
+            f"""
+            UPDATE agent_sessions
+            SET metadata = %s::jsonb,
+                history_version = %s,
+                updated_at = now()
+            WHERE session_id = %s AND {owner_sql}
+              AND deleted_at IS NULL
+            """,
+            tuple([_json_dumps(metadata), next_version, session_id, *owner_params]),
+        )
+        connection.commit()
+        return {"history_version": next_version, "metadata": metadata}
+    session = session_store.sessions.get(session_id)
+    if session is None or str(session.get("user_id") or "") != str(owner_key):
+        raise WebSocketCommandError("not_found", "session not found")
+    metadata = dict(session.get("metadata") or {})
+    metadata.update(metadata_patch)
+    session["metadata"] = metadata
+    if bump_history_version:
+        session["history_version"] = int(session.get("history_version") or 0) + 1
+    session["updated_at"] = utc_now()
+    return {"history_version": int(session.get("history_version") or 0), "metadata": metadata}
+
+
+def _validate_metadata_patch(metadata_patch: dict[str, Any]) -> None:
+    protected = _PROTECTED_SESSION_METADATA_KEYS.intersection(metadata_patch)
+    if protected:
+        raise WebSocketCommandError("invalid_payload", "metadataPatch contains protected fields")
+    unknown = set(metadata_patch) - _SESSION_METADATA_PATCH_ALLOWLIST
+    if unknown:
+        raise WebSocketCommandError("invalid_payload", "metadataPatch contains unsupported fields")
+
+
+def _session_command_signature(operation: str, payload: dict[str, Any]) -> str:
+    return json.dumps({"operation": operation, "payload": payload}, ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _normalize_session_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    unknown = set(settings) - _SESSION_SETTINGS_ALLOWLIST
+    if unknown:
+        raise WebSocketCommandError("invalid_payload", "settings contains unsupported fields")
+    normalized: dict[str, Any] = {}
+    model = settings.get("model")
+    if model is not None:
+        if not isinstance(model, str) or not model.strip():
+            raise WebSocketCommandError("invalid_payload", "settings.model must be a non-empty string")
+        normalized["model"] = model.strip()
+    system_prompt = settings.get("systemPrompt", settings.get("system_prompt"))
+    if system_prompt is not None:
+        if not isinstance(system_prompt, str):
+            raise WebSocketCommandError("invalid_payload", "settings.systemPrompt must be a string")
+        normalized["systemPrompt"] = system_prompt
+    toolsets = settings.get("toolsets")
+    if toolsets is not None:
+        if not isinstance(toolsets, list) or any(not isinstance(item, str) or not item.strip() for item in toolsets):
+            raise WebSocketCommandError("invalid_payload", "settings.toolsets must be a string array")
+        normalized_toolsets = [item.strip() for item in toolsets]
+        if any(item not in _PUBLIC_SESSION_TOOLSETS for item in normalized_toolsets):
+            raise WebSocketCommandError("invalid_payload", "settings.toolsets contains unsupported toolsets")
+        normalized["toolsets"] = normalized_toolsets
+    delegation_policy = settings.get("delegationPolicy", settings.get("delegation_policy"))
+    if delegation_policy is not None:
+        if not isinstance(delegation_policy, dict):
+            raise WebSocketCommandError("invalid_payload", "settings.delegationPolicy must be an object")
+        normalized["delegationPolicy"] = _normalize_delegation_policy(delegation_policy)
+    return normalized
+
+
+def _normalize_delegation_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    allowed_keys = {"canDelegate", "maxWorkerDepth"}
+    if set(policy) - allowed_keys:
+        raise WebSocketCommandError("invalid_payload", "settings.delegationPolicy contains unsupported fields")
+    can_delegate = policy.get("canDelegate", False)
+    if not isinstance(can_delegate, bool):
+        raise WebSocketCommandError("invalid_payload", "settings.delegationPolicy.canDelegate must be a boolean")
+    max_worker_depth = policy.get("maxWorkerDepth", 0)
+    if not isinstance(max_worker_depth, int) or max_worker_depth < 0 or max_worker_depth > 1:
+        raise WebSocketCommandError("invalid_payload", "settings.delegationPolicy.maxWorkerDepth must be 0 or 1")
+    # 세션 설정은 실행 권한을 넓히지 않는다. 위임 도구 노출은 별도 승인된 runtime toolset에서만 결정한다.
+    return {"canDelegate": can_delegate, "maxWorkerDepth": max_worker_depth}
+
+
+def _session_settings_snapshot(session: dict[str, Any]) -> dict[str, Any]:
+    settings = session.get("settings")
+    if not isinstance(settings, dict):
+        return {}
+    return dict(settings)
+
+
+def _apply_session_settings_snapshot(task_input: dict[str, Any], settings: dict[str, Any], *, session: dict[str, Any]) -> None:
+    """세션 설정을 TaskRun 입력에 복사해 이후 재시작/재생 시 같은 실행 기준을 유지한다."""
+
+    snapshot = dict(settings)
+    task_input["settings_snapshot"] = snapshot
+    if "model" in snapshot:
+        task_input["model"] = snapshot["model"]
+    if "toolsets" in snapshot:
+        task_input["toolsets"] = list(snapshot["toolsets"])
+        task_input["enabled_toolsets"] = list(snapshot["toolsets"])
+    if "delegationPolicy" in snapshot:
+        task_input["delegation_policy"] = dict(snapshot["delegationPolicy"])
+    task_input["system_prompt_snapshot"] = get_system_prompt_snapshot(session)
+
+
+def _json_dumps(value: Any) -> str:
+    import json
+
+    return json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
+
+
+def _json_load(value: Any, default: Any) -> Any:
+    import json
+
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
+def _owner_filter(owner_key: str) -> tuple[str, list[Any]]:
+    owner_user_id = _owner_user_id(owner_key)
+    if owner_user_id is None:
+        return "owner_key = %s", [owner_key]
+    return "owner_user_id = %s", [owner_user_id]
+
+
+def _owner_user_id(value: Any) -> int | None:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _public_session_payload(session: dict[str, Any], *, context: WebSocketCommandContext | None = None) -> dict[str, Any]:
@@ -647,14 +1685,20 @@ def _public_session_payload(session: dict[str, Any], *, context: WebSocketComman
         "session_key": session.get("session_key"),
         "title": session.get("title"),
         "owner_key": session.get("user_id"),
+        "owner_user_id": session.get("owner_user_id"),
         "status": session.get("status"),
         "source": session.get("source"),
         "parent_session_id": session.get("parent_session_id"),
         "message_count": int(session.get("message_count") or 0),
+        "history_version": int(session.get("history_version") or 0),
         "metadata": dict(session.get("metadata") or {}),
+        "settings": dict(session.get("settings") or {}),
         "created_at": session.get("created_at") or session.get("started_at"),
         "updated_at": session.get("updated_at"),
         "ended_at": session.get("ended_at"),
+        "archived_at": session.get("archived_at"),
+        "deleted_at": session.get("deleted_at"),
+        "purge_after": session.get("purge_after"),
     }
     if context is not None:
         payload.update(_session_list_preview_payload(context, session_id=str(session["id"])))

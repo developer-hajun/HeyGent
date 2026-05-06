@@ -24,16 +24,18 @@ class PostgresDurableRepository:
         connection.execute(
             """
             INSERT INTO run_anchors (
-                task_run_id, session_id, owner_key, session_key,
-                current_step_run_id, durable_status, anchor_payload
+                task_run_id, session_id, owner_key, owner_user_id, session_key,
+                current_step_run_id, durable_status, agent_config_snapshot, anchor_payload
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
             ON CONFLICT (task_run_id) DO UPDATE SET
                 session_id = EXCLUDED.session_id,
                 owner_key = EXCLUDED.owner_key,
+                owner_user_id = EXCLUDED.owner_user_id,
                 session_key = EXCLUDED.session_key,
                 current_step_run_id = EXCLUDED.current_step_run_id,
                 durable_status = EXCLUDED.durable_status,
+                agent_config_snapshot = EXCLUDED.agent_config_snapshot,
                 anchor_payload = EXCLUDED.anchor_payload,
                 revision = run_anchors.revision + 1,
                 updated_at = now()
@@ -42,9 +44,11 @@ class PostgresDurableRepository:
                 task_run_id,
                 payload.get("session_id"),
                 owner_key,
+                payload.get("owner_user_id") or _owner_user_id(owner_key),
                 payload.get("session_key"),
                 payload.get("current_step_run_id"),
                 payload.get("durable_status", "OPEN"),
+                _json(payload.get("agent_config_snapshot", {})),
                 _json(payload.get("anchor_payload", {})),
             ),
         )
@@ -63,16 +67,15 @@ class PostgresDurableRepository:
             """
             INSERT INTO step_anchors (
                 step_run_id, task_run_id, parent_step_run_id, worker_session_id,
-                step_order, step_type, handler_key, durable_status, anchor_payload
+                step_order, step_type, durable_status, anchor_payload
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
             ON CONFLICT (step_run_id) DO UPDATE SET
                 task_run_id = EXCLUDED.task_run_id,
                 parent_step_run_id = EXCLUDED.parent_step_run_id,
                 worker_session_id = EXCLUDED.worker_session_id,
                 step_order = EXCLUDED.step_order,
                 step_type = EXCLUDED.step_type,
-                handler_key = EXCLUDED.handler_key,
                 durable_status = EXCLUDED.durable_status,
                 anchor_payload = EXCLUDED.anchor_payload,
                 revision = step_anchors.revision + 1,
@@ -85,7 +88,6 @@ class PostgresDurableRepository:
                 payload.get("worker_session_id"),
                 payload.get("step_order", 0),
                 payload.get("step_type", "agent.loop.execute"),
-                payload.get("handler_key"),
                 payload.get("durable_status", "OPEN"),
                 _json(payload.get("anchor_payload", {})),
             ),
@@ -257,13 +259,14 @@ class PostgresTaskRepository(PostgresDurableRepository):
         connection.execute(
             """
             INSERT INTO approval_requests (
-                approval_id, task_run_id, step_run_id, tool_call_id, status,
+                approval_id, owner_user_id, task_run_id, step_run_id, tool_call_id, status,
                 request_payload, response_payload, created_at, resolved_at
             )
-            VALUES (%s, %s, %s, %s, 'PENDING', %s::jsonb, '{}'::jsonb, %s, NULL)
+            VALUES (%s, %s, %s, %s, %s, 'PENDING', %s::jsonb, '{}'::jsonb, %s, NULL)
             """,
             (
                 approval_id,
+                payload.get("owner_user_id") or _owner_user_id((self.get_run_anchor(task_run_id) or {}).get("owner_key")),
                 task_run_id,
                 step_run_id,
                 payload.get("pending_tool_call_id") or payload.get("tool_call_id"),
@@ -465,15 +468,20 @@ class PostgresTaskRepository(PostgresDurableRepository):
         existing = self.get_run_anchor(task.task_run_id) or {}
         payload = dict(existing.get("anchor_payload") or {})
         payload["task"] = _task_payload(task)
+        agent_config_snapshot = _agent_config_snapshot_from_task(task)
         # anchor_payload의 events는 append_event가 관리하므로 TaskRun 저장 때 지우지 않는다.
+        # agent_config_snapshot은 TaskRun input과 별도 컬럼에도 남겨 재시작 시
+        # 설정 원본을 anchor JSON 파싱 없이 확인할 수 있게 한다.
         self.upsert_run_anchor(
             task.task_run_id,
             {
                 "owner_key": task.owner_key,
+                "owner_user_id": _owner_user_id(task.owner_key),
                 "session_id": payload.get("transcript_session_id"),
                 "session_key": task.session_key,
                 "current_step_run_id": task.current_step_run_id,
                 "durable_status": _durable_status(task.status),
+                "agent_config_snapshot": agent_config_snapshot,
                 "anchor_payload": payload,
             },
         )
@@ -489,7 +497,6 @@ class PostgresTaskRepository(PostgresDurableRepository):
                 "worker_session_id": ((step.detail_json or {}).get("agentDetail") or {}).get("workerSessionId"),
                 "step_order": step.step_order,
                 "step_type": step.step_type,
-                "handler_key": step.handler_key,
                 "durable_status": _durable_status(step.status),
                 "anchor_payload": payload,
             },
@@ -556,7 +563,7 @@ def _normalize_row(row: Any) -> dict[str, Any] | None:
         normalized = dict(row)
     else:
         normalized = dict(row)
-    for key in ("anchor_payload", "input_payload", "result_summary", "request_payload", "response_payload"):
+    for key in ("anchor_payload", "agent_config_snapshot", "input_payload", "result_summary", "request_payload", "response_payload"):
         value = normalized.get(key)
         if isinstance(value, str):
             normalized[key] = json.loads(value)
@@ -567,8 +574,6 @@ def _task_payload(task: TaskRun) -> dict[str, Any]:
     return {
         "task_run_id": task.task_run_id,
         "task_type": task.task_type,
-        "intent_type": task.intent_type,
-        "entry_handler_key": task.entry_handler_key,
         "current_step_run_id": task.current_step_run_id,
         "owner_key": task.owner_key,
         "session_key": task.session_key,
@@ -588,14 +593,30 @@ def _task_payload(task: TaskRun) -> dict[str, Any]:
     }
 
 
+def _agent_config_snapshot_from_task(task: TaskRun) -> dict[str, Any]:
+    """TaskRun input에서 재시작 가능한 실행 설정만 durable anchor 컬럼으로 분리한다."""
+
+    input_payload = dict(task.input_payload or {})
+    settings_snapshot = input_payload.get("settings_snapshot")
+    snapshot = dict(settings_snapshot) if isinstance(settings_snapshot, dict) else {}
+    for source_key, target_key in (
+        ("model", "model"),
+        ("system_prompt_snapshot", "systemPrompt"),
+        ("enabled_toolsets", "toolsets"),
+        ("delegation_policy", "delegationPolicy"),
+    ):
+        value = input_payload.get(source_key)
+        if value is not None and target_key not in snapshot:
+            snapshot[target_key] = value
+    return snapshot
+
+
 def _task_from_payload(payload: dict[str, Any] | None) -> TaskRun | None:
     if not payload:
         return None
     return TaskRun(
         task_run_id=payload["task_run_id"],
         task_type=payload["task_type"],
-        intent_type=payload.get("intent_type"),
-        entry_handler_key=payload.get("entry_handler_key"),
         current_step_run_id=payload.get("current_step_run_id"),
         owner_key=payload["owner_key"],
         session_key=payload.get("session_key"),
@@ -621,7 +642,6 @@ def _step_payload(step: StepRun) -> dict[str, Any]:
         "task_run_id": step.task_run_id,
         "step_order": step.step_order,
         "step_type": step.step_type,
-        "handler_key": step.handler_key,
         "status": step.status,
         "title": step.title,
         "input_payload": step.input_payload,
@@ -645,7 +665,6 @@ def _step_from_payload(payload: dict[str, Any] | None) -> StepRun | None:
         task_run_id=payload["task_run_id"],
         step_order=int(payload["step_order"]),
         step_type=payload["step_type"],
-        handler_key=payload.get("handler_key"),
         status=payload["status"],
         title=payload.get("title"),
         input_payload=payload.get("input_payload") or {},
@@ -705,3 +724,10 @@ def _dt(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed
+
+
+def _owner_user_id(value: Any) -> int | None:
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None

@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -37,6 +38,7 @@ import java.time.LocalDateTime;
 class DeviceControllerTest {
 
     private static final Long USER_ID = 1L;
+    private static final String DEVICE_ID = "deskmate-c3-a1b2c3";
 
     @Autowired
     private MockMvc mockMvc;
@@ -71,7 +73,7 @@ class DeviceControllerTest {
     void pairCallsServiceWithAuthenticatedUser() throws Exception {
         DeviceResponse response = new DeviceResponse(
             10L,
-            "deskmate-c3-a1b2c3",
+            DEVICE_ID,
             "desk oled",
             IotDeviceStatus.ACTIVE,
             null,
@@ -85,8 +87,24 @@ class DeviceControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(new DevicePairRequest("482913", "desk oled"))))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.data.deviceId").value("deskmate-c3-a1b2c3"));
+            .andExpect(jsonPath("$.data.deviceId").value(DEVICE_ID));
 
         verify(devicePairingService).pair(eq(USER_ID), any(DevicePairRequest.class));
+    }
+
+    @Test
+    void unpairRequiresAuthentication() throws Exception {
+        mockMvc.perform(delete("/api/v1/iot/devices/{deviceId}", DEVICE_ID))
+            .andExpect(status().is4xxClientError());
+    }
+
+    @Test
+    void unpairCallsServiceWithAuthenticatedUser() throws Exception {
+        mockMvc.perform(delete("/api/v1/iot/devices/{deviceId}", DEVICE_ID)
+                .with(user(new CustomUserPrincipal(USER_ID))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data").doesNotExist());
+
+        verify(deviceService).unpair(USER_ID, DEVICE_ID);
     }
 }
