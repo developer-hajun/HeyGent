@@ -176,7 +176,7 @@ def test_tasks_browser_renders_task_step_and_step_detail_views(monkeypatch):
         detail_task={
             "task_run_id": "task_wait",
             "task_type": "approval.wait",
-            "entry_handler_key": "approval.wait",
+            "step_type": "approval.wait",
             "status": "WAITING",
             "title": "승인 대기 태스크",
             "input_payload": {"subject": "배포 전 승인해줘"},
@@ -315,8 +315,6 @@ def test_tasks_browser_navigation_works_without_extra_prompt(monkeypatch):
                             {
                                 "task_run_id": "task_1",
                                 "task_type": "agent.loop",
-                                "intent_type": "agent.loop",
-                                "entry_handler_key": "agent.loop",
                                 "status": "COMPLETED",
                                 "title": "모델 생성 요청",
                                 "input_summary": "헤르메스 알아?",
@@ -360,8 +358,6 @@ def test_tasks_browser_navigation_works_without_extra_prompt(monkeypatch):
                 {
                     "task_run_id": "task_1",
                     "task_type": "agent.loop",
-                    "intent_type": "agent.loop",
-                    "entry_handler_key": "agent.loop",
                     "status": "COMPLETED",
                     "title": "agent loop 요청",
                     "input_payload": {"prompt": "헤르메스 알아?"},
@@ -689,7 +685,7 @@ def test_cli_create_task_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    exit_code = main(["--mode", "local", "create-task", "--type", "agent.loop", "--prompt", "cli"])
+    exit_code = main(["--mode", "local", "create-task", "--prompt", "cli"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
@@ -701,11 +697,10 @@ def test_cli_create_task_prompt_shortcut(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-prompt.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    exit_code = main(["--mode", "local", "create-task", "--type", "agent.loop", "--prompt", "한 줄 요약해줘"])
+    exit_code = main(["--mode", "local", "create-task", "--prompt", "한 줄 요약해줘"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
-    assert '"intent_type": "agent.loop"' in captured
     assert '"status": "COMPLETED"' in captured
 
 
@@ -832,8 +827,6 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
                 {
                     "task_run_id": "task_test",
                     "task_type": "agent.loop",
-                    "intent_type": "agent.loop",
-                    "entry_handler_key": "agent.loop",
                     "status": "COMPLETED",
                     "input_payload": {"prompt": "테스트"},
                     "result_payload": {"provider_name": "openai_oauth", "text": "연결 확인 완료", "metadata": {"mode": "live"}},
@@ -982,8 +975,6 @@ def test_cli_shell_interrupt(monkeypatch, tmp_path, capsys):
             {
                 "task_run_id": "task_interrupt",
                 "task_type": "agent.loop",
-                "intent_type": "agent.loop",
-                "entry_handler_key": "agent.loop",
                 "status": "COMPLETED",
                 "input_payload": {"prompt": prompt},
                 "result_payload": {"provider_name": "openai_oauth", "text": "늦게 도착한 응답", "metadata": {"mode": "live", "model": "gpt-5.4"}},
@@ -1229,5 +1220,5 @@ def test_cli_command_help(capsys):
 
     assert exit_code == 0
     assert "[HeyGent CLI] create-task 도움말" in captured
-    assert "--type" in captured
+    assert "--prompt" in captured
 

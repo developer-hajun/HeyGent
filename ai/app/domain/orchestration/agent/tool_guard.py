@@ -39,6 +39,9 @@ class ToolGuard:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> ToolGuardResult:
+        if tool_name in {"step", "todo"}:
+            return ToolGuardResult(decision=ToolGuardDecision.ALLOW)
+
         if task_input.get("approval_required") and not self._has_approved_global_resume(task_input):
             # approval은 도구 실행 전 사용자 확인이 필요한 상태로, 실제 실행은 resume 이후로 미룬다.
             reason = str(task_input.get("approval_reason") or f"{tool_name} 실행 전 승인이 필요합니다")

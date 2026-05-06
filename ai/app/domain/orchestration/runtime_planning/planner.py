@@ -5,7 +5,7 @@ from app.core.utils.ids import new_id
 from app.tools.contracts import TaskHandler
 from app.domain.orchestration.contracts import build_orchestration_detail
 from app.domain.orchestration.runtime_planning.task_plan import build_task_plan
-from app.domain.orchestration.runtime_planning.todo_state import TodoState, build_initial_todo_state, build_task_todo_payload, build_todo_detail_patch
+from app.domain.orchestration.runtime_planning.todo_state import TodoState, build_initial_todo_state, build_task_todo_payload
 from app.domain.tasks.detail import build_default_step_detail, build_semantic_step_detail, merge_step_detail
 from app.domain.tasks.models import StepRun, TaskRun
 
@@ -21,7 +21,7 @@ class Planner:
         # 그래서 명시적 task_plan이 없으면 고정 operation todo(미리 박아 둔 실행 단계 목록)를 만들지 않는다.
         initial_todo_state = (
             TodoState(items=(), current_key=None)
-            if handler.spec.handler_key == "agent.loop"
+            if handler.spec.task_type == "agent.loop"
             else build_initial_todo_state(
                 step_title=handler.spec.step_title,
                 operation_templates=handler.spec.operation_templates,
@@ -30,8 +30,6 @@ class Planner:
         return TaskRun(
             task_run_id=new_id("task"),
             task_type=handler.spec.task_type,
-            intent_type=handler.spec.intent_type,
-            entry_handler_key=handler.spec.entry_handler_key,
             owner_key=owner_key,
             session_key=session_key,
             status="PENDING",
@@ -39,102 +37,6 @@ class Planner:
             input_payload=input_payload,
             todo_state=build_task_todo_payload(initial_todo_state),
         )
-
-    def materialize_step(self, *, task: TaskRun, handler: TaskHandler, input_payload: dict, step_order: int) -> StepRun:
-        input_payload = self._normalized_input_payload(input_payload=input_payload, handler=handler)
-        current_step_title = handler.spec.step_title
-        current_semantic_key = self._handler_semantic_key(handler)
-        current_semantic_goal = handler.spec.semantic_goal or handler.spec.step_title
-        step = StepRun(
-            step_run_id=new_id("step"),
-            task_run_id=task.task_run_id,
-            step_order=step_order,
-            step_type=handler.spec.step_type,
-            handler_key=handler.spec.handler_key,
-            status="PENDING",
-            title=current_step_title,
-            input_payload=input_payload,
-            detail_json=build_default_step_detail(),
-        )
-        step.detail_json = merge_step_detail(
-            step.detail_json,
-            build_orchestration_detail(
-                intent_type=task.intent_type or handler.spec.intent_type,
-                entry_handler_key=task.entry_handler_key or handler.spec.entry_handler_key,
-                handler_key=handler.spec.handler_key,
-                semantic_step=current_step_title,
-            ),
-        )
-        step.detail_json = merge_step_detail(
-            step.detail_json,
-            build_semantic_step_detail(
-                step_run_id=step.step_run_id,
-                semantic_key=current_semantic_key,
-                semantic_step=current_step_title,
-                semantic_goal=current_semantic_goal,
-                lifecycle="pending",
-            ),
-        )
-        initial_todo_state = build_initial_todo_state(
-            step_title=current_step_title,
-            operation_templates=handler.spec.operation_templates,
-        )
-        step.detail_json = merge_step_detail(step.detail_json, build_todo_detail_patch(initial_todo_state))
-        return step
-
-    def materialize_observed_step(
-        self,
-        *,
-        task: TaskRun,
-        handler: TaskHandler,
-        input_payload: dict,
-        step_order: int,
-        outcome: dict,
-    ) -> StepRun:
-        """첫 모델 응답을 본 뒤 StepRun(사용자에게 보이는 의미 단계)을 만든다.
-
-        agent.loop는 실행 전에 의미 단계를 확정하기 어려울 수 있어, outcome의 detail_json을
-        우선 신뢰하고 부족한 값만 handler 기본값으로 보강한다.
-        """
-
-        input_payload = self._normalized_input_payload(input_payload=input_payload, handler=handler)
-        detail_json = merge_step_detail(build_default_step_detail(), outcome.get("detail_json"))
-        semantic_detail = detail_json.get("semanticDetail") or {}
-        title = self._stable_step_title(semantic_detail.get("semanticStep"), fallback=handler.spec.step_title)
-        goal = semantic_detail.get("goal") or outcome.get("summary_message") or title
-        semantic_key = semantic_detail.get("semanticKey") or self._handler_semantic_key(handler)
-        step = StepRun(
-            step_run_id=new_id("step"),
-            task_run_id=task.task_run_id,
-            step_order=step_order,
-            step_type=handler.spec.step_type,
-            handler_key=handler.spec.handler_key,
-            status=StepStatus.PENDING,
-            title=str(title),
-            input_payload=input_payload,
-            detail_json=detail_json,
-            summary_message=outcome.get("summary_message"),
-        )
-        step.detail_json = merge_step_detail(
-            step.detail_json,
-            build_orchestration_detail(
-                intent_type=task.intent_type or handler.spec.intent_type,
-                entry_handler_key=task.entry_handler_key or handler.spec.entry_handler_key,
-                handler_key=handler.spec.handler_key,
-                semantic_step=str(title),
-            ),
-        )
-        step.detail_json = merge_step_detail(
-            step.detail_json,
-            build_semantic_step_detail(
-                step_run_id=step.step_run_id,
-                semantic_key=semantic_key,
-                semantic_step=str(title),
-                semantic_goal=str(goal),
-                lifecycle="running",
-            ),
-        )
-        return step
 
     def materialize_observed_semantic_step(
         self,
@@ -166,7 +68,6 @@ class Planner:
             task_run_id=task.task_run_id,
             step_order=step_order,
             step_type=handler.spec.step_type,
-            handler_key=handler.spec.handler_key,
             status=StepStatus.PENDING,
             title=title,
             input_payload={
@@ -182,9 +83,6 @@ class Planner:
         step.detail_json = merge_step_detail(
             step.detail_json,
             build_orchestration_detail(
-                intent_type=task.intent_type or handler.spec.intent_type,
-                entry_handler_key=task.entry_handler_key or handler.spec.entry_handler_key,
-                handler_key=handler.spec.handler_key,
                 semantic_step=title,
             ),
         )
@@ -207,13 +105,9 @@ class Planner:
         재개 시에는 새 step을 만들지 않고 정확히 같은 step을 다시 RUNNING으로 올린다.
         """
 
-        step.handler_key = step.handler_key or handler.spec.handler_key
         step.detail_json = merge_step_detail(
             step.detail_json,
             build_orchestration_detail(
-                intent_type=task.intent_type or handler.spec.intent_type,
-                entry_handler_key=task.entry_handler_key or handler.spec.entry_handler_key,
-                handler_key=step.handler_key,
                 semantic_step=step.title or handler.spec.step_title,
             ),
         )
@@ -244,14 +138,3 @@ class Planner:
         """
 
         return handler.spec.semantic_key or fallback or handler.spec.step_type
-
-    @staticmethod
-    def _stable_step_title(value: object, *, fallback: str) -> str:
-        """긴 모델 답변이 StepRun 제목으로 올라오지 않게 표시용 제목을 고정한다."""
-
-        title = str(value or "").strip()
-        if not title:
-            return fallback
-        if "\n" in title or len(title) > 80:
-            return fallback
-        return title

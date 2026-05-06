@@ -202,10 +202,9 @@ def _style_line(text: str, *, selected: bool = False, muted: bool = False, accen
 def _friendly_task_title(payload: dict[str, Any]) -> str:
     title = str(payload.get("title") or "").strip()
     task_type = str(payload.get("task_type") or "").strip()
-    intent_type = str(payload.get("intent_type") or "").strip()
-    if title and title not in {task_type, intent_type}:
+    if title and title != task_type:
         return _truncate_text(title, limit=42)
-    return _truncate_text(TASK_TITLE_FALLBACKS.get(task_type) or TASK_TITLE_FALLBACKS.get(intent_type) or intent_type or task_type or "Task", limit=42)
+    return _truncate_text(TASK_TITLE_FALLBACKS.get(task_type) or task_type or "Task", limit=42)
 
 
 
@@ -472,7 +471,7 @@ def render_task_detail(state: TaskBrowserState) -> str:
         f"상태: {task.get('status') or '-'}",
         f"입력: {_task_detail_input_summary(task)}",
         "TaskRun = 전체 작업 / StepRun = 한 단계 / detail_json = step 저장 실행 정보",
-        f"step: {len(steps)}개   handler: {task.get('entry_handler_key') or '-'}",
+        f"step: {len(steps)}개",
         f"최근 갱신: {_format_time(task.get('updated_at') or task.get('created_at'))}",
         "",
         *_render_step_preview_lines(state),

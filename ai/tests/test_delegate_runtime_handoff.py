@@ -113,9 +113,6 @@ class FakeWorkerSessionStore:
 
 class FakeWorkerHandler:
     spec = HandlerSpec(
-        intent_type="agent.loop",
-        entry_handler_key="agent.loop",
-        handler_key="agent.loop",
         task_type="agent.loop",
         task_title="Agent Loop",
         step_type="agent.loop",
@@ -152,7 +149,7 @@ class FakeWorkerRegistry:
     def __init__(self, handler) -> None:
         self.handler = handler
 
-    def resolve(self, *, intent_type, entry_handler_key):
+    def resolve(self):
         return self.handler
 
 
@@ -189,8 +186,6 @@ async def test_child_session_launcher_uses_worker_callback_without_legacy_task_r
     spec = ChildSessionSpec(
         parent_task_run_id="task_parent",
         parent_step_run_id="step_parent",
-        child_intent_type="agent.loop",
-        child_entry_handler_key="agent.loop",
         metadata={"profile_key": "worker.default", "agent_id": "agent_worker"},
         worker_session_id="session_worker",
     )
@@ -221,8 +216,6 @@ async def test_agent_loop_runner_worker_session_does_not_create_task_run():
     spec = ChildSessionSpec(
         parent_task_run_id="task_parent",
         parent_step_run_id="step_parent",
-        child_intent_type="agent.loop",
-        child_entry_handler_key="agent.loop",
         metadata={"agent_id": "agent_worker"},
         worker_session_id="session_worker",
     )
@@ -232,8 +225,6 @@ async def test_agent_loop_runner_worker_session_does_not_create_task_run():
         owner_key="user_1",
         session_key="session_1",
         input_payload={"prompt": "worker", "transcript_session_id": "session_worker"},
-        intent_type="agent.loop",
-        entry_handler_key="agent.loop",
     )
 
     assert result.status == TaskStatus.COMPLETED
@@ -252,8 +243,6 @@ async def test_agent_loop_runner_enforces_worker_hard_timeout():
     spec = ChildSessionSpec(
         parent_task_run_id="task_parent",
         parent_step_run_id="step_parent",
-        child_intent_type="agent.loop",
-        child_entry_handler_key="agent.loop",
         metadata={"agent_id": "agent_worker"},
         worker_session_id="session_worker",
     )
@@ -268,8 +257,6 @@ async def test_agent_loop_runner_enforces_worker_hard_timeout():
                 "transcript_session_id": "session_worker",
                 "hard_timeout_seconds": 0.01,
             },
-            intent_type="agent.loop",
-            entry_handler_key="agent.loop",
         )
 
 
@@ -289,8 +276,6 @@ async def test_delegate_runtime_records_worker_handoff_when_repository_supports_
 
     outcome = {
         "child_session": {
-            "intent_type": "agent.loop",
-            "entry_handler_key": "agent.loop",
             "input_payload": {"prompt": "하위 작업"},
             "metadata": {"profile_key": "worker.default"},
         }
@@ -301,7 +286,6 @@ async def test_delegate_runtime_records_worker_handoff_when_repository_supports_
     assert repository.created_handoffs[0]["task_run_id"] == "task_parent"
     assert repository.created_handoffs[0]["parent_step_run_id"] == "step_parent"
     assert repository.created_handoffs[0]["worker_profile_id"] == "worker.default"
-    assert repository.created_handoffs[0]["input_payload"]["child_intent_type"] == "agent.loop"
     completed_id, completed_payload = repository.completed_handoffs[0]
     assert completed_id == repository.created_handoffs[0]["handoff_id"]
     assert completed_payload["status"] == "COMPLETED"
@@ -334,8 +318,6 @@ async def test_delegate_runtime_creates_worker_session_and_normalizes_contract_p
         step=step,
         outcome={
             "child_session": {
-                "intent_type": "agent.loop",
-                "entry_handler_key": "agent.loop",
                 "goal": "문서 갭 줄이기",
                 "context": {"branch": "AI-feat/Subagent_구조화"},
                 "toolsets": ["file", "delegation", "terminal", "file"],
@@ -427,8 +409,6 @@ async def test_delegate_runtime_keeps_sibling_workers_under_main_parent_session(
             step=step,
             outcome={
                 "child_session": {
-                    "intent_type": "agent.loop",
-                    "entry_handler_key": "agent.loop",
                     "goal": f"관점 {index + 1} 검토",
                     "metadata": {"profile_key": "worker.default"},
                 }
@@ -475,8 +455,6 @@ async def test_delegate_runtime_applies_profile_defaults_and_toolset_intersectio
         step=step,
         outcome={
             "child_session": {
-                "intent_type": "agent.loop",
-                "entry_handler_key": "agent.loop",
                 "goal": "profile 적용",
                 "toolsets": ["terminal", "file", "delegation"],
                 "metadata": {"profile_key": "worker.profiled"},
@@ -528,8 +506,6 @@ async def test_delegate_runtime_applies_profile_hard_timeout_default():
         step=step,
         outcome={
             "child_session": {
-                "intent_type": "agent.loop",
-                "entry_handler_key": "agent.loop",
                 "goal": "profile timeout 적용",
                 "toolsets": ["web", "browser"],
                 "metadata": {"profile_key": "worker.timeout"},
@@ -558,8 +534,6 @@ async def test_delegate_runtime_completes_handoff_as_failed_when_launch_fails():
         step=step,
         outcome={
             "child_session": {
-                "intent_type": "agent.loop",
-                "entry_handler_key": "agent.loop",
                 "input_payload": {"prompt": "하위 작업"},
             }
         },

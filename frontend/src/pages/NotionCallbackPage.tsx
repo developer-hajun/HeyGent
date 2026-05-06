@@ -4,10 +4,10 @@ import { Loader2 } from 'lucide-react'
 export function NotionCallbackPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
-    const success = params.get('success')
+    const status = params.get('status')
     const error = params.get('error')
 
-    if (success === 'true') {
+    if (status === 'success') {
       window.opener?.postMessage({ type: 'NOTION_CONNECTED' }, '*')
     } else {
       window.opener?.postMessage({ type: 'NOTION_CONNECT_FAILED', error }, '*')
