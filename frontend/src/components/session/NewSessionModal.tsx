@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { X, Bot, Sparkles, SlidersHorizontal, Camera, ChevronLeft } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog'
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 
 export interface CustomAgentConfig {
   agentName: string

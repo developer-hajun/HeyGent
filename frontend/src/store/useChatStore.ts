@@ -52,7 +52,11 @@ type ChatState = {
     inputPayload?: JsonObject
     clientMessageId?: string
   }) => Promise<AiRealtimeRawFrame>
-  updateSession: (input: { sessionId: string; title?: string }) => Promise<RawAiSession | null>
+  updateSession: (input: {
+    sessionId: string
+    title?: string
+    metadataPatch?: JsonObject
+  }) => Promise<RawAiSession | null>
   deleteSession: (sessionId: string) => Promise<void>
   updateSessionSettings: (input: {
     sessionId: string
@@ -210,12 +214,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       throw error
     }
   },
-  updateSession: async ({ sessionId, title }) => {
+  updateSession: async ({ sessionId, title, metadataPatch }) => {
     const frame = await useAiRealtimeStore
       .getState()
       .sendCommand<AiRealtimeRawFrame>('session.update', {
         sessionId,
         title,
+        metadataPatch,
         clientCommandId: createClientCommandId(),
       })
 

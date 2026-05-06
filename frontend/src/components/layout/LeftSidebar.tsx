@@ -23,7 +23,8 @@ import {
 import { useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SettingsDialog } from '@/components/SettingsDialog'
-import { NewSessionModal, type CustomAgentConfig } from '@/components/NewSessionModal'
+import { NewSessionModal, type CustomAgentConfig } from '@/components/session/NewSessionModal'
+import { SessionSettingsModal } from '@/components/session/SessionSettingsModal'
 import { useUIStore } from '@/store/useUIStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -64,6 +65,7 @@ export function LeftSidebar() {
   const [profileOpen, setProfileOpen] = useState(false)
   const [sessionsPopoverOpen, setSessionsPopoverOpen] = useState(false)
   const [newSessionModalOpen, setNewSessionModalOpen] = useState(false)
+  const [sessionSettingsSessionId, setSessionSettingsSessionId] = useState<string | null>(null)
   const [sessionConfirm, setSessionConfirm] = useState<SessionConfirmState | null>(null)
   const commandClient = useAiRealtimeStore((state) => state.commandClient)
   const realtimeStatus = useAiRealtimeStore((state) => state.connectionStatus)
@@ -71,7 +73,6 @@ export function LeftSidebar() {
   const sessionListLoading = useChatStore((state) => state.sessionListLoading)
   const chatError = useChatStore((state) => state.sessionListError ?? state.lastError)
   const fetchSessions = useChatStore((state) => state.fetchSessions)
-  const updateSession = useChatStore((state) => state.updateSession)
   const deleteSession = useChatStore((state) => state.deleteSession)
   const isResizing = useRef(false)
   const startX = useRef(0)
@@ -91,6 +92,8 @@ export function LeftSidebar() {
     () => sidebarSessions.filter((session) => session.isRunning),
     [sidebarSessions],
   )
+  const sessionSettingsSession =
+    sessionSettingsSessionId === null ? null : (sessionsById[sessionSettingsSessionId] ?? null)
 
   useEffect(() => {
     if (commandClient === null) {
@@ -107,19 +110,6 @@ export function LeftSidebar() {
   const handleOpenChatSession = (sessionId: string, event?: React.MouseEvent) => {
     event?.stopPropagation()
     navigate(`/session/${sessionId}`)
-  }
-
-  const handleRenameSession = async (session: SidebarSession) => {
-    const nextTitle = window.prompt('새 이름을 입력하세요.', session.title)?.trim()
-    if (nextTitle === undefined || nextTitle === '' || nextTitle === session.title) {
-      return
-    }
-
-    try {
-      await updateSession({ sessionId: session.id, title: nextTitle })
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : '이름 변경에 실패했습니다.')
-    }
   }
 
   const handleConfirmSessionAction = async () => {
@@ -197,6 +187,15 @@ export function LeftSidebar() {
             navigate('/new-chat')
           }
         }}
+      />
+      <SessionSettingsModal
+        open={sessionSettingsSessionId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSessionSettingsSessionId(null)
+          }
+        }}
+        session={sessionSettingsSession}
       />
       {sessionConfirm !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -294,12 +293,14 @@ export function LeftSidebar() {
                           setSessionsPopoverOpen(false)
                         }}
                         className={`cursor-pointer rounded-lg p-2.5 transition-colors ${
-                          isActive ? 'bg-zinc-100' : 'hover:bg-muted'
+                          isActive
+                            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                            : 'hover:bg-muted'
                         }`}
                       >
                         <div className="mb-1 flex items-center justify-between gap-1">
                           <p
-                            className={`truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
+                            className={`truncate text-sm ${isActive ? 'text-sidebar-accent-foreground font-medium' : 'text-foreground/80'}`}
                           >
                             {session.title}
                           </p>
@@ -312,7 +313,7 @@ export function LeftSidebar() {
                             }}
                             className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors ${
                               isChatActive
-                                ? 'bg-zinc-800 text-white'
+                                ? 'bg-sidebar-primary text-sidebar-primary-foreground'
                                 : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                             }`}
                           >
@@ -428,14 +429,16 @@ export function LeftSidebar() {
                           navigate('/agent-status')
                         }}
                         className={`group flex cursor-pointer items-center gap-2 rounded-lg p-2.5 transition-colors ${
-                          isActive ? 'bg-zinc-100' : 'hover:bg-sidebar-accent'
+                          isActive
+                            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                            : 'hover:bg-sidebar-accent'
                         }`}
                       >
                         <div className="min-w-0 flex-1">
                           <div className="mb-0.5 flex items-center gap-1">
                             {isPinned && <Pin className="text-primary h-3 w-3 shrink-0" />}
                             <p
-                              className={`truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
+                              className={`truncate text-sm ${isActive ? 'text-sidebar-accent-foreground font-medium' : 'text-foreground/80'}`}
                             >
                               {session.title}
                             </p>
@@ -471,12 +474,12 @@ export function LeftSidebar() {
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  void handleRenameSession(session)
+                                  setSessionSettingsSessionId(session.id)
                                 }}
                                 className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
                               >
-                                <Edit3 className="text-muted-foreground h-4 w-4 shrink-0" />
-                                <span>이름 변경</span>
+                                <Settings className="text-muted-foreground h-4 w-4 shrink-0" />
+                                <span>설정</span>
                               </button>
                               <button
                                 type="button"
@@ -518,7 +521,7 @@ export function LeftSidebar() {
                             onClick={(event) => handleOpenChatSession(session.id, event)}
                             className={`relative flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
                               isChatActive
-                                ? 'bg-zinc-800 text-white'
+                                ? 'bg-sidebar-primary text-sidebar-primary-foreground'
                                 : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
                             }`}
                           >
