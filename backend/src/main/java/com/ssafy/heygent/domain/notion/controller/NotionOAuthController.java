@@ -1,6 +1,6 @@
 package com.ssafy.heygent.domain.notion.controller;
 
-import java.util.Map;
+import java.util.List;
 
 import jakarta.validation.Valid;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.ssafy.heygent.domain.notion.dto.request.NotionExecuteRequest;
 import com.ssafy.heygent.domain.notion.dto.response.NotionConnectUrlResponse;
+import com.ssafy.heygent.domain.notion.dto.response.NotionExecuteCommandResponse;
 import com.ssafy.heygent.domain.notion.dto.response.NotionStatusResponse;
 import com.ssafy.heygent.domain.notion.service.NotionApiService;
 import com.ssafy.heygent.domain.notion.service.NotionOAuthService;
@@ -57,25 +58,17 @@ public class NotionOAuthController {
         return ApiResponse.success();
     }
 
-    @Operation(summary = "Notion 명령 실행", description = "Notion API를 직접 호출하여 명령을 실행합니다.")
+    @Operation(summary = "Notion 명령 배치 실행", description = "여러 Notion API 프록시 명령을 순서대로 실행하고 각 결과를 반환합니다.")
     @PostMapping("/execute")
-    public ApiResponse<Map> execute(
+    public ApiResponse<List<NotionExecuteCommandResponse>> execute(
         @AuthenticationPrincipal CustomUserPrincipal user,
         @Valid @RequestBody NotionExecuteRequest request
     ) {
-        Long userId = resolveUserId(user);
-        Map result = switch (request.getAction()) {
-            case "create_page"       -> notionApiService.createPage(userId, request.getParams());
-            case "get_page"          -> notionApiService.getPage(userId, request.getTargetId());
-            case "get_page_blocks"   -> notionApiService.getPageBlocks(userId, request.getTargetId());
-            case "update_page"       -> notionApiService.updatePage(userId, request.getTargetId(), request.getParams());
-            case "append_blocks"     -> notionApiService.appendBlocks(userId, request.getTargetId(), request.getParams());
-            case "query_database"    -> notionApiService.queryDatabase(userId, request.getTargetId(), request.getParams());
-            case "insert_row"        -> notionApiService.insertDatabaseRow(userId, request.getParams());
-            case "search"            -> notionApiService.search(userId, request.getParams());
-            default -> throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
-        };
-        return ApiResponse.success(result);
+        return ApiResponse.success(notionApiService.executeBatch(
+            resolveUserId(user),
+            request.getUserId(),
+            request.getCommands()
+        ));
     }
 
     private Long resolveUserId(CustomUserPrincipal user) {
@@ -84,4 +77,5 @@ public class NotionOAuthController {
         }
         return user.getUserId();
     }
+
 }
