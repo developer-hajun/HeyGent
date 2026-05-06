@@ -18,6 +18,7 @@ export interface AgentConfig {
   initialPosition: { x: number; y: number }
   destinations: Record<Destination, { x: number; y: number }>
   scale?: number
+  stateScales?: Partial<Record<AgentState, number>>
 }
 
 export interface AgentRuntime {
