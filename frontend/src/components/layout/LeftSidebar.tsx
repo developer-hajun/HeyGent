@@ -11,12 +11,10 @@ import {
   MessageSquare,
   Clock,
   GripVertical,
-  Moon,
   PanelRightOpen,
   Plus,
   User,
   Settings,
-  Sun,
   LogOut,
   UserCircle,
   Wifi,
@@ -64,11 +62,9 @@ export function LeftSidebar() {
     sidebarWidth: width,
     settingsOpen,
     settingsInitialTab,
-    theme,
     setSidebarCollapsed,
     clampSidebarWidth,
     setSettingsOpen,
-    setTheme,
     setTaskActivityPanelOpen,
   } = useUIStore()
   const { selectedSessionId, setSelectedSessionId, pinnedSessionIds, togglePinSession } =
@@ -320,17 +316,6 @@ export function LeftSidebar() {
               </button>
             </CollapsedTooltip>
 
-            <CollapsedTooltip label={theme === 'dark' ? '라이트 모드' : '다크 모드'}>
-              <button
-                type="button"
-                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
-                aria-label={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
-              >
-                {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-              </button>
-            </CollapsedTooltip>
-
             {currentChatSessionId !== null && (
               <CollapsedTooltip label="활동 패널">
                 <button
@@ -502,15 +487,6 @@ export function LeftSidebar() {
                   />
                 </button>
                 <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                    className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-8 w-8 items-center justify-center rounded-md transition-colors"
-                    aria-label={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
-                    title={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
-                  >
-                    {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                  </button>
                   <button
                     type="button"
                     onClick={() => setSidebarCollapsed(true)}
