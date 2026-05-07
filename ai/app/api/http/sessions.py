@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel
 
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
+from app.api.memory_context import attach_persistent_memory_context
 from app.api.deps.openapi_auth import document_bearer_auth
 from app.contracts.session import (
     ArchiveSessionRequest,
@@ -340,6 +341,13 @@ async def _create_message_in_session(
     task_input["after_user_message_version"] = user_append["after_user_message_version"]
     task_input["completion_expected_version"] = user_append["completion_expected_version"]
     task_input["client_message_id"] = client_message_id
+    await attach_persistent_memory_context(
+        app_state=request.app.state,
+        task_input=task_input,
+        user_id=str(user.user_id),
+        query=payload.content,
+        workspace_key=user.workspace_key or session.get("workspace_key"),
+    )
 
     try:
         task = await request.app.state.orchestrator.start(

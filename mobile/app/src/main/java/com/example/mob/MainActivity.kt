@@ -1,34 +1,58 @@
 package com.example.mob
 
+import android.app.Activity
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.mob.common.AppDrawer
+import com.example.mob.data.remote.RetrofitClient
 import com.example.mob.feature.auth.LoginScreen
 import com.example.mob.feature.chat.ChatScreen
 import com.example.mob.feature.health.HealthViewModel
@@ -37,19 +61,20 @@ import com.example.mob.feature.profile.ProfileScreen
 import com.example.mob.ui.theme.MOBTheme
 import com.example.mob.ui.theme.NavyPrimary
 import com.example.mob.ui.theme.TextSecondary
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import androidx.compose.ui.platform.LocalContext
-import android.app.Activity
-import androidx.compose.runtime.LaunchedEffect
-import android.util.Log
-import com.example.mob.data.remote.RetrofitClient
 import com.kakao.sdk.common.KakaoSdk
 import com.kakao.sdk.common.util.Utility
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-private sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
-    data object Chat    : Screen("chat",    "Chat",    Icons.AutoMirrored.Filled.Chat)
-    data object Home    : Screen("home",    "Home",    Icons.Default.Home)
+private sealed class Screen(
+    val route: String,
+    val label: String,
+    val icon: ImageVector,
+) {
+    data object Chat : Screen("chat", "Chat", Icons.AutoMirrored.Filled.Chat)
+
+    data object Home : Screen("home", "Home", Icons.Default.Home)
+
     data object Profile : Screen("profile", "Profile", Icons.Default.Person)
 }
 
@@ -75,9 +100,8 @@ class MainActivity : ComponentActivity() {
                 when {
                     !splashDone -> SplashScreen()
                     !isLoggedIn -> LoginScreen(onLoginSuccess = { isLoggedIn = true })
-                    else        -> MainApp(onLogout = { isLoggedIn = false })
+                    else -> MainApp(onLogout = { isLoggedIn = false })
                 }
-
             }
         }
     }
@@ -86,17 +110,18 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun SplashScreen() {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black),
-        contentAlignment = Alignment.Center
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black),
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             text = "HEYGENT",
             color = Color.White,
             fontSize = 34.sp,
             fontWeight = FontWeight.ExtraBold,
-            letterSpacing = 5.sp
+            letterSpacing = 5.sp,
         )
     }
 }
@@ -143,12 +168,12 @@ private fun MainApp(onLogout: () -> Unit) {
                     activeChatSessionId = sessionId
                     navController.navigate(Screen.Chat.route) { launchSingleTop = true }
                     scope.launch { drawerState.close() }
-                }
+                },
             )
-        }
+        },
     ) {
         Scaffold(
-            bottomBar = { AppBottomBar(navController) }
+            bottomBar = { AppBottomBar(navController) },
         ) { innerPadding ->
             val bottomPadding = innerPadding.calculateBottomPadding()
             val onMenuClick: () -> Unit = { scope.launch { drawerState.open() } }
@@ -157,9 +182,9 @@ private fun MainApp(onLogout: () -> Unit) {
                 navController = navController,
                 startDestination = Screen.Home.route,
                 enterTransition = { EnterTransition.None },
-                exitTransition  = { ExitTransition.None },
+                exitTransition = { ExitTransition.None },
                 popEnterTransition = { EnterTransition.None },
-                popExitTransition  = { ExitTransition.None }
+                popExitTransition = { ExitTransition.None },
             ) {
                 composable(Screen.Chat.route) {
                     ChatScreen(
@@ -167,13 +192,13 @@ private fun MainApp(onLogout: () -> Unit) {
                         activeChatSessionId = activeChatSessionId,
                         onActiveChatSessionChange = { activeChatSessionId = it },
                         agentName = agentName,
-                        bottomPadding = bottomPadding
+                        bottomPadding = bottomPadding,
                     )
                 }
                 composable(Screen.Home.route) {
                     HomeScreen(
                         onMenuClick = onMenuClick,
-                        bottomPadding = bottomPadding
+                        bottomPadding = bottomPadding,
                     )
                 }
                 composable(Screen.Profile.route) {
@@ -183,7 +208,7 @@ private fun MainApp(onLogout: () -> Unit) {
                         onLogout = onLogout,
                         agentName = agentName,
                         onAgentNameChange = { agentName = it },
-                        healthViewModel = healthViewModel
+                        healthViewModel = healthViewModel,
                     )
                 }
             }
@@ -193,29 +218,83 @@ private fun MainApp(onLogout: () -> Unit) {
 
 @Composable
 private fun AppBottomBar(navController: NavHostController) {
-    val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+    val currentRoute = navController
+        .currentBackStackEntryAsState()
+        .value
+        ?.destination
+        ?.route
 
-    NavigationBar(containerColor = Color.White, tonalElevation = 0.dp) {
-        bottomNavScreens.forEach { screen ->
-            val selected = currentRoute == screen.route
-            NavigationBarItem(
-                selected = selected,
-                onClick = {
-                    navController.navigate(screen.route) {
-                        popUpTo(Screen.Home.route) { inclusive = false }
-                        launchSingleTop = true
-                    }
-                },
-                icon = { Icon(screen.icon, contentDescription = screen.label) },
-                label = { Text(screen.label, fontSize = 11.sp) },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = NavyPrimary,
-                    selectedTextColor = NavyPrimary,
-                    unselectedIconColor = TextSecondary,
-                    unselectedTextColor = TextSecondary,
-                    indicatorColor = Color(0xFFE8EAF0)
-                )
+    val selectedIndex = bottomNavScreens.indexOfFirst { it.route == currentRoute }
+        .let { if (it == -1) 0 else it }
+
+    val animatedIndex by animateFloatAsState(
+        targetValue = selectedIndex.toFloat(),
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = 500f),
+        label = "nav_indicator"
+    )
+
+    Column {
+        HorizontalDivider(color = Color(0xFFE0E0E0), thickness = 0.5.dp)
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .background(Color.White)
+        ) {
+            val itemWidth = maxWidth / bottomNavScreens.size
+
+            // 슬라이딩 선택 인디케이터 (아이콘+글자 전체 포함)
+            Box(
+                modifier = Modifier
+                    .offset(x = itemWidth * animatedIndex + 8.dp)
+                    .width(itemWidth - 16.dp)
+                    .fillMaxHeight()
+                    .padding(vertical = 5.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFFE8EAF0))
             )
+
+            Row(modifier = Modifier.fillMaxSize()) {
+                bottomNavScreens.forEach { screen ->
+                    val selected = currentRoute == screen.route
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                navController.navigate(screen.route) {
+                                    popUpTo(Screen.Home.route) { inclusive = false }
+                                    launchSingleTop = true
+                                }
+                            },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            screen.icon,
+                            contentDescription = screen.label,
+                            tint = if (selected) NavyPrimary else TextSecondary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(Modifier.height(1.dp))
+                        Text(
+                            screen.label,
+                            fontSize = 10.sp,
+                            color = if (selected) NavyPrimary else TextSecondary
+                        )
+                    }
+                }
+            }
         }
+        // 갤럭시 시스템 네비게이션 바 영역 — 불투명 흰 배경으로 채움
+        Spacer(
+            modifier = Modifier
+                .background(Color.White)
+                .fillMaxWidth()
+                .navigationBarsPadding()
+        )
     }
 }
