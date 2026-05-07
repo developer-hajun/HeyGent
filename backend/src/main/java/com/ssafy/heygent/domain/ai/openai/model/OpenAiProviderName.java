@@ -42,6 +42,13 @@ public enum OpenAiProviderName {
         List.of(),
         List.of("gpt-5.4", "gpt-5.4-mini")
     ),
+    OPENAI_CODEX_OAUTH(
+        "openai_codex_oauth",
+        "oauth",
+        "openai_codex",
+        List.of("codex_oauth", "openai-codex"),
+        List.of("gpt-5.3-codex", "gpt-5.2-codex", "gpt-5-codex-mini")
+    ),
     OPENAI_DEV_FALLBACK(
         "openai_dev_fallback",
         "api_key",
@@ -89,6 +96,10 @@ public enum OpenAiProviderName {
 
     public boolean isUserManagedApiKeyProvider() {
         return this == OPENAI_API_KEY || this == GEMINI_API_KEY || this == CLAUDE_API_KEY;
+    }
+
+    public boolean isCodexOAuthProvider() {
+        return this == OPENAI_CODEX_OAUTH;
     }
 
     public boolean supportsUsageQuery() {
