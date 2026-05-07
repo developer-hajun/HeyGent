@@ -11,8 +11,19 @@ import {
   MessageSquare,
   Plus,
   Target,
+  Trash2,
   Wifi,
 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { SubAgentProfileImage } from '@/components/sessionWorkspace/subAgents'
 import { useChatStore } from '@/store/useChatStore'
 import { useSessionStore } from '@/store/useSessionStore'
@@ -32,6 +43,7 @@ interface SessionWorkspaceMenuProps {
   activeSubAgentId: string | null
   onCollapsedChange: (collapsed: boolean) => void
   onCreateSubAgent: () => void
+  onDeleteSession: () => Promise<void>
   onOpenSubAgent: (agentPanelId: string) => void
   onSelectPanel: (panelId: WorkspaceNavId) => void
 }
@@ -55,6 +67,7 @@ export function SessionWorkspaceMenu({
   activeSubAgentId,
   onCollapsedChange,
   onCreateSubAgent,
+  onDeleteSession,
   onOpenSubAgent,
   onSelectPanel,
 }: SessionWorkspaceMenuProps) {
@@ -66,6 +79,9 @@ export function SessionWorkspaceMenu({
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(title)
   const [titleSaving, setTitleSaving] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const handleSaveTitle = async () => {
     const trimmed = titleDraft.trim()
@@ -89,6 +105,19 @@ export function SessionWorkspaceMenu({
     }
   }
 
+  const handleDeleteSession = async () => {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await onDeleteSession()
+      setDeleteDialogOpen(false)
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : '대화를 삭제하지 못했습니다.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   if (collapsed) {
     return (
       <aside
@@ -105,6 +134,27 @@ export function SessionWorkspaceMenu({
             <ChevronRight className="h-5 w-5" />
           </button>
         </div>
+        <div className="mt-auto flex h-12 items-center justify-center">
+          <button
+            type="button"
+            onClick={() => setDeleteDialogOpen(true)}
+            className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive flex h-12 w-12 items-center justify-center rounded-xl transition-colors"
+            aria-label="대화 삭제"
+          >
+            <Trash2 className="h-5 w-5" />
+          </button>
+        </div>
+        <DeleteSessionDialog
+          deleteError={deleteError}
+          deleting={deleting}
+          open={deleteDialogOpen}
+          sessionTitle={title}
+          onConfirm={() => void handleDeleteSession()}
+          onOpenChange={(open) => {
+            if (!open && !deleting) setDeleteError(null)
+            setDeleteDialogOpen(open)
+          }}
+        />
       </aside>
     )
   }
@@ -271,7 +321,71 @@ export function SessionWorkspaceMenu({
           </div>
         </section>
       </nav>
+      <div className="border-border/70 shrink-0 border-t px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setDeleteDialogOpen(true)}
+          className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors"
+        >
+          <Trash2 className="h-4 w-4 shrink-0" />
+          <span className="truncate">대화 삭제</span>
+        </button>
+      </div>
+      <DeleteSessionDialog
+        deleteError={deleteError}
+        deleting={deleting}
+        open={deleteDialogOpen}
+        sessionTitle={title}
+        onConfirm={() => void handleDeleteSession()}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeleteError(null)
+          setDeleteDialogOpen(open)
+        }}
+      />
     </aside>
+  )
+}
+
+function DeleteSessionDialog({
+  deleteError,
+  deleting,
+  open,
+  sessionTitle,
+  onConfirm,
+  onOpenChange,
+}: {
+  deleteError: string | null
+  deleting: boolean
+  open: boolean
+  sessionTitle: string
+  onConfirm: () => void
+  onOpenChange: (open: boolean) => void
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>정말로 삭제하시겠습니까?</AlertDialogTitle>
+          <AlertDialogDescription>
+            `{sessionTitle}` 대화와 저장된 메시지가 삭제됩니다. 이 작업은 되돌릴 수 없습니다.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {deleteError ? <p className="text-destructive text-sm">{deleteError}</p> : null}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleting}>취소</AlertDialogCancel>
+          <Button variant="destructive" onClick={onConfirm} disabled={deleting}>
+            {deleting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                삭제 중
+              </>
+            ) : (
+              '삭제'
+            )}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 

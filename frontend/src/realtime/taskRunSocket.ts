@@ -222,7 +222,7 @@ export const createTaskRunSocket = (
 
   const requireAuthenticated = () => {
     if (!authenticated) {
-      throw new Error('AI WebSocket 인증 완료 전에는 구독할 수 없습니다.')
+      throw new Error('서버에 연결되지 않았습니다. 잠시 후 다시 시도해 주세요.')
     }
   }
 

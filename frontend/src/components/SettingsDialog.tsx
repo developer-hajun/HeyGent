@@ -22,6 +22,7 @@ import { Switch } from './ui/switch'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { motion, AnimatePresence } from 'motion/react'
 import { useChatStore } from '@/store/useChatStore'
+import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import type { AiModelOption } from '@/types/aiChat'
 import { startOpenAiOAuth } from '@/apis/openaiOAuth'
 import { saveOpenAiApiKey } from '@/apis/openaiApiKey'
@@ -292,6 +293,7 @@ function ModelsContent({ sessionId }: { sessionId?: string }) {
   const modelOptionsError = useChatStore((state) => state.modelOptionsError)
   const fetchModelOptions = useChatStore((state) => state.fetchModelOptions)
   const updateSessionSettings = useChatStore((state) => state.updateSessionSettings)
+  const authenticatedReady = useAiRealtimeStore((state) => state.authenticatedReady)
   const [optimisticModel, setOptimisticModel] = useState<{
     sessionId?: string
     modelId: string
@@ -299,8 +301,11 @@ function ModelsContent({ sessionId }: { sessionId?: string }) {
   const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!authenticatedReady) {
+      return
+    }
     void fetchModelOptions(sessionId).catch(() => undefined)
-  }, [fetchModelOptions, sessionId])
+  }, [authenticatedReady, fetchModelOptions, sessionId])
 
   const models = modelOptions?.models ?? []
   const selectedModel =
@@ -341,20 +346,20 @@ function ModelsContent({ sessionId }: { sessionId?: string }) {
         </p>
       </div>
 
-      {modelOptionsLoading && (
+      {authenticatedReady && modelOptionsLoading && (
         <div className="text-muted-foreground flex items-center gap-2 text-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
           모델 목록을 불러오는 중입니다.
         </div>
       )}
 
-      {modelOptionsError && (
+      {authenticatedReady && modelOptionsError && (
         <div className="border-border bg-muted/30 text-muted-foreground rounded-xl border p-4 text-sm">
           {modelOptionsError}
         </div>
       )}
 
-      {!modelOptionsLoading && !modelOptionsError && models.length === 0 && (
+      {authenticatedReady && !modelOptionsLoading && !modelOptionsError && models.length === 0 && (
         <div className="border-border bg-muted/30 text-muted-foreground rounded-xl border p-4 text-sm">
           사용할 수 있는 모델 목록이 아직 제공되지 않았습니다.
         </div>

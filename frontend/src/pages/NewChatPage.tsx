@@ -375,10 +375,14 @@ function readPendingSessionConfig(): CustomAgentConfig | null {
         delegationPolicy:
           typeof value.delegationPolicy === 'object' &&
           value.delegationPolicy !== null &&
-          typeof value.delegationPolicy.canDelegate === 'boolean' &&
-          typeof value.delegationPolicy.maxWorkerDepth === 'number'
-            ? value.delegationPolicy
-            : { canDelegate: false, maxWorkerDepth: 0 },
+          typeof value.delegationPolicy.canDelegate === 'boolean'
+            ? {
+                canDelegate: value.delegationPolicy.canDelegate,
+                ...(typeof value.delegationPolicy.maxWorkerDepth === 'number'
+                  ? { maxWorkerDepth: value.delegationPolicy.maxWorkerDepth }
+                  : {}),
+              }
+            : { canDelegate: false },
       }
     }
   } catch {

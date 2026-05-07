@@ -115,9 +115,7 @@ export function SubAgentDetailView({
     <div className={`space-y-6 ${instructionsDirty ? 'pb-24 sm:pb-0' : ''}`}>
       <AgentDetailHeader
         name={item.agent.name}
-        onInstructions={() => selectTab('instructions')}
-        onRuns={() => selectTab('runs')}
-        status="draft"
+        status="초안"
         subtitle={
           <>
             {item.agent.role ?? 'general'}

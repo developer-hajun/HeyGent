@@ -1,19 +1,13 @@
 import { useState } from 'react'
-import { ArrowLeft, Bot, Code2, Cpu, Gem, Network, Rocket, Sparkles, Terminal } from 'lucide-react'
+import { ArrowLeft, Bot, Terminal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/components/ui/utils'
 import { SUB_AGENT_ADAPTER_OPTIONS, type SubAgentAdapterType } from './subAgentConfigOptions'
 
 const ADAPTER_ICONS: Record<SubAgentAdapterType, typeof Bot> = {
   claude_local: Bot,
   codex_local: Terminal,
-  cursor: Cpu,
-  gemini_local: Sparkles,
-  hermes_local: Network,
-  openclaw_gateway: Rocket,
-  opencode_local: Code2,
-  pi_local: Gem,
 }
 
 export function SubAgentCreateDialog({
@@ -43,6 +37,10 @@ export function SubAgentCreateDialog({
       }}
     >
       <DialogContent showCloseButton={false} className="gap-0 overflow-hidden p-0 sm:max-w-md">
+        <DialogTitle className="sr-only">새 에이전트 추가</DialogTitle>
+        <DialogDescription className="sr-only">
+          CEO에게 생성을 요청하거나 직접 세부 설정으로 새 서브에이전트를 추가합니다.
+        </DialogDescription>
         <div className="border-border flex items-center justify-between border-b px-4 py-2.5">
           <span className="text-muted-foreground text-sm">새 에이전트 추가</span>
           <Button
@@ -65,7 +63,7 @@ export function SubAgentCreateDialog({
                   <Bot className="text-foreground h-6 w-6" />
                 </div>
                 <p className="text-muted-foreground text-sm">
-                  조직 구조와 권한을 아는 CEO에게 에이전트 생성을 맡기는 것을 권장합니다.
+                  대화 맥락과 필요한 역할을 잘 아는 CEO에게 에이전트 생성을 맡길 수 있습니다.
                 </p>
               </div>
 
@@ -103,8 +101,8 @@ export function SubAgentCreateDialog({
               <div className="grid grid-cols-2 gap-2">
                 {SUB_AGENT_ADAPTER_OPTIONS.map((option) => {
                   const Icon = ADAPTER_ICONS[option.id]
-                  const comingSoon = 'comingSoon' in option && option.comingSoon
-                  const recommended = 'recommended' in option && option.recommended
+                  const comingSoon = false
+                  const recommended = option.recommended
                   return (
                     <button
                       key={option.id}
