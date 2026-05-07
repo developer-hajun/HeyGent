@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
 from app.api.memory_context import attach_persistent_memory_context
+from app.api.memory_writeback import writeback_persistent_memory_candidates
 from app.api.deps.openapi_auth import document_bearer_auth
 from app.contracts.session import (
     ArchiveSessionRequest,
@@ -81,7 +82,7 @@ async def create_message_in_new_session(
         session = _get_public_session_or_404(request, payload.session_id)
         ensure_owner(user, session.get("user_id"))
     else:
-        session = _create_public_session_for_message(request, owner_key=user.user_id, payload=payload)
+        session = _create_public_session_for_message(request, owner_key=user.user_id, payload=payload, workspace_key=user.workspace_key)
     return await _create_message_in_session(request, payload, session=session, user=user)
 
 
@@ -380,6 +381,17 @@ async def _create_message_in_session(
             status=task.status,
         )
         assistant_message_id = assistant_append["message_id"]
+        await writeback_persistent_memory_candidates(
+            app_state=request.app.state,
+            user_id=str(user.user_id),
+            user_message=payload.content,
+            assistant_message=assistant_content,
+            session_id=sessionId,
+            workspace_key=user.workspace_key or session.get("workspace_key"),
+            task_run_id=task.task_run_id,
+            user_message_id=str(user_append["message_id"]),
+            assistant_message_id=str(assistant_message_id),
+        )
     elif task.status != "WAITING":
         session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task.task_run_id)
     messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
@@ -448,6 +460,7 @@ def _create_public_session_for_message(
     *,
     owner_key: str,
     payload: CreateSessionMessageRequest,
+    workspace_key: str | None = None,
 ) -> dict[str, Any]:
     session_store = request.app.state.session_store
     session_limit = max(1, int(getattr(request.app.state.settings, "public_session_limit_per_user", 10)))
@@ -459,6 +472,9 @@ def _create_public_session_for_message(
         )
 
     session_id = new_id("session")
+    metadata = {"source": _PUBLIC_SESSION_SOURCE}
+    if workspace_key:
+        metadata["workspace_key"] = workspace_key
     session_store.create_session(
         session_id=session_id,
         session_key=session_id,
@@ -466,7 +482,7 @@ def _create_public_session_for_message(
         user_id=owner_key,
         model=payload.model,
         title=_derive_session_title(payload.content),
-        metadata={"source": _PUBLIC_SESSION_SOURCE},
+        metadata=metadata,
     )
     session = session_store.get_session(session_id)
     if session is None:
