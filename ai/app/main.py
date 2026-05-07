@@ -25,6 +25,8 @@ from app.domain.orchestration.approval.queue import ApprovalQueue
 from app.domain.orchestration.approval.service import ApprovalService
 from app.domain.orchestration.agent.runner import AgentLoopRunner
 from app.domain.orchestration.agent.loop import TaskEngine
+from app.domain.orchestration.agent.memory.memory_extraction_provider import ProviderMemoryExtractionClient
+from app.domain.orchestration.agent.memory.memory_extractor import LlmMemoryExtractor
 from app.domain.orchestration.agent.tool_catalog import ToolCatalog
 from app.domain.orchestration.orchestrator import Orchestrator
 from app.domain.orchestration.runtime_planning import Planner
@@ -96,6 +98,8 @@ async def lifespan(app: FastAPI):
             OpenAIOAuthProvider(settings, repository),
         ]
     )
+    memory_extraction_provider = ProviderMemoryExtractionClient(provider_registry=provider_registry)
+    memory_extractor = LlmMemoryExtractor(provider=memory_extraction_provider)
     session_store = PostgresSessionStore(postgres_connection_factory)
     # recall_service = RecallService(session_store)
     # memory_store = MemoryStore()
@@ -142,6 +146,7 @@ async def lifespan(app: FastAPI):
     app.state.session_service = session_service
     app.state.backend_auth_client = backend_auth_client
     app.state.backend_memory_client = backend_memory_client
+    app.state.memory_extractor = memory_extractor
     app.state.provider_registry = provider_registry
     app.state.session_store = session_store
     # app.state.recall_service = recall_service

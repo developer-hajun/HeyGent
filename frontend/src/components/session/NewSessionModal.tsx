@@ -62,7 +62,7 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
         className="w-[480px] gap-0 overflow-hidden p-0 [&>button]:hidden"
         aria-describedby="new-session-description"
       >
-        <DialogTitle className="sr-only">새 세션 시작</DialogTitle>
+        <DialogTitle className="sr-only">새 대화 시작</DialogTitle>
         <DialogDescription id="new-session-description" className="sr-only">
           세션 유형을 선택하거나 에이전트를 커스터마이징합니다
         </DialogDescription>
@@ -79,8 +79,8 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
               {/* Header */}
               <div className="border-border flex items-center justify-between border-b px-6 py-4">
                 <div>
-                  <h2 className="text-foreground text-base font-semibold">새 세션 시작</h2>
-                  <p className="text-muted-foreground mt-0.5 text-xs">세션 유형을 선택하세요</p>
+                  <h2 className="text-foreground text-base font-semibold">새 대화 시작</h2>
+                  <p className="text-muted-foreground mt-0.5 text-xs">대화 유형을 선택하세요</p>
                 </div>
                 <button
                   onClick={handleClose}

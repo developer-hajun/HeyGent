@@ -22,6 +22,7 @@ class FakeBackendAuthClient:
 class FakeBackendMemoryClient:
     def __init__(self) -> None:
         self.calls = []
+        self.created_candidates = []
         self.memories = []
         self.fail = False
 
@@ -31,8 +32,27 @@ class FakeBackendMemoryClient:
             raise BackendMemoryClientError("test memory recall failure")
         return list(self.memories)
 
+    async def create_candidates(self, **kwargs):
+        self.created_candidates.append(kwargs)
+        if self.fail:
+            raise BackendMemoryClientError("test memory writeback failure")
+        return []
+
     async def aclose(self) -> None:
         return None
+
+
+class FakeMemoryExtractor:
+    def __init__(self) -> None:
+        self.calls = []
+        self.candidates = []
+        self.fail = False
+
+    async def extract_candidates(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.fail:
+            raise RuntimeError("test memory extraction failure")
+        return list(self.candidates)
 
 
 @pytest.fixture(autouse=True)
@@ -134,6 +154,8 @@ def _patch_app_runtime(app_main, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_main, "build_task_projection_store", lambda **_kwargs: RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60))
     monkeypatch.setattr(app_main, "BackendAuthClient", lambda settings: FakeBackendAuthClient())
     monkeypatch.setattr(app_main, "BackendMemoryClient", lambda settings: FakeBackendMemoryClient())
+    monkeypatch.setattr(app_main, "ProviderMemoryExtractionClient", lambda **_kwargs: object())
+    monkeypatch.setattr(app_main, "LlmMemoryExtractor", lambda **_kwargs: FakeMemoryExtractor())
     monkeypatch.setattr(app_main, "LocalToolRuntime", local_tool_runtime_without_bridge)
     build_memory_connection_registry = app_main.build_connection_registry
     monkeypatch.setattr(app_main, "build_connection_registry", lambda **_kwargs: build_memory_connection_registry(redis_url=None, ttl_seconds=60))
