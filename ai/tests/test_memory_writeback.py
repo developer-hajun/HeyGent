@@ -49,7 +49,7 @@ async def test_writeback_extracts_and_posts_candidates_to_backend():
     extractor = FakeExtractor([candidate])
     app_state = SimpleNamespace(backend_memory_client=memory_client, memory_extractor=extractor)
 
-    await writeback_persistent_memory_candidates(
+    observation = await writeback_persistent_memory_candidates(
         app_state=app_state,
         user_id="1",
         user_message="앞으로 짧게 답해줘.",
@@ -64,6 +64,16 @@ async def test_writeback_extracts_and_posts_candidates_to_backend():
     assert len(extractor.calls) == 1
     assert extractor.calls[0]["context"].workspace_key == "workspace-a"
     assert memory_client.calls == [{"user_id": "1", "candidates": [candidate]}]
+    assert observation == {
+        "status": "succeeded",
+        "attempted": True,
+        "candidate_count": 1,
+        "memory_types": ["PREFERENCE"],
+        "store_types": ["USER_PROFILE"],
+        "scope_types": ["GLOBAL"],
+        "operation_types": ["ADD"],
+        "failed": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -72,7 +82,7 @@ async def test_writeback_is_nonfatal_when_extractor_fails():
     extractor = FakeExtractor(fail=True)
     app_state = SimpleNamespace(backend_memory_client=memory_client, memory_extractor=extractor)
 
-    await writeback_persistent_memory_candidates(
+    observation = await writeback_persistent_memory_candidates(
         app_state=app_state,
         user_id="1",
         user_message="기억해줘.",
@@ -81,6 +91,8 @@ async def test_writeback_is_nonfatal_when_extractor_fails():
     )
 
     assert memory_client.calls == []
+    assert observation["status"] == "extract_failed"
+    assert observation["failed"] is True
 
 
 @pytest.mark.asyncio
@@ -102,7 +114,7 @@ async def test_writeback_is_nonfatal_when_backend_fails():
     )
     app_state = SimpleNamespace(backend_memory_client=memory_client, memory_extractor=extractor)
 
-    await writeback_persistent_memory_candidates(
+    observation = await writeback_persistent_memory_candidates(
         app_state=app_state,
         user_id="1",
         user_message="기억해줘.",
@@ -111,3 +123,6 @@ async def test_writeback_is_nonfatal_when_backend_fails():
     )
 
     assert len(memory_client.calls) == 1
+    assert observation["status"] == "store_failed"
+    assert observation["attempted"] is True
+    assert observation["candidate_count"] == 1
