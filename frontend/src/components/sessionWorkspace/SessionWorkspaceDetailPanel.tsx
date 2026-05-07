@@ -281,7 +281,6 @@ function PurposePage({ session }: { session: RawAiSession }) {
 
             <div className="min-w-0">
               <PromptEntityRow
-                identifier="이름"
                 title="에이전트 이름"
                 value={agentName}
                 onChange={setAgentName}
@@ -289,7 +288,6 @@ function PurposePage({ session }: { session: RawAiSession }) {
                 placeholder="예: 기획 도우미"
               />
               <PromptEntityRow
-                identifier="호칭"
                 title="호칭"
                 value={callName}
                 onChange={setCallName}
@@ -297,7 +295,6 @@ function PurposePage({ session }: { session: RawAiSession }) {
                 placeholder="예: 팀장님, 사용자님"
               />
               <PromptEntityRow
-                identifier="완료"
                 title="성공 기준"
                 value={successCriteria}
                 onChange={setSuccessCriteria}
@@ -306,7 +303,6 @@ function PurposePage({ session }: { session: RawAiSession }) {
                 multiline
               />
               <PromptEntityRow
-                identifier="제약"
                 title="제약"
                 value={constraints}
                 onChange={setConstraints}
@@ -783,7 +779,6 @@ function normalizeSkillIds(values: string[]): SubAgentSkillId[] {
 }
 
 function PromptEntityRow({
-  identifier,
   title,
   value,
   multiline = false,
@@ -792,7 +787,6 @@ function PromptEntityRow({
   onChange,
   onDirty,
 }: {
-  identifier?: string
   title: string
   value: string
   multiline?: boolean
@@ -803,11 +797,6 @@ function PromptEntityRow({
 }) {
   return (
     <label className="border-border hover:bg-accent/50 flex items-start gap-3 border-b px-4 py-2 text-sm transition-colors last:border-b-0">
-      {identifier ? (
-        <span className="text-muted-foreground w-20 shrink-0 pt-1 font-mono text-xs">
-          {identifier}
-        </span>
-      ) : null}
       <span className="w-28 shrink-0 truncate pt-1">{title}</span>
       {multiline ? (
         <textarea
