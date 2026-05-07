@@ -87,7 +87,8 @@ fun AppDrawer(
     Column(
         modifier =
             Modifier
-                .fillMaxSize()
+                .fillMaxHeight()
+                .width(300.dp)
                 .background(Color.Black)
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 32.dp),
