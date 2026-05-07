@@ -126,7 +126,6 @@ export function SettingsDialog({ open, onOpenChange, sessionId, initialTab }: Se
 function GeneralContent() {
   const [settings, setSettings] = useState({
     language: '한국어',
-    theme: '시스템 설정',
     notifications: true,
     soundEffects: true,
   })
@@ -165,39 +164,6 @@ function GeneralContent() {
                   >
                     <span className="text-foreground text-sm font-medium">{lang}</span>
                     {settings.language === lang && <Check className="text-primary h-4 w-4" />}
-                  </button>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
-        </div>
-
-        {/* Theme */}
-        <div className="border-border rounded-xl border p-4">
-          <div className="mb-1 flex items-start justify-between">
-            <div className="flex-1">
-              <h4 className="text-foreground mb-1 text-sm font-medium">테마</h4>
-              <p className="text-muted-foreground text-xs">화면 테마를 선택합니다</p>
-            </div>
-          </div>
-
-          <Popover>
-            <PopoverTrigger asChild>
-              <button className="border-border hover:bg-muted/30 mt-3 flex w-full items-center justify-between rounded-lg border px-3 py-2 transition-colors">
-                <span className="text-foreground text-sm">{settings.theme}</span>
-                <ChevronDown className="text-muted-foreground h-4 w-4" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-80 p-2" align="start">
-              <div className="space-y-1">
-                {['시스템 설정', '라이트 모드', '다크 모드'].map((theme) => (
-                  <button
-                    key={theme}
-                    onClick={() => setSettings({ ...settings, theme })}
-                    className="hover:bg-muted flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-colors"
-                  >
-                    <span className="text-foreground text-sm font-medium">{theme}</span>
-                    {settings.theme === theme && <Check className="text-primary h-4 w-4" />}
                   </button>
                 ))}
               </div>
