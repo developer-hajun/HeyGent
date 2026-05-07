@@ -48,14 +48,33 @@ class OpenAiCredentialIssueServiceTest {
 
     @Test
     void issueReturnsUserApiKeyCredential() throws Exception {
-        OpenAiCredentialIssueRequest request = request("openai_user_api_key");
-        when(openAiApiKeyService.resolveApiKey(1L)).thenReturn("user-key");
+        OpenAiCredentialIssueRequest request = request("openai_api_key");
+        when(openAiApiKeyService.resolveApiKey(
+            org.mockito.ArgumentMatchers.eq(1L),
+            org.mockito.ArgumentMatchers.any()
+        )).thenReturn("user-key");
 
         OpenAiCredentialIssueResponse response = openAiCredentialIssueService.issue(request);
 
-        assertThat(response.getProviderName()).isEqualTo("openai_user_api_key");
+        assertThat(response.getProviderName()).isEqualTo("openai_api_key");
         assertThat(response.getCredentialType()).isEqualTo("api_key");
         assertThat(response.getCredential()).isEqualTo("user-key");
+    }
+
+    @Test
+    void issueReturnsGeminiApiKeyCredential() throws Exception {
+        OpenAiCredentialIssueRequest request = request("gemini_api_key", "gemini-2.5-pro");
+        when(openAiApiKeyService.resolveApiKey(
+            org.mockito.ArgumentMatchers.eq(1L),
+            org.mockito.ArgumentMatchers.any()
+        )).thenReturn("gemini-key");
+
+        OpenAiCredentialIssueResponse response = openAiCredentialIssueService.issue(request);
+
+        assertThat(response.getProviderName()).isEqualTo("gemini_api_key");
+        assertThat(response.getAuthType()).isEqualTo("api_key");
+        assertThat(response.getCredentialType()).isEqualTo("api_key");
+        assertThat(response.getCredential()).isEqualTo("gemini-key");
     }
 
     @Test
@@ -74,10 +93,14 @@ class OpenAiCredentialIssueServiceTest {
     }
 
     private OpenAiCredentialIssueRequest request(String providerName) throws Exception {
+        return request(providerName, "gpt-5.4");
+    }
+
+    private OpenAiCredentialIssueRequest request(String providerName, String model) throws Exception {
         OpenAiCredentialIssueRequest request = new OpenAiCredentialIssueRequest();
         set(request, "userId", 1L);
         set(request, "providerName", providerName);
-        set(request, "model", "gpt-5.4");
+        set(request, "model", model);
         return request;
     }
 

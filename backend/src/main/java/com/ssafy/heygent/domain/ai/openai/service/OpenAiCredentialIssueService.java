@@ -24,10 +24,16 @@ public class OpenAiCredentialIssueService {
     @Transactional
     public OpenAiCredentialIssueResponse issue(OpenAiCredentialIssueRequest request) {
         OpenAiProviderName providerName = OpenAiProviderName.from(request.getProviderName());
-        String model = runtimePolicyService.requireAllowedModel(request.getModel());
+        String model = runtimePolicyService.requireAllowedModel(providerName, request.getModel());
 
-        if (providerName == OpenAiProviderName.OPENAI_USER_API_KEY) {
-            return response(providerName, model, "api_key", openAiApiKeyService.resolveApiKey(request.getUserId()), null);
+        if (providerName.isUserManagedApiKeyProvider()) {
+            return response(
+                providerName,
+                model,
+                "api_key",
+                openAiApiKeyService.resolveApiKey(request.getUserId(), providerName),
+                null
+            );
         }
 
         if (providerName == OpenAiProviderName.OPENAI_OAUTH) {

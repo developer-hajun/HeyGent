@@ -8,6 +8,6 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 public class OpenAiApiKeyUpsertRequest {
 
-    @NotBlank(message = "OpenAI API Key는 필수입니다.")
+    @NotBlank(message = "AI provider API Key는 필수입니다.")
     private String apiKey;
 }
