@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Protocol
 
 
@@ -115,7 +116,6 @@ def _normalize_candidate(raw: Any, *, context: MemoryExtractionContext) -> dict[
     }
     _put_if_present(result, "summary", _trimmed(raw.get("summary"), max_length=500))
     _put_if_present(result, "evidence", _trimmed(raw.get("evidence"), max_length=2000))
-    _put_if_present(result, "sourceSessionKey", _trimmed(context.session_id, max_length=100))
     _put_if_present(result, "sourceTaskRunId", _trimmed(context.task_run_id, max_length=100))
     _put_if_present(result, "sourceMessageId", _trimmed(context.assistant_message_id or context.user_message_id, max_length=100))
     return result
@@ -176,23 +176,26 @@ def _hard_deny(text: Any) -> bool:
     if not isinstance(text, str):
         return False
     normalized = text.lower()
-    return any(pattern in normalized for pattern in _DO_NOT_STORE_PATTERNS)
+    if any(phrase in normalized for phrase in _DO_NOT_STORE_PHRASES):
+        return True
+    return any(pattern.search(text) for pattern in _SECRET_VALUE_PATTERNS)
 
 
 _ALLOWED_MEMORY_TYPES = {"PREFERENCE", "PROFILE", "FACT", "INSTRUCTION", "PROCEDURE"}
-_DO_NOT_STORE_PATTERNS = (
+_DO_NOT_STORE_PHRASES = (
     "기억하지 마",
     "저장하지 마",
     "잊어줘",
-    "api key",
-    "apikey",
-    "access token",
-    "refresh token",
-    "password",
-    "secret",
-    "credential",
-    "sk-",
-    "토큰",
-    "비밀번호",
-    "암호",
+    "do not remember",
+    "don't remember",
+    "do not store",
+    "don't store",
+    "forget this",
+)
+_SECRET_VALUE_PATTERNS = (
+    re.compile(r"(?i)\b(api[_ -]?key|access[_ -]?token|refresh[_ -]?token|password|passwd|secret|credential)\b\s*[:=]\s*['\"]?[^\s,'\"]{6,}"),
+    re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/=-]{10,}"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{10,}\b"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b"),
+    re.compile(r"(?i)\b(read|open|print|dump|show)\b.{0,40}\b(\.env|credentials?|secrets?)\b"),
 )

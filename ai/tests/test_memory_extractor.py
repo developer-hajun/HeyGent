@@ -53,7 +53,6 @@ async def test_memory_extractor_normalizes_preference_candidate_for_backend_cont
             "confidence": 0.9,
             "summary": "짧은 답변 선호",
             "evidence": "짧게 답해줘.",
-            "sourceSessionKey": "session_1",
             "sourceTaskRunId": "task_1",
             "sourceMessageId": "msg_2",
         }
@@ -132,3 +131,55 @@ async def test_memory_extractor_does_not_call_llm_when_user_denies_storage():
 
     assert candidates == []
     assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_allows_security_policy_without_secret_value():
+    provider = FakeStructuredProvider(
+        {
+            "candidates": [
+                {
+                    "memoryType": "INSTRUCTION",
+                    "scopeType": "GLOBAL",
+                    "content": "이 프로젝트에서는 access token을 task input에 넣지 않는다.",
+                    "importance": 0.8,
+                    "confidence": 0.9,
+                }
+            ]
+        }
+    )
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="앞으로 access token은 task input에 넣지 않는 걸 기억해줘.",
+        assistant_message="알겠습니다.",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1"),
+    )
+
+    assert candidates[0]["content"] == "이 프로젝트에서는 access token을 task input에 넣지 않는다."
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_drops_secret_value_candidates():
+    provider = FakeStructuredProvider(
+        {
+            "candidates": [
+                {
+                    "memoryType": "FACT",
+                    "scopeType": "GLOBAL",
+                    "content": "사용자의 access_token=abcdef1234567890",
+                    "importance": 0.8,
+                    "confidence": 0.9,
+                }
+            ]
+        }
+    )
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="기억해줘.",
+        assistant_message="알겠습니다.",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1"),
+    )
+
+    assert candidates == []
