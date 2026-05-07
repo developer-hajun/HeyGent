@@ -33,22 +33,22 @@ public class SecurityConfig {
                 )
 
                 .authorizeHttpRequests(auth -> auth
-                .requestMatchers(
-                "/api/v1/auth/kakao",
-                "/api/v1/auth/kakao/mobile",
-                "/api/v1/auth/dev-login",
-                "/api/v1/auth/refresh",
-                "/v3/api-docs/**",
-                "/swagger-ui/**",
-                "/swagger-ui.html",
-                "/auth/notion/callback",
-                "/api/v1/ai/openai/oauth/callback",
-                "/api/v1/iot/pairing/start",
-                "/api/v1/iot/pairing/devices/*/status",
-                "/api/v3/api-docs/**",
-                "/api/swagger-ui/**",
-                "/api/swagger-ui.html"
-                ).permitAll()
+                        .requestMatchers(
+                                "/api/v1/auth/kakao",
+                                "/api/v1/auth/kakao/mobile",
+                                "/api/v1/auth/dev-login",
+                                "/api/v1/auth/refresh",
+                                "/v3/api-docs/**",
+                                "/swagger-ui/**",
+                                "/swagger-ui.html",
+                                "/auth/notion/callback",
+                                "/api/v1/ai/openai/oauth/callback",
+                                "/api/v1/iot/pairing/start",
+                                "/api/v1/iot/pairing/devices/*/status",
+                                "/api/v3/api-docs/**",
+                                "/api/swagger-ui/**",
+                                "/api/swagger-ui.html"
+                        ).permitAll()
                         .anyRequest().authenticated()
                 )
 
