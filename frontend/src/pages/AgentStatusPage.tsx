@@ -4,6 +4,7 @@ import type {
   AgentConfig,
   AgentRuntime,
   Destination,
+  UIDestination,
   SittingState,
 } from '@/components/office/types'
 
@@ -98,7 +99,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
     initialPosition: { x: 1460, y: 700 },
     destinations: {
       desk: { x: 825, y: 520 },
-      sofa: { x: 1140, y: 230 },
+      sofa: { x: 1185, y: 205 },
       floorLean: { x: 1290, y: 260 },
       meeting: { x: 925, y: 90 },
       calling: { x: 1070, y: 658 },
@@ -117,7 +118,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
     initialPosition: { x: 1460, y: 700 },
     destinations: {
       desk: { x: 465, y: 595 },
-      sofa: { x: 1140, y: 230 },
+      sofa: { x: 1185, y: 205 },
       floorLean: { x: 1340, y: 280 },
       meeting: { x: 850, y: 65 },
       calling: { x: 1430, y: 840 },
@@ -132,7 +133,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
     initialPosition: { x: 1460, y: 700 },
     destinations: {
       desk: { x: 650, y: 458 },
-      sofa: { x: 1140, y: 230 },
+      sofa: { x: 1185, y: 205 },
       floorLean: { x: 995, y: 340 },
       meeting: { x: 670, y: 105 },
       calling: { x: 240, y: 710 },
@@ -147,7 +148,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
     initialPosition: { x: 1460, y: 700 },
     destinations: {
       desk: { x: 650, y: 685 },
-      sofa: { x: 1140, y: 230 },
+      sofa: { x: 1185, y: 205 },
       floorLean: { x: 1380, y: 490 },
       meeting: { x: 785, y: 245 },
       calling: { x: 1200, y: 658 },
@@ -161,7 +162,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
     initialPosition: { x: 1460, y: 700 },
     destinations: {
       desk: { x: 650, y: 685 },
-      sofa: { x: 1140, y: 230 },
+      sofa: { x: 1185, y: 205 },
       floorLean: { x: 1310, y: 460 },
       meeting: { x: 920, y: 220 },
       calling: { x: 1250, y: 660 },
@@ -457,8 +458,13 @@ function findPath(
       if (closed.has(k)) continue
       const ng = cur.g + COST[d]
       const existing = open.get(k)
-      if (!existing || ng < existing.g)
-        open.set(k, { x: nx, y: ny, g: ng, h: Math.hypot(nx - end.x, ny - end.y), prev: cur })
+      if (!existing || ng < existing.g) {
+        const dx1 = nx - end.x
+        const dy1 = ny - end.y
+        // 타이브레이킹: 시작→목적지 직선 방향에 가까운 경로를 우선 선택해 지그재그 억제
+        const cross = Math.abs(dx1 * (start.y - end.y) - (start.x - end.x) * dy1)
+        open.set(k, { x: nx, y: ny, g: ng, h: Math.hypot(dx1, dy1) + cross * 0.001, prev: cur })
+      }
     }
   }
   return []
@@ -468,11 +474,23 @@ const WALK_SPEED = 100
 const FRAME_DURATIONS = [300, 120, 300, 120] as const
 const AGENT_BLOCK_RADIUS_CELLS = 1
 const AGENT_COLLISION_RADIUS = 90
+const SPOT_OCCUPIED_RADIUS = 40 // 자리 점유 판정 반경 (소파 두 자리 간격 ~51px보다 작아야 함)
 
-const DESTINATION_MAP: Record<Destination, { targetState: SittingState; label: string }> = {
+// 책상 대기 줄 — 책상이 점유 중일 때 (880, 640)부터 순서대로 80px 간격으로 줄서기
+const DESK_WAIT_QUEUE: { x: number; y: number }[] = Array.from({ length: 10 }, (_, i) => ({
+  x: 880 + i * 80,
+  y: 640,
+}))
+
+// 맵 상의 소파 자리 2곳 — 휴식 버튼 클릭 시 빈 자리부터 배정
+const SOFA_SPOTS: { x: number; y: number }[] = [
+  { x: 1185, y: 205 },
+  { x: 1140, y: 230 },
+]
+
+const DESTINATION_MAP: Record<UIDestination, { targetState: SittingState; label: string }> = {
   desk: { targetState: 'sitting_desk', label: '책상' },
-  sofa: { targetState: 'sitting_sofa', label: '쇼파' },
-  floorLean: { targetState: 'sitting_floor_lean', label: '벽' },
+  rest: { targetState: 'sitting_sofa', label: '휴식' }, // 런타임에 sofa/floorLean 으로 오버라이드
   meeting: { targetState: 'sitting_meeting', label: '회의' },
   calling: { targetState: 'sitting_calling', label: '전화' },
 }
@@ -485,12 +503,14 @@ const STATE_LABELS: Record<string, string> = {
   sitting_floor_lean: '휴식 중',
   sitting_meeting: '회의 중',
   sitting_calling: '통화 중',
+  standing_wait: '대기 중',
 }
 
 function stateColor(state: string) {
   if (state === 'sitting_calling') return 'bg-blue-400'
   if (state.startsWith('sitting')) return 'bg-green-400'
   if (state === 'walking') return 'bg-yellow-400'
+  if (state === 'standing_wait') return 'bg-orange-400'
   return 'bg-slate-500'
 }
 
@@ -549,6 +569,33 @@ function isOccupiedByAnotherAgent(
   })
 }
 
+// 해당 자리가 점유 중인지 확인
+// — 이미 정착한 에이전트 OR 동일 자리를 향해 이동 중인 에이전트 모두 점유로 간주
+function isSpotOccupied(
+  spot: { x: number; y: number },
+  agents: AgentRuntime[],
+  excludeId: string,
+): boolean {
+  return agents.some((a) => {
+    if (a.config.id === excludeId) return false
+    // 정착(앉거나 대기) 에이전트
+    if (
+      a.state !== 'idle' &&
+      a.state !== 'walking' &&
+      Math.hypot(a.position.x - spot.x, a.position.y - spot.y) < SPOT_OCCUPIED_RADIUS
+    )
+      return true
+    // 동시에 같은 자리로 이동 중인 에이전트 — 중복 배정 방지
+    if (
+      a.state === 'walking' &&
+      a.targetPosition != null &&
+      Math.hypot(a.targetPosition.x - spot.x, a.targetPosition.y - spot.y) < SPOT_OCCUPIED_RADIUS
+    )
+      return true
+    return false
+  })
+}
+
 function initAgents(): AgentRuntime[] {
   return AGENT_CONFIGS.map((config) => ({
     config,
@@ -559,11 +606,12 @@ function initAgents(): AgentRuntime[] {
     transitionDuration: 3,
     pendingWaypoints: [],
     targetPosition: null,
+    standWaitTarget: null,
     facingRight: false,
   }))
 }
 
-const DESTINATIONS: Destination[] = ['desk', 'sofa', 'floorLean', 'meeting', 'calling']
+const DESTINATIONS: UIDestination[] = ['desk', 'rest', 'meeting', 'calling']
 
 export function AgentStatusPage() {
   const [agents, setAgents] = useState<AgentRuntime[]>(initAgents)
@@ -625,23 +673,69 @@ export function AgentStatusPage() {
     }
   }
 
-  const handleMove = (agentId: string, destination: Destination) => {
+  const handleMove = (agentId: string, destination: UIDestination) => {
     setAgents((prev) => {
       const agent = prev.find((a) => a.config.id === agentId)
       if (!agent || agent.state === 'walking') return prev
 
-      const destConfig = agent.config.destinations[destination]
-      const { targetState } = DESTINATION_MAP[destination]
-      const passableRects = !navmeshGrid && destination === 'desk' ? DESK_OBSTACLE_RECTS : undefined
+      // ── rest → 소파 빈 자리 우선 배정, 둘 다 차면 floorLean ──────────────
+      let internalDest: Destination
+      let destPoint: { x: number; y: number }
+      if (destination === 'rest') {
+        const freeSofaSpot = SOFA_SPOTS.find((spot) => !isSpotOccupied(spot, prev, agentId))
+        if (freeSofaSpot) {
+          internalDest = 'sofa'
+          destPoint = { ...freeSofaSpot }
+        } else {
+          internalDest = 'floorLean'
+          destPoint = { ...agent.config.destinations.floorLean }
+        }
+      } else {
+        internalDest = destination
+        destPoint = { ...agent.config.destinations[internalDest] }
+      }
+
+      const destConfig = agent.config.destinations[internalDest]
+
+      // internalDest 에 맞는 실제 앉기 상태
+      const resolvedTargetState: SittingState =
+        internalDest === 'sofa'
+          ? 'sitting_sofa'
+          : internalDest === 'floorLean'
+            ? 'sitting_floor_lean'
+            : DESTINATION_MAP[destination].targetState
+
+      // 목적지 자리가 이미 점유 중이면 옆에 서 있는 상태로 전환
+      const targetState: SittingState = isSpotOccupied(destPoint, prev, agentId)
+        ? 'standing_wait'
+        : resolvedTargetState
+
+      const passableRects =
+        !navmeshGrid && internalDest === 'desk' ? DESK_OBSTACLE_RECTS : undefined
       const passableLines =
-        !navmeshGrid && (destination === 'sofa' || destination === 'floorLean')
+        !navmeshGrid && (internalDest === 'sofa' || internalDest === 'floorLean')
           ? SOFA_WALL_OBSTACLE_LINES
           : undefined
-      const destPoint = { x: destConfig.x, y: destConfig.y }
+
       const pathGrid = withAgentBlockers(runtimeGridRef.current, prev, agentId)
+
+      // standing_wait: 책상이 차 있으면 고정 대기 줄에 순서대로 배정
+      let standWaitOrigin: { x: number; y: number } | null = null
+      if (targetState === 'standing_wait') {
+        standWaitOrigin = { ...destPoint }
+        const freeSlot =
+          DESK_WAIT_QUEUE.find((spot) => !isSpotOccupied(spot, prev, agentId)) ??
+          DESK_WAIT_QUEUE[DESK_WAIT_QUEUE.length - 1]
+        destPoint = { ...freeSlot }
+      }
+
+      // rest·standing_wait 는 커스텀 waypoints 미사용
       const waypoints =
-        destConfig.waypoints ??
+        (destination !== 'rest' && targetState !== 'standing_wait'
+          ? destConfig.waypoints
+          : undefined) ??
         findPath(agent.position, destPoint, passableRects, pathGrid, passableLines)
+
       const lastStop = waypoints[waypoints.length - 1]
       const finalPosition =
         lastStop && isOccupiedByAnotherAgent(destPoint, prev, agentId) ? lastStop : destPoint
@@ -649,6 +743,12 @@ export function AgentStatusPage() {
       const firstStop = allStops[0]
       if (!firstStop) {
         clearWalkTimer(agentId)
+        // standing_wait 즉시 배치 시 점유된 자리 방향으로 바라봄
+        const arrivalFacing = standWaitOrigin
+          ? Math.abs(standWaitOrigin.x - finalPosition.x) > 5
+            ? standWaitOrigin.x > finalPosition.x
+            : agent.facingRight
+          : agent.facingRight
         return prev.map((a) =>
           a.config.id === agentId
             ? {
@@ -659,14 +759,16 @@ export function AgentStatusPage() {
                 walkFrame: 0,
                 pendingWaypoints: [],
                 targetPosition: null,
-                facingRight: false,
+                standWaitTarget: standWaitOrigin,
+                facingRight: arrivalFacing,
               }
             : a,
         )
       }
       const remaining = allStops.slice(1)
-      const dx = firstStop.x - agent.position.x
-      const facingRight = Math.abs(dx) > 5 ? dx > 0 : agent.facingRight
+      // 최종 목적지 방향으로 facing 결정 — 웨이포인트마다 좌우 반전 방지
+      const overallDx = finalPosition.x - agent.position.x
+      const facingRight = Math.abs(overallDx) > CELL ? overallDx > 0 : agent.facingRight
 
       clearWalkTimer(agentId)
 
@@ -689,6 +791,8 @@ export function AgentStatusPage() {
               transitionDuration: calcDuration(agent.position, firstStop),
               pendingWaypoints: remaining,
               targetPosition: { ...finalPosition },
+              // standing_wait 도착 시 점유된 자리 방향을 바라보기 위해 원본 좌표 저장
+              standWaitTarget: standWaitOrigin,
               facingRight,
             }
           : a,
@@ -703,8 +807,10 @@ export function AgentStatusPage() {
 
       if (agent.pendingWaypoints.length > 0) {
         const [next, ...rest] = agent.pendingWaypoints
-        const dx = next.x - agent.position.x
-        const facingRight = Math.abs(dx) > 5 ? dx > 0 : agent.facingRight
+        // 최종 목적지 방향 기준으로 facing 유지 — 경유 웨이포인트 방향에 흔들리지 않도록
+        const finalTarget = agent.targetPosition ?? next
+        const overallDx = finalTarget.x - agent.position.x
+        const facingRight = Math.abs(overallDx) > CELL ? overallDx > 0 : agent.facingRight
         return prev.map((a) =>
           a.config.id === agentId
             ? {
@@ -719,18 +825,24 @@ export function AgentStatusPage() {
       }
 
       clearWalkTimer(agentId)
-      return prev.map((a) =>
-        a.config.id === agentId
-          ? {
-              ...a,
-              position: a.targetPosition ? { ...a.targetPosition } : a.position,
-              state: a.targetState,
-              walkFrame: 0,
-              pendingWaypoints: [],
-              targetPosition: null,
-            }
-          : a,
-      )
+      return prev.map((a) => {
+        if (a.config.id !== agentId) return a
+        // standing_wait 도착 시 저장해둔 목적지 좌표 방향으로 바라봄
+        const finalFacing =
+          a.targetState === 'standing_wait' && a.standWaitTarget
+            ? a.standWaitTarget.x > (a.targetPosition?.x ?? a.position.x)
+            : a.facingRight
+        return {
+          ...a,
+          position: a.targetPosition ? { ...a.targetPosition } : a.position,
+          state: a.targetState,
+          walkFrame: 0,
+          pendingWaypoints: [],
+          targetPosition: null,
+          standWaitTarget: null,
+          facingRight: finalFacing,
+        }
+      })
     })
   }
 
@@ -747,6 +859,7 @@ export function AgentStatusPage() {
               walkFrame: 0 as const,
               pendingWaypoints: [],
               targetPosition: null,
+              standWaitTarget: null,
               facingRight: false,
             }
           : a,

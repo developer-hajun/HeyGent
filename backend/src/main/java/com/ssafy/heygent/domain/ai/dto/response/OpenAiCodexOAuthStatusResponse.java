@@ -7,14 +7,12 @@ import lombok.Getter;
 
 @Getter
 @Builder
-public class OpenAiProviderStatusItemResponse {
+public class OpenAiCodexOAuthStatusResponse {
 
     private String providerName;
-    private String providerType;
-    private String authType;
-    private String defaultModel;
     private boolean connected;
     private boolean available;
-    private LocalDateTime expiresAt;
     private String status;
+    private String accountId;
+    private LocalDateTime expiresAt;
 }

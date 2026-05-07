@@ -11,10 +11,10 @@ public enum ErrorCode {
     // 400 BAD_REQUEST
     INVALID_REQUEST(HttpStatus.BAD_REQUEST, "잘못된 요청입니다."),
     INVALID_INPUT_VALUE(HttpStatus.BAD_REQUEST, "입력값이 올바르지 않습니다."),
-    OPENAI_PROVIDER_NOT_SUPPORTED(HttpStatus.BAD_REQUEST, "지원하지 않는 OpenAI Provider입니다."),
-    OPENAI_MODEL_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "허용되지 않은 OpenAI 모델입니다."),
+    OPENAI_PROVIDER_NOT_SUPPORTED(HttpStatus.BAD_REQUEST, "지원하지 않는 AI Provider입니다."),
+    OPENAI_MODEL_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "허용되지 않은 AI 모델입니다."),
     OPENAI_OAUTH_STATE_INVALID(HttpStatus.BAD_REQUEST, "OpenAI OAuth state가 유효하지 않습니다."),
-    OPENAI_PROVIDER_NOT_CONNECTED(HttpStatus.BAD_REQUEST, "선택한 OpenAI Provider가 연결되어 있지 않습니다."),
+    OPENAI_PROVIDER_NOT_CONNECTED(HttpStatus.BAD_REQUEST, "선택한 AI Provider가 연결되어 있지 않습니다."),
     OPENAI_DEV_FALLBACK_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "dev fallback OpenAI Provider는 현재 환경에서 사용할 수 없습니다."),
 
     // 401 UNAUTHORIZED

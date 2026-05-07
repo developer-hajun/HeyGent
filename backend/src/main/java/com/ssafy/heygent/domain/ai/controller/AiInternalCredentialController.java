@@ -16,13 +16,13 @@ import lombok.RequiredArgsConstructor;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/internal/ai/openai")
-public class AiInternalOpenAiController {
+@RequestMapping("/internal/ai/credentials")
+public class AiInternalCredentialController {
 
     private final OpenAiCredentialIssueService openAiCredentialIssueService;
 
-    @Operation(summary = "AI 서버용 OpenAI credential 발급", description = "AI 서버가 OpenAI 호출에 사용할 수 있는 사용자별 credential 정보를 발급합니다.")
-    @PostMapping("/credentials/issue")
+    @Operation(summary = "AI 서버용 provider credential 발급", description = "AI 서버가 모델 호출에 사용할 사용자별 provider credential 정보를 발급합니다.")
+    @PostMapping("/issue")
     public ApiResponse<OpenAiCredentialIssueResponse> issueCredential(
         @Valid @RequestBody OpenAiCredentialIssueRequest request
     ) {

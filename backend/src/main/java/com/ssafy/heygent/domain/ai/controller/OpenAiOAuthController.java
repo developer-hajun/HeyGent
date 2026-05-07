@@ -20,6 +20,7 @@ import com.ssafy.heygent.global.exception.ApiResponse;
 import com.ssafy.heygent.global.exception.CustomException;
 import com.ssafy.heygent.global.exception.ErrorCode;
 
+import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
@@ -30,6 +31,7 @@ public class OpenAiOAuthController {
 
     private final OpenAiOAuthService openAiOAuthService;
 
+    @Operation(summary = "OpenAI OAuth 연결 시작", description = "로그인된 사용자의 OpenAI OAuth 연결을 시작하고 인증 URL을 반환합니다.")
     @PostMapping("/start")
     public ApiResponse<OpenAiOAuthStartResponse> start(
         @AuthenticationPrincipal CustomUserPrincipal user,
@@ -38,6 +40,7 @@ public class OpenAiOAuthController {
         return ApiResponse.success(openAiOAuthService.start(resolveUserId(user), request));
     }
 
+    @Operation(summary = "OpenAI OAuth 콜백", description = "OpenAI OAuth 인증 완료 후 전달된 code와 state를 처리하고 연결 결과 HTML을 반환합니다.")
     @GetMapping(value = "/callback", produces = MediaType.TEXT_HTML_VALUE)
     public ResponseEntity<String> callback(
         @RequestParam String code,
@@ -56,6 +59,7 @@ public class OpenAiOAuthController {
             """.formatted(response.getStatus(), response.getExpiresAt()));
     }
 
+    @Operation(summary = "OpenAI OAuth 토큰 갱신", description = "로그인된 사용자의 OpenAI OAuth 토큰을 갱신하고 연결 상태를 반환합니다.")
     @PostMapping("/refresh")
     public ApiResponse<OpenAiOAuthConnectionResponse> refresh(
         @AuthenticationPrincipal CustomUserPrincipal user
@@ -63,6 +67,7 @@ public class OpenAiOAuthController {
         return ApiResponse.success(openAiOAuthService.refresh(resolveUserId(user)));
     }
 
+    @Operation(summary = "OpenAI OAuth 연결 해제", description = "로그인된 사용자의 OpenAI OAuth 연결을 해제하고 변경된 연결 상태를 반환합니다.")
     @DeleteMapping
     public ApiResponse<OpenAiOAuthConnectionResponse> disconnect(
         @AuthenticationPrincipal CustomUserPrincipal user
