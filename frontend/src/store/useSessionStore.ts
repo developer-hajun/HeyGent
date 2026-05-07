@@ -41,7 +41,26 @@ type PersistedSessionState = Partial<{
 
 type PersistedAgentPanelItem = {
   id: string
-  agent: Pick<Agent, 'name' | 'description' | 'accent' | 'skills'>
+  agent: Pick<
+    Agent,
+    | 'name'
+    | 'description'
+    | 'accent'
+    | 'title'
+    | 'role'
+    | 'adapterType'
+    | 'command'
+    | 'model'
+    | 'extraArgs'
+    | 'webSearchEnabled'
+    | 'bypassSandbox'
+    | 'heartbeatEnabled'
+    | 'intervalSec'
+    | 'profileImage'
+    | 'spriteId'
+    | 'reportsToAgentId'
+    | 'skills'
+  >
   panelOpen: boolean
 }
 
@@ -201,6 +220,19 @@ function serializeAgentPanelsBySessionId(
           name: panel.agent.name,
           description: panel.agent.description,
           accent: panel.agent.accent,
+          title: panel.agent.title,
+          role: panel.agent.role,
+          adapterType: panel.agent.adapterType,
+          command: panel.agent.command,
+          model: panel.agent.model,
+          extraArgs: panel.agent.extraArgs,
+          webSearchEnabled: panel.agent.webSearchEnabled,
+          bypassSandbox: panel.agent.bypassSandbox,
+          heartbeatEnabled: panel.agent.heartbeatEnabled,
+          intervalSec: panel.agent.intervalSec,
+          profileImage: panel.agent.profileImage,
+          spriteId: panel.agent.spriteId,
+          reportsToAgentId: panel.agent.reportsToAgentId,
           skills: panel.agent.skills,
         },
         panelOpen: panel.panelOpen,

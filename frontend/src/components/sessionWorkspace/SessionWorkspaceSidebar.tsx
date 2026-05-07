@@ -17,6 +17,7 @@ export function SessionWorkspaceSidebar() {
   const location = useLocation()
   const navigate = useNavigate()
   const sessionWorkspaceCollapsed = useUIStore((state) => state.sessionWorkspaceCollapsed)
+  const setSidebarCollapsed = useUIStore((state) => state.setSidebarCollapsed)
   const setSessionWorkspaceCollapsed = useUIStore((state) => state.setSessionWorkspaceCollapsed)
   const setSelectedSessionId = useSessionStore((state) => state.setSelectedSessionId)
   const sessionsById = useChatStore((state) => state.sessionsById)
@@ -28,7 +29,8 @@ export function SessionWorkspaceSidebar() {
   const activePanel = getWorkspacePanelFromPath(location.pathname)
   const session = sessionId === null ? null : (sessionsById[sessionId] ?? null)
   const currentRoute = location.pathname.startsWith('/agent-status/') ? 'visualization' : 'chat'
-  const activeSubAgentId = new URLSearchParams(location.search).get('edit')
+  const searchParams = new URLSearchParams(location.search)
+  const activeSubAgentId = searchParams.get('agent') ?? searchParams.get('edit')
   const connectionState = getWorkspaceConnectionState(
     connectionStatus,
     authStatus,
@@ -43,6 +45,7 @@ export function SessionWorkspaceSidebar() {
   const handleSelectPanel = (panelId: WorkspaceNavId) => {
     if (panelId === 'chat') {
       setSelectedSessionId(sessionId)
+      setSidebarCollapsed(true)
       navigate(`/session/${sessionId}`)
       return
     }
@@ -53,13 +56,20 @@ export function SessionWorkspaceSidebar() {
 
   const handleCreateSubAgent = () => {
     setSelectedSessionId(sessionId)
-    navigate(`${getWorkspacePanelPath(sessionId, 'subAgents')}?new=1`)
+    navigate(`${getWorkspacePanelPath(sessionId, 'subAgents')}?create=1`)
   }
 
   const handleEditSubAgent = (agentPanelId: string) => {
     setSelectedSessionId(sessionId)
     navigate(
-      `${getWorkspacePanelPath(sessionId, 'subAgents')}?edit=${encodeURIComponent(agentPanelId)}`,
+      `${getWorkspacePanelPath(sessionId, 'subAgents')}?agent=${encodeURIComponent(agentPanelId)}&subAgentTab=configuration`,
+    )
+  }
+
+  const handleOpenSubAgent = (agentPanelId: string) => {
+    setSelectedSessionId(sessionId)
+    navigate(
+      `${getWorkspacePanelPath(sessionId, 'subAgents')}?agent=${encodeURIComponent(agentPanelId)}`,
     )
   }
 
@@ -76,6 +86,7 @@ export function SessionWorkspaceSidebar() {
       onCollapsedChange={setSessionWorkspaceCollapsed}
       onCreateSubAgent={handleCreateSubAgent}
       onEditSubAgent={handleEditSubAgent}
+      onOpenSubAgent={handleOpenSubAgent}
       onSelectPanel={handleSelectPanel}
     />
   )
