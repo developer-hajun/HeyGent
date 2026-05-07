@@ -10,7 +10,7 @@ function getOfficeMapSrc(): string {
   if (hour >= 8 && hour < 16) return '/assets/maps/office_map_day.png'
   if (hour >= 16 && hour < 18) return '/assets/maps/office_map_sunset.png'
   if (hour >= 6 && hour < 8) return '/assets/maps/office_map_sunset.png'
-  if (hour >= 18 && hour < 20) return '/assets/maps/office_map_dust.png'
+  if (hour >= 18 && hour < 20) return '/assets/maps/office_map_dusk.png'
   return '/assets/maps/office_map_night.png'
 }
 
@@ -80,7 +80,7 @@ export function OfficeMap({
 
     const observer = new ResizeObserver(([entry]) => {
       const { width, height } = entry.contentRect
-      const s = Math.min(width / MAP_WIDTH, height / MAP_HEIGHT)
+      const s = Math.max(width / MAP_WIDTH, height / MAP_HEIGHT)
       setScale(s)
       setOffset({
         x: Math.max(0, (width - MAP_WIDTH * s) / 2),
