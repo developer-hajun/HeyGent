@@ -12,7 +12,6 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
-  SlidersHorizontal,
   Target,
   Trash2,
   Wifi,
@@ -52,7 +51,6 @@ const MENU_ITEMS: Array<{
   icon: typeof Target
 }> = [
   { id: 'chat', label: '채팅', icon: MessageSquare },
-  { id: 'settings', label: '설정', icon: SlidersHorizontal },
   { id: 'visualization', label: '시각화', icon: Map },
 ]
 

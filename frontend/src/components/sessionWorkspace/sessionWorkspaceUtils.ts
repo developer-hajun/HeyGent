@@ -34,7 +34,7 @@ export function getWorkspacePanelFromPath(pathname: string): WorkspacePanelId | 
     return 'purpose'
   }
   if (panelSlug === 'settings' || panelSlug === 'model') {
-    return 'settings'
+    return 'purpose'
   }
   if (panelSlug === 'sub-agents') {
     return 'subAgents'
@@ -48,9 +48,6 @@ export function getWorkspacePanelFromPath(pathname: string): WorkspacePanelId | 
 export function getWorkspacePanelPath(sessionId: string, panelId: WorkspacePanelId) {
   if (panelId === 'purpose') {
     return `/session/${sessionId}/workspace/goal`
-  }
-  if (panelId === 'settings') {
-    return `/session/${sessionId}/workspace/settings`
   }
   if (panelId === 'subAgents') {
     return `/session/${sessionId}/workspace/sub-agents`

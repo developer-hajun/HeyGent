@@ -28,7 +28,7 @@ import { AgentStatusPage } from '@/pages/AgentStatusPage'
 import { useChatStore } from '@/store/useChatStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import type { JsonObject } from '@/realtime/aiRealtimeTypes'
-import type { AiSessionSettingsPatch, RawAiSession } from '@/types/aiChat'
+import type { AiModelOption, AiSessionSettingsPatch, RawAiSession } from '@/types/aiChat'
 import type { Agent } from '@/types/agent'
 import {
   getModelFamilies,
@@ -66,10 +66,6 @@ export function SessionWorkspaceDetailPanel({
     return <AgentStatusPage />
   }
 
-  if (activePanel === 'settings') {
-    return <SettingsPage session={session} sessionId={sessionId} />
-  }
-
   if (session === null) {
     const title = activePanel === 'purpose' ? '메인 에이전트' : '세션'
     return (
@@ -89,10 +85,12 @@ export function SessionWorkspaceDetailPanel({
 function PurposePage({ session }: { session: RawAiSession }) {
   const updateSession = useChatStore((state) => state.updateSession)
   const updateSessionSettings = useChatStore((state) => state.updateSessionSettings)
+  const fetchModelOptions = useChatStore((state) => state.fetchModelOptions)
 
   const metadata = useMemo(() => toJsonObject(session.metadata), [session.metadata])
   const uiMetadata = useMemo(() => toJsonObject(metadata.ui), [metadata])
   const settings = useMemo(() => toJsonObject(session.settings), [session.settings])
+  const sessionId = session.session_id
   const currentPurpose = getString(uiMetadata, 'sessionPurpose') ?? ''
   const currentAgentName = getString(uiMetadata, 'agentName') ?? ''
   const currentCallName = getString(uiMetadata, 'callName') ?? ''
@@ -100,17 +98,62 @@ function PurposePage({ session }: { session: RawAiSession }) {
     getString(settings, 'systemPrompt') ?? getString(settings, 'system_prompt') ?? ''
   const currentSuccessCriteria = getString(uiMetadata, 'successCriteria') ?? ''
   const currentConstraints = getString(uiMetadata, 'constraints') ?? ''
+  const currentModel = getString(settings, 'model') ?? ''
+  const currentProfileImage =
+    getString(uiMetadata, 'agentProfileImage') ?? AGENT_IMAGE_OPTIONS[0].src
   const [purpose, setPurpose] = useState(currentPurpose)
   const [agentName, setAgentName] = useState(currentAgentName)
   const [callName, setCallName] = useState(currentCallName)
   const [persona, setPersona] = useState(currentPersona)
   const [successCriteria, setSuccessCriteria] = useState(currentSuccessCriteria)
   const [constraints, setConstraints] = useState(currentConstraints)
+  const [selectedModel, setSelectedModel] = useState(currentModel)
+  const [profileImage, setProfileImage] = useState(currentProfileImage)
+  const [modelOptionsLoading, setModelOptionsLoading] = useState(true)
+  const [modelOptionsError, setModelOptionsError] = useState<string | null>(null)
+  const [modelOptions, setModelOptions] = useState(getModelOptions(undefined))
+  const [selectedFamily, setSelectedFamily] = useState<ModelFamily>(inferModelFamily(currentModel))
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
 
-  const sessionId = session.session_id
+  const modelGroups = useMemo(() => groupModels(modelOptions), [modelOptions])
+  const modelFamilies = useMemo(() => getModelFamilies(modelGroups), [modelGroups])
+  const effectiveSelectedFamily = modelFamilies.some((family) => family.id === selectedFamily)
+    ? selectedFamily
+    : (modelFamilies[0]?.id ?? 'gpt')
+  const visibleModels = modelGroups[effectiveSelectedFamily]
+  const selectedImageIndex = Math.max(
+    0,
+    AGENT_IMAGE_OPTIONS.findIndex((option) => option.src === profileImage),
+  )
+
+  useEffect(() => {
+    let active = true
+
+    void fetchModelOptions(sessionId)
+      .then((options) => {
+        if (!active) return
+        const nextModels = getModelOptions(options.models)
+        setModelOptions(nextModels)
+        setModelOptionsLoading(false)
+        if (currentModel === '' && typeof options.model === 'string' && options.model.trim()) {
+          setSelectedModel(options.model)
+          setSelectedFamily(inferModelFamily(options.model))
+        }
+      })
+      .catch((error) => {
+        if (!active) return
+        setModelOptionsError(
+          error instanceof Error ? error.message : '모델 목록 조회에 실패했습니다.',
+        )
+        setModelOptionsLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [currentModel, fetchModelOptions, sessionId])
 
   const markDirty = () => {
     setSaved(false)
@@ -124,11 +167,15 @@ function PurposePage({ session }: { session: RawAiSession }) {
     setOptionalUiString(nextUiMetadata, 'callName', callName)
     setOptionalUiString(nextUiMetadata, 'successCriteria', successCriteria)
     setOptionalUiString(nextUiMetadata, 'constraints', constraints)
+    setOptionalUiString(nextUiMetadata, 'agentProfileImage', profileImage)
 
     const settingsPatch: AiSessionSettingsPatch = {}
     const nextPersona = persona.trim()
     if (nextPersona !== currentPersona) {
       settingsPatch.systemPrompt = nextPersona
+    }
+    if (selectedModel !== '' && selectedModel !== currentModel) {
+      settingsPatch.model = selectedModel
     }
 
     setSaving(true)
@@ -177,69 +224,101 @@ function PurposePage({ session }: { session: RawAiSession }) {
         {saveError && <p className="text-destructive text-sm">{saveError}</p>}
         <div className="space-y-3">
           <div className="text-muted-foreground text-xs">대화 프롬프트</div>
-          <textarea
-            value={purpose}
-            onChange={(event) => {
-              setPurpose(event.target.value)
-              markDirty()
-            }}
-            rows={1}
-            placeholder="예: 이번 대화에서는 3분 발표용 서비스 소개안을 완성한다."
-            aria-label="대화 목표"
-            className="placeholder:text-muted-foreground/45 focus:bg-accent/20 min-h-8 w-full resize-none bg-transparent text-xl leading-8 font-bold outline-none"
-          />
-          <textarea
-            value={persona}
-            onChange={(event) => {
-              setPersona(event.target.value)
-              markDirty()
-            }}
-            rows={3}
-            placeholder="예: PM처럼 질문하고, 근거가 부족하면 먼저 확인하며, 답변은 실행 항목 중심으로 정리한다."
-            aria-label="AI 페르소나"
-            className="text-muted-foreground placeholder:text-muted-foreground/45 focus:bg-accent/20 min-h-20 w-full resize-none bg-transparent text-sm leading-6 outline-none"
-          />
+          <div className="border-border grid overflow-hidden border xl:grid-cols-[minmax(0,4fr)_minmax(240px,3fr)]">
+            <div className="border-border space-y-3 p-4 xl:border-r">
+              <textarea
+                value={purpose}
+                onChange={(event) => {
+                  setPurpose(event.target.value)
+                  markDirty()
+                }}
+                rows={1}
+                placeholder="예: 이번 대화에서는 3분 발표용 서비스 소개안을 완성한다."
+                aria-label="대화 목표"
+                className="placeholder:text-muted-foreground/45 focus:bg-accent/20 min-h-8 w-full resize-none bg-transparent text-xl leading-8 font-bold outline-none"
+              />
+              <textarea
+                value={persona}
+                onChange={(event) => {
+                  setPersona(event.target.value)
+                  markDirty()
+                }}
+                rows={3}
+                placeholder="예: PM처럼 질문하고, 근거가 부족하면 먼저 확인하며, 답변은 실행 항목 중심으로 정리한다."
+                aria-label="AI 페르소나"
+                className="text-muted-foreground placeholder:text-muted-foreground/45 focus:bg-accent/20 min-h-20 w-full resize-none bg-transparent text-sm leading-6 outline-none"
+              />
+            </div>
+            <div className="flex items-start justify-center p-4">
+              <AgentImageSelector
+                profileImage={profileImage}
+                selectedImageIndex={selectedImageIndex}
+                onProfileImageChange={(image) => {
+                  setProfileImage(image)
+                  setSaved(false)
+                }}
+              />
+            </div>
+          </div>
         </div>
 
         <div className="space-y-3">
           <div className="flex items-center justify-start">
-            <span className="text-muted-foreground text-xs">세부 지시</span>
+            <span className="text-muted-foreground text-xs">세부사항</span>
           </div>
-          <div className="border-border border">
-            <PromptEntityRow
-              identifier="이름"
-              title="에이전트 이름"
-              value={agentName}
-              onChange={setAgentName}
-              onDirty={markDirty}
-              placeholder="예: 기획 도우미"
-            />
-            <PromptEntityRow
-              identifier="호칭"
-              title="호칭"
-              value={callName}
-              onChange={setCallName}
-              onDirty={markDirty}
-              placeholder="예: 팀장님, 사용자님"
-            />
-            <PromptEntityRow
-              identifier="완료"
-              title="성공 기준"
-              value={successCriteria}
-              onChange={setSuccessCriteria}
-              onDirty={markDirty}
-              placeholder="예: 최종 답변에 문제 정의, 해결안, 다음 액션 3개가 포함되어야 합니다."
-              multiline
-            />
-            <PromptEntityRow
-              identifier="제약"
-              title="제약"
-              value={constraints}
-              onChange={setConstraints}
-              onDirty={markDirty}
-              placeholder="예: 추측하지 말고 모르는 내용은 확인 질문으로 남겨주세요."
-              multiline
-            />
+          <div className="border-border grid overflow-hidden border xl:grid-cols-[minmax(0,4fr)_minmax(280px,3fr)]">
+            <div className="border-border xl:border-r">
+              <PromptEntityRow
+                identifier="이름"
+                title="에이전트 이름"
+                value={agentName}
+                onChange={setAgentName}
+                onDirty={markDirty}
+                placeholder="예: 기획 도우미"
+              />
+              <PromptEntityRow
+                identifier="호칭"
+                title="호칭"
+                value={callName}
+                onChange={setCallName}
+                onDirty={markDirty}
+                placeholder="예: 팀장님, 사용자님"
+              />
+              <PromptEntityRow
+                identifier="완료"
+                title="성공 기준"
+                value={successCriteria}
+                onChange={setSuccessCriteria}
+                onDirty={markDirty}
+                placeholder="예: 최종 답변에 문제 정의, 해결안, 다음 액션 3개가 포함되어야 합니다."
+                multiline
+              />
+              <PromptEntityRow
+                identifier="제약"
+                title="제약"
+                value={constraints}
+                onChange={setConstraints}
+                onDirty={markDirty}
+                placeholder="예: 추측하지 말고 모르는 내용은 확인 질문으로 남겨주세요."
+                multiline
+              />
+            </div>
+
+            <div className="space-y-4 p-4">
+              <ModelSelector
+                effectiveSelectedFamily={effectiveSelectedFamily}
+                modelFamilies={modelFamilies}
+                modelOptionsError={modelOptionsError}
+                modelOptionsLoading={modelOptionsLoading}
+                onModelSelect={(modelId) => {
+                  setSelectedModel(modelId)
+                  setSaved(false)
+                }}
+                onFamilySelect={setSelectedFamily}
+                selectedModel={selectedModel}
+                visibleModels={visibleModels}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -254,239 +333,124 @@ const AGENT_IMAGE_OPTIONS = [
   { id: 'agent04', label: '개발자', src: '/assets/agents/agent04/idle_front.png' },
 ]
 
-function SettingsPage({ session, sessionId }: { session: RawAiSession | null; sessionId: string }) {
-  const updateSession = useChatStore((state) => state.updateSession)
-  const updateSessionSettings = useChatStore((state) => state.updateSessionSettings)
-  const fetchModelOptions = useChatStore((state) => state.fetchModelOptions)
-  const metadata = useMemo(() => toJsonObject(session?.metadata), [session?.metadata])
-  const uiMetadata = useMemo(() => toJsonObject(metadata.ui), [metadata])
-  const settings = useMemo(() => toJsonObject(session?.settings), [session?.settings])
-  const currentModel = getString(settings, 'model') ?? ''
-  const currentAgentName = getString(uiMetadata, 'agentName') ?? ''
-  const currentAgentTitle = getString(uiMetadata, 'agentTitle') ?? ''
-  const currentProfileImage =
-    getString(uiMetadata, 'agentProfileImage') ?? AGENT_IMAGE_OPTIONS[0].src
-  const [selectedModel, setSelectedModel] = useState(currentModel)
-  const [agentName, setAgentName] = useState(currentAgentName)
-  const [agentTitle, setAgentTitle] = useState(currentAgentTitle)
-  const [profileImage, setProfileImage] = useState(currentProfileImage)
-  const [modelOptionsLoading, setModelOptionsLoading] = useState(true)
-  const [modelOptionsError, setModelOptionsError] = useState<string | null>(null)
-  const [modelOptions, setModelOptions] = useState(getModelOptions(undefined))
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
+function ModelSelector({
+  effectiveSelectedFamily,
+  modelFamilies,
+  modelOptionsError,
+  modelOptionsLoading,
+  onFamilySelect,
+  onModelSelect,
+  selectedModel,
+  visibleModels,
+}: {
+  effectiveSelectedFamily: ModelFamily
+  modelFamilies: Array<{ id: ModelFamily; label: string }>
+  modelOptionsError: string | null
+  modelOptionsLoading: boolean
+  onFamilySelect: (family: ModelFamily) => void
+  onModelSelect: (modelId: string) => void
+  selectedModel: string
+  visibleModels: AiModelOption[]
+}) {
+  return (
+    <section className="space-y-3">
+      <div className="text-muted-foreground text-xs">모델</div>
+      <div className="border-border flex items-center gap-1 border-b">
+        {modelFamilies.map((family) => (
+          <button
+            key={family.id}
+            type="button"
+            onClick={() => onFamilySelect(family.id)}
+            className={`border-b px-3 py-2 text-sm font-medium transition-colors ${
+              effectiveSelectedFamily === family.id
+                ? 'border-foreground text-foreground'
+                : 'text-muted-foreground hover:text-foreground border-transparent'
+            }`}
+          >
+            {family.label}
+          </button>
+        ))}
+        {modelOptionsLoading && (
+          <span className="text-muted-foreground ml-auto inline-flex items-center gap-1.5 text-xs">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            조회 중
+          </span>
+        )}
+      </div>
 
-  const modelGroups = useMemo(() => groupModels(modelOptions), [modelOptions])
-  const [selectedFamily, setSelectedFamily] = useState<ModelFamily>(inferModelFamily(currentModel))
-  const modelFamilies = useMemo(() => getModelFamilies(modelGroups), [modelGroups])
-  const effectiveSelectedFamily = modelFamilies.some((family) => family.id === selectedFamily)
-    ? selectedFamily
-    : (modelFamilies[0]?.id ?? 'gpt')
-  const visibleModels = modelGroups[effectiveSelectedFamily]
-  const selectedImageIndex = Math.max(
-    0,
-    AGENT_IMAGE_OPTIONS.findIndex((option) => option.src === profileImage),
+      {modelOptionsError && (
+        <p className="text-destructive text-sm">{formatServerError(modelOptionsError)}</p>
+      )}
+
+      <div className="border-border max-h-80 overflow-y-auto border">
+        {visibleModels.map((model) => (
+          <button
+            key={`${model.provider ?? 'model'}:${model.id}`}
+            type="button"
+            onClick={() => onModelSelect(model.id)}
+            disabled={modelOptionsLoading || modelOptionsError !== null}
+            className="border-border hover:bg-accent/50 flex w-full items-center gap-3 border-b px-4 py-2 text-left text-sm transition-colors last:border-b-0 disabled:opacity-60"
+          >
+            <span className="text-muted-foreground w-20 shrink-0 text-xs capitalize">
+              {model.provider ?? effectiveSelectedFamily}
+            </span>
+            <span className="min-w-0 flex-1 truncate">{model.label}</span>
+            {selectedModel === model.id && <Check className="h-4 w-4 shrink-0" />}
+          </button>
+        ))}
+        {!modelOptionsLoading && visibleModels.length === 0 && (
+          <p className="text-muted-foreground px-4 py-2 text-sm">선택 가능한 모델이 없습니다.</p>
+        )}
+      </div>
+    </section>
   )
+}
 
-  useEffect(() => {
-    let active = true
-
-    void fetchModelOptions(sessionId)
-      .then((options) => {
-        if (!active) return
-        const nextModels = getModelOptions(options.models)
-        setModelOptions(nextModels)
-        setModelOptionsLoading(false)
-        if (currentModel === '' && typeof options.model === 'string' && options.model.trim()) {
-          setSelectedModel(options.model)
-          setSelectedFamily(inferModelFamily(options.model))
-        }
-      })
-      .catch((error) => {
-        if (!active) return
-        setModelOptionsError(
-          error instanceof Error ? error.message : '모델 목록 조회에 실패했습니다.',
-        )
-        setModelOptionsLoading(false)
-      })
-
-    return () => {
-      active = false
-    }
-  }, [currentModel, fetchModelOptions, sessionId])
-
-  const handleSave = async () => {
-    const nextUiMetadata: JsonObject = { ...uiMetadata }
-    setOptionalUiString(nextUiMetadata, 'agentName', agentName)
-    setOptionalUiString(nextUiMetadata, 'agentTitle', agentTitle)
-    setOptionalUiString(nextUiMetadata, 'agentProfileImage', profileImage)
-
-    const settingsPatch: AiSessionSettingsPatch = {}
-    if (selectedModel !== '' && selectedModel !== currentModel) {
-      settingsPatch.model = selectedModel
-    }
-
-    setSaving(true)
-    setSaved(false)
-    try {
-      if (!shallowJsonEqual(uiMetadata, nextUiMetadata)) {
-        await updateSession({ sessionId, metadataPatch: { ui: nextUiMetadata } })
-      }
-      if (Object.keys(settingsPatch).length > 0) {
-        await updateSessionSettings({ sessionId, settingsPatch })
-      }
-      setSaved(true)
-      window.setTimeout(() => setSaved(false), 1400)
-    } finally {
-      setSaving(false)
-    }
-  }
+function AgentImageSelector({
+  onProfileImageChange,
+  profileImage,
+  selectedImageIndex,
+}: {
+  onProfileImageChange: (image: string) => void
+  profileImage: string
+  selectedImageIndex: number
+}) {
+  const selectedImage = AGENT_IMAGE_OPTIONS[selectedImageIndex]
 
   return (
-    <WorkspacePageShell
-      title="설정"
-      eyebrow="세션 설정"
-      action={
-        <button
-          type="button"
-          onClick={() => void handleSave()}
-          disabled={session === null || saving || modelOptionsError !== null}
-          className="border-border hover:bg-accent/50 inline-flex items-center gap-1.5 border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-60"
-        >
-          {saving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : saved ? (
-            <Check className="h-3.5 w-3.5" />
-          ) : (
-            <Save className="h-3.5 w-3.5" />
-          )}
-          {saved ? '저장됨' : '저장'}
-        </button>
-      }
-    >
-      <div className="space-y-6">
-        <div className="border-border border">
-          <div className="border-border flex items-center gap-3 border-b px-4 py-3">
-            <button
-              type="button"
-              onClick={() => {
-                const nextIndex =
-                  (selectedImageIndex - 1 + AGENT_IMAGE_OPTIONS.length) % AGENT_IMAGE_OPTIONS.length
-                setProfileImage(AGENT_IMAGE_OPTIONS[nextIndex].src)
-                setSaved(false)
-              }}
-              className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-8 w-8 items-center justify-center transition-colors"
-              aria-label="이전 에이전트 이미지"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <div className="bg-muted flex h-28 w-28 shrink-0 items-end justify-center overflow-hidden">
-              <img
-                src={profileImage}
-                alt="팀장 에이전트"
-                className="h-28 w-28 object-contain"
-                draggable={false}
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                const nextIndex = (selectedImageIndex + 1) % AGENT_IMAGE_OPTIONS.length
-                setProfileImage(AGENT_IMAGE_OPTIONS[nextIndex].src)
-                setSaved(false)
-              }}
-              className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-8 w-8 items-center justify-center transition-colors"
-              aria-label="다음 에이전트 이미지"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-            <div className="min-w-0 flex-1">
-              <div className="text-muted-foreground text-xs">팀장 에이전트</div>
-              <div className="mt-1 text-sm font-medium">
-                {AGENT_IMAGE_OPTIONS[selectedImageIndex]?.label ?? '팀장'}
-              </div>
-              <p className="text-muted-foreground mt-1 text-xs">
-                업로드 없이 준비된 모델 이미지를 좌우 버튼으로 선택합니다.
-              </p>
-            </div>
-          </div>
-          <PromptEntityRow
-            identifier="이름"
-            title="에이전트 이름"
-            value={agentName}
-            onChange={(value) => {
-              setAgentName(value)
-              setSaved(false)
-            }}
-            onDirty={() => setSaved(false)}
-            placeholder="예: 팀장 에이전트"
-          />
-          <PromptEntityRow
-            identifier="역할"
-            title="세션 역할"
-            value={agentTitle}
-            onChange={(value) => {
-              setAgentTitle(value)
-              setSaved(false)
-            }}
-            onDirty={() => setSaved(false)}
-            placeholder="예: 대화 목표를 정리하고 하위 에이전트에게 일을 나눕니다."
-            multiline
-          />
-        </div>
-
-        <div className="border-border flex items-center gap-1 border-b">
-          {modelFamilies.map((family) => (
-            <button
-              key={family.id}
-              type="button"
-              onClick={() => setSelectedFamily(family.id)}
-              className={`border-b px-3 py-2 text-sm font-medium transition-colors ${
-                effectiveSelectedFamily === family.id
-                  ? 'border-foreground text-foreground'
-                  : 'text-muted-foreground hover:text-foreground border-transparent'
-              }`}
-            >
-              {family.label}
-            </button>
-          ))}
-          {modelOptionsLoading && (
-            <span className="text-muted-foreground ml-auto inline-flex items-center gap-1.5 text-xs">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              조회 중
-            </span>
-          )}
-        </div>
-
-        {modelOptionsError && (
-          <p className="text-destructive text-sm">{formatServerError(modelOptionsError)}</p>
-        )}
-
-        <div className="border-border border">
-          {visibleModels.map((model) => (
-            <button
-              key={`${model.provider ?? 'model'}:${model.id}`}
-              type="button"
-              onClick={() => {
-                setSelectedModel(model.id)
-                setSaved(false)
-              }}
-              disabled={modelOptionsLoading || modelOptionsError !== null}
-              className="border-border hover:bg-accent/50 flex w-full items-center gap-3 border-b px-4 py-2 text-left text-sm transition-colors last:border-b-0 disabled:opacity-60"
-            >
-              <span className="text-muted-foreground w-28 shrink-0 text-xs capitalize">
-                {model.provider ?? effectiveSelectedFamily}
-              </span>
-              <span className="min-w-0 flex-1 truncate">{model.label}</span>
-              {selectedModel === model.id && <Check className="h-4 w-4 shrink-0" />}
-            </button>
-          ))}
-          {!modelOptionsLoading && visibleModels.length === 0 && (
-            <p className="text-muted-foreground px-4 py-2 text-sm">선택 가능한 모델이 없습니다.</p>
-          )}
-        </div>
+    <div className="flex w-full items-start justify-center gap-3" aria-label="에이전트 이미지">
+      <button
+        type="button"
+        onClick={() => {
+          const nextIndex =
+            (selectedImageIndex - 1 + AGENT_IMAGE_OPTIONS.length) % AGENT_IMAGE_OPTIONS.length
+          onProfileImageChange(AGENT_IMAGE_OPTIONS[nextIndex].src)
+        }}
+        className="text-muted-foreground hover:bg-accent/50 hover:text-foreground mt-12 flex h-8 w-8 shrink-0 items-center justify-center transition-colors"
+        aria-label="이전 에이전트 이미지"
+      >
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+      <div className="bg-muted flex aspect-square w-36 shrink-0 items-end justify-center overflow-hidden">
+        <img
+          src={profileImage}
+          alt={selectedImage?.label ?? '메인 에이전트'}
+          className="h-full w-full object-contain"
+          draggable={false}
+        />
       </div>
-    </WorkspacePageShell>
+      <button
+        type="button"
+        onClick={() => {
+          const nextIndex = (selectedImageIndex + 1) % AGENT_IMAGE_OPTIONS.length
+          onProfileImageChange(AGENT_IMAGE_OPTIONS[nextIndex].src)
+        }}
+        className="text-muted-foreground hover:bg-accent/50 hover:text-foreground mt-12 flex h-8 w-8 shrink-0 items-center justify-center transition-colors"
+        aria-label="다음 에이전트 이미지"
+      >
+        <ChevronRight className="h-4 w-4" />
+      </button>
+    </div>
   )
 }
 
