@@ -21,7 +21,7 @@ export function AdapterSection({
           options={SUB_AGENT_ADAPTER_OPTIONS.map((option) => ({
             value: option.id,
             label: option.label,
-            disabled: 'comingSoon' in option && option.comingSoon,
+            disabled: false,
           }))}
           onChange={(value) => onAdapterTypeChange(value as SubAgentAdapterType)}
         />
@@ -32,14 +32,10 @@ export function AdapterSection({
 
 export function RunPolicySection({
   heartbeatEnabled,
-  intervalSec,
   onHeartbeatEnabledChange,
-  onIntervalSecChange,
 }: {
   heartbeatEnabled: boolean
-  intervalSec: number
   onHeartbeatEnabledChange: (value: boolean) => void
-  onIntervalSecChange: (value: number) => void
 }) {
   return (
     <AgentSectionCard title="실행 규칙">
@@ -64,18 +60,6 @@ export function RunPolicySection({
             />
           </button>
         </div>
-        {heartbeatEnabled && (
-          <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
-            <span>실행 주기</span>
-            <input
-              type="number"
-              className="border-border w-16 rounded-md border bg-transparent px-2 py-0.5 text-center font-mono text-xs outline-none"
-              value={intervalSec}
-              onChange={(event) => onIntervalSecChange(Number(event.target.value) || 0)}
-            />
-            <span>초</span>
-          </div>
-        )}
       </div>
     </AgentSectionCard>
   )

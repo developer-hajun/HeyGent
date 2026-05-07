@@ -21,6 +21,7 @@ export function SessionWorkspaceSidebar() {
   const setSessionWorkspaceCollapsed = useUIStore((state) => state.setSessionWorkspaceCollapsed)
   const setSelectedSessionId = useSessionStore((state) => state.setSelectedSessionId)
   const sessionsById = useChatStore((state) => state.sessionsById)
+  const deleteSession = useChatStore((state) => state.deleteSession)
   const connectionStatus = useAiRealtimeStore((state) => state.connectionStatus)
   const authStatus = useAiRealtimeStore((state) => state.authStatus)
   const realtimeError = useAiRealtimeStore((state) => state.lastError)
@@ -66,6 +67,12 @@ export function SessionWorkspaceSidebar() {
     )
   }
 
+  const handleDeleteSession = async () => {
+    await deleteSession(sessionId)
+    setSelectedSessionId(null)
+    navigate('/new-chat', { replace: true })
+  }
+
   return (
     <SessionWorkspaceMenu
       key={sessionId}
@@ -78,6 +85,7 @@ export function SessionWorkspaceSidebar() {
       activeSubAgentId={activeSubAgentId}
       onCollapsedChange={setSessionWorkspaceCollapsed}
       onCreateSubAgent={handleCreateSubAgent}
+      onDeleteSession={handleDeleteSession}
       onOpenSubAgent={handleOpenSubAgent}
       onSelectPanel={handleSelectPanel}
     />

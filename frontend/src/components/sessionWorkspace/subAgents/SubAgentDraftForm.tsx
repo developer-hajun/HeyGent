@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ChevronDown, ChevronLeft, ChevronRight, Shield } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -7,7 +7,17 @@ import {
   AgentModelDropdown,
   AgentSectionCard,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
+import { useUIStore } from '@/store/useUIStore'
+import { useChatStore } from '@/store/useChatStore'
+import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import type { Agent } from '@/types/agent'
+import {
+  getModelFamilies,
+  getModelOptions,
+  groupModels,
+  inferModelFamily,
+  type ModelFamily,
+} from '../sessionWorkspaceUtils'
 import { AdapterSection, RunPolicySection } from './SubAgentConfigSections'
 import {
   getDefaultCommand,
@@ -55,15 +65,32 @@ export function SubAgentDraftForm({
     initialAgent?.command ?? getDefaultCommand(adapterType),
   )
   const [modelDraft, setModelDraft] = useState(initialAgent?.model ?? getDefaultModel(adapterType))
-  const [extraArgsDraft, setExtraArgsDraft] = useState(initialAgent?.extraArgs ?? '')
+  const [extraArgsDraft] = useState(initialAgent?.extraArgs ?? '')
+  const [selectedFamily, setSelectedFamily] = useState<ModelFamily>(inferModelFamily(modelDraft))
+  const [modelOptionsLoading, setModelOptionsLoading] = useState(false)
+  const [modelOptionsError, setModelOptionsError] = useState<string | null>(null)
+  const [modelOptions, setModelOptions] = useState(getModelOptions(undefined))
   const [heartbeatEnabled, setHeartbeatEnabled] = useState(initialAgent?.heartbeatEnabled ?? false)
-  const [intervalSec, setIntervalSec] = useState(initialAgent?.intervalSec ?? 300)
+  const [intervalSec] = useState(initialAgent?.intervalSec ?? 300)
   const [spriteId, setSpriteId] = useState<SubAgentSpriteId>(
     normalizeSubAgentSpriteId(initialAgent?.spriteId),
   )
   const [roleOpen, setRoleOpen] = useState(false)
-  const [revisionsOpen, setRevisionsOpen] = useState(false)
+  const setSettingsOpen = useUIStore((state) => state.setSettingsOpen)
+  const fetchModelOptions = useChatStore((state) => state.fetchModelOptions)
+  const authenticatedReady = useAiRealtimeStore((state) => state.authenticatedReady)
   const profileImage = getSubAgentImageBySpriteId(spriteId).src
+  const modelGroups = useMemo(() => groupModels(modelOptions), [modelOptions])
+  const modelFamilies = useMemo(() => getModelFamilies(modelGroups), [modelGroups])
+  const effectiveSelectedFamily = modelFamilies.some((family) => family.id === selectedFamily)
+    ? selectedFamily
+    : (modelFamilies[0]?.id ?? 'gpt')
+  const visibleModels = modelGroups[effectiveSelectedFamily]
+  const visibleModelOptions = visibleModels.map((model) => ({
+    value: model.id,
+    label: model.label,
+    description: model.provider ?? effectiveSelectedFamily,
+  }))
   const selectedSpriteIndex = Math.max(
     0,
     SUB_AGENT_PROFILE_IMAGE_OPTIONS.findIndex((option) => option.id === spriteId),
@@ -74,6 +101,33 @@ export function SubAgentDraftForm({
     (name) => name.trim().toLowerCase() === trimmedName.toLowerCase(),
   )
   const canSave = trimmedName !== '' && !duplicateName
+
+  useEffect(() => {
+    if (!authenticatedReady) {
+      return
+    }
+
+    let active = true
+
+    void fetchModelOptions()
+      .then((options) => {
+        if (!active) return
+        const nextModels = getModelOptions(options.models)
+        setModelOptions(nextModels)
+        setModelOptionsLoading(false)
+      })
+      .catch((error) => {
+        if (!active) return
+        setModelOptionsError(
+          error instanceof Error ? error.message : '모델 목록 조회에 실패했습니다.',
+        )
+        setModelOptionsLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [authenticatedReady, fetchModelOptions])
 
   const handleSave = () => {
     if (!canSave) return
@@ -208,76 +262,53 @@ export function SubAgentDraftForm({
             onAdapterTypeChange={(nextAdapterType) => {
               setAdapterType(nextAdapterType)
               setCommandDraft(getDefaultCommand(nextAdapterType))
-              setModelDraft(getDefaultModel(nextAdapterType))
+              const nextModel = getDefaultModel(nextAdapterType)
+              setModelDraft(nextModel)
+              setSelectedFamily(inferModelFamily(nextModel))
             }}
           />
 
-          <AgentSectionCard title="모델과 권한">
-            <Field label="실행 명령">
-              <input
-                value={commandDraft}
-                onChange={(event) => setCommandDraft(event.target.value)}
-                className={inputClass}
-                placeholder={getDefaultCommand(adapterType)}
-              />
-            </Field>
+          <AgentSectionCard title="모델">
             <Field label="모델">
-              <AgentModelDropdown
-                value={modelDraft}
-                options={[getDefaultModel(adapterType), modelDraft]
-                  .filter(
-                    (item, index, array) => item.trim() !== '' && array.indexOf(item) === index,
-                  )
-                  .map((item) => ({ value: item, label: item }))}
-                onChange={setModelDraft}
-                allowDefault={false}
-                placeholder={getDefaultModel(adapterType)}
-              />
-            </Field>
-            <Field label="추가 인자">
-              <input
-                value={extraArgsDraft}
-                onChange={(event) => setExtraArgsDraft(event.target.value)}
-                className={inputClass}
-                placeholder="예: --verbose, --foo=bar"
-              />
+              {authenticatedReady && modelOptionsLoading && (
+                <span className="text-muted-foreground mb-1 inline-flex items-center gap-1.5 text-xs">
+                  조회 중
+                </span>
+              )}
+              {authenticatedReady && modelOptionsError ? (
+                <p className="text-destructive text-sm">{modelOptionsError}</p>
+              ) : (
+                <AgentModelDropdown
+                  value={modelDraft}
+                  options={visibleModelOptions}
+                  onChange={(modelId) => {
+                    setModelDraft(modelId)
+                    setSelectedFamily(inferModelFamily(modelId))
+                  }}
+                  allowDefault
+                  placeholder={getDefaultModel(adapterType)}
+                />
+              )}
             </Field>
           </AgentSectionCard>
 
           <RunPolicySection
             heartbeatEnabled={heartbeatEnabled}
-            intervalSec={intervalSec}
             onHeartbeatEnabledChange={setHeartbeatEnabled}
-            onIntervalSecChange={setIntervalSec}
           />
 
-          <div className="space-y-3">
-            <h3 className="text-sm font-medium">API 키</h3>
-            <div className="border-border rounded-lg border p-4">
-              <p className="text-muted-foreground text-sm">
-                API 키는 전역 설정의 제공자 연결에서 관리합니다.
-              </p>
+          <AgentSectionCard title="API 키">
+            <div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setSettingsOpen(true, 'apiKeys')}
+              >
+                API 키 설정 열기
+              </Button>
             </div>
-          </div>
-
-          <div>
-            <button
-              type="button"
-              className="hover:text-foreground flex items-center gap-2 text-sm font-medium transition-colors"
-              onClick={() => setRevisionsOpen((open) => !open)}
-            >
-              {revisionsOpen ? (
-                <ChevronDown className="text-muted-foreground h-3.5 w-3.5" />
-              ) : (
-                <ChevronRight className="text-muted-foreground h-3.5 w-3.5" />
-              )}
-              설정 변경 기록
-              <span className="text-muted-foreground text-xs font-normal">0</span>
-            </button>
-            {revisionsOpen && (
-              <p className="text-muted-foreground mt-3 text-sm">아직 설정 변경 기록이 없습니다.</p>
-            )}
-          </div>
+          </AgentSectionCard>
         </div>
       </div>
 

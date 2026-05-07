@@ -6,9 +6,10 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
-  FileText,
   FolderOpen,
   Loader2,
+  MoreHorizontal,
+  Pause,
   Play,
   Plus,
   Trash2,
@@ -79,16 +80,12 @@ export interface AgentSelectOption {
 
 export function AgentDetailHeader({
   name,
-  onInstructions,
-  onRuns,
   profile,
   savedIndicator,
   status,
   subtitle,
 }: {
   name: string
-  onInstructions: () => void
-  onRuns: () => void
   profile: ReactNode
   savedIndicator?: ReactNode
   status: string
@@ -107,17 +104,24 @@ export function AgentDetailHeader({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-        <Button variant="outline" size="sm" onClick={onInstructions}>
-          <FileText className="h-3.5 w-3.5 sm:mr-1" />
-          <span className="hidden sm:inline">지침</span>
+        <Button variant="outline" size="sm" disabled title="작업 배정 기능은 준비 중입니다.">
+          <Plus className="h-3.5 w-3.5 sm:mr-1" />
+          <span className="hidden sm:inline">작업 배정</span>
         </Button>
-        <Button variant="outline" size="sm" onClick={onRuns}>
+        <Button variant="outline" size="sm" disabled title="직접 실행 기능은 준비 중입니다.">
           <Play className="h-3.5 w-3.5 sm:mr-1" />
-          <span className="hidden sm:inline">실행 기록</span>
+          <span className="hidden sm:inline">하트비트 실행</span>
+        </Button>
+        <Button variant="outline" size="sm" disabled title="일시정지 기능은 준비 중입니다.">
+          <Pause className="h-3.5 w-3.5 sm:mr-1" />
+          <span className="hidden sm:inline">일시정지</span>
         </Button>
         <span className="border-border bg-muted/40 hidden rounded-full border px-2 py-0.5 text-xs sm:inline">
           {status}
         </span>
+        <Button variant="ghost" size="icon-xs" disabled title="추가 작업은 준비 중입니다.">
+          <MoreHorizontal className="h-4 w-4" />
+        </Button>
       </div>
     </div>
   )
@@ -228,6 +232,7 @@ export function AgentConfigurationPanel({ children }: { children: ReactNode }) {
 }
 
 export function AgentInstructionsBundlePanel({
+  compact = false,
   content,
   entryFile,
   files = {},
@@ -239,6 +244,7 @@ export function AgentInstructionsBundlePanel({
   onModeChange,
   onRootPathChange,
 }: {
+  compact?: boolean
   content: string
   entryFile: string
   files?: Record<string, string>
@@ -297,7 +303,7 @@ export function AgentInstructionsBundlePanel({
   }
 
   return (
-    <div className="space-y-6">
+    <div className={compact ? 'space-y-4' : 'space-y-6'}>
       <div>
         <button
           type="button"
@@ -310,7 +316,11 @@ export function AgentInstructionsBundlePanel({
           고급 설정
         </button>
         {advancedOpen && (
-          <div className="grid gap-x-6 gap-y-4 pt-4 pb-6 md:grid-cols-[auto_minmax(0,1fr)_minmax(12rem,0.65fr)]">
+          <div
+            className={`grid gap-x-6 gap-y-4 md:grid-cols-[auto_minmax(0,1fr)_minmax(12rem,0.65fr)] ${
+              compact ? 'pt-3 pb-4' : 'pt-4 pb-6'
+            }`}
+          >
             <label className="min-w-0 space-y-1.5">
               <span className="text-muted-foreground text-xs font-medium">관리 방식</span>
               <div className="flex gap-2">
@@ -371,9 +381,13 @@ export function AgentInstructionsBundlePanel({
         )}
       </div>
 
-      <div className="grid min-w-0 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+      <div
+        className={`grid min-w-0 gap-3 ${
+          compact ? 'lg:grid-cols-[220px_minmax(0,1fr)]' : 'lg:grid-cols-[260px_minmax(0,1fr)]'
+        }`}
+      >
         <div
-          className={`border-border min-w-0 rounded-lg border p-3 ${
+          className={`border-border min-w-0 rounded-lg border ${compact ? 'p-2.5' : 'p-3'} ${
             showFilesMobile ? 'block' : 'hidden lg:block'
           }`}
         >
@@ -459,7 +473,11 @@ export function AgentInstructionsBundlePanel({
           </div>
         </div>
 
-        <div className="border-border min-w-0 overflow-hidden rounded-lg border p-4">
+        <div
+          className={`border-border min-w-0 overflow-hidden rounded-lg border ${
+            compact ? 'p-3' : 'p-4'
+          }`}
+        >
           <div className="mb-3 flex items-center justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
               <Button
@@ -489,7 +507,9 @@ export function AgentInstructionsBundlePanel({
           <textarea
             value={selectedContent}
             onChange={(event) => updateSelectedContent(event.target.value)}
-            className={`${agentTextInputClass} min-h-[420px] resize-y leading-6 whitespace-pre-wrap`}
+            className={`${agentTextInputClass} ${
+              compact ? 'min-h-[300px] resize-none' : 'min-h-[420px] resize-y'
+            } leading-6 whitespace-pre-wrap`}
             placeholder="# Agent instructions"
           />
         </div>

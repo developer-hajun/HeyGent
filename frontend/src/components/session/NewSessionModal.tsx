@@ -8,6 +8,8 @@ import {
   AgentModelDropdown,
   AgentSectionCard,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
+import { Button } from '@/components/ui/button'
+import { useUIStore } from '@/store/useUIStore'
 
 export interface CustomAgentConfig {
   agentName: string
@@ -18,7 +20,7 @@ export interface CustomAgentConfig {
   model: string
   delegationPolicy: {
     canDelegate: boolean
-    maxWorkerDepth: number
+    maxWorkerDepth?: number
   }
   instructionsEntryFile: string
   instructionsMode: 'managed' | 'external'
@@ -33,9 +35,12 @@ interface NewSessionModalProps {
 }
 
 type ModalView = 'select' | 'customize'
+type CustomizeStep = 'settings' | 'instructions'
 
 export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionModalProps) {
+  const setSettingsOpen = useUIStore((state) => state.setSettingsOpen)
   const [view, setView] = useState<ModalView>('select')
+  const [customizeStep, setCustomizeStep] = useState<CustomizeStep>('settings')
   const [agentName, setAgentName] = useState('')
   const [persona, setPersona] = useState('')
   const [callName, setCallName] = useState('')
@@ -47,7 +52,6 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
   const [instructionsFiles, setInstructionsFiles] = useState<Record<string, string>>({})
   const [model, setModel] = useState('gpt-5.4')
   const [canDelegate, setCanDelegate] = useState(false)
-  const [maxWorkerDepth, setMaxWorkerDepth] = useState(0)
   const selectedImageIndex = Math.max(
     0,
     CEO_IMAGE_OPTIONS.findIndex((option) => option.src === profileImage),
@@ -58,6 +62,7 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
     // 닫을 때 상태 초기화 (애니메이션 후)
     setTimeout(() => {
       setView('select')
+      setCustomizeStep('settings')
       setAgentName('')
       setPersona('')
       setCallName('')
@@ -69,7 +74,6 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
       setInstructionsFiles({})
       setModel('gpt-5.4')
       setCanDelegate(false)
-      setMaxWorkerDepth(0)
     }, 200)
   }
 
@@ -81,7 +85,7 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
       capabilities,
       profileImage,
       model,
-      delegationPolicy: { canDelegate, maxWorkerDepth },
+      delegationPolicy: { canDelegate },
       instructionsEntryFile,
       instructionsMode,
       instructionsRootPath,
@@ -89,6 +93,7 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
     })
     setTimeout(() => {
       setView('select')
+      setCustomizeStep('settings')
       setAgentName('')
       setPersona('')
       setCallName('')
@@ -100,14 +105,13 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
       setInstructionsFiles({})
       setModel('gpt-5.4')
       setCanDelegate(false)
-      setMaxWorkerDepth(0)
     }, 200)
   }
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent
-        className="max-h-[88vh] w-[860px] max-w-[calc(100vw-24px)] gap-0 overflow-hidden p-0 [&>button]:hidden"
+        className="max-h-[calc(100vh-24px)] w-[920px] max-w-[calc(100vw-24px)] gap-0 overflow-hidden p-0 [&>button]:hidden"
         aria-describedby="new-session-description"
       >
         <DialogTitle className="sr-only">새 대화 시작</DialogTitle>
@@ -158,7 +162,10 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
 
                 {/* 에이전트 커스터마이징 */}
                 <button
-                  onClick={() => setView('customize')}
+                  onClick={() => {
+                    setCustomizeStep('settings')
+                    setView('customize')
+                  }}
                   className="border-border group flex w-full items-start gap-4 rounded-xl border p-4 text-left transition-all duration-150 hover:border-violet-300 hover:bg-violet-50/50"
                 >
                   <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-violet-100 transition-colors group-hover:bg-violet-200/70">
@@ -184,7 +191,13 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
               {/* Header */}
               <div className="border-border flex items-center gap-3 border-b px-6 py-4">
                 <button
-                  onClick={() => setView('select')}
+                  onClick={() => {
+                    if (customizeStep === 'instructions') {
+                      setCustomizeStep('settings')
+                      return
+                    }
+                    setView('select')
+                  }}
                   className="text-muted-foreground hover:text-foreground hover:bg-muted flex h-7 w-7 items-center justify-center rounded-md transition-colors"
                 >
                   <ChevronLeft className="h-4 w-4" />
@@ -192,7 +205,9 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                 <div className="flex-1">
                   <h2 className="text-foreground text-base font-semibold">에이전트 커스터마이징</h2>
                   <p className="text-muted-foreground mt-0.5 text-xs">
-                    새 대화에 사용할 표시용 설정을 입력합니다
+                    {customizeStep === 'settings'
+                      ? '새 대화에 사용할 기본 설정을 입력합니다'
+                      : '에이전트가 따를 지침을 입력합니다'}
                   </p>
                 </div>
                 <button
@@ -203,180 +218,186 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                 </button>
               </div>
 
-              <div className="max-h-[calc(88vh-137px)] space-y-6 overflow-y-auto px-6 py-5">
-                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,0.82fr)]">
-                  <div className="space-y-4">
-                    <AgentSectionCard title="프로필">
-                      <div className="grid gap-4 sm:grid-cols-[14rem_minmax(0,1fr)]">
-                        <AgentImageStepper
-                          profileImage={profileImage}
-                          selectedImageIndex={selectedImageIndex}
-                          onProfileImageChange={setProfileImage}
-                        />
-                        <div className="space-y-3">
-                          <Field label="이름">
+              <div className="space-y-4 px-5 py-4">
+                {customizeStep === 'settings' ? (
+                  <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.78fr)]">
+                    <div className="space-y-3">
+                      <AgentSectionCard title="프로필">
+                        <div className="grid gap-3 sm:grid-cols-[13rem_minmax(0,1fr)]">
+                          <AgentImageStepper
+                            profileImage={profileImage}
+                            selectedImageIndex={selectedImageIndex}
+                            onProfileImageChange={setProfileImage}
+                          />
+                          <div className="space-y-2.5">
+                            <Field label="이름">
+                              <input
+                                type="text"
+                                value={agentName}
+                                onChange={(event) => setAgentName(event.target.value)}
+                                placeholder="에이전트 이름"
+                                className={inputClass}
+                              />
+                            </Field>
+                            <Field label="호칭">
+                              <input
+                                type="text"
+                                value={callName}
+                                onChange={(event) => setCallName(event.target.value)}
+                                placeholder="CEO"
+                                className={inputClass}
+                              />
+                            </Field>
+                            <Field label="할 수 있는 일">
+                              <textarea
+                                value={capabilities}
+                                onChange={(event) => setCapabilities(event.target.value)}
+                                rows={2}
+                                placeholder="이 에이전트가 할 수 있는 일을 적어주세요."
+                                className={`${inputClass} resize-none leading-6`}
+                              />
+                            </Field>
+                          </div>
+                        </div>
+                      </AgentSectionCard>
+
+                      <AgentSectionCard title="실행 환경">
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          <Field label="기본 환경">
+                            <select
+                              className={`${inputClass} cursor-not-allowed opacity-70`}
+                              disabled
+                            >
+                              <option>회사 기본값 (로컬)</option>
+                            </select>
+                          </Field>
+                          <Field label="역할">
                             <input
-                              type="text"
-                              value={agentName}
-                              onChange={(event) => setAgentName(event.target.value)}
-                              placeholder="에이전트 이름"
-                              className={inputClass}
+                              className={`${inputClass} opacity-70`}
+                              value="CEO"
+                              disabled
+                              readOnly
                             />
                           </Field>
-                          <Field label="호칭">
+                          <Field label="상위 에이전트">
                             <input
-                              type="text"
-                              value={callName}
-                              onChange={(event) => setCallName(event.target.value)}
-                              placeholder="CEO"
-                              className={inputClass}
-                            />
-                          </Field>
-                          <Field label="할 수 있는 일">
-                            <textarea
-                              value={capabilities}
-                              onChange={(event) => setCapabilities(event.target.value)}
-                              rows={3}
-                              placeholder="이 에이전트가 할 수 있는 일을 적어주세요."
-                              className={`${inputClass} resize-y leading-6`}
+                              className={`${inputClass} opacity-70`}
+                              value="Root"
+                              disabled
+                              readOnly
                             />
                           </Field>
                         </div>
-                      </div>
-                    </AgentSectionCard>
-
-                    <AgentSectionCard title="실행 환경">
-                      <div className="grid gap-3 sm:grid-cols-3">
-                        <Field label="기본 환경">
-                          <select
-                            className={`${inputClass} cursor-not-allowed opacity-70`}
-                            disabled
-                          >
-                            <option>회사 기본값 (로컬)</option>
-                          </select>
-                        </Field>
-                        <Field label="역할">
-                          <input
-                            className={`${inputClass} opacity-70`}
-                            value="CEO"
-                            disabled
-                            readOnly
-                          />
-                        </Field>
-                        <Field label="상위 에이전트">
-                          <input
-                            className={`${inputClass} opacity-70`}
-                            value="Root"
-                            disabled
-                            readOnly
-                          />
-                        </Field>
-                      </div>
-                    </AgentSectionCard>
-                  </div>
-
-                  <div className="space-y-4">
-                    <AgentSectionCard title="연결 방식">
-                      <Field label="연결 방식">
-                        <AgentAdapterTypeDropdown
-                          value="gpt"
-                          options={[{ value: 'gpt', label: 'OpenAI API' }]}
-                          onChange={() => undefined}
-                        />
-                      </Field>
-                    </AgentSectionCard>
-
-                    <AgentSectionCard title="모델과 권한">
-                      <Field label="모델">
-                        <AgentModelDropdown
-                          value={model}
-                          options={[{ value: 'gpt-5.4', label: 'gpt-5.4' }]}
-                          onChange={setModel}
-                          allowDefault
-                        />
-                      </Field>
-                    </AgentSectionCard>
-
-                    <AgentSectionCard title="실행 규칙">
-                      <label className="border-border hover:bg-accent/40 flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={canDelegate}
-                          onChange={(event) => {
-                            const checked = event.target.checked
-                            setCanDelegate(checked)
-                            if (!checked) setMaxWorkerDepth(0)
-                          }}
-                          className="border-border mt-0.5 h-4 w-4 rounded"
-                        />
-                        <span className="min-w-0">
-                          <span className="block text-sm font-medium">필요할 때 실행 허용</span>
-                          <span className="text-muted-foreground mt-0.5 block text-xs leading-5">
-                            세션 안에서 필요한 작업을 다른 에이전트에게 맡길 수 있습니다.
-                          </span>
-                        </span>
-                      </label>
-                      {canDelegate && (
-                        <Field label="동시 실행 수">
-                          <select
-                            className={inputClass}
-                            value={maxWorkerDepth}
-                            onChange={(event) => setMaxWorkerDepth(Number(event.target.value))}
-                          >
-                            <option value={0}>0</option>
-                            <option value={1}>1</option>
-                          </select>
-                        </Field>
-                      )}
-                    </AgentSectionCard>
+                      </AgentSectionCard>
+                    </div>
 
                     <div className="space-y-3">
-                      <h3 className="text-sm font-medium">API 키</h3>
-                      <div className="border-border rounded-lg border p-4">
-                        <p className="text-muted-foreground text-sm">
-                          API 키는 전역 설정의 제공자 연결에서 관리합니다.
-                        </p>
-                      </div>
-                    </div>
+                      <AgentSectionCard title="연결 방식">
+                        <Field label="연결 방식">
+                          <AgentAdapterTypeDropdown
+                            value="gpt"
+                            options={[{ value: 'gpt', label: 'OpenAI API' }]}
+                            onChange={() => undefined}
+                          />
+                        </Field>
+                      </AgentSectionCard>
 
-                    <div className="text-muted-foreground text-sm">
-                      설정 변경 기록은 대화를 만든 뒤 표시됩니다.
+                      <AgentSectionCard title="모델">
+                        <Field label="모델">
+                          <AgentModelDropdown
+                            value={model}
+                            options={[{ value: 'gpt-5.4', label: 'gpt-5.4' }]}
+                            onChange={setModel}
+                            allowDefault
+                          />
+                        </Field>
+                      </AgentSectionCard>
+
+                      <AgentSectionCard title="실행 규칙">
+                        <label className="border-border hover:bg-accent/40 flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={canDelegate}
+                            onChange={(event) => setCanDelegate(event.target.checked)}
+                            className="border-border mt-0.5 h-4 w-4 rounded"
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-medium">
+                              서브에이전트 호출 허용
+                            </span>
+                            <span className="text-muted-foreground mt-0.5 block text-xs leading-5">
+                              세션 안에서 필요한 서브에이전트를 호출할 수 있습니다.
+                            </span>
+                          </span>
+                        </label>
+                      </AgentSectionCard>
+
+                      <AgentSectionCard title="API 키">
+                        <div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setSettingsOpen(true, 'apiKeys')}
+                          >
+                            API 키 설정 열기
+                          </Button>
+                        </div>
+                      </AgentSectionCard>
                     </div>
                   </div>
-                </div>
-
-                <AgentSectionCard title="지침">
-                  <AgentInstructionsBundlePanel
-                    content={persona}
-                    entryFile={instructionsEntryFile}
-                    files={instructionsFiles}
-                    mode={instructionsMode}
-                    rootPath={instructionsRootPath}
-                    onContentChange={setPersona}
-                    onEntryFileChange={setInstructionsEntryFile}
-                    onFilesChange={setInstructionsFiles}
-                    onModeChange={setInstructionsMode}
-                    onRootPathChange={setInstructionsRootPath}
-                  />
-                </AgentSectionCard>
+                ) : (
+                  <AgentSectionCard title="지침">
+                    <AgentInstructionsBundlePanel
+                      compact
+                      content={persona}
+                      entryFile={instructionsEntryFile}
+                      files={instructionsFiles}
+                      mode={instructionsMode}
+                      rootPath={instructionsRootPath}
+                      onContentChange={setPersona}
+                      onEntryFileChange={setInstructionsEntryFile}
+                      onFilesChange={setInstructionsFiles}
+                      onModeChange={setInstructionsMode}
+                      onRootPathChange={setInstructionsRootPath}
+                    />
+                  </AgentSectionCard>
+                )}
               </div>
 
               {/* Footer */}
               <div className="border-border flex gap-2 border-t px-6 py-4">
                 <button
-                  onClick={() => setView('select')}
+                  onClick={() => {
+                    if (customizeStep === 'instructions') {
+                      setCustomizeStep('settings')
+                      return
+                    }
+                    setView('select')
+                  }}
                   className="bg-muted text-foreground hover:bg-muted/80 flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
                 >
                   이전
                 </button>
-                <button
-                  onClick={handleCustomizeConfirm}
-                  disabled={!agentName.trim()}
-                  className="bg-primary hover:bg-primary/90 flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-40"
-                >
-                  <Sparkles className="h-3.5 w-3.5" />
-                  설정 완료
-                </button>
+                {customizeStep === 'settings' ? (
+                  <button
+                    onClick={() => setCustomizeStep('instructions')}
+                    disabled={!agentName.trim()}
+                    className="bg-primary hover:bg-primary/90 flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-40"
+                  >
+                    다음
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleCustomizeConfirm}
+                    disabled={!agentName.trim()}
+                    className="bg-primary hover:bg-primary/90 flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-40"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    설정 완료
+                  </button>
+                )}
               </div>
             </motion.div>
           )}

@@ -35,6 +35,7 @@ import { AgentStatusPage } from '@/pages/AgentStatusPage'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
+import { useUIStore } from '@/store/useUIStore'
 import type { JsonObject, RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
 import type { AiSessionSettingsPatch, ChatMessageView, RawAiSession } from '@/types/aiChat'
 import type { RawTaskRun } from '@/types/taskRuns'
@@ -124,13 +125,8 @@ function PurposePage({ session }: { session: RawAiSession }) {
     getString(uiMetadata, 'instructionsMode') === 'external' ? 'external' : 'managed'
   const currentInstructionsRootPath = getString(uiMetadata, 'instructionsRootPath') ?? ''
   const currentModel = getString(settings, 'model') ?? ''
-  const currentToolsets = normalizeToolsets(settings.toolsets)
   const currentDelegationPolicy = toJsonObject(settings.delegationPolicy)
   const currentCanDelegate = currentDelegationPolicy.canDelegate === true
-  const currentMaxWorkerDepth =
-    typeof currentDelegationPolicy.maxWorkerDepth === 'number'
-      ? Math.min(1, Math.max(0, Math.floor(currentDelegationPolicy.maxWorkerDepth)))
-      : 0
   const currentProfileImage = normalizeAgentProfileImage(
     getString(uiMetadata, 'agentProfileImage') ?? undefined,
   )
@@ -146,11 +142,9 @@ function PurposePage({ session }: { session: RawAiSession }) {
   )
   const [instructionsRootPath, setInstructionsRootPath] = useState(currentInstructionsRootPath)
   const [selectedModel, setSelectedModel] = useState(currentModel)
-  const [selectedToolsets, setSelectedToolsets] = useState<string[]>(currentToolsets)
   const [canDelegate, setCanDelegate] = useState(currentCanDelegate)
-  const [maxWorkerDepth, setMaxWorkerDepth] = useState(currentMaxWorkerDepth)
   const [profileImage, setProfileImage] = useState(currentProfileImage)
-  const [modelOptionsLoading, setModelOptionsLoading] = useState(true)
+  const [modelOptionsLoading, setModelOptionsLoading] = useState(authenticatedReady)
   const [modelOptionsError, setModelOptionsError] = useState<string | null>(null)
   const [modelOptions, setModelOptions] = useState(getModelOptions(undefined))
   const [selectedFamily, setSelectedFamily] = useState<ModelFamily>(inferModelFamily(currentModel))
@@ -158,7 +152,7 @@ function PurposePage({ session }: { session: RawAiSession }) {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
-  const [configRevisionsOpen, setConfigRevisionsOpen] = useState(false)
+  const setSettingsOpen = useUIStore((state) => state.setSettingsOpen)
 
   const modelGroups = useMemo(() => groupModels(modelOptions), [modelOptions])
   const modelFamilies = useMemo(() => getModelFamilies(modelGroups), [modelGroups])
@@ -190,9 +184,7 @@ function PurposePage({ session }: { session: RawAiSession }) {
     instructionsRootPath.trim() !== currentInstructionsRootPath ||
     selectedModel !== modelBaseline ||
     profileImage !== currentProfileImage ||
-    !stringArraysEqual(selectedToolsets, currentToolsets) ||
-    canDelegate !== currentCanDelegate ||
-    maxWorkerDepth !== currentMaxWorkerDepth
+    canDelegate !== currentCanDelegate
   const showConfigActionBar =
     (activeTab === 'configuration' || activeTab === 'instructions') && (isDirty || saving)
   const sessionRuns = useMemo(
@@ -217,6 +209,10 @@ function PurposePage({ session }: { session: RawAiSession }) {
   }, [authenticatedReady, commandClient, fetchActiveTaskRuns, fetchMessages, sessionId])
 
   useEffect(() => {
+    if (!authenticatedReady || commandClient === null) {
+      return
+    }
+
     let active = true
 
     void fetchModelOptions(sessionId)
@@ -242,7 +238,7 @@ function PurposePage({ session }: { session: RawAiSession }) {
     return () => {
       active = false
     }
-  }, [currentModel, fetchModelOptions, sessionId])
+  }, [authenticatedReady, commandClient, currentModel, fetchModelOptions, sessionId])
 
   useEffect(() => {
     if (!isDirty) return
@@ -283,9 +279,7 @@ function PurposePage({ session }: { session: RawAiSession }) {
     setInstructionsRootPath(currentInstructionsRootPath)
     setSelectedModel(modelBaseline)
     setSelectedFamily(inferModelFamily(modelBaseline))
-    setSelectedToolsets(currentToolsets)
     setCanDelegate(currentCanDelegate)
-    setMaxWorkerDepth(currentMaxWorkerDepth)
     setProfileImage(currentProfileImage)
     setSaveError(null)
     setSaved(false)
@@ -319,11 +313,8 @@ function PurposePage({ session }: { session: RawAiSession }) {
     if (selectedModel !== '' && selectedModel !== modelBaseline) {
       settingsPatch.model = selectedModel
     }
-    if (!stringArraysEqual(selectedToolsets, currentToolsets)) {
-      settingsPatch.toolsets = selectedToolsets
-    }
-    if (canDelegate !== currentCanDelegate || maxWorkerDepth !== currentMaxWorkerDepth) {
-      settingsPatch.delegationPolicy = { canDelegate, maxWorkerDepth }
+    if (canDelegate !== currentCanDelegate) {
+      settingsPatch.delegationPolicy = { canDelegate }
     }
 
     setSaving(true)
@@ -361,8 +352,6 @@ function PurposePage({ session }: { session: RawAiSession }) {
         <MainAgentHeader
           callName={displayRole}
           onConfigure={() => selectTab('configuration')}
-          onInstructions={() => selectTab('instructions')}
-          onRuns={() => selectTab('runs')}
           model={selectedModel}
           name={displayName}
           profileImage={profileImage}
@@ -561,15 +550,15 @@ function PurposePage({ session }: { session: RawAiSession }) {
                     onFamilySelect={setSelectedFamily}
                   />
                 </AgentSectionCard>
-                <AgentSectionCard title="모델과 권한">
+                <AgentSectionCard title="모델">
                   <Field label="모델">
-                    {modelOptionsLoading && (
+                    {authenticatedReady && modelOptionsLoading && (
                       <span className="text-muted-foreground mb-1 inline-flex items-center gap-1.5 text-xs">
                         <Loader2 className="h-3 w-3 animate-spin" />
                         조회 중
                       </span>
                     )}
-                    {modelOptionsError ? (
+                    {authenticatedReady && modelOptionsError ? (
                       <p className="text-destructive text-sm">
                         {formatServerError(modelOptionsError)}
                       </p>
@@ -585,80 +574,30 @@ function PurposePage({ session }: { session: RawAiSession }) {
                       />
                     )}
                   </Field>
-                  <div className="grid gap-2">
-                    {PUBLIC_TOOLSET_OPTIONS.map((toolset) => (
-                      <ToggleRow
-                        key={toolset.id}
-                        checked={selectedToolsets.includes(toolset.id)}
-                        description={toolset.description}
-                        label={toolset.label}
-                        onChange={(checked) => {
-                          setSelectedToolsets((current) =>
-                            checked
-                              ? [...current, toolset.id]
-                              : current.filter((item) => item !== toolset.id),
-                          )
-                          markDirty()
-                        }}
-                      />
-                    ))}
-                  </div>
                 </AgentSectionCard>
                 <AgentSectionCard title="실행 규칙">
                   <ToggleRow
                     checked={canDelegate}
-                    description="승인된 범위 안에서 서브 작업을 맡길 수 있게 합니다."
-                    label="필요할 때 실행 허용"
+                    description="세션 안에서 필요한 서브에이전트를 호출할 수 있습니다."
+                    label="서브에이전트 호출 허용"
                     onChange={(checked) => {
                       setCanDelegate(checked)
-                      if (!checked) setMaxWorkerDepth(0)
                       markDirty()
                     }}
                   />
-                  {canDelegate && (
-                    <Field label="동시 실행 수">
-                      <select
-                        className={inputClass}
-                        value={maxWorkerDepth}
-                        onChange={(event) => {
-                          setMaxWorkerDepth(Number(event.target.value))
-                          markDirty()
-                        }}
-                      >
-                        <option value={0}>0</option>
-                        <option value={1}>1</option>
-                      </select>
-                    </Field>
-                  )}
                 </AgentSectionCard>
-                <div className="space-y-3">
-                  <h3 className="text-sm font-medium">API 키</h3>
-                  <div className="border-border rounded-lg border p-4">
-                    <p className="text-muted-foreground text-sm">
-                      API 키는 전역 설정의 제공자 연결에서 관리합니다.
-                    </p>
+                <AgentSectionCard title="API 키">
+                  <div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSettingsOpen(true, 'apiKeys')}
+                    >
+                      API 키 설정 열기
+                    </Button>
                   </div>
-                </div>
-                <div>
-                  <button
-                    type="button"
-                    className="hover:text-foreground flex items-center gap-2 text-sm font-medium transition-colors"
-                    onClick={() => setConfigRevisionsOpen((open) => !open)}
-                  >
-                    {configRevisionsOpen ? (
-                      <ChevronLeft className="text-muted-foreground h-3.5 w-3.5 -rotate-90" />
-                    ) : (
-                      <ChevronRight className="text-muted-foreground h-3.5 w-3.5" />
-                    )}
-                    설정 변경 기록
-                    <span className="text-muted-foreground text-xs font-normal">0</span>
-                  </button>
-                  {configRevisionsOpen && (
-                    <p className="text-muted-foreground mt-3 text-sm">
-                      아직 설정 변경 기록이 없습니다.
-                    </p>
-                  )}
-                </div>
+                </AgentSectionCard>
               </div>
             </div>
           </AgentConfigurationPanel>
@@ -932,14 +871,6 @@ const CEO_IMAGE_OPTIONS = [
   { id: 'profile', label: '프로필', src: '/assets/agents/ceo/ceo_profile.png' },
 ] as const
 
-const PUBLIC_TOOLSET_OPTIONS = [
-  { id: 'session', label: '세션 기록', description: '세션 기록과 맥락을 사용합니다.' },
-  { id: 'planning', label: '계획', description: '계획/진행 상태 도구를 사용합니다.' },
-  { id: 'web', label: '웹', description: '웹 검색/조회 도구를 사용합니다.' },
-  { id: 'skills', label: '스킬', description: '등록된 스킬 도구를 사용합니다.' },
-  { id: 'safe', label: '안전 모드', description: '안전한 기본 도구만 허용합니다.' },
-] as const
-
 const MAIN_AGENT_SKILL_OPTIONS = [
   { id: 'notion', label: 'Notion', description: '문서와 데이터베이스를 정리합니다.' },
   {
@@ -955,8 +886,6 @@ function MainAgentHeader({
   model,
   name,
   onConfigure,
-  onInstructions,
-  onRuns,
   profileImage,
   saved,
   saving,
@@ -965,8 +894,6 @@ function MainAgentHeader({
   model: string
   name: string
   onConfigure: () => void
-  onInstructions: () => void
-  onRuns: () => void
   profileImage: string
   saved: boolean
   saving: boolean
@@ -974,9 +901,7 @@ function MainAgentHeader({
   return (
     <AgentDetailHeader
       name={name}
-      onInstructions={onInstructions}
-      onRuns={onRuns}
-      status="활성"
+      status="작업 가능"
       subtitle={
         <>
           {callName} · {model || '기본 모델'}
@@ -1095,13 +1020,6 @@ function normalizeAgentProfileImage(value: string | undefined) {
     return value
   }
   return CEO_IMAGE_OPTIONS[0].src
-}
-
-function normalizeToolsets(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  return Array.from(
-    new Set(value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')),
-  )
 }
 
 function normalizeMainAgentSkillIds(value: unknown): string[] {
