@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
   AlertTriangle,
+  Bot,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -46,12 +47,11 @@ interface SessionWorkspaceMenuProps {
 }
 
 const MENU_ITEMS: Array<{
-  id: Exclude<WorkspaceNavId, 'subAgents'>
+  id: Exclude<WorkspaceNavId, 'purpose' | 'subAgents'>
   label: string
   icon: typeof Target
 }> = [
   { id: 'chat', label: '채팅', icon: MessageSquare },
-  { id: 'purpose', label: '목표', icon: Target },
   { id: 'settings', label: '설정', icon: SlidersHorizontal },
   { id: 'visualization', label: '시각화', icon: Map },
 ]
@@ -73,6 +73,7 @@ export function SessionWorkspaceMenu({
   const { agentPanelsBySessionId, removeAgentPanelFromSession } = useSessionStore()
   const agentPanels = agentPanelsBySessionId[sessionId] ?? []
   const title = getSessionTitle(session)
+  const mainAgentName = getMainAgentName(session)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(title)
   const [titleSaving, setTitleSaving] = useState(false)
@@ -201,22 +202,48 @@ export function SessionWorkspaceMenu({
         </div>
 
         <section>
-          <div className="group flex items-center px-3 py-1.5">
+          <SectionHeader label="CEO" />
+          <div className="group/main relative flex items-center">
+            <button
+              type="button"
+              onClick={() => onSelectPanel('purpose')}
+              className={`flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 pr-8 text-left text-sm font-medium transition-colors ${
+                activePanel === 'purpose'
+                  ? 'bg-accent text-foreground'
+                  : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
+              }`}
+            >
+              <Bot className="text-muted-foreground h-5 w-5 shrink-0" />
+              <span className="truncate">{mainAgentName}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onSelectPanel('purpose')}
+              className="text-muted-foreground hover:bg-accent/50 hover:text-foreground absolute top-1/2 right-1 flex h-7 w-7 -translate-y-1/2 items-center justify-center opacity-0 transition-opacity group-focus-within/main:opacity-100 group-hover/main:opacity-100 data-[state=open]:opacity-100"
+              aria-label={`${mainAgentName} 메인 에이전트 편집`}
+            >
+              <Edit3 className="h-4 w-4" />
+            </button>
+          </div>
+        </section>
+
+        <section>
+          <div className="group flex items-center">
             <button
               type="button"
               onClick={() => onSelectPanel('subAgents')}
-              className="flex min-w-0 flex-1 items-center gap-1 text-left"
+              className="flex min-w-0 flex-1 items-center gap-1 px-3 py-1.5 text-left"
             >
               <ChevronRight className="text-muted-foreground/60 h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
               <span className="text-muted-foreground/60 font-mono text-[10px] font-medium tracking-widest uppercase">
-                서브에이전트
+                에이전트
               </span>
             </button>
             <button
               type="button"
               onClick={onCreateSubAgent}
-              className="text-muted-foreground/60 hover:bg-accent/50 hover:text-foreground flex h-7 w-7 items-center justify-center transition-colors"
-              aria-label="서브에이전트 추가"
+              className="text-muted-foreground/60 hover:bg-accent/50 hover:text-foreground mr-1 flex h-7 w-7 items-center justify-center transition-colors"
+              aria-label="에이전트 추가"
             >
               <Plus className="h-4 w-4" />
             </button>
@@ -290,6 +317,25 @@ function getSessionTitle(session: RawAiSession | null) {
   const metadata = toJsonObject(session.metadata)
   const uiMetadata = toJsonObject(metadata.ui)
   return getString(uiMetadata, 'sessionName') ?? getTrimmedString(session.title) ?? '세션'
+}
+
+function getMainAgentName(session: RawAiSession | null) {
+  if (session === null) {
+    return '메인 에이전트'
+  }
+  const metadata = toJsonObject(session.metadata)
+  const uiMetadata = toJsonObject(metadata.ui)
+  return getString(uiMetadata, 'agentName') ?? '메인 에이전트'
+}
+
+function SectionHeader({ label }: { label: string }) {
+  return (
+    <div className="px-3 py-1.5">
+      <span className="text-muted-foreground/60 font-mono text-[10px] font-medium tracking-widest uppercase">
+        {label}
+      </span>
+    </div>
+  )
 }
 
 function ConnectionStatusRow({ state }: { state: WorkspaceConnectionState }) {

@@ -71,7 +71,7 @@ export function SessionWorkspaceDetailPanel({
   }
 
   if (session === null) {
-    const title = activePanel === 'purpose' ? '목표' : '세션'
+    const title = activePanel === 'purpose' ? '메인 에이전트' : '세션'
     return (
       <WorkspacePageShell title={title} eyebrow="작업면">
         <p className="text-muted-foreground text-sm">세션 정보를 불러오는 중입니다.</p>
@@ -153,8 +153,8 @@ function PurposePage({ session }: { session: RawAiSession }) {
 
   return (
     <WorkspacePageShell
-      title="목표"
-      eyebrow="목표 설정"
+      title="메인 에이전트"
+      eyebrow="CEO"
       action={
         <button
           type="button"
@@ -537,7 +537,7 @@ function SubAgentsPage({ sessionId }: { sessionId: string }) {
   }
 
   return (
-    <WorkspacePageShell title="서브에이전트" eyebrow="서브에이전트">
+    <WorkspacePageShell title="에이전트" eyebrow="에이전트">
       <div className="space-y-4">
         {draftMode !== null && (
           <SubAgentDraftForm
@@ -559,7 +559,7 @@ function SubAgentsPage({ sessionId }: { sessionId: string }) {
         <div className="border-border border">
           {agentPanels.length === 0 ? (
             <p className="text-muted-foreground px-4 py-2 text-sm">
-              서브에이전트가 없습니다. 사이드바의 + 버튼으로 역할을 나눌 수 있습니다.
+              에이전트가 없습니다. 사이드바의 + 버튼으로 역할을 나눌 수 있습니다.
             </p>
           ) : (
             agentPanels.map((item) => (
