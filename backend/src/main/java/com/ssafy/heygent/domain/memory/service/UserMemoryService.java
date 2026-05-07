@@ -129,7 +129,12 @@ public class UserMemoryService {
 
     @Transactional
     public List<UserMemoryResponse> createCandidates(Long userId, CreateMemoryCandidatesRequest request) {
-        return request.getCandidates().stream()
+        return createCandidates(userId, request.getCandidates());
+    }
+
+    @Transactional
+    public List<UserMemoryResponse> createCandidates(Long userId, List<CreateMemoryRequest> candidates) {
+        return candidates.stream()
             .filter(candidate -> isStorableScore(candidate.getImportance(), candidate.getConfidence()))
             .map(candidate -> create(userId, candidate))
             .toList();
@@ -384,13 +389,18 @@ public class UserMemoryService {
 
     @Transactional
     public UserMemoryResponse markUsed(Long userId, Long memoryId, MarkMemoryUsedRequest request) {
+        return markUsed(userId, memoryId, request.getUsefulnessScore());
+    }
+
+    @Transactional
+    public UserMemoryResponse markUsed(Long userId, Long memoryId, Double usefulnessScore) {
         UserMemory memory = findOwnedMemory(userId, memoryId);
         if (memory.getStatus() != MemoryStatus.ACTIVE || !isNotExpired(memory, LocalDateTime.now())) {
             throw new CustomException(ErrorCode.RESOURCE_NOT_FOUND);
         }
 
-        memory.markUsed(LocalDateTime.now(), request.getUsefulnessScore());
-        userMemoryEventService.record(memory, MemoryEventType.USED, request.getUsefulnessScore(), Map.of());
+        memory.markUsed(LocalDateTime.now(), usefulnessScore);
+        userMemoryEventService.record(memory, MemoryEventType.USED, usefulnessScore, Map.of());
         return UserMemoryResponse.from(memory);
     }
 

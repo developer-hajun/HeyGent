@@ -30,6 +30,9 @@ class OpenAiCredentialIssueServiceTest {
     @Mock
     private OpenAiOAuthService openAiOAuthService;
 
+    @Mock
+    private OpenAiCodexOAuthService openAiCodexOAuthService;
+
     private OpenAiCredentialIssueService openAiCredentialIssueService;
 
     @BeforeEach
@@ -42,7 +45,8 @@ class OpenAiCredentialIssueServiceTest {
             properties,
             runtimePolicyService,
             openAiApiKeyService,
-            openAiOAuthService
+            openAiOAuthService,
+            openAiCodexOAuthService
         );
     }
 
@@ -89,6 +93,22 @@ class OpenAiCredentialIssueServiceTest {
         assertThat(response.getProviderName()).isEqualTo("openai_oauth");
         assertThat(response.getCredentialType()).isEqualTo("bearer");
         assertThat(response.getCredential()).isEqualTo("access-token");
+        assertThat(response.getExpiresAt()).isEqualTo(expiresAt);
+    }
+
+    @Test
+    void issueReturnsCodexOauthAccessToken() throws Exception {
+        OpenAiCredentialIssueRequest request = request("openai_codex_oauth", "gpt-5.3-codex");
+        LocalDateTime expiresAt = LocalDateTime.now().plusHours(1);
+        when(openAiCodexOAuthService.resolveAccessTokenCredential(1L))
+            .thenReturn(new OpenAiCodexOAuthService.AccessTokenCredential("codex-access-token", expiresAt));
+
+        OpenAiCredentialIssueResponse response = openAiCredentialIssueService.issue(request);
+
+        assertThat(response.getProviderName()).isEqualTo("openai_codex_oauth");
+        assertThat(response.getAuthType()).isEqualTo("oauth");
+        assertThat(response.getCredentialType()).isEqualTo("bearer");
+        assertThat(response.getCredential()).isEqualTo("codex-access-token");
         assertThat(response.getExpiresAt()).isEqualTo(expiresAt);
     }
 
