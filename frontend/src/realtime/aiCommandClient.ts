@@ -47,7 +47,6 @@ const MUTATING_COMMAND_IDEMPOTENCY_KEYS: Partial<Record<AiRealtimeCommandType, s
   'session.message.undo': ['clientCommandId'],
   'session.history.compact': ['clientCommandId'],
   'session.update': ['clientCommandId'],
-  'session.archive': ['clientCommandId'],
   'session.delete': ['clientCommandId'],
   'session.settings.update': ['clientCommandId'],
   'taskRun.resume': ['approvalResponseId', 'clientCommandId'],

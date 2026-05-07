@@ -43,7 +43,7 @@ type ChatState = {
   modelOptionsLoading: boolean
   modelOptionsError: string | null
   lastError: string | null
-  fetchSessions: (options?: { includeArchived?: boolean }) => Promise<RawAiSession[]>
+  fetchSessions: () => Promise<RawAiSession[]>
   fetchMessages: (sessionId: string) => Promise<ChatMessageView[]>
   sendMessage: (input: {
     sessionId?: string
@@ -52,9 +52,11 @@ type ChatState = {
     inputPayload?: JsonObject
     clientMessageId?: string
   }) => Promise<AiRealtimeRawFrame>
-  updateSession: (input: { sessionId: string; title?: string }) => Promise<RawAiSession | null>
-  archiveSession: (sessionId: string) => Promise<void>
-  unarchiveSession: (sessionId: string) => Promise<RawAiSession | null>
+  updateSession: (input: {
+    sessionId: string
+    title?: string
+    metadataPatch?: JsonObject
+  }) => Promise<RawAiSession | null>
   deleteSession: (sessionId: string) => Promise<void>
   updateSessionSettings: (input: {
     sessionId: string
@@ -76,18 +78,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   modelOptionsLoading: false,
   modelOptionsError: null,
   lastError: null,
-  fetchSessions: async (options = {}) => {
+  fetchSessions: async () => {
     set({ sessionListLoading: true, sessionListError: null })
 
     try {
-      const includeArchived = options.includeArchived === true
       const frame = await useAiRealtimeStore
         .getState()
-        .sendCommand<AiRealtimeRawFrame>('session.list', { includeArchived })
+        .sendCommand<AiRealtimeRawFrame>('session.list', { includeArchived: true })
       const payload = getFramePayload(frame) as SessionListResultPayload
-      const sessions = getRawSessionList(payload).filter(
-        (session) => !isRemovedSession(session, includeArchived),
-      )
+      const sessions = getRawSessionList(payload).filter((session) => !isRemovedSession(session))
 
       set((state) => ({
         sessionsById: reconcileVisibleSessions(state.sessionsById, sessions),
@@ -215,44 +214,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       throw error
     }
   },
-  updateSession: async ({ sessionId, title }) => {
+  updateSession: async ({ sessionId, title, metadataPatch }) => {
     const frame = await useAiRealtimeStore
       .getState()
       .sendCommand<AiRealtimeRawFrame>('session.update', {
         sessionId,
         title,
-        clientCommandId: createClientCommandId(),
-      })
-
-    const updatedSession = getSessionFromMutationFrame(frame, sessionId)
-    set((state) => ({
-      sessionsById:
-        updatedSession === null
-          ? state.sessionsById
-          : { ...state.sessionsById, [updatedSession.session_id]: updatedSession },
-      lastError: null,
-    }))
-    get().handleRealtimeFrame(frame)
-    return updatedSession
-  },
-  archiveSession: async (sessionId) => {
-    const frame = await useAiRealtimeStore
-      .getState()
-      .sendCommand<AiRealtimeRawFrame>('session.archive', {
-        sessionId,
-        archived: true,
-        clientCommandId: createClientCommandId(),
-      })
-
-    get().handleRealtimeFrame(frame)
-    set((state) => removeSessionFromState(state, sessionId))
-  },
-  unarchiveSession: async (sessionId) => {
-    const frame = await useAiRealtimeStore
-      .getState()
-      .sendCommand<AiRealtimeRawFrame>('session.archive', {
-        sessionId,
-        archived: false,
+        metadataPatch,
         clientCommandId: createClientCommandId(),
       })
 
@@ -341,10 +309,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
       case 'session.updated':
         mergeSessionUpdated(frame, set)
         return
-      case 'session.archived':
-      case 'session.archive.result':
-        mergeSessionMutationResult(frame, set)
-        return
       case 'session.deleted':
       case 'session.delete.result':
         mergeSessionDeleteResult(frame, set)
@@ -419,10 +383,8 @@ const removeSessionFromState = (state: ChatState, sessionId: string): Partial<Ch
 const isPendingSession = (session: RawAiSession) =>
   session.session_id.startsWith('pending_session_') || session.source === 'pending'
 
-const isRemovedSession = (session: RawAiSession, includeArchived = false) =>
-  session.deleted_at != null ||
-  session.status === 'DELETED' ||
-  (!includeArchived && (session.archived_at != null || session.status === 'ARCHIVED'))
+const isRemovedSession = (session: RawAiSession) =>
+  session.deleted_at != null || session.status === 'DELETED'
 
 const getRawMessageList = (payload: SessionMessagesListResultPayload | unknown): RawAiMessage[] => {
   if (!isJsonObject(payload)) {

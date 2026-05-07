@@ -28,7 +28,6 @@ export type AiRealtimeCommandType =
   | 'session.message.undo'
   | 'session.history.compact'
   | 'session.update'
-  | 'session.archive'
   | 'session.delete'
   | 'session.settings.update'
   | 'model.options'
@@ -53,10 +52,8 @@ export type AiRealtimeServerFrameType =
   | 'session.message.waiting'
   | 'session.message.failed'
   | 'session.updated'
-  | 'session.archived'
   | 'session.deleted'
   | 'session.settings.updated'
-  | 'session.archive.result'
   | 'session.delete.result'
   | 'session.settings.update.result'
   | 'model.options.result'
@@ -169,12 +166,6 @@ export type SessionUpdatePayload = {
   metadataPatch?: JsonObject
 }
 
-export type SessionArchivePayload = {
-  sessionId: string
-  archived?: boolean
-  clientCommandId: string
-}
-
 export type SessionDeletePayload = {
   sessionId: string
   clientCommandId: string
@@ -261,7 +252,6 @@ export type AiRealtimeCommandPayloadMap = {
   'session.message.undo': SessionMessageUndoPayload
   'session.history.compact': SessionHistoryCompactPayload
   'session.update': SessionUpdatePayload
-  'session.archive': SessionArchivePayload
   'session.delete': SessionDeletePayload
   'session.settings.update': SessionSettingsUpdatePayload
   'model.options': ModelOptionsPayload
@@ -274,7 +264,6 @@ export type AiRealtimeCommandPayloadMap = {
 
 export type AiRealtimeCommandResultPayloadMap = {
   'session.update': SessionMutationResultPayload
-  'session.archive': SessionMutationResultPayload
   'session.delete': SessionDeleteResultPayload
   'session.settings.update': SessionMutationResultPayload
   'model.options': ModelOptionsRawResultPayload

@@ -28,7 +28,7 @@ import {
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
-import type { CustomAgentConfig } from '@/components/NewSessionModal'
+import type { CustomAgentConfig } from '@/components/session/NewSessionModal'
 import { createClientMessageId } from '@/utils/requestId'
 
 const suggestedPrompts = [
