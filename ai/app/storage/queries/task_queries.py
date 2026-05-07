@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS task_runs (
     current_step_run_id TEXT,
     -- 작업 소유 주체를 구분하는 키. 사용자/세션 범위를 나눌 때 필요하다.
     owner_key TEXT NOT NULL,
+    -- 같은 DB의 users(id)와 맞출 수 있을 때 권한 판정에 사용할 숫자 소유자 ID다.
+    owner_user_id INTEGER REFERENCES users(id),
     -- Spring 이 관리하는 외부 세션 식별자. UI 세션 복원용 참조값이다.
     session_key TEXT,
     -- 현재 작업 상태. 재개/완료/실패 처리와 UI 표시가 이 값을 본다.

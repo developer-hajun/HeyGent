@@ -18,12 +18,13 @@ import {
   MoreHorizontal,
   Pin,
   PinOff,
-  DoorOpen,
+  Trash2,
 } from 'lucide-react'
 import { useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SettingsDialog } from '@/components/SettingsDialog'
-import { NewSessionModal } from '@/components/NewSessionModal'
+import { NewSessionModal, type CustomAgentConfig } from '@/components/session/NewSessionModal'
+import { SessionSettingsModal } from '@/components/session/SessionSettingsModal'
 import { useUIStore } from '@/store/useUIStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -42,32 +43,37 @@ type SidebarSession = {
   raw: RawAiSession
 }
 
+type SessionConfirmAction = 'delete'
+
+type SessionConfirmState = {
+  sessionId: string
+  action: SessionConfirmAction
+}
+
 export function LeftSidebar() {
   const {
     sidebarCollapsed: collapsed,
     sidebarWidth: width,
     settingsOpen,
+    settingsInitialTab,
     setSidebarCollapsed,
     clampSidebarWidth,
     setSettingsOpen,
   } = useUIStore()
-  const {
-    selectedSessionId,
-    setSelectedSessionId,
-    pinnedSessionIds,
-    hiddenSessionIds,
-    togglePinSession,
-    hideSession,
-  } = useSessionStore()
+  const { selectedSessionId, setSelectedSessionId, pinnedSessionIds, togglePinSession } =
+    useSessionStore()
   const [profileOpen, setProfileOpen] = useState(false)
   const [sessionsPopoverOpen, setSessionsPopoverOpen] = useState(false)
   const [newSessionModalOpen, setNewSessionModalOpen] = useState(false)
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [sessionSettingsSessionId, setSessionSettingsSessionId] = useState<string | null>(null)
+  const [sessionConfirm, setSessionConfirm] = useState<SessionConfirmState | null>(null)
   const commandClient = useAiRealtimeStore((state) => state.commandClient)
   const realtimeStatus = useAiRealtimeStore((state) => state.connectionStatus)
   const sessionsById = useChatStore((state) => state.sessionsById)
-  const chatError = useChatStore((state) => state.lastError)
+  const sessionListLoading = useChatStore((state) => state.sessionListLoading)
+  const chatError = useChatStore((state) => state.sessionListError ?? state.lastError)
   const fetchSessions = useChatStore((state) => state.fetchSessions)
+  const deleteSession = useChatStore((state) => state.deleteSession)
   const isResizing = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
@@ -76,16 +82,18 @@ export function LeftSidebar() {
   const sidebarSessions = useMemo(() => {
     const all = Object.values(sessionsById)
       .map(toSidebarSession)
-      .filter((s) => !hiddenSessionIds.has(s.id))
+      .filter((s) => !isRemovedSidebarSession(s.raw))
       .sort((first, second) => getSessionTime(second.raw) - getSessionTime(first.raw))
     const pinned = all.filter((s) => pinnedSessionIds.has(s.id))
     const unpinned = all.filter((s) => !pinnedSessionIds.has(s.id))
     return [...pinned, ...unpinned]
-  }, [sessionsById, hiddenSessionIds, pinnedSessionIds])
+  }, [sessionsById, pinnedSessionIds])
   const runningSessions = useMemo(
     () => sidebarSessions.filter((session) => session.isRunning),
     [sidebarSessions],
   )
+  const sessionSettingsSession =
+    sessionSettingsSessionId === null ? null : (sessionsById[sessionSettingsSessionId] ?? null)
 
   useEffect(() => {
     if (commandClient === null) {
@@ -102,6 +110,27 @@ export function LeftSidebar() {
   const handleOpenChatSession = (sessionId: string, event?: React.MouseEvent) => {
     event?.stopPropagation()
     navigate(`/session/${sessionId}`)
+  }
+
+  const handleConfirmSessionAction = async () => {
+    if (sessionConfirm === null) {
+      return
+    }
+
+    const { sessionId, action } = sessionConfirm
+    try {
+      if (action === 'delete') {
+        await deleteSession(sessionId)
+      }
+
+      if (location.pathname === `/session/${sessionId}`) {
+        navigate('/new-chat')
+      }
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '세션 작업에 실패했습니다.')
+    } finally {
+      setSessionConfirm(null)
+    }
   }
 
   const startResize = useCallback(
@@ -138,38 +167,61 @@ export function LeftSidebar() {
 
   return (
     <>
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        sessionId={
+          location.pathname.startsWith('/session/') ? location.pathname.slice(9) : undefined
+        }
+        initialTab={settingsInitialTab as 'apiKeys'}
+      />
       <NewSessionModal
         open={newSessionModalOpen}
         onOpenChange={setNewSessionModalOpen}
-        onConfirm={() => {
+        onConfirm={(config) => {
+          storePendingSessionConfig(config)
           setNewSessionModalOpen(false)
-          navigate('/new-chat')
+          if (config) {
+            navigate('/agent-status')
+          } else {
+            navigate('/new-chat')
+          }
         }}
       />
-      {/* Leave confirmation dialog */}
-      {deleteConfirm !== null && (
+      <SessionSettingsModal
+        open={sessionSettingsSessionId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSessionSettingsSessionId(null)
+          }
+        }}
+        session={sessionSettingsSession}
+      />
+      {sessionConfirm !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-card border-border w-80 rounded-2xl border p-6 shadow-xl">
-            <h3 className="text-foreground mb-2 text-base font-semibold">채팅 나가기</h3>
+            <h3 className="text-foreground mb-2 text-base font-semibold">
+              {getSessionConfirmTitle(sessionConfirm.action)}
+            </h3>
             <p className="text-muted-foreground mb-5 text-sm">
-              이 채팅 세션을 나가시겠습니까? 목록에서 사라집니다.
+              {getSessionConfirmMessage(sessionConfirm.action)}
             </p>
             <div className="flex gap-2">
               <button
-                onClick={() => setDeleteConfirm(null)}
+                onClick={() => setSessionConfirm(null)}
                 className="bg-muted text-foreground hover:bg-muted/80 flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
               >
                 취소
               </button>
               <button
-                onClick={() => {
-                  hideSession(deleteConfirm)
-                  setDeleteConfirm(null)
-                }}
-                className="flex-1 rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-600"
+                onClick={() => void handleConfirmSessionAction()}
+                className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors ${
+                  sessionConfirm.action === 'delete'
+                    ? 'bg-red-500 hover:bg-red-600'
+                    : 'bg-primary hover:bg-primary/90'
+                }`}
               >
-                나가기
+                {getSessionConfirmButtonLabel(sessionConfirm.action)}
               </button>
             </div>
           </div>
@@ -242,13 +294,13 @@ export function LeftSidebar() {
                         }}
                         className={`cursor-pointer rounded-lg p-2.5 transition-colors ${
                           isActive
-                            ? 'bg-primary/8 border-primary/15 border'
-                            : 'hover:bg-muted border border-transparent'
+                            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                            : 'hover:bg-muted'
                         }`}
                       >
                         <div className="mb-1 flex items-center justify-between gap-1">
                           <p
-                            className={`truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
+                            className={`truncate text-sm ${isActive ? 'text-sidebar-accent-foreground font-medium' : 'text-foreground/80'}`}
                           >
                             {session.title}
                           </p>
@@ -261,7 +313,7 @@ export function LeftSidebar() {
                             }}
                             className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors ${
                               isChatActive
-                                ? 'bg-primary/10 text-primary'
+                                ? 'bg-sidebar-primary text-sidebar-primary-foreground'
                                 : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                             }`}
                           >
@@ -280,7 +332,11 @@ export function LeftSidebar() {
                     )
                   })}
                   {sidebarSessions.length === 0 && (
-                    <EmptySessionNotice realtimeStatus={realtimeStatus} error={chatError} />
+                    <EmptySessionNotice
+                      realtimeStatus={realtimeStatus}
+                      loading={sessionListLoading}
+                      error={chatError}
+                    />
                   )}
                 </div>
               </PopoverContent>
@@ -374,15 +430,15 @@ export function LeftSidebar() {
                         }}
                         className={`group flex cursor-pointer items-center gap-2 rounded-lg p-2.5 transition-colors ${
                           isActive
-                            ? 'bg-primary/8 border-primary/15 border'
-                            : 'hover:bg-sidebar-accent border border-transparent'
+                            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                            : 'hover:bg-sidebar-accent'
                         }`}
                       >
                         <div className="min-w-0 flex-1">
                           <div className="mb-0.5 flex items-center gap-1">
                             {isPinned && <Pin className="text-primary h-3 w-3 shrink-0" />}
                             <p
-                              className={`truncate text-sm ${isActive ? 'text-foreground font-medium' : 'text-foreground/80'}`}
+                              className={`truncate text-sm ${isActive ? 'text-sidebar-accent-foreground font-medium' : 'text-foreground/80'}`}
                             >
                               {session.title}
                             </p>
@@ -418,6 +474,17 @@ export function LeftSidebar() {
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation()
+                                  setSessionSettingsSessionId(session.id)
+                                }}
+                                className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
+                              >
+                                <Settings className="text-muted-foreground h-4 w-4 shrink-0" />
+                                <span>설정</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
                                   togglePinSession(session.id)
                                 }}
                                 className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
@@ -438,12 +505,12 @@ export function LeftSidebar() {
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation()
-                                  setDeleteConfirm(session.id)
+                                  setSessionConfirm({ sessionId: session.id, action: 'delete' })
                                 }}
                                 className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-red-500 transition-colors hover:bg-red-50"
                               >
-                                <DoorOpen className="h-4 w-4 shrink-0" />
-                                <span>나가기</span>
+                                <Trash2 className="h-4 w-4 shrink-0" />
+                                <span>삭제</span>
                               </button>
                             </PopoverContent>
                           </Popover>
@@ -454,7 +521,7 @@ export function LeftSidebar() {
                             onClick={(event) => handleOpenChatSession(session.id, event)}
                             className={`relative flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
                               isChatActive
-                                ? 'bg-primary/10 text-primary'
+                                ? 'bg-sidebar-primary text-sidebar-primary-foreground'
                                 : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
                             }`}
                           >
@@ -468,18 +535,22 @@ export function LeftSidebar() {
                     )
                   })}
                   {sidebarSessions.length === 0 && (
-                    <EmptySessionNotice realtimeStatus={realtimeStatus} error={chatError} />
+                    <EmptySessionNotice
+                      realtimeStatus={realtimeStatus}
+                      loading={sessionListLoading}
+                      error={chatError}
+                    />
                   )}
                 </div>
               </section>
             </div>
 
             {/* ── Profile Footer (Fixed) ── */}
-            <div className="border-sidebar-border shrink-0 border-t p-3">
+            <div className="border-sidebar-border shrink-0 border-t px-3 py-2">
               <Popover open={profileOpen} onOpenChange={setProfileOpen}>
                 <PopoverTrigger asChild>
-                  <button className="hover:bg-sidebar-accent flex w-full items-center gap-3 rounded-lg p-2.5 transition-colors">
-                    <ProfileAvatar size={36} />
+                  <button className="hover:bg-sidebar-accent flex w-full items-center gap-3 rounded-lg p-2 transition-colors">
+                    <ProfileAvatar size={32} />
                     <div className="min-w-0 flex-1 text-left">
                       <p className="text-foreground truncate text-sm font-medium">
                         <ProfileName />
@@ -515,15 +586,26 @@ export function LeftSidebar() {
   )
 }
 
+function storePendingSessionConfig(config: CustomAgentConfig | undefined) {
+  if (config === undefined) {
+    sessionStorage.removeItem('ai-new-session-config')
+    return
+  }
+  sessionStorage.setItem('ai-new-session-config', JSON.stringify(config))
+}
+
 function EmptySessionNotice({
   realtimeStatus,
+  loading,
   error,
 }: {
   realtimeStatus: string
+  loading: boolean
   error: string | null
 }) {
   const message =
     error ??
+    (loading ? '세션 목록을 불러오는 중입니다.' : null) ??
     (realtimeStatus === 'authenticated' ? '아직 표시할 대화 세션이 없습니다.' : 'AI 연결 준비 중')
 
   return (
@@ -531,6 +613,27 @@ function EmptySessionNotice({
       {message}
     </div>
   )
+}
+
+function getSessionConfirmTitle(action: SessionConfirmAction) {
+  if (action === 'delete') {
+    return '채팅 삭제'
+  }
+  return '채팅 삭제'
+}
+
+function getSessionConfirmMessage(action: SessionConfirmAction) {
+  if (action === 'delete') {
+    return '이 채팅을 삭제하시겠습니까? 서버의 삭제 정책에 따라 복구가 제한될 수 있습니다.'
+  }
+  return '이 채팅을 삭제하시겠습니까? 서버의 삭제 정책에 따라 복구가 제한될 수 있습니다.'
+}
+
+function getSessionConfirmButtonLabel(action: SessionConfirmAction) {
+  if (action === 'delete') {
+    return '삭제'
+  }
+  return '삭제'
 }
 
 function toSidebarSession(session: RawAiSession): SidebarSession {
@@ -600,6 +703,10 @@ function formatSessionTime(session: RawAiSession) {
 
 function isRunningTaskRunStatus(status: string | undefined) {
   return status === 'PENDING' || status === 'RUNNING' || status === 'WAITING'
+}
+
+function isRemovedSidebarSession(session: RawAiSession) {
+  return session.deleted_at != null || session.status === 'DELETED'
 }
 
 // ────────────────────────────────────────────────────────────────────────────

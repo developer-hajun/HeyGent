@@ -1,4 +1,4 @@
-import { Bot, CheckCircle2, Clock3, Loader2, UserRound, XCircle } from 'lucide-react'
+import { CheckCircle2, Clock3, Loader2, XCircle } from 'lucide-react'
 import type { ChatMessageView } from '@/types/aiChat'
 import type {
   ActivityItemView,
@@ -41,16 +41,21 @@ export function ChatMessageItem({
   return (
     <article className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
       {!isUser && (
-        <div className="bg-primary/10 text-primary mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
-          <Bot className="h-4 w-4" />
+        <div className="mt-1 h-8 w-8 shrink-0 overflow-hidden rounded-full">
+          <img
+            src="/assets/agents/ceo/ceo_profile.png"
+            alt="AI 어시스턴트"
+            className="h-full w-full object-cover"
+          />
         </div>
       )}
-      <div className={`max-w-[78%] space-y-2 ${isUser ? 'items-end' : 'items-start'}`}>
+      <div className={`max-w-[78%] space-y-1 ${isUser ? 'items-end' : 'items-start'}`}>
+        {!isUser && <p className="text-muted-foreground px-1 text-xs font-medium">AI 어시스턴트</p>}
         {shouldShowMessageBody && (
           <div
             className={
               isUser
-                ? 'bg-primary text-primary-foreground rounded-2xl px-4 py-3 text-sm leading-6 [overflow-wrap:anywhere] break-words'
+                ? 'text-foreground rounded-2xl bg-zinc-200 px-4 py-3 text-sm leading-6 wrap-anywhere dark:bg-zinc-700'
                 : 'text-foreground rounded-2xl py-2 text-sm leading-7 [overflow-wrap:anywhere] break-words'
             }
           >
@@ -60,8 +65,14 @@ export function ChatMessageItem({
               </p>
             ) : (
               <div className="text-muted-foreground flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span>응답을 작성하는 중입니다.</span>
+                {message.status === 'waiting' ? (
+                  <>
+                    <Clock3 className="h-4 w-4 text-amber-500" />
+                    <span>사용자 확인을 기다리는 중입니다.</span>
+                  </>
+                ) : (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
               </div>
             )}
           </div>
@@ -102,11 +113,6 @@ export function ChatMessageItem({
           </button>
         )}
       </div>
-      {isUser && (
-        <div className="bg-muted text-muted-foreground mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
-          <UserRound className="h-4 w-4" />
-        </div>
-      )}
     </article>
   )
 }

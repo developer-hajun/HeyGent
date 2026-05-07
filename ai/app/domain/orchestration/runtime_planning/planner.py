@@ -13,7 +13,15 @@ from app.domain.tasks.models import StepRun, TaskRun
 class Planner:
     """TaskRun / StepRun의 semantic(사용자에게 보이는 의미 단계) 골격을 만든다."""
 
-    def materialize_task(self, *, owner_key: str, session_key: str | None, input_payload: dict, handler: TaskHandler) -> TaskRun:
+    def materialize_task(
+        self,
+        *,
+        owner_key: str,
+        session_key: str | None,
+        input_payload: dict,
+        handler: TaskHandler,
+        task_run_id: str | None = None,
+    ) -> TaskRun:
         input_payload = self._normalized_input_payload(input_payload=input_payload, handler=handler)
         task_plan = build_task_plan(input_payload=input_payload, default_task_title=handler.spec.task_title)
         # agent.loop는 native tool call(모델이 구조화된 도구 호출을 직접 반환하는 방식)을 보고
@@ -28,7 +36,7 @@ class Planner:
             )
         )
         return TaskRun(
-            task_run_id=new_id("task"),
+            task_run_id=task_run_id or new_id("task"),
             task_type=handler.spec.task_type,
             owner_key=owner_key,
             session_key=session_key,

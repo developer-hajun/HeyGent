@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { X, Bot, Sparkles, SlidersHorizontal, Camera, ChevronLeft } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog'
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 
 export interface CustomAgentConfig {
   agentName: string
@@ -119,7 +119,7 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                   <div>
                     <p className="text-foreground text-sm font-semibold">에이전트 커스터마이징</p>
                     <p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">
-                      팀장 에이전트의 이름, 페르소나 등을 직접 설정합니다
+                      새 대화 시작 전에 표시용 이름과 페르소나를 입력합니다
                     </p>
                   </div>
                 </button>
@@ -144,7 +144,7 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                 <div className="flex-1">
                   <h2 className="text-foreground text-base font-semibold">에이전트 커스터마이징</h2>
                   <p className="text-muted-foreground mt-0.5 text-xs">
-                    팀장 에이전트 캐릭터를 설정합니다
+                    새 대화에 사용할 표시용 설정을 입력합니다
                   </p>
                 </div>
                 <button
@@ -160,16 +160,12 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                 {/* Profile Image */}
                 <div className="flex flex-col items-center gap-2">
                   <div className="relative">
-                    <div className="bg-muted border-border flex h-20 w-20 items-center justify-center overflow-hidden rounded-full border-2">
-                      {profileImage ? (
-                        <img
-                          src={profileImage}
-                          alt="프로필"
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <Bot className="text-muted-foreground h-9 w-9" />
-                      )}
+                    <div className="border-border flex h-20 w-20 overflow-hidden rounded-full border-2">
+                      <img
+                        src={profileImage ?? '/assets/agents/ceo/ceo_profile.png'}
+                        alt="프로필"
+                        className="h-full w-full object-cover"
+                      />
                     </div>
                     <button
                       onClick={() => fileInputRef.current?.click()}
