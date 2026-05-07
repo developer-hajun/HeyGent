@@ -1,6 +1,18 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router'
 import { FloorAgentSprite } from '@/components/office/FloorAgentSprite'
+
+const IMG_W = 1586
+const IMG_H = 992
+
+function getBuildingBgSrc(): string {
+  const hour = new Date().getHours()
+  if (hour >= 8 && hour < 16) return '/assets/maps/building_bg_day.png'
+  if (hour >= 6 && hour < 8) return '/assets/maps/building_bg_sunset.png'
+  if (hour >= 16 && hour < 18) return '/assets/maps/building_bg_sunset.png'
+  if (hour >= 18 && hour < 20) return '/assets/maps/building_bg_dusk.png'
+  return '/assets/maps/building_bg_night.png'
+}
 
 const FLOORS = [
   {
@@ -10,10 +22,10 @@ const FLOORS = [
     left: '15%',
     width: '72%',
     height: '26%',
-    agentSize: 72, // ← 에이전트 크기 (px)
-    agentBottom: -1, // ← 층 바닥 기준 위치 (%)
-    agentMinX: 40, // ← 에이전트 왼쪽 이동 한계 (%)
-    agentMaxX: 85, // ← 에이전트 오른쪽 이동 한계 (%)
+    agentSize: 90,
+    agentBottom: 4,
+    agentMinX: 40,
+    agentMaxX: 85,
     agents: [
       { agentId: 'agent01', initialXPct: 30 },
       { agentId: 'agent02', initialXPct: 55 },
@@ -27,10 +39,10 @@ const FLOORS = [
     left: '15%',
     width: '72%',
     height: '26%',
-    agentSize: 71, // ← 에이전트 크기 (px)
-    agentBottom: 5, // ← 층 바닥 기준 위치 (%)
-    agentMinX: 30, // ← 에이전트 왼쪽 이동 한계 (%)
-    agentMaxX: 85, // ← 에이전트 오른쪽 이동 한계 (%)
+    agentSize: 90,
+    agentBottom: 10,
+    agentMinX: 30,
+    agentMaxX: 85,
     agents: [
       { agentId: 'agent04', initialXPct: 30 },
       { agentId: 'agent05', initialXPct: 55 },
@@ -44,10 +56,10 @@ const FLOORS = [
     left: '15%',
     width: '68%',
     height: '25%',
-    agentSize: 70, // ← 에이전트 크기 (px)
-    agentBottom: 8, // ← 층 바닥 기준 위치 (%)
-    agentMinX: 25, // ← 에이전트 왼쪽 이동 한계 (%)
-    agentMaxX: 85, // ← 에이전트 오른쪽 이동 한계 (%)
+    agentSize: 90,
+    agentBottom: 19,
+    agentMinX: 25,
+    agentMaxX: 85,
     agents: [
       { agentId: 'agent07', initialXPct: 25 },
       { agentId: 'agent08', initialXPct: 42 },
@@ -60,26 +72,80 @@ const FLOORS = [
 export function BuildingOverviewPage() {
   const navigate = useNavigate()
   const [hoveredFloor, setHoveredFloor] = useState<string | null>(null)
+  const [bgSrc, setBgSrc] = useState(getBuildingBgSrc)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [scale, setScale] = useState(1)
+
+  useEffect(() => {
+    function scheduleNext() {
+      const now = new Date()
+      const boundaries = [6, 8, 16, 18, 20]
+      const totalMinutes = now.getHours() * 60 + now.getMinutes()
+      const nextBoundaryMinutes =
+        boundaries.map((h) => h * 60).find((m) => m > totalMinutes) ?? 6 * 60 + 24 * 60
+      const msUntilNext = (nextBoundaryMinutes - totalMinutes) * 60_000 - now.getSeconds() * 1000
+
+      return setTimeout(() => {
+        setBgSrc(getBuildingBgSrc())
+        scheduleNext()
+      }, msUntilNext)
+    }
+
+    const timer = scheduleNext()
+    return () => clearTimeout(timer)
+  }, [])
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry.contentRect
+      setScale(Math.min(width / IMG_W, height / IMG_H))
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
   return (
-    <div className="relative flex flex-1 items-center justify-center overflow-hidden bg-[#7e7a8e]">
-      <div
-        className="relative inline-block"
+    <div ref={containerRef} className="relative flex-1 overflow-hidden">
+      {/* 배경: 시간대별 이미지로 화면 전체 채움 */}
+      <img
+        src={bgSrc}
+        alt=""
+        draggable={false}
         style={{
-          maskImage:
-            'linear-gradient(to right, transparent 0%, black 10%, black 95%, transparent 100%), linear-gradient(to bottom, transparent 0%, black 6%, black 96%, transparent 100%)',
-          maskComposite: 'intersect',
-          WebkitMaskImage:
-            'linear-gradient(to right, transparent 0%, black 10%, black 95%, transparent 100%), linear-gradient(to bottom, transparent 0%, black 6%, black 96%, transparent 100%)',
-          WebkitMaskComposite: 'source-in',
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          objectPosition: 'center',
+        }}
+      />
+
+      {/* 전경: building_overview.png + 층별 클릭 영역 */}
+      <div
+        style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          width: IMG_W,
+          height: IMG_H,
+          transform: `translate(-50%, -50%) scale(${scale})`,
+          transformOrigin: 'center center',
         }}
       >
         <img
           src="/assets/maps/building_overview.png"
           alt="Building Overview"
           draggable={false}
-          className="block select-none"
-          style={{ maxHeight: 'calc(100vh - 120px)', maxWidth: '100%' }}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '100%',
+            height: '100%',
+            display: 'block',
+          }}
         />
         {FLOORS.map((floor) => (
           <div
