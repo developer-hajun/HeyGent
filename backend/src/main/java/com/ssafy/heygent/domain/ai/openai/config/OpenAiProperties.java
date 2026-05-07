@@ -26,6 +26,7 @@ public class OpenAiProperties {
     private String credentialEncryptionKey = "";
     private OAuth oauth = new OAuth();
     private CodexOAuth codexOAuth = new CodexOAuth();
+    private CodexDeviceOAuth codexDeviceOAuth = new CodexDeviceOAuth();
 
     public boolean hasApiKey() {
         return StringUtils.hasText(apiKey);
@@ -64,5 +65,15 @@ public class OpenAiProperties {
         private String tokenUrl = "https://auth.openai.com/oauth/token";
         private List<String> scopes = new ArrayList<>(List.of("openid", "profile", "email", "offline_access"));
         private int refreshSkewSeconds = 300;
+    }
+
+    @Getter
+    @Setter
+    public static class CodexDeviceOAuth {
+
+        private String command = "codex";
+        private String workspaceRoot = "";
+        private int startTimeoutSeconds = 30;
+        private int authTimeoutSeconds = 900;
     }
 }
