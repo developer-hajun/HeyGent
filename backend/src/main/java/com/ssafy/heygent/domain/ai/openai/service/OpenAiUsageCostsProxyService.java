@@ -28,6 +28,9 @@ public class OpenAiUsageCostsProxyService {
     @Transactional
     public OpenAiUsageCostsProxyResponse getUsage(Long userId, String providerNameValue, LocalDate from, LocalDate to) {
         OpenAiProviderName providerName = OpenAiProviderName.from(providerNameValue);
+        if (!providerName.supportsUsageQuery()) {
+            throw new CustomException(ErrorCode.OPENAI_PROVIDER_NOT_SUPPORTED);
+        }
         String credential = resolveCredential(userId, providerName);
         long startTime = toStartTime(from);
         Long endTime = toEndTime(to);
@@ -40,8 +43,8 @@ public class OpenAiUsageCostsProxyService {
     }
 
     private String resolveCredential(Long userId, OpenAiProviderName providerName) {
-        if (providerName == OpenAiProviderName.OPENAI_USER_API_KEY) {
-            return openAiApiKeyService.resolveApiKey(userId);
+        if (providerName == OpenAiProviderName.OPENAI_API_KEY) {
+            return openAiApiKeyService.resolveApiKey(userId, providerName);
         }
         if (providerName == OpenAiProviderName.OPENAI_OAUTH) {
             return openAiOAuthService.resolveAccessTokenCredential(userId).accessToken();

@@ -8,6 +8,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import com.ssafy.heygent.domain.ai.dto.response.AiProviderModelItemResponse;
+import com.ssafy.heygent.domain.ai.dto.response.AiProviderModelListResponse;
 import com.ssafy.heygent.domain.ai.dto.response.OpenAiModelListResponse;
 import com.ssafy.heygent.domain.ai.dto.response.OpenAiProviderStatusItemResponse;
 import com.ssafy.heygent.domain.ai.dto.response.OpenAiProviderStatusResponse;
@@ -33,9 +35,29 @@ public class OpenAiProviderStatusService {
     }
 
     @Transactional(readOnly = true)
+    public AiProviderModelListResponse getProviderModels() {
+        List<AiProviderModelItemResponse> providers = userManagedProviders().stream()
+            .map(providerName -> AiProviderModelItemResponse.builder()
+                .providerName(providerName.getValue())
+                .providerType(providerName.getProviderType())
+                .authType(providerName.getAuthType())
+                .defaultModel(runtimePolicyService.defaultModel(providerName))
+                .models(runtimePolicyService.allowedModels(providerName))
+                .build())
+            .toList();
+
+        return AiProviderModelListResponse.builder()
+            .defaultModel(runtimePolicyService.defaultModel())
+            .providers(providers)
+            .build();
+    }
+
+    @Transactional(readOnly = true)
     public OpenAiProviderStatusResponse getProviders(Long userId) {
         List<OpenAiProviderStatusItemResponse> providers = new ArrayList<>();
-        providers.add(userApiKeyStatus(userId));
+        for (OpenAiProviderName providerName : userManagedProviders()) {
+            providers.add(userApiKeyStatus(userId, providerName));
+        }
         providers.add(oauthStatus(userId));
         if (runtimePolicyService.isDevFallbackProfile()) {
             providers.add(devFallbackStatus());
@@ -46,14 +68,25 @@ public class OpenAiProviderStatusService {
             .build();
     }
 
-    private OpenAiProviderStatusItemResponse userApiKeyStatus(Long userId) {
-        boolean connected = openAiProviderConnectionRepository
-            .findByUserIdAndProviderName(userId, OpenAiProviderName.OPENAI_USER_API_KEY.getValue())
-            .isPresent();
+    private List<OpenAiProviderName> userManagedProviders() {
+        return List.of(
+            OpenAiProviderName.OPENAI_API_KEY,
+            OpenAiProviderName.GEMINI_API_KEY,
+            OpenAiProviderName.CLAUDE_API_KEY
+        );
+    }
+
+    private OpenAiProviderStatusItemResponse userApiKeyStatus(Long userId, OpenAiProviderName providerName) {
+        boolean connected = providerName.lookupValues().stream()
+            .anyMatch(lookupValue -> openAiProviderConnectionRepository
+                .findByUserIdAndProviderName(userId, lookupValue)
+                .isPresent());
 
         return OpenAiProviderStatusItemResponse.builder()
-            .providerName(OpenAiProviderName.OPENAI_USER_API_KEY.getValue())
-            .authType(OpenAiProviderName.OPENAI_USER_API_KEY.getAuthType())
+            .providerName(providerName.getValue())
+            .providerType(providerName.getProviderType())
+            .authType(providerName.getAuthType())
+            .defaultModel(runtimePolicyService.defaultModel(providerName))
             .connected(connected)
             .available(connected)
             .expiresAt(null)
@@ -67,7 +100,9 @@ public class OpenAiProviderStatusService {
             .map(this::connectedOauthStatus)
             .orElseGet(() -> OpenAiProviderStatusItemResponse.builder()
                 .providerName(OpenAiProviderName.OPENAI_OAUTH.getValue())
+                .providerType(OpenAiProviderName.OPENAI_OAUTH.getProviderType())
                 .authType(OpenAiProviderName.OPENAI_OAUTH.getAuthType())
+                .defaultModel(runtimePolicyService.defaultModel(OpenAiProviderName.OPENAI_OAUTH))
                 .connected(false)
                 .available(false)
                 .expiresAt(null)
@@ -80,7 +115,9 @@ public class OpenAiProviderStatusService {
             || StringUtils.hasText(connection.getEncryptedRefreshToken());
         return OpenAiProviderStatusItemResponse.builder()
             .providerName(OpenAiProviderName.OPENAI_OAUTH.getValue())
+            .providerType(OpenAiProviderName.OPENAI_OAUTH.getProviderType())
             .authType(OpenAiProviderName.OPENAI_OAUTH.getAuthType())
+            .defaultModel(runtimePolicyService.defaultModel(OpenAiProviderName.OPENAI_OAUTH))
             .connected(true)
             .available(available)
             .expiresAt(connection.getExpiresAt())
@@ -92,7 +129,9 @@ public class OpenAiProviderStatusService {
         boolean available = runtimePolicyService.isDevFallbackAvailable();
         return OpenAiProviderStatusItemResponse.builder()
             .providerName(OpenAiProviderName.OPENAI_DEV_FALLBACK.getValue())
+            .providerType(OpenAiProviderName.OPENAI_DEV_FALLBACK.getProviderType())
             .authType(OpenAiProviderName.OPENAI_DEV_FALLBACK.getAuthType())
+            .defaultModel(runtimePolicyService.defaultModel(OpenAiProviderName.OPENAI_DEV_FALLBACK))
             .connected(available)
             .available(available)
             .expiresAt(null)
