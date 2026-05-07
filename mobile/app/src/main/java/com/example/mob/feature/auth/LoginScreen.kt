@@ -53,9 +53,10 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             try {
                 Log.d("AUTH_API", "POST /api/v1/auth/kakao/mobile 호출 시작")
                 Log.d("AUTH_API", "요청 body: accessToken=${kakaoAccessToken.take(20)}...")
-                val response = RetrofitClient.authApiService.kakaoLogin(
-                    KakaoLoginRequest(accessToken = kakaoAccessToken)
-                )
+                val response =
+                    RetrofitClient.authApiService.kakaoLogin(
+                        KakaoLoginRequest(accessToken = kakaoAccessToken),
+                    )
                 Log.d("AUTH_API", "응답 수신: status=${response.status}, message=${response.message}")
                 if (response.status == 200 && response.data != null) {
                     val serviceJwt = response.data.accessToken
@@ -117,9 +118,10 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     }
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.White),
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(Color.White),
         contentAlignment = Alignment.Center,
     ) {
         Column(
@@ -165,9 +167,10 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
             text = "로그인하면 서비스 이용약관 및 개인정보처리방침에 동의합니다",
             color = TextSecondary,
             fontSize = 11.sp,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 32.dp),
+            modifier =
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 32.dp),
         )
     }
 }
@@ -175,16 +178,17 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
 @Composable
 private fun KakaoLoginButton(onClick: () -> Unit) {
     Box(
-        modifier = Modifier
-            .width(280.dp)
-            .height(52.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFFFEE500))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onClick,
-            ),
+        modifier =
+            Modifier
+                .width(280.dp)
+                .height(52.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFFFEE500))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onClick,
+                ),
         contentAlignment = Alignment.Center,
     ) {
         Row(
