@@ -20,6 +20,7 @@ public class OpenAiCredentialIssueService {
     private final OpenAiRuntimePolicyService runtimePolicyService;
     private final OpenAiApiKeyService openAiApiKeyService;
     private final OpenAiOAuthService openAiOAuthService;
+    private final OpenAiCodexOAuthService openAiCodexOAuthService;
 
     @Transactional
     public OpenAiCredentialIssueResponse issue(OpenAiCredentialIssueRequest request) {
@@ -39,6 +40,12 @@ public class OpenAiCredentialIssueService {
         if (providerName == OpenAiProviderName.OPENAI_OAUTH) {
             OpenAiOAuthService.AccessTokenCredential credential =
                 openAiOAuthService.resolveAccessTokenCredential(request.getUserId());
+            return response(providerName, model, "bearer", credential.accessToken(), credential.expiresAt());
+        }
+
+        if (providerName.isCodexOAuthProvider()) {
+            OpenAiCodexOAuthService.AccessTokenCredential credential =
+                openAiCodexOAuthService.resolveAccessTokenCredential(request.getUserId());
             return response(providerName, model, "bearer", credential.accessToken(), credential.expiresAt());
         }
 
