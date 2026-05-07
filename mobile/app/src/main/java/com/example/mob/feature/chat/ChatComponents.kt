@@ -1,5 +1,12 @@
 package com.example.mob.feature.chat
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -11,7 +18,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.foundation.Canvas
@@ -29,11 +38,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.mob.ui.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
+import kotlin.math.sqrt
 
 private val BotBubbleColor = Color(0xFF1C1C1E)
 
@@ -191,6 +206,56 @@ fun ChatInputBar(
     placeholder: String = "젠틀맨 어시스턴트에게 질문하세요..."
 ) {
     var isRecording by remember { mutableStateOf(false) }
+    var amplitude by remember { mutableStateOf(0f) }
+    val context = LocalContext.current
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) isRecording = true }
+
+    LaunchedEffect(isRecording) {
+        if (!isRecording) {
+            amplitude = 0f
+            return@LaunchedEffect
+        }
+        val sampleRate = 44100
+        val minBuf = AudioRecord.getMinBufferSize(
+            sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
+        )
+        val bufSize = minBuf.coerceAtLeast(2048)
+        val record = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                sampleRate, AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT, bufSize
+            ).also {
+                if (it.state != AudioRecord.STATE_INITIALIZED) {
+                    isRecording = false
+                    return@LaunchedEffect
+                }
+            }
+        } catch (e: SecurityException) {
+            isRecording = false
+            return@LaunchedEffect
+        }
+        record.startRecording()
+        val buffer = ShortArray(bufSize / 2)
+        try {
+            while (isActive) {
+                val read = withContext(Dispatchers.IO) { record.read(buffer, 0, buffer.size) }
+                if (read > 0) {
+                    var sumSq = 0.0
+                    for (j in 0 until read) sumSq += buffer[j].toLong() * buffer[j]
+                    val rms = sqrt(sumSq / read).toFloat()
+                    amplitude = (rms / (Short.MAX_VALUE * 0.1f)).coerceIn(0f, 1f)
+                }
+            }
+        } finally {
+            record.stop()
+            record.release()
+            amplitude = 0f
+        }
+    }
 
     Surface(shadowElevation = 8.dp, color = SurfaceWhite) {
         Row(
@@ -215,7 +280,7 @@ fun ChatInputBar(
                 contentAlignment = Alignment.CenterStart
             ) {
                 when {
-                    isRecording -> RecordingWaveform()
+                    isRecording -> RecordingWaveform(amplitude)
                     isProcessing -> Text("응답을 기다리는 중...", color = TextSecondary, fontSize = 14.sp)
                     else -> BasicTextField(
                         value = inputText,
@@ -240,7 +305,17 @@ fun ChatInputBar(
 
             if (!isProcessing) {
                 IconButton(
-                    onClick = { isRecording = !isRecording },
+                    onClick = {
+                        if (isRecording) {
+                            isRecording = false
+                        } else {
+                            val granted = ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.RECORD_AUDIO
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (granted) isRecording = true
+                            else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
                     modifier = Modifier.size(36.dp)
                 ) {
                     Icon(
@@ -267,11 +342,11 @@ fun ChatInputBar(
                     modifier = Modifier
                         .size(40.dp)
                         .clip(CircleShape)
-                        .background(HealthRed)
+                        .background(NavyPrimary)
                         .clickable { isRecording = false },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.Stop, contentDescription = "녹음 중지", tint = Color.White, modifier = Modifier.size(20.dp))
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "전송", tint = Color.White, modifier = Modifier.size(18.dp))
                 }
                 inputText.isNotBlank() -> Box(
                     modifier = Modifier
@@ -291,7 +366,7 @@ fun ChatInputBar(
                         .clickable { onVoiceMode() },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Default.GraphicEq, contentDescription = "음성 대화", tint = Color(0xFF19C37D), modifier = Modifier.size(22.dp))
+                    Icon(Icons.Default.GraphicEq, contentDescription = "음성 대화", tint = Color.White, modifier = Modifier.size(22.dp))
                 }
             }
         }
@@ -299,18 +374,16 @@ fun ChatInputBar(
 }
 
 @Composable
-private fun RecordingWaveform() {
-    val transition = rememberInfiniteTransition(label = "recording")
-    val barHeights = (0 until 7).map { i ->
-        transition.animateFloat(
-            initialValue = 0.15f,
-            targetValue = 1.0f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(240 + i * 55, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "bar$i"
-        )
+private fun RecordingWaveform(amplitude: Float) {
+    // 산 모양 배율: 중앙 바가 가장 높고 양 끝이 낮음
+    val multipliers = remember { listOf(0.4f, 0.62f, 0.82f, 1.0f, 0.82f, 0.62f, 0.4f) }
+
+    val animatedHeights = multipliers.map { mult ->
+        animateFloatAsState(
+            targetValue = (amplitude * mult).coerceAtLeast(0.08f),
+            animationSpec = spring(dampingRatio = 0.5f, stiffness = 280f),
+            label = ""
+        ).value
     }
 
     Row(
@@ -325,8 +398,8 @@ private fun RecordingWaveform() {
             val gap = 4.dp.toPx()
             val total = 7 * barW + 6 * gap
             val startX = (size.width - total) / 2f
-            barHeights.forEachIndexed { i, h ->
-                val barH = size.height * h.value
+            animatedHeights.forEachIndexed { i, h ->
+                val barH = size.height * h
                 val x = startX + i * (barW + gap)
                 val y = (size.height - barH) / 2f
                 drawRoundRect(
@@ -344,6 +417,7 @@ private fun RecordingWaveform() {
 fun VoiceModeOverlay(onStop: () -> Unit) {
     val transition = rememberInfiniteTransition(label = "voice")
     var isSpeaking by remember { mutableStateOf(false) }
+    var isMicOn by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -394,23 +468,44 @@ fun VoiceModeOverlay(onStop: () -> Unit) {
             )
         }
 
-        Box(
+        Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 72.dp)
+                .padding(bottom = 72.dp),
+            horizontalArrangement = Arrangement.spacedBy(40.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            // 마이크 켜기/끄기
             Box(
                 modifier = Modifier
                     .size(64.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.15f))
+                    .background(if (isMicOn) Color.White.copy(alpha = 0.15f) else HealthRed)
+                    .clickable { isMicOn = !isMicOn },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    if (isMicOn) Icons.Default.Mic else Icons.Default.MicOff,
+                    contentDescription = if (isMicOn) "마이크 끄기" else "마이크 켜기",
+                    tint = Color.White,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+
+            // 음성 모드 종료
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(CircleShape)
+                    .background(HealthRed)
                     .clickable { onStop() },
                 contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(24.dp)
-                        .background(Color.White, RoundedCornerShape(4.dp))
+                Icon(
+                    Icons.Default.CallEnd,
+                    contentDescription = "종료",
+                    tint = Color.White,
+                    modifier = Modifier.size(28.dp)
                 )
             }
         }

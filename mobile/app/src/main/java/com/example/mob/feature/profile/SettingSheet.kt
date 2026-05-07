@@ -45,19 +45,21 @@ fun SettingSheet(
         containerColor = Color.White,
         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
     ) {
-        if (currentPage == null) {
-            SettingMainPage(
-                onNavigate = { currentPage = it },
-                onDismiss = onDismiss
-            )
-        } else {
-            SettingSubPage(
-                page = currentPage!!,
-                onBack = { currentPage = null },
-                onDismiss = onDismiss,
-                agentName = agentName,
-                onAgentNameChange = onAgentNameChange
-            )
+        Box(modifier = Modifier.fillMaxWidth().heightIn(min = 420.dp)) {
+            if (currentPage == null) {
+                SettingMainPage(
+                    onNavigate = { currentPage = it },
+                    onDismiss = onDismiss
+                )
+            } else {
+                SettingSubPage(
+                    page = currentPage!!,
+                    onBack = { currentPage = null },
+                    onDismiss = onDismiss,
+                    agentName = agentName,
+                    onAgentNameChange = onAgentNameChange
+                )
+            }
         }
     }
 }
@@ -113,26 +115,8 @@ private fun SettingSubPage(
 
 // ────────────────────────────── 일반 ──────────────────────────────
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GeneralContent() {
-    var notificationsOn by remember { mutableStateOf(true) }
-    var soundOn by remember { mutableStateOf(true) }
-
-    Text("애플리케이션의 기본 설정을 관리합니다", fontSize = 13.sp, color = TextSecondary)
-    Spacer(modifier = Modifier.height(20.dp))
-
-    DropdownSetting(
-        label = "언어",
-        description = "애플리케이션 표시 언어를 선택합니다",
-        options = listOf("한국어", "English"),
-        defaultValue = "한국어"
-    )
-    Spacer(modifier = Modifier.height(16.dp))
-    SettingToggleItem("알림", "데스크톱 알림을 활성화합니다", notificationsOn) { notificationsOn = it }
-    Spacer(modifier = Modifier.height(16.dp))
-    SettingToggleItem("효과음", "알림 및 상호작용 시 효과음을 재생합니다", soundOn) { soundOn = it }
-}
+private fun GeneralContent() {}
 
 // ────────────────────────────── 스킬 목록 ──────────────────────────────
 
@@ -366,7 +350,7 @@ private fun ModelContent() {
 private fun PersonalizeContent(agentName: String, onAgentNameChange: (String) -> Unit) {
     var voiceName by remember { mutableStateOf(agentName) }
 
-    Text("에이전트의 스타일과 말투를 개인화합니다", fontSize = 13.sp, color = TextSecondary)
+    Text("에이전트 이름을 설정합니다", fontSize = 13.sp, color = TextSecondary)
     Spacer(modifier = Modifier.height(20.dp))
 
     Text("에이전트 이름", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
@@ -381,21 +365,6 @@ private fun PersonalizeContent(agentName: String, onAgentNameChange: (String) ->
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
         shape = RoundedCornerShape(8.dp)
-    )
-    Spacer(modifier = Modifier.height(16.dp))
-
-    DropdownSetting(
-        label = "기본 스타일 및 말투",
-        description = "에이전트가 응답하는 스타일과 말투를 지정합니다",
-        options = listOf("기본값", "격식체", "반말", "친근한"),
-        defaultValue = "기본값"
-    )
-    Spacer(modifier = Modifier.height(16.dp))
-    DropdownSetting(
-        label = "언어",
-        description = "응답 언어를 선택합니다",
-        options = listOf("자동 탐지", "한국어", "English"),
-        defaultValue = "자동 탐지"
     )
 }
 
