@@ -16,6 +16,7 @@ import com.ssafy.heygent.global.exception.ApiResponse;
 import com.ssafy.heygent.global.exception.CustomException;
 import com.ssafy.heygent.global.exception.ErrorCode;
 
+import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
 
 @RestController
@@ -25,6 +26,7 @@ public class OpenAiUsageCostsProxyController {
 
     private final OpenAiUsageCostsProxyService openAiUsageCostsProxyService;
 
+    @Operation(summary = "내 OpenAI usage 비용 조회", description = "로그인된 사용자의 provider별 OpenAI usage 비용을 기간 조건으로 조회합니다.")
     @GetMapping("/me")
     public ApiResponse<OpenAiUsageCostsProxyResponse> getMyOpenAiUsage(
         @AuthenticationPrincipal CustomUserPrincipal user,
