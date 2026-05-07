@@ -1,18 +1,25 @@
 import { useRef, useCallback, useEffect, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router'
 import {
+  Activity,
+  AlertCircle,
   ChevronLeft,
   ChevronRight,
   Loader2,
+  LayoutDashboard,
   MessageCircle,
   MessageSquare,
   Clock,
   GripVertical,
+  Moon,
+  PanelRightOpen,
   Plus,
   User,
   Settings,
+  Sun,
   LogOut,
   UserCircle,
+  Wifi,
   X,
   Edit3,
   MoreHorizontal,
@@ -44,6 +51,7 @@ type SidebarSession = {
 }
 
 type SessionConfirmAction = 'delete'
+type SidebarConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'error'
 
 type SessionConfirmState = {
   sessionId: string
@@ -56,9 +64,12 @@ export function LeftSidebar() {
     sidebarWidth: width,
     settingsOpen,
     settingsInitialTab,
+    theme,
     setSidebarCollapsed,
     clampSidebarWidth,
     setSettingsOpen,
+    setTheme,
+    setTaskActivityPanelOpen,
   } = useUIStore()
   const { selectedSessionId, setSelectedSessionId, pinnedSessionIds, togglePinSession } =
     useSessionStore()
@@ -69,6 +80,9 @@ export function LeftSidebar() {
   const [sessionConfirm, setSessionConfirm] = useState<SessionConfirmState | null>(null)
   const commandClient = useAiRealtimeStore((state) => state.commandClient)
   const realtimeStatus = useAiRealtimeStore((state) => state.connectionStatus)
+  const authStatus = useAiRealtimeStore((state) => state.authStatus)
+  const realtimeError = useAiRealtimeStore((state) => state.lastError)
+  const accessToken = useAuthStore((state) => state.accessToken)
   const sessionsById = useChatStore((state) => state.sessionsById)
   const sessionListLoading = useChatStore((state) => state.sessionListLoading)
   const chatError = useChatStore((state) => state.sessionListError ?? state.lastError)
@@ -79,6 +93,7 @@ export function LeftSidebar() {
   const startWidth = useRef(0)
   const navigate = useNavigate()
   const location = useLocation()
+  const currentChatSessionId = getCurrentChatSessionId(location.pathname)
   const sidebarSessions = useMemo(() => {
     const all = Object.values(sessionsById)
       .map(toSidebarSession)
@@ -94,6 +109,18 @@ export function LeftSidebar() {
   )
   const sessionSettingsSession =
     sessionSettingsSessionId === null ? null : (sessionsById[sessionSettingsSessionId] ?? null)
+  const currentChatSession =
+    currentChatSessionId === null ? null : (sessionsById[currentChatSessionId] ?? null)
+  const currentChatTitle = useMemo(
+    () => getSessionDisplayName(currentChatSession),
+    [currentChatSession],
+  )
+  const connectionState = getSidebarConnectionState(
+    realtimeStatus,
+    authStatus,
+    accessToken,
+    realtimeError,
+  )
 
   useEffect(() => {
     if (commandClient === null) {
@@ -235,9 +262,25 @@ export function LeftSidebar() {
         {/* ── Collapsed Rail ── */}
         {collapsed && (
           <div className="flex h-full flex-col items-center gap-1 py-3">
+            <CollapsedTooltip label="홈">
+              <button
+                type="button"
+                onClick={() => navigate('/')}
+                className="hover:bg-sidebar-accent flex h-10 w-10 items-center justify-center rounded-lg transition-colors"
+                aria-label="홈으로 이동"
+              >
+                <img
+                  src="/logo-sidebar.png"
+                  alt="HeyGent"
+                  className="h-9 w-9 rounded-md object-contain"
+                />
+              </button>
+            </CollapsedTooltip>
+
             {/* Expand button */}
             <CollapsedTooltip label="사이드바 열기">
               <button
+                type="button"
                 onClick={() => setSidebarCollapsed(false)}
                 className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
               >
@@ -247,9 +290,66 @@ export function LeftSidebar() {
 
             <div className="bg-sidebar-border my-1 h-px w-6" />
 
+            <CollapsedTooltip label="대시보드">
+              <button
+                type="button"
+                onClick={() => navigate('/')}
+                className={`hover:bg-sidebar-accent flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+                  location.pathname === '/'
+                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                aria-label="대시보드로 이동"
+              >
+                <LayoutDashboard className="h-4 w-4" />
+              </button>
+            </CollapsedTooltip>
+
+            <CollapsedTooltip label="에이전트 상태">
+              <button
+                type="button"
+                onClick={() => navigate('/agent-status')}
+                className={`hover:bg-sidebar-accent flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+                  location.pathname.startsWith('/agent-status')
+                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                aria-label="에이전트 상태로 이동"
+              >
+                <Activity className="h-4 w-4" />
+              </button>
+            </CollapsedTooltip>
+
+            <CollapsedTooltip label={theme === 'dark' ? '라이트 모드' : '다크 모드'}>
+              <button
+                type="button"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+                aria-label={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+              >
+                {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </button>
+            </CollapsedTooltip>
+
+            {currentChatSessionId !== null && (
+              <CollapsedTooltip label="활동 패널">
+                <button
+                  type="button"
+                  onClick={() => setTaskActivityPanelOpen(true)}
+                  className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+                  aria-label="활동 패널 열기"
+                >
+                  <PanelRightOpen className="h-4 w-4" />
+                </button>
+              </CollapsedTooltip>
+            )}
+
+            <div className="bg-sidebar-border my-1 h-px w-6" />
+
             {/* New Chat button */}
             <CollapsedTooltip label="새 채팅">
               <button
+                type="button"
                 onClick={handleNewChat}
                 className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
               >
@@ -387,25 +487,85 @@ export function LeftSidebar() {
         {/* ── Expanded Panel ── */}
         {!collapsed && (
           <div className="flex h-full flex-col overflow-hidden">
-            {/* Header */}
-            <div className="border-sidebar-border flex h-12 shrink-0 items-center justify-between border-b px-4">
-              <div className="flex items-center gap-2">
-                <MessageSquare className="text-muted-foreground h-4 w-4" />
-                <span className="text-foreground text-sm font-semibold">대화 세션</span>
-              </div>
-              <div className="flex items-center gap-1">
+            <div className="border-sidebar-border shrink-0 border-b px-3 py-3">
+              <div className="mb-3 flex items-center justify-between gap-2">
                 <button
-                  onClick={() => setSidebarCollapsed(true)}
-                  className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-7 w-7 items-center justify-center rounded-md transition-colors"
+                  type="button"
+                  onClick={() => navigate('/')}
+                  className="hover:bg-sidebar-accent flex min-w-0 items-center gap-2 rounded-lg p-1.5 transition-colors"
+                  aria-label="홈으로 이동"
                 >
-                  <ChevronLeft className="h-3.5 w-3.5" />
+                  <img
+                    src="/logo-sidebar.png"
+                    alt="HeyGent"
+                    className="h-14 w-28 shrink-0 rounded-lg object-contain"
+                  />
                 </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                    className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-8 w-8 items-center justify-center rounded-md transition-colors"
+                    aria-label={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+                    title={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+                  >
+                    {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSidebarCollapsed(true)}
+                    className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-8 w-8 items-center justify-center rounded-md transition-colors"
+                    aria-label="사이드바 접기"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
+
+              <nav className="space-y-1">
+                <button
+                  type="button"
+                  onClick={() => navigate('/')}
+                  className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
+                    location.pathname === '/'
+                      ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+                      : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
+                  }`}
+                >
+                  <LayoutDashboard className="h-4 w-4 shrink-0" />
+                  <span>대시보드</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/agent-status')}
+                  className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
+                    location.pathname.startsWith('/agent-status')
+                      ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+                      : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
+                  }`}
+                >
+                  <Activity className="h-4 w-4 shrink-0" />
+                  <span>에이전트 상태</span>
+                </button>
+              </nav>
+
+              {currentChatSessionId !== null && (
+                <CurrentChatSidebarControl
+                  title={currentChatTitle}
+                  connectionState={connectionState}
+                  onOpenActivity={() => setTaskActivityPanelOpen(true)}
+                  onOpenSettings={() => setSessionSettingsSessionId(currentChatSessionId)}
+                />
+              )}
             </div>
 
             <div className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-3">
               {/* ── Sessions ── */}
               <section>
+                <div className="text-muted-foreground mb-2 flex items-center gap-2 px-1 text-xs font-medium">
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  <span>대화 세션</span>
+                </div>
                 <div className="space-y-1">
                   {/* New Chat button */}
                   <button
@@ -594,6 +754,66 @@ function storePendingSessionConfig(config: CustomAgentConfig | undefined) {
   sessionStorage.setItem('ai-new-session-config', JSON.stringify(config))
 }
 
+function CurrentChatSidebarControl({
+  title,
+  connectionState,
+  onOpenActivity,
+  onOpenSettings,
+}: {
+  title: string
+  connectionState: SidebarConnectionState
+  onOpenActivity: () => void
+  onOpenSettings: () => void
+}) {
+  const isBusy = connectionState === 'connecting' || connectionState === 'reconnecting'
+  const isError = connectionState === 'error'
+
+  return (
+    <div className="border-sidebar-border mt-3 rounded-lg border p-2.5">
+      <div className="mb-2 flex min-w-0 items-center gap-2">
+        <div className="bg-muted text-muted-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
+          <MessageCircle className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-foreground truncate text-sm font-semibold">{title}</p>
+          <div
+            className={`flex items-center gap-1.5 text-xs ${
+              isError ? 'text-destructive' : 'text-muted-foreground'
+            }`}
+          >
+            {isBusy ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : isError ? (
+              <AlertCircle className="h-3 w-3" />
+            ) : (
+              <Wifi className="h-3 w-3" />
+            )}
+            <span>{getSidebarConnectionText(connectionState)}</span>
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs transition-colors"
+        >
+          <Settings className="h-3.5 w-3.5" />
+          <span>설정</span>
+        </button>
+        <button
+          type="button"
+          onClick={onOpenActivity}
+          className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs transition-colors"
+        >
+          <PanelRightOpen className="h-3.5 w-3.5" />
+          <span>활동</span>
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function EmptySessionNotice({
   realtimeStatus,
   loading,
@@ -707,6 +927,81 @@ function isRunningTaskRunStatus(status: string | undefined) {
 
 function isRemovedSidebarSession(session: RawAiSession) {
   return session.deleted_at != null || session.status === 'DELETED'
+}
+
+function getCurrentChatSessionId(pathname: string) {
+  if (!pathname.startsWith('/session/')) {
+    return null
+  }
+  const sessionId = pathname.slice('/session/'.length).split('/')[0]
+  return sessionId.trim() === '' ? null : sessionId
+}
+
+function getSessionDisplayName(session: RawAiSession | null) {
+  if (session === null) {
+    return '새 세션'
+  }
+  const source = session as Record<string, unknown>
+  const metadata = toPlainObject(source.metadata)
+  const ui = toPlainObject(metadata.ui)
+  return getTrimmedString(ui.sessionName) ?? toSidebarSession(session).title
+}
+
+function toPlainObject(value: unknown): Record<string, unknown> {
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>
+  }
+  return {}
+}
+
+function getTrimmedString(value: unknown) {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+}
+
+function getSidebarConnectionState(
+  connectionStatus: string,
+  authStatus: string,
+  accessToken: string | null,
+  realtimeError: string | null,
+): SidebarConnectionState {
+  if (realtimeError !== null || authStatus === 'failed') {
+    return 'error'
+  }
+  if (accessToken === null || accessToken.trim() === '') {
+    return 'error'
+  }
+
+  switch (connectionStatus) {
+    case 'authenticated':
+      return 'connected'
+    case 'connecting':
+    case 'open':
+      return 'connecting'
+    case 'reconnecting':
+      return 'reconnecting'
+    case 'error':
+    case 'closed':
+      return 'error'
+    case 'idle':
+    default:
+      return 'idle'
+  }
+}
+
+function getSidebarConnectionText(state: SidebarConnectionState) {
+  switch (state) {
+    case 'connected':
+      return '연결됨'
+    case 'connecting':
+      return '연결 중'
+    case 'reconnecting':
+      return '연결 복구 중'
+    case 'error':
+      return '연결 확인 필요'
+    case 'idle':
+    default:
+      return '대기 중'
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

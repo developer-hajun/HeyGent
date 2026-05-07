@@ -22,6 +22,10 @@ interface UIState {
   clampSidebarWidth: (width: number) => void
   setSettingsOpen: (open: boolean, initialTab?: string) => void
 
+  // 채팅 활동 패널
+  taskActivityPanelOpen: boolean
+  setTaskActivityPanelOpen: (open: boolean) => void
+
   // 우측 패널
   rightPanelType: RightPanelType
   setRightPanelType: (type: RightPanelType) => void
@@ -50,6 +54,8 @@ export const useUIStore = create<UIState>((set, get) => ({
     set({ sidebarWidth: Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width)) }),
   setSettingsOpen: (open, initialTab) =>
     set({ settingsOpen: open, ...(initialTab ? { settingsInitialTab: initialTab } : {}) }),
+  taskActivityPanelOpen: false,
+  setTaskActivityPanelOpen: (open) => set({ taskActivityPanelOpen: open }),
 
   rightPanelType: null,
   setRightPanelType: (type) => set({ rightPanelType: type }),

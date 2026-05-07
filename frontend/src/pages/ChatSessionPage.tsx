@@ -4,19 +4,14 @@ import { useParams } from 'react-router'
 import { ChatComposer } from '@/components/chat/ChatComposer'
 import { ChatEmptyState } from '@/components/chat/ChatEmptyState'
 import { ChatMessageList } from '@/components/chat/ChatMessageList'
-import { ChatSessionHeader } from '@/components/chat/ChatSessionHeader'
 import type { ChatConnectionState } from '@/components/chat/chatTypes'
-import { SessionSettingsModal } from '@/components/session/SessionSettingsModal'
 import { StepRunActivityPanel } from '@/components/taskRuns/StepRunActivityPanel'
-import type {
-  AiRealtimeAuthStatus,
-  AiRealtimeConnectionStatus,
-  JsonObject,
-} from '@/realtime/aiRealtimeTypes'
+import type { AiRealtimeAuthStatus, AiRealtimeConnectionStatus } from '@/realtime/aiRealtimeTypes'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
+import { useUIStore } from '@/store/useUIStore'
 import {
   isInternalStepAnchorEvent,
   isInternalStepAnchorStepRun,
@@ -31,8 +26,6 @@ const EMPTY_MESSAGES: never[] = []
 
 export function ChatSessionPage() {
   const { sessionId = '' } = useParams()
-  const [activityOpen, setActivityOpen] = useState(false)
-  const [sessionSettingsOpen, setSessionSettingsOpen] = useState(false)
   const [selectedTaskRunId, setSelectedTaskRunId] = useState<string | undefined>()
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -54,6 +47,8 @@ export function ChatSessionPage() {
   const realtimeError = useAiRealtimeStore((state) => state.lastError)
   const subscribeTask = useAiRealtimeStore((state) => state.subscribeTask)
   const accessToken = useAuthStore((state) => state.accessToken)
+  const activityOpen = useUIStore((state) => state.taskActivityPanelOpen)
+  const setActivityOpen = useUIStore((state) => state.setTaskActivityPanelOpen)
 
   const storeMessages = useChatStore((state) =>
     sessionId === '' ? EMPTY_MESSAGES : (state.messagesBySessionId[sessionId] ?? EMPTY_MESSAGES),
@@ -86,7 +81,6 @@ export function ChatSessionPage() {
       storeMessages.filter((message) => message.role === 'user' || message.role === 'assistant'),
     [storeMessages],
   )
-  const sessionName = useMemo(() => getSessionDisplayName(currentSession), [currentSession])
   const taskRunIds = useMemo(() => {
     const ids = new Set<string>()
 
@@ -197,6 +191,7 @@ export function ChatSessionPage() {
     fetchMessages,
     isPendingSession,
     realtimeError,
+    setActivityOpen,
     sessionId,
   ])
 
@@ -395,12 +390,6 @@ export function ChatSessionPage() {
   return (
     <main className="bg-background flex min-w-0 flex-1 overflow-hidden">
       <section className="flex min-w-0 flex-1 flex-col">
-        <ChatSessionHeader
-          title={sessionName}
-          connectionState={connectionState}
-          onOpenActivity={() => setActivityOpen(true)}
-          onOpenSettings={() => setSessionSettingsOpen(true)}
-        />
         {displayErrorMessage && loadState !== 'error' && (
           <button
             type="button"
@@ -461,11 +450,6 @@ export function ChatSessionPage() {
         selectedTaskRunId={selectedTaskRunId}
         onSelectTaskRun={setSelectedTaskRunId}
         onFocusTaskRunMessage={handleFocusTaskRunMessage}
-      />
-      <SessionSettingsModal
-        open={sessionSettingsOpen}
-        onOpenChange={setSessionSettingsOpen}
-        session={currentSession ?? null}
       />
     </main>
   )
@@ -564,22 +548,4 @@ const getChatStepOrder = (stepRun: { step_order?: number | null; stepOrder?: num
     return stepRun.stepOrder
   }
   return undefined
-}
-
-function getNonEmptyString(value: unknown) {
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
-}
-
-function getSessionDisplayName(session: unknown) {
-  const source = toJsonObject(session)
-  const metadata = toJsonObject(source.metadata)
-  const ui = toJsonObject(metadata.ui)
-  return getNonEmptyString(ui.sessionName) ?? '새 세션'
-}
-
-function toJsonObject(value: unknown): JsonObject {
-  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-    return value as JsonObject
-  }
-  return {}
 }
