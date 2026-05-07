@@ -9,6 +9,7 @@ const SITTING_SPRITES: Record<string, string> = {
   sitting_floor_lean: 'sit_floor_lean',
   sitting_meeting: 'meeting',
   sitting_calling: 'calling',
+  standing_wait: 'walk_side_stand',
 }
 
 const WALK_FRAMES = ['walk_side_01', 'walk_side_stand', 'walk_side_02', 'walk_side_stand'] as const
@@ -55,7 +56,10 @@ export function AgentSprite({ agent, onArrived }: AgentSpriteProps) {
           width: '100%',
           height: '100%',
           userSelect: 'none',
-          transform: agent.facingRight && agent.state === 'walking' ? 'scaleX(-1)' : undefined,
+          transform:
+            agent.facingRight && (agent.state === 'walking' || agent.state === 'standing_wait')
+              ? 'scaleX(-1)'
+              : undefined,
         }}
       />
     </div>
