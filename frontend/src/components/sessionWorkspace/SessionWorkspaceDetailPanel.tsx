@@ -224,39 +224,40 @@ function PurposePage({ session }: { session: RawAiSession }) {
         {saveError && <p className="text-destructive text-sm">{saveError}</p>}
         <div className="space-y-3">
           <div className="text-muted-foreground text-xs">대화 프롬프트</div>
-          <div className="border-border grid overflow-hidden border xl:grid-cols-[minmax(0,4fr)_minmax(240px,3fr)]">
-            <div className="border-border space-y-3 p-4 xl:border-r">
-              <textarea
+          <div className="border-border grid grid-cols-[minmax(0,4fr)_minmax(0,3fr)] overflow-hidden border">
+            <div className="border-border min-w-0 border-r">
+              <PromptEntityRow
+                title="대화 목표"
                 value={purpose}
-                onChange={(event) => {
-                  setPurpose(event.target.value)
-                  markDirty()
-                }}
-                rows={1}
+                onChange={setPurpose}
+                onDirty={markDirty}
                 placeholder="예: 이번 대화에서는 3분 발표용 서비스 소개안을 완성한다."
-                aria-label="대화 목표"
-                className="placeholder:text-muted-foreground/45 focus:bg-accent/20 min-h-8 w-full resize-none bg-transparent text-xl leading-8 font-bold outline-none"
+                multiline
+                rows={2}
               />
-              <textarea
+              <PromptEntityRow
+                title="응답 역할"
                 value={persona}
-                onChange={(event) => {
-                  setPersona(event.target.value)
-                  markDirty()
-                }}
-                rows={3}
+                onChange={setPersona}
+                onDirty={markDirty}
                 placeholder="예: PM처럼 질문하고, 근거가 부족하면 먼저 확인하며, 답변은 실행 항목 중심으로 정리한다."
-                aria-label="AI 페르소나"
-                className="text-muted-foreground placeholder:text-muted-foreground/45 focus:bg-accent/20 min-h-20 w-full resize-none bg-transparent text-sm leading-6 outline-none"
+                multiline
+                rows={3}
               />
             </div>
-            <div className="flex items-start justify-center p-4">
-              <AgentImageSelector
-                profileImage={profileImage}
-                selectedImageIndex={selectedImageIndex}
-                onProfileImageChange={(image) => {
-                  setProfileImage(image)
+            <div className="min-w-0 space-y-4 p-3 sm:p-4">
+              <ModelSelector
+                effectiveSelectedFamily={effectiveSelectedFamily}
+                modelFamilies={modelFamilies}
+                modelOptionsError={modelOptionsError}
+                modelOptionsLoading={modelOptionsLoading}
+                onModelSelect={(modelId) => {
+                  setSelectedModel(modelId)
                   setSaved(false)
                 }}
+                onFamilySelect={setSelectedFamily}
+                selectedModel={selectedModel}
+                visibleModels={visibleModels}
               />
             </div>
           </div>
@@ -266,8 +267,19 @@ function PurposePage({ session }: { session: RawAiSession }) {
           <div className="flex items-center justify-start">
             <span className="text-muted-foreground text-xs">세부사항</span>
           </div>
-          <div className="border-border grid overflow-hidden border xl:grid-cols-[minmax(0,4fr)_minmax(280px,3fr)]">
-            <div className="border-border xl:border-r">
+          <div className="border-border grid grid-cols-[minmax(170px,1fr)_minmax(0,4fr)] overflow-hidden border">
+            <div className="border-border flex min-w-0 items-center justify-center border-r p-2 sm:p-3">
+              <AgentImageSelector
+                profileImage={profileImage}
+                selectedImageIndex={selectedImageIndex}
+                onProfileImageChange={(image) => {
+                  setProfileImage(image)
+                  setSaved(false)
+                }}
+              />
+            </div>
+
+            <div className="min-w-0">
               <PromptEntityRow
                 identifier="이름"
                 title="에이전트 이름"
@@ -301,22 +313,6 @@ function PurposePage({ session }: { session: RawAiSession }) {
                 onDirty={markDirty}
                 placeholder="예: 추측하지 말고 모르는 내용은 확인 질문으로 남겨주세요."
                 multiline
-              />
-            </div>
-
-            <div className="space-y-4 p-4">
-              <ModelSelector
-                effectiveSelectedFamily={effectiveSelectedFamily}
-                modelFamilies={modelFamilies}
-                modelOptionsError={modelOptionsError}
-                modelOptionsLoading={modelOptionsLoading}
-                onModelSelect={(modelId) => {
-                  setSelectedModel(modelId)
-                  setSaved(false)
-                }}
-                onFamilySelect={setSelectedFamily}
-                selectedModel={selectedModel}
-                visibleModels={visibleModels}
               />
             </div>
           </div>
@@ -391,7 +387,7 @@ function ModelSelector({
             disabled={modelOptionsLoading || modelOptionsError !== null}
             className="border-border hover:bg-accent/50 flex w-full items-center gap-3 border-b px-4 py-2 text-left text-sm transition-colors last:border-b-0 disabled:opacity-60"
           >
-            <span className="text-muted-foreground w-20 shrink-0 text-xs capitalize">
+            <span className="text-muted-foreground hidden w-20 shrink-0 text-xs capitalize sm:inline">
               {model.provider ?? effectiveSelectedFamily}
             </span>
             <span className="min-w-0 flex-1 truncate">{model.label}</span>
@@ -418,7 +414,10 @@ function AgentImageSelector({
   const selectedImage = AGENT_IMAGE_OPTIONS[selectedImageIndex]
 
   return (
-    <div className="flex w-full items-start justify-center gap-3" aria-label="에이전트 이미지">
+    <div
+      className="flex w-full min-w-0 items-center justify-center gap-1 sm:gap-2"
+      aria-label="에이전트 이미지"
+    >
       <button
         type="button"
         onClick={() => {
@@ -426,12 +425,12 @@ function AgentImageSelector({
             (selectedImageIndex - 1 + AGENT_IMAGE_OPTIONS.length) % AGENT_IMAGE_OPTIONS.length
           onProfileImageChange(AGENT_IMAGE_OPTIONS[nextIndex].src)
         }}
-        className="text-muted-foreground hover:bg-accent/50 hover:text-foreground mt-12 flex h-8 w-8 shrink-0 items-center justify-center transition-colors"
+        className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-8 w-8 shrink-0 items-center justify-center transition-colors"
         aria-label="이전 에이전트 이미지"
       >
         <ChevronLeft className="h-4 w-4" />
       </button>
-      <div className="bg-muted flex aspect-square w-36 shrink-0 items-end justify-center overflow-hidden">
+      <div className="bg-muted flex aspect-square w-full max-w-28 min-w-20 shrink items-end justify-center overflow-hidden">
         <img
           src={profileImage}
           alt={selectedImage?.label ?? '메인 에이전트'}
@@ -445,7 +444,7 @@ function AgentImageSelector({
           const nextIndex = (selectedImageIndex + 1) % AGENT_IMAGE_OPTIONS.length
           onProfileImageChange(AGENT_IMAGE_OPTIONS[nextIndex].src)
         }}
-        className="text-muted-foreground hover:bg-accent/50 hover:text-foreground mt-12 flex h-8 w-8 shrink-0 items-center justify-center transition-colors"
+        className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-8 w-8 shrink-0 items-center justify-center transition-colors"
         aria-label="다음 에이전트 이미지"
       >
         <ChevronRight className="h-4 w-4" />
@@ -788,23 +787,27 @@ function PromptEntityRow({
   title,
   value,
   multiline = false,
+  rows = 3,
   placeholder,
   onChange,
   onDirty,
 }: {
-  identifier: string
+  identifier?: string
   title: string
   value: string
   multiline?: boolean
+  rows?: number
   placeholder: string
   onChange: (value: string) => void
   onDirty: () => void
 }) {
   return (
     <label className="border-border hover:bg-accent/50 flex items-start gap-3 border-b px-4 py-2 text-sm transition-colors last:border-b-0">
-      <span className="text-muted-foreground w-20 shrink-0 pt-1 font-mono text-xs">
-        {identifier}
-      </span>
+      {identifier ? (
+        <span className="text-muted-foreground w-20 shrink-0 pt-1 font-mono text-xs">
+          {identifier}
+        </span>
+      ) : null}
       <span className="w-28 shrink-0 truncate pt-1">{title}</span>
       {multiline ? (
         <textarea
@@ -813,7 +816,7 @@ function PromptEntityRow({
             onChange(event.target.value)
             onDirty()
           }}
-          rows={3}
+          rows={rows}
           placeholder={placeholder}
           className="placeholder:text-muted-foreground/45 text-muted-foreground focus:bg-accent/20 min-h-16 min-w-0 flex-1 resize-none bg-transparent leading-6 outline-none"
         />
@@ -846,7 +849,7 @@ function WorkspacePageShell({
 }) {
   return (
     <main className="bg-background min-w-0 flex-1 overflow-auto p-4 outline-none md:p-6">
-      <div className="max-w-4xl space-y-6">
+      <div className="w-full space-y-6">
         <div className="space-y-3">
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground text-xs uppercase">{eyebrow}</span>
