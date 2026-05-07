@@ -1,6 +1,8 @@
 from pathlib import Path
 
+from app.clients.backend_memory import BackendMemoryItem
 from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopHandler
+from app.domain.orchestration.prompts.persistent_memory_prompt import build_persistent_memory_prompt
 from app.domain.orchestration.prompts.prompt_builder import PromptBuilder, assemble_agent_loop_messages, render_single_prompt_fallback
 from app.domain.orchestration.prompts.skill_prompt import SkillLoader, SkillPromptBuilder, SkillRegistry
 
@@ -52,6 +54,42 @@ def test_prompt_builder_explains_approval_tool_call_boundary():
     assert "approval_required=true" in prompt
     assert "도구 호출 자체는 먼저 native tool call로 반환하세요" in prompt
     assert "같은 tool_call_id" in prompt
+
+
+def test_prompt_builder_places_persistent_memory_before_current_prompt():
+    prompt_builder = PromptBuilder(SkillPromptBuilder(SkillRegistry()))
+    memory_context = "<memory-context>\ncontent: 사용자는 짧은 답변을 선호한다.\n</memory-context>"
+
+    prompt = prompt_builder.build_model_prompt(
+        input_payload={
+            "prompt": "오늘 회의 정리해줘",
+            "persistent_memory_context": memory_context,
+        }
+    )
+
+    assert memory_context in prompt
+    assert prompt.index("<memory-context>") < prompt.index("오늘 회의 정리해줘")
+
+
+def test_persistent_memory_prompt_sanitizes_metadata():
+    prompt = build_persistent_memory_prompt(
+        [
+            BackendMemoryItem(
+                id=10,
+                memory_type="PREFERENCE",
+                store_type="PROFILE",
+                scope_type="GLOBAL",
+                content="사용자는 한국어 답변을 선호한다.",
+                summary="언어 선호",
+                metadata={"workspaceKey": "team-a", "token": "secret-token", "tags": ["language"]},
+            )
+        ]
+    )
+
+    assert "<memory-context>" in prompt
+    assert "사용자는 한국어 답변을 선호한다." in prompt
+    assert "workspaceKey" in prompt
+    assert "secret-token" not in prompt
 
 
 def test_assemble_agent_loop_messages_preserves_history_as_native_messages():
