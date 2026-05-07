@@ -70,7 +70,7 @@ export function ChatComposer({
   }
 
   return (
-    <div className="bg-background/95 supports-backdrop-filter:bg-background/80 px-4 py-2 backdrop-blur">
+    <div className="bg-background/95 supports-backdrop-filter:bg-background/80 px-4 pt-2 pb-8 backdrop-blur sm:pb-10">
       <div className="mx-auto max-w-3xl">
         <div className="border-border bg-card overflow-hidden rounded-2xl border shadow-sm transition-shadow duration-200 hover:shadow-md">
           {/* Input row */}
