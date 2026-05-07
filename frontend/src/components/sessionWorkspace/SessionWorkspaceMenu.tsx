@@ -234,7 +234,7 @@ export function SessionWorkspaceMenu({
             >
               <ChevronRight className="text-muted-foreground/60 h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
               <span className="text-muted-foreground/60 font-mono text-[10px] font-medium tracking-widest uppercase">
-                에이전트
+                AGENT
               </span>
             </button>
             <button
