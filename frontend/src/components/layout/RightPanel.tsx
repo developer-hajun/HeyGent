@@ -1,16 +1,9 @@
-import type { ComponentType, CSSProperties } from 'react'
 import { useRef, useState, useCallback, useMemo } from 'react'
 import { X, MoreVertical, Trash2 } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useSessionStore, type AgentPanelItem } from '@/store/useSessionStore'
-
-export interface Agent {
-  name: string
-  icon: ComponentType<{ className?: string; style?: CSSProperties }>
-  accent: string
-  description: string
-}
+export type { Agent } from '@/types/agent'
 
 const TAB_H = 96
 const TAB_GAP = 12

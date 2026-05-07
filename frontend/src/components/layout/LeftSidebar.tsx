@@ -2,33 +2,30 @@ import { useEffect, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router'
 import {
   Activity,
-  AlertCircle,
   ChevronLeft,
   ChevronRight,
   Loader2,
   LayoutDashboard,
-  MessageCircle,
   MessageSquare,
-  PanelRightOpen,
   Plus,
   User,
   Settings,
   LogOut,
   UserCircle,
-  Wifi,
   X,
   Edit3,
-  MoreHorizontal,
   Pin,
-  PinOff,
-  Trash2,
 } from 'lucide-react'
 import { useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { NewSessionModal, type CustomAgentConfig } from '@/components/session/NewSessionModal'
-import { SessionSettingsModal } from '@/components/session/SessionSettingsModal'
-import { DEFAULT_SIDEBAR_WIDTH, useUIStore } from '@/store/useUIStore'
+import { getCurrentWorkspaceSessionId } from '@/components/sessionWorkspace/sessionWorkspaceUtils'
+import {
+  DEFAULT_SIDEBAR_COLLAPSED_WIDTH,
+  DEFAULT_SIDEBAR_WIDTH,
+  useUIStore,
+} from '@/store/useUIStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
@@ -46,14 +43,6 @@ type SidebarSession = {
   raw: RawAiSession
 }
 
-type SessionConfirmAction = 'delete'
-type SidebarConnectionState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'error'
-
-type SessionConfirmState = {
-  sessionId: string
-  action: SessionConfirmAction
-}
-
 export function LeftSidebar() {
   const {
     sidebarCollapsed: collapsed,
@@ -61,27 +50,19 @@ export function LeftSidebar() {
     settingsInitialTab,
     setSidebarCollapsed,
     setSettingsOpen,
-    setTaskActivityPanelOpen,
   } = useUIStore()
-  const { selectedSessionId, setSelectedSessionId, pinnedSessionIds, togglePinSession } =
-    useSessionStore()
+  const { setSelectedSessionId, pinnedSessionIds } = useSessionStore()
   const [profileOpen, setProfileOpen] = useState(false)
   const [newSessionModalOpen, setNewSessionModalOpen] = useState(false)
-  const [sessionSettingsSessionId, setSessionSettingsSessionId] = useState<string | null>(null)
-  const [sessionConfirm, setSessionConfirm] = useState<SessionConfirmState | null>(null)
   const commandClient = useAiRealtimeStore((state) => state.commandClient)
   const realtimeStatus = useAiRealtimeStore((state) => state.connectionStatus)
-  const authStatus = useAiRealtimeStore((state) => state.authStatus)
-  const realtimeError = useAiRealtimeStore((state) => state.lastError)
-  const accessToken = useAuthStore((state) => state.accessToken)
   const sessionsById = useChatStore((state) => state.sessionsById)
   const sessionListLoading = useChatStore((state) => state.sessionListLoading)
   const chatError = useChatStore((state) => state.sessionListError ?? state.lastError)
   const fetchSessions = useChatStore((state) => state.fetchSessions)
-  const deleteSession = useChatStore((state) => state.deleteSession)
   const navigate = useNavigate()
   const location = useLocation()
-  const currentChatSessionId = getCurrentChatSessionId(location.pathname)
+  const currentWorkspaceSessionId = getCurrentWorkspaceSessionId(location.pathname)
   const sidebarSessions = useMemo(() => {
     const all = Object.values(sessionsById)
       .map(toSidebarSession)
@@ -91,20 +72,6 @@ export function LeftSidebar() {
     const unpinned = all.filter((s) => !pinnedSessionIds.has(s.id))
     return [...pinned, ...unpinned]
   }, [sessionsById, pinnedSessionIds])
-  const sessionSettingsSession =
-    sessionSettingsSessionId === null ? null : (sessionsById[sessionSettingsSessionId] ?? null)
-  const currentChatSession =
-    currentChatSessionId === null ? null : (sessionsById[currentChatSessionId] ?? null)
-  const currentChatTitle = useMemo(
-    () => getSessionDisplayName(currentChatSession),
-    [currentChatSession],
-  )
-  const connectionState = getSidebarConnectionState(
-    realtimeStatus,
-    authStatus,
-    accessToken,
-    realtimeError,
-  )
 
   useEffect(() => {
     if (commandClient === null) {
@@ -120,28 +87,11 @@ export function LeftSidebar() {
 
   const handleOpenChatSession = (sessionId: string, event?: React.MouseEvent) => {
     event?.stopPropagation()
+    setSelectedSessionId(sessionId)
+    if (!collapsed) {
+      setSidebarCollapsed(true)
+    }
     navigate(`/session/${sessionId}`)
-  }
-
-  const handleConfirmSessionAction = async () => {
-    if (sessionConfirm === null) {
-      return
-    }
-
-    const { sessionId, action } = sessionConfirm
-    try {
-      if (action === 'delete') {
-        await deleteSession(sessionId)
-      }
-
-      if (location.pathname === `/session/${sessionId}`) {
-        navigate('/new-chat')
-      }
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : '세션 작업에 실패했습니다.')
-    } finally {
-      setSessionConfirm(null)
-    }
   }
 
   return (
@@ -149,9 +99,7 @@ export function LeftSidebar() {
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
-        sessionId={
-          location.pathname.startsWith('/session/') ? location.pathname.slice(9) : undefined
-        }
+        sessionId={getCurrentWorkspaceSessionId(location.pathname) ?? undefined}
         initialTab={settingsInitialTab as 'apiKeys'}
       />
       <NewSessionModal
@@ -167,93 +115,50 @@ export function LeftSidebar() {
           }
         }}
       />
-      <SessionSettingsModal
-        open={sessionSettingsSessionId !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSessionSettingsSessionId(null)
-          }
-        }}
-        session={sessionSettingsSession}
-      />
-      {sessionConfirm !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-card border-border w-80 rounded-2xl border p-6 shadow-xl">
-            <h3 className="text-foreground mb-2 text-base font-semibold">
-              {getSessionConfirmTitle(sessionConfirm.action)}
-            </h3>
-            <p className="text-muted-foreground mb-5 text-sm">
-              {getSessionConfirmMessage(sessionConfirm.action)}
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setSessionConfirm(null)}
-                className="bg-muted text-foreground hover:bg-muted/80 flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
-              >
-                취소
-              </button>
-              <button
-                onClick={() => void handleConfirmSessionAction()}
-                className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors ${
-                  sessionConfirm.action === 'delete'
-                    ? 'bg-red-500 hover:bg-red-600'
-                    : 'bg-primary hover:bg-primary/90'
-                }`}
-              >
-                {getSessionConfirmButtonLabel(sessionConfirm.action)}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div
-        className="bg-sidebar border-sidebar-border relative flex shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200 ease-in-out"
-        style={{ width: collapsed ? 52 : DEFAULT_SIDEBAR_WIDTH }}
+        className="bg-background border-border relative flex shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200 ease-in-out"
+        style={{ width: collapsed ? DEFAULT_SIDEBAR_COLLAPSED_WIDTH : DEFAULT_SIDEBAR_WIDTH }}
       >
         {/* ── Collapsed Rail ── */}
         {collapsed && (
-          <div className="flex h-full flex-col items-center gap-1 py-3">
+          <div className="flex h-full flex-col items-center gap-0.5 pb-3">
+            <div className="flex h-12 shrink-0 items-center justify-center">
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(false)}
+                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-8 w-8 items-center justify-center transition-colors"
+                aria-label="사이드바 펼치기"
+              >
+                <ChevronRight className="h-5 w-5" />
+              </button>
+            </div>
+
             <CollapsedTooltip label="홈">
               <button
                 type="button"
                 onClick={() => navigate('/')}
-                className="hover:bg-sidebar-accent flex h-10 w-10 items-center justify-center rounded-lg transition-colors"
+                className="hover:bg-accent/50 flex h-10 w-10 items-center justify-center transition-colors"
                 aria-label="홈으로 이동"
               >
-                <img
-                  src="/logo-sidebar.png"
-                  alt="HeyGent"
-                  className="h-9 w-9 rounded-md object-contain"
-                />
+                <img src="/onlylogo.png" alt="HeyGent" className="h-9 w-9 object-contain" />
               </button>
             </CollapsedTooltip>
 
-            {/* Expand button */}
-            <CollapsedTooltip label="사이드바 열기">
-              <button
-                type="button"
-                onClick={() => setSidebarCollapsed(false)}
-                className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
-              >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </CollapsedTooltip>
-
-            <div className="bg-sidebar-border my-1 h-px w-6" />
+            <div className="bg-border my-1 h-px w-6" />
 
             <CollapsedTooltip label="대시보드">
               <button
                 type="button"
                 onClick={() => navigate('/')}
-                className={`hover:bg-sidebar-accent flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+                className={`hover:bg-accent/50 flex h-10 w-10 items-center justify-center transition-colors ${
                   location.pathname === '/'
-                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                    ? 'bg-accent text-foreground'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
                 aria-label="대시보드로 이동"
               >
-                <LayoutDashboard className="h-4 w-4" />
+                <LayoutDashboard className="h-5 w-5" />
               </button>
             </CollapsedTooltip>
 
@@ -261,40 +166,27 @@ export function LeftSidebar() {
               <button
                 type="button"
                 onClick={() => navigate('/agent-status')}
-                className={`hover:bg-sidebar-accent flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+                className={`hover:bg-accent/50 flex h-10 w-10 items-center justify-center transition-colors ${
                   location.pathname.startsWith('/agent-status')
-                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                    ? 'bg-accent text-foreground'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
                 aria-label="에이전트 상태로 이동"
               >
-                <Activity className="h-4 w-4" />
+                <Activity className="h-5 w-5" />
               </button>
             </CollapsedTooltip>
 
-            {currentChatSessionId !== null && (
-              <CollapsedTooltip label="활동 패널">
-                <button
-                  type="button"
-                  onClick={() => setTaskActivityPanelOpen(true)}
-                  className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
-                  aria-label="활동 패널 열기"
-                >
-                  <PanelRightOpen className="h-4 w-4" />
-                </button>
-              </CollapsedTooltip>
-            )}
-
-            <div className="bg-sidebar-border my-1 h-px w-6" />
+            <div className="bg-border my-1 h-px w-6" />
 
             {/* New Chat button */}
-            <CollapsedTooltip label="새 채팅">
+            <CollapsedTooltip label="새 대화">
               <button
                 type="button"
                 onClick={handleNewChat}
-                className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-10 w-10 items-center justify-center transition-colors"
               >
-                <Plus className="h-4 w-4" />
+                <Plus className="h-5 w-5" />
               </button>
             </CollapsedTooltip>
 
@@ -304,16 +196,16 @@ export function LeftSidebar() {
                   type="button"
                   onClick={(event) => handleOpenChatSession(session.id, event)}
                   aria-label={`${session.title} 채팅 열기`}
-                  className={`hover:bg-sidebar-accent relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
-                    location.pathname === `/session/${session.id}`
-                      ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+                  className={`hover:bg-accent/50 relative flex h-10 w-10 items-center justify-center transition-colors ${
+                    currentWorkspaceSessionId === session.id
+                      ? 'bg-accent text-foreground'
                       : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
                   {session.isRunning && (
                     <Loader2 className="text-primary absolute top-1 right-1 h-3 w-3 animate-spin" />
                   )}
-                  <MessageCircle className="h-4 w-4" strokeWidth={2.5} />
+                  <MessageSquare className="h-5 w-5" />
                 </button>
               </CollapsedTooltip>
             ))}
@@ -321,11 +213,11 @@ export function LeftSidebar() {
             <div className="flex-1" />
 
             {/* Profile icon (collapsed) */}
-            <div className="bg-sidebar-border my-1 h-px w-6" />
+            <div className="bg-border my-1 h-px w-6" />
             <Popover open={profileOpen} onOpenChange={setProfileOpen}>
               <PopoverTrigger asChild>
                 <CollapsedTooltip label="프로필">
-                  <button className="hover:bg-sidebar-accent flex h-9 w-9 items-center justify-center rounded-lg transition-colors">
+                  <button className="hover:bg-accent/50 flex h-10 w-10 items-center justify-center transition-colors">
                     <ProfileAvatar size={32} />
                   </button>
                 </CollapsedTooltip>
@@ -345,195 +237,99 @@ export function LeftSidebar() {
         {/* ── Expanded Panel ── */}
         {!collapsed && (
           <div className="flex h-full flex-col overflow-hidden">
-            <div className="border-sidebar-border shrink-0 border-b px-3 py-3">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <button
-                  type="button"
-                  onClick={() => navigate('/')}
-                  className="hover:bg-sidebar-accent flex min-w-0 items-center gap-2 rounded-lg p-1.5 transition-colors"
-                  aria-label="홈으로 이동"
-                >
-                  <img
-                    src="/logo-sidebar.png"
-                    alt="HeyGent"
-                    className="h-12 w-22 shrink-0 rounded-lg object-contain"
-                  />
-                </button>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setSidebarCollapsed(true)}
-                    className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-8 w-8 items-center justify-center rounded-md transition-colors"
-                    aria-label="사이드바 접기"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
+            <div className="flex h-12 shrink-0 items-center gap-1 px-3">
+              <button
+                type="button"
+                onClick={() => navigate('/')}
+                className="hover:bg-accent/50 flex min-w-0 flex-1 items-center gap-2 px-3 py-2 transition-colors"
+                aria-label="홈으로 이동"
+              >
+                <img
+                  src="/logo-no-character.png"
+                  alt="HeyGent"
+                  className="h-8 w-44 shrink-0 object-contain"
+                />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(true)}
+                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-8 w-8 shrink-0 items-center justify-center transition-colors"
+                aria-label="사이드바 접기"
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+            </div>
 
-              <nav className="space-y-1">
+            <div className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-2">
+              <nav className="flex flex-col gap-0.5">
                 <button
                   type="button"
                   onClick={() => navigate('/')}
-                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm transition-colors ${
+                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-sm font-medium transition-colors ${
                     location.pathname === '/'
-                      ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
-                      : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
+                      ? 'bg-accent text-foreground'
+                      : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
                   }`}
                 >
-                  <LayoutDashboard className="h-4 w-4 shrink-0" />
+                  <LayoutDashboard className="h-5 w-5 shrink-0" />
                   <span>대시보드</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => navigate('/agent-status')}
-                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm transition-colors ${
+                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-sm font-medium transition-colors ${
                     location.pathname.startsWith('/agent-status')
-                      ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
-                      : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
+                      ? 'bg-accent text-foreground'
+                      : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
                   }`}
                 >
-                  <Activity className="h-4 w-4 shrink-0" />
+                  <Activity className="h-5 w-5 shrink-0" />
                   <span>에이전트 상태</span>
                 </button>
               </nav>
 
-              {currentChatSessionId !== null && (
-                <CurrentChatSidebarControl
-                  title={currentChatTitle}
-                  connectionState={connectionState}
-                  onOpenActivity={() => setTaskActivityPanelOpen(true)}
-                  onOpenSettings={() => setSessionSettingsSessionId(currentChatSessionId)}
-                />
-              )}
-            </div>
-
-            <div className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-3">
               {/* ── Sessions ── */}
-              <section>
-                <div className="text-muted-foreground mb-2 flex items-center gap-2 px-1 text-xs font-medium">
-                  <MessageSquare className="h-3.5 w-3.5" />
+              <section className="mt-4">
+                <div className="text-muted-foreground/60 px-3 py-1.5 font-mono text-[10px] font-medium tracking-widest">
                   <span>대화 세션</span>
                 </div>
-                <div className="space-y-1">
-                  {/* New Chat button */}
+                <div className="mt-0.5 flex flex-col gap-0.5">
                   <button
                     onClick={handleNewChat}
-                    className="hover:bg-sidebar-accent border-sidebar-border flex w-full items-center gap-2 rounded-lg border border-dashed p-2 transition-colors"
+                    className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm font-medium transition-colors"
                   >
-                    <Plus className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-                    <span className="text-muted-foreground truncate text-sm">새 채팅</span>
+                    <Plus className="text-muted-foreground h-5 w-5 shrink-0" />
+                    <span className="text-muted-foreground truncate text-sm">새 대화</span>
                   </button>
 
                   {sidebarSessions.map((session) => {
-                    const isActive =
-                      location.pathname === '/agent-status' && selectedSessionId === session.id
-                    const isChatActive = location.pathname === `/session/${session.id}`
+                    const isActive = currentWorkspaceSessionId === session.id
                     const isPinned = pinnedSessionIds.has(session.id)
                     return (
-                      <div
+                      <button
+                        type="button"
                         key={session.id}
                         onClick={() => {
                           setSelectedSessionId(session.id)
-                          navigate('/agent-status')
+                          setSidebarCollapsed(true)
+                          navigate(`/session/${session.id}`)
                         }}
-                        className={`group flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-2 transition-colors ${
+                        className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm font-medium transition-colors ${
                           isActive
-                            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                            : 'hover:bg-sidebar-accent'
+                            ? 'bg-accent text-foreground'
+                            : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
                         }`}
                       >
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1">
                             {isPinned && <Pin className="text-primary h-3 w-3 shrink-0" />}
-                            <p
-                              className={`truncate text-sm ${isActive ? 'text-sidebar-accent-foreground font-medium' : 'text-foreground/80'}`}
-                            >
-                              {session.title}
-                            </p>
+                            <p className="truncate">{session.title}</p>
                           </div>
                         </div>
-                        <div className="flex shrink-0 items-center gap-1">
-                          {/* ⋯ menu */}
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <button
-                                type="button"
-                                aria-label="세션 옵션"
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-muted-foreground hover:bg-sidebar-accent hover:text-foreground flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition-all group-hover:opacity-100"
-                              >
-                                <MoreHorizontal className="h-4 w-4" />
-                              </button>
-                            </PopoverTrigger>
-                            <PopoverContent
-                              side="right"
-                              align="start"
-                              className="w-40 rounded-xl p-1"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setSessionSettingsSessionId(session.id)
-                                }}
-                                className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
-                              >
-                                <Settings className="text-muted-foreground h-4 w-4 shrink-0" />
-                                <span>설정</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  togglePinSession(session.id)
-                                }}
-                                className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
-                              >
-                                {isPinned ? (
-                                  <>
-                                    <PinOff className="text-muted-foreground h-4 w-4 shrink-0" />
-                                    <span>고정 해제</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Pin className="text-muted-foreground h-4 w-4 shrink-0" />
-                                    <span>채팅 고정</span>
-                                  </>
-                                )}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setSessionConfirm({ sessionId: session.id, action: 'delete' })
-                                }}
-                                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-red-500 transition-colors hover:bg-red-50"
-                              >
-                                <Trash2 className="h-4 w-4 shrink-0" />
-                                <span>삭제</span>
-                              </button>
-                            </PopoverContent>
-                          </Popover>
-                          {/* Chat open button */}
-                          <button
-                            type="button"
-                            aria-label="채팅 열기"
-                            onClick={(event) => handleOpenChatSession(session.id, event)}
-                            className={`relative flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                              isChatActive
-                                ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-                                : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
-                            }`}
-                          >
-                            {session.isRunning && (
-                              <Loader2 className="text-primary absolute -top-0.5 -right-0.5 h-3 w-3 animate-spin" />
-                            )}
-                            <MessageCircle className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
+                        {session.isRunning && (
+                          <Loader2 className="text-primary h-3.5 w-3.5 shrink-0 animate-spin" />
+                        )}
+                      </button>
                     )
                   })}
                   {sidebarSessions.length === 0 && (
@@ -548,10 +344,10 @@ export function LeftSidebar() {
             </div>
 
             {/* ── Profile Footer (Fixed) ── */}
-            <div className="border-sidebar-border shrink-0 border-t px-3 py-2">
+            <div className="border-border shrink-0 border-t px-3 py-2">
               <Popover open={profileOpen} onOpenChange={setProfileOpen}>
                 <PopoverTrigger asChild>
-                  <button className="hover:bg-sidebar-accent flex w-full items-center gap-3 rounded-lg p-2 transition-colors">
+                  <button className="hover:bg-accent/50 flex w-full items-center gap-3 p-2 transition-colors">
                     <ProfileAvatar size={32} />
                     <div className="min-w-0 flex-1 text-left">
                       <p className="text-foreground truncate text-sm font-medium">
@@ -585,66 +381,6 @@ function storePendingSessionConfig(config: CustomAgentConfig | undefined) {
   sessionStorage.setItem('ai-new-session-config', JSON.stringify(config))
 }
 
-function CurrentChatSidebarControl({
-  title,
-  connectionState,
-  onOpenActivity,
-  onOpenSettings,
-}: {
-  title: string
-  connectionState: SidebarConnectionState
-  onOpenActivity: () => void
-  onOpenSettings: () => void
-}) {
-  const isBusy = connectionState === 'connecting' || connectionState === 'reconnecting'
-  const isError = connectionState === 'error'
-
-  return (
-    <div className="border-sidebar-border mt-3 rounded-lg border p-2">
-      <div className="mb-2 flex min-w-0 items-center gap-2">
-        <div className="bg-muted text-muted-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
-          <MessageCircle className="h-4 w-4" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-foreground truncate text-sm font-semibold">{title}</p>
-          <div
-            className={`flex items-center gap-1.5 text-xs ${
-              isError ? 'text-destructive' : 'text-muted-foreground'
-            }`}
-          >
-            {isBusy ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : isError ? (
-              <AlertCircle className="h-3 w-3" />
-            ) : (
-              <Wifi className="h-3 w-3" />
-            )}
-            <span>{getSidebarConnectionText(connectionState)}</span>
-          </div>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-1.5">
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-8 items-center justify-center rounded-md transition-colors"
-          aria-label="세션 설정 열기"
-        >
-          <Settings className="h-3.5 w-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={onOpenActivity}
-          className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-8 items-center justify-center rounded-md transition-colors"
-          aria-label="활동 패널 열기"
-        >
-          <PanelRightOpen className="h-3.5 w-3.5" />
-        </button>
-      </div>
-    </div>
-  )
-}
-
 function EmptySessionNotice({
   realtimeStatus,
   loading,
@@ -657,34 +393,13 @@ function EmptySessionNotice({
   const message =
     error ??
     (loading ? '세션 목록을 불러오는 중입니다.' : null) ??
-    (realtimeStatus === 'authenticated' ? '아직 표시할 대화 세션이 없습니다.' : 'AI 연결 준비 중')
+    (realtimeStatus === 'authenticated' ? '아직 표시할 대화 세션이 없습니다.' : '서버 연결 준비 중')
 
   return (
-    <div className="border-sidebar-border text-muted-foreground rounded-lg border border-dashed p-3 text-xs leading-5">
+    <div className="border-border text-muted-foreground border border-dashed p-3 text-xs leading-5">
       {message}
     </div>
   )
-}
-
-function getSessionConfirmTitle(action: SessionConfirmAction) {
-  if (action === 'delete') {
-    return '채팅 삭제'
-  }
-  return '채팅 삭제'
-}
-
-function getSessionConfirmMessage(action: SessionConfirmAction) {
-  if (action === 'delete') {
-    return '이 채팅을 삭제하시겠습니까? 서버의 삭제 정책에 따라 복구가 제한될 수 있습니다.'
-  }
-  return '이 채팅을 삭제하시겠습니까? 서버의 삭제 정책에 따라 복구가 제한될 수 있습니다.'
-}
-
-function getSessionConfirmButtonLabel(action: SessionConfirmAction) {
-  if (action === 'delete') {
-    return '삭제'
-  }
-  return '삭제'
 }
 
 function toSidebarSession(session: RawAiSession): SidebarSession {
@@ -758,81 +473,6 @@ function isRunningTaskRunStatus(status: string | undefined) {
 
 function isRemovedSidebarSession(session: RawAiSession) {
   return session.deleted_at != null || session.status === 'DELETED'
-}
-
-function getCurrentChatSessionId(pathname: string) {
-  if (!pathname.startsWith('/session/')) {
-    return null
-  }
-  const sessionId = pathname.slice('/session/'.length).split('/')[0]
-  return sessionId.trim() === '' ? null : sessionId
-}
-
-function getSessionDisplayName(session: RawAiSession | null) {
-  if (session === null) {
-    return '새 세션'
-  }
-  const source = session as Record<string, unknown>
-  const metadata = toPlainObject(source.metadata)
-  const ui = toPlainObject(metadata.ui)
-  return getTrimmedString(ui.sessionName) ?? toSidebarSession(session).title
-}
-
-function toPlainObject(value: unknown): Record<string, unknown> {
-  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-    return value as Record<string, unknown>
-  }
-  return {}
-}
-
-function getTrimmedString(value: unknown) {
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
-}
-
-function getSidebarConnectionState(
-  connectionStatus: string,
-  authStatus: string,
-  accessToken: string | null,
-  realtimeError: string | null,
-): SidebarConnectionState {
-  if (realtimeError !== null || authStatus === 'failed') {
-    return 'error'
-  }
-  if (accessToken === null || accessToken.trim() === '') {
-    return 'error'
-  }
-
-  switch (connectionStatus) {
-    case 'authenticated':
-      return 'connected'
-    case 'connecting':
-    case 'open':
-      return 'connecting'
-    case 'reconnecting':
-      return 'reconnecting'
-    case 'error':
-    case 'closed':
-      return 'error'
-    case 'idle':
-    default:
-      return 'idle'
-  }
-}
-
-function getSidebarConnectionText(state: SidebarConnectionState) {
-  switch (state) {
-    case 'connected':
-      return '연결됨'
-    case 'connecting':
-      return '연결 중'
-    case 'reconnecting':
-      return '연결 복구 중'
-    case 'error':
-      return '연결 확인 필요'
-    case 'idle':
-    default:
-      return '대기 중'
-  }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
