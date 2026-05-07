@@ -44,14 +44,14 @@ export function SubAgentCreateDialog({
     >
       <DialogContent showCloseButton={false} className="gap-0 overflow-hidden p-0 sm:max-w-md">
         <div className="border-border flex items-center justify-between border-b px-4 py-2.5">
-          <span className="text-muted-foreground text-sm">Add a new agent</span>
+          <span className="text-muted-foreground text-sm">새 에이전트 추가</span>
           <Button
             type="button"
             variant="ghost"
             size="icon-xs"
             className="text-muted-foreground"
             onClick={closeDialog}
-            aria-label="Close"
+            aria-label="닫기"
           >
             <span className="text-lg leading-none">&times;</span>
           </Button>
@@ -65,14 +65,13 @@ export function SubAgentCreateDialog({
                   <Bot className="text-foreground h-6 w-6" />
                 </div>
                 <p className="text-muted-foreground text-sm">
-                  We recommend letting your CEO handle agent setup — they know the org structure and
-                  can configure reporting, permissions, and adapters.
+                  조직 구조와 권한을 아는 CEO에게 에이전트 생성을 맡기는 것을 권장합니다.
                 </p>
               </div>
 
               <Button className="w-full" size="lg" onClick={onAskCeo}>
                 <Bot className="mr-2 h-4 w-4" />
-                Ask the CEO to create a new agent
+                CEO에게 새 에이전트 생성 요청
               </Button>
 
               <div className="text-center">
@@ -81,7 +80,7 @@ export function SubAgentCreateDialog({
                   className="text-muted-foreground hover:text-foreground text-xs underline underline-offset-2 transition-colors"
                   onClick={() => setShowAdvancedCards(true)}
                 >
-                  I want advanced configuration myself
+                  직접 세부 설정하기
                 </button>
               </div>
             </>
@@ -94,10 +93,10 @@ export function SubAgentCreateDialog({
                   onClick={() => setShowAdvancedCards(false)}
                 >
                   <ArrowLeft className="h-3.5 w-3.5" />
-                  Back
+                  뒤로
                 </button>
                 <p className="text-muted-foreground text-sm">
-                  Choose your adapter type for advanced setup.
+                  세부 설정에 사용할 연결 방식을 선택하세요.
                 </p>
               </div>
 
@@ -115,7 +114,7 @@ export function SubAgentCreateDialog({
                         comingSoon && 'cursor-not-allowed opacity-40',
                       )}
                       disabled={comingSoon}
-                      title={comingSoon ? 'Coming soon' : undefined}
+                      title={comingSoon ? '준비 중' : undefined}
                       onClick={() => {
                         if (comingSoon) return
                         setShowAdvancedCards(false)
@@ -124,7 +123,7 @@ export function SubAgentCreateDialog({
                     >
                       {recommended && (
                         <span className="absolute -top-1.5 right-1.5 rounded-full bg-green-500 px-1.5 py-0.5 text-[9px] leading-none font-semibold text-white">
-                          Recommended
+                          추천
                         </span>
                       )}
                       <Icon className="h-4 w-4" />

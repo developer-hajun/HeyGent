@@ -2,21 +2,21 @@ export const SUB_AGENT_ADAPTER_OPTIONS = [
   {
     id: 'claude_local',
     label: 'Claude Code',
-    description: 'Local Claude agent',
+    description: '로컬 Claude 에이전트',
     recommended: true,
   },
-  { id: 'codex_local', label: 'Codex', description: 'Local Codex agent', recommended: true },
-  { id: 'cursor', label: 'Cursor', description: 'Local Cursor agent' },
-  { id: 'gemini_local', label: 'Gemini CLI', description: 'Local Gemini agent' },
-  { id: 'hermes_local', label: 'Hermes Agent', description: 'Local Hermes CLI agent' },
+  { id: 'codex_local', label: 'Codex', description: '로컬 Codex 에이전트', recommended: true },
+  { id: 'cursor', label: 'Cursor', description: '로컬 Cursor 에이전트' },
+  { id: 'gemini_local', label: 'Gemini CLI', description: '로컬 Gemini 에이전트' },
+  { id: 'hermes_local', label: 'Hermes Agent', description: '로컬 Hermes CLI 에이전트' },
   {
     id: 'openclaw_gateway',
     label: 'OpenClaw Gateway',
-    description: 'Invoke OpenClaw via gateway protocol',
+    description: '게이트웨이 프로토콜로 OpenClaw 호출',
     comingSoon: true,
   },
-  { id: 'opencode_local', label: 'OpenCode', description: 'Local multi-provider agent' },
-  { id: 'pi_local', label: 'Pi', description: 'Local Pi agent' },
+  { id: 'opencode_local', label: 'OpenCode', description: '로컬 멀티 제공자 에이전트' },
+  { id: 'pi_local', label: 'Pi', description: '로컬 Pi 에이전트' },
 ] as const
 
 export type SubAgentAdapterType = (typeof SUB_AGENT_ADAPTER_OPTIONS)[number]['id']

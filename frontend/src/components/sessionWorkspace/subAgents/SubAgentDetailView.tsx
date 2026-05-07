@@ -1,13 +1,18 @@
 import { useState } from 'react'
-import { Activity, BarChart3, Clock, FileText, MoreHorizontal, Play, Settings } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Activity, BarChart3, Clock, FileText } from 'lucide-react'
 import { PageTabBar } from '@/components/PageTabBar'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+  AgentBudgetPanel,
+  AgentConfigurationPanel,
+  AgentDashboardPanel,
+  AgentDetailHeader,
+  AgentInstructionsBundlePanel,
+  AgentInstructionsPanel,
+  AgentRunsPanel,
+  AgentSkillsLibraryPanel,
+  AgentSkillsPanel,
+} from '@/components/sessionWorkspace/AgentDetailPanels'
+import { Button } from '@/components/ui/button'
 import { Tabs } from '@/components/ui/tabs'
 import type { AgentPanelItem } from '@/store/useSessionStore'
 import type { Agent } from '@/types/agent'
@@ -24,146 +29,274 @@ type SubAgentDetailTab =
   | 'budget'
 
 const DETAIL_TABS: Array<{ value: SubAgentDetailTab; label: string }> = [
-  { value: 'dashboard', label: 'Dashboard' },
-  { value: 'instructions', label: 'Instructions' },
-  { value: 'skills', label: 'Skills' },
-  { value: 'configuration', label: 'Configuration' },
-  { value: 'runs', label: 'Runs' },
-  { value: 'budget', label: 'Budget' },
+  { value: 'dashboard', label: '대시보드' },
+  { value: 'instructions', label: '지침' },
+  { value: 'skills', label: '스킬' },
+  { value: 'configuration', label: '설정' },
+  { value: 'runs', label: '실행 기록' },
+  { value: 'budget', label: '예산' },
 ]
 
 export function SubAgentDetailView({
   item,
   onSave,
+  onTabChange,
   reservedNames,
   requestedTab,
 }: {
   item: AgentPanelItem
   onSave: (agent: Agent) => void
+  onTabChange?: (tab: SubAgentDetailTab) => void
   requestedTab?: string | null
   reservedNames: string[]
 }) {
   const [tab, setTab] = useState<SubAgentDetailTab>(getDetailTab(requestedTab))
+  const [instructionsDraft, setInstructionsDraft] = useState(item.agent.instructions ?? '')
+  const [instructionsEntryFile, setInstructionsEntryFile] = useState(
+    item.agent.instructionsEntryFile ?? 'AGENTS.md',
+  )
+  const [instructionsFiles, setInstructionsFiles] = useState(item.agent.instructionsFiles ?? {})
+  const [instructionsMode, setInstructionsMode] = useState<'managed' | 'external'>(
+    item.agent.instructionsMode ?? 'managed',
+  )
+  const [instructionsRootPath, setInstructionsRootPath] = useState(
+    item.agent.instructionsRootPath ?? '',
+  )
+  const [skillSaving, setSkillSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
   const selectedSkills = SUB_AGENT_SKILLS.filter((skill) => item.agent.skills?.includes(skill.id))
+  const instructionsDirty =
+    instructionsDraft.trim() !== (item.agent.instructions ?? '') ||
+    instructionsEntryFile.trim() !== (item.agent.instructionsEntryFile ?? 'AGENTS.md') ||
+    !shallowStringRecordEqual(instructionsFiles, item.agent.instructionsFiles ?? {}) ||
+    instructionsMode !== (item.agent.instructionsMode ?? 'managed') ||
+    instructionsRootPath.trim() !== (item.agent.instructionsRootPath ?? '')
+
+  const selectTab = (nextTab: SubAgentDetailTab) => {
+    setTab(nextTab)
+    onTabChange?.(nextTab)
+    setSaved(false)
+  }
+
+  const resetInstructionsDraft = () => {
+    setInstructionsDraft(item.agent.instructions ?? '')
+    setInstructionsEntryFile(item.agent.instructionsEntryFile ?? 'AGENTS.md')
+    setInstructionsFiles(item.agent.instructionsFiles ?? {})
+    setInstructionsMode(item.agent.instructionsMode ?? 'managed')
+    setInstructionsRootPath(item.agent.instructionsRootPath ?? '')
+    setSaved(false)
+  }
+
+  const saveInstructionsDraft = () => {
+    if (!instructionsDirty) return
+    onSave({
+      ...item.agent,
+      instructions: instructionsDraft.trim(),
+      instructionsEntryFile: instructionsEntryFile.trim() || 'AGENTS.md',
+      instructionsFiles,
+      instructionsMode,
+      instructionsRootPath: instructionsRootPath.trim(),
+    })
+    setSaved(true)
+    window.setTimeout(() => setSaved(false), 1400)
+  }
+
+  const toggleSkill = (skillId: string, checked: boolean) => {
+    const currentSkills = item.agent.skills ?? []
+    const nextSkills = checked
+      ? Array.from(new Set([...currentSkills, skillId]))
+      : currentSkills.filter((id) => id !== skillId)
+    setSkillSaving(true)
+    onSave({ ...item.agent, skills: nextSkills })
+    window.setTimeout(() => setSkillSaving(false), 500)
+  }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-3">
-          <SubAgentProfileImage
-            accent={item.agent.accent}
-            profileImage={item.agent.profileImage}
-            spriteId={item.agent.spriteId}
-            size="large"
-          />
-          <div className="min-w-0">
-            <h1 className="truncate text-2xl font-bold">{item.agent.name}</h1>
-            <p className="text-muted-foreground truncate text-sm">
-              {item.agent.role ?? 'general'}
-              {item.agent.title ? ` - ${item.agent.title}` : ''}
-            </p>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-          <Button variant="outline" size="sm" onClick={() => setTab('configuration')}>
-            <FileText className="h-3.5 w-3.5 sm:mr-1" />
-            <span className="hidden sm:inline">Configuration</span>
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setTab('runs')}>
-            <Play className="h-3.5 w-3.5 sm:mr-1" />
-            <span className="hidden sm:inline">Runs</span>
-          </Button>
-          <span className="border-border bg-muted/40 hidden rounded-full border px-2 py-0.5 text-xs sm:inline">
-            draft
-          </span>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label={`${item.agent.name} actions`}
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
-              <DropdownMenuItem onClick={() => setTab('configuration')}>
-                <Settings className="size-4" />
-                <span>Configuration</span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
+    <div className={`space-y-6 ${instructionsDirty ? 'pb-24 sm:pb-0' : ''}`}>
+      <AgentDetailHeader
+        name={item.agent.name}
+        onInstructions={() => selectTab('instructions')}
+        onRuns={() => selectTab('runs')}
+        status="draft"
+        subtitle={
+          <>
+            {item.agent.role ?? 'general'}
+            {item.agent.title ? ` · ${item.agent.title}` : ''}
+          </>
+        }
+        profile={
+          <button
+            type="button"
+            onClick={() => selectTab('configuration')}
+            className="rounded-lg transition-opacity hover:opacity-80"
+            aria-label="서브 에이전트 프로필 설정 열기"
+          >
+            <SubAgentProfileImage
+              accent={item.agent.accent}
+              profileImage={item.agent.profileImage}
+              spriteId={item.agent.spriteId}
+              size="large"
+            />
+          </button>
+        }
+        savedIndicator={
+          saved ? <span className="text-xs font-medium text-emerald-600">저장됨</span> : undefined
+        }
+      />
 
-      <Tabs value={tab} onValueChange={(next) => setTab(next as SubAgentDetailTab)}>
+      <Tabs value={tab} onValueChange={(next) => selectTab(next as SubAgentDetailTab)}>
         <PageTabBar
+          align="start"
           items={DETAIL_TABS}
           value={tab}
-          onValueChange={(next) => setTab(next as SubAgentDetailTab)}
+          onValueChange={(next) => selectTab(next as SubAgentDetailTab)}
         />
       </Tabs>
 
       {tab === 'dashboard' && (
-        <div className="grid gap-3 sm:grid-cols-3">
-          <MetricCard icon={Activity} label="Status" value="Draft" />
-          <MetricCard icon={BarChart3} label="Skills" value={String(selectedSkills.length)} />
-          <MetricCard icon={Clock} label="Runs" value="0" />
-        </div>
+        <AgentDashboardPanel
+          costs={[
+            { label: '입력 토큰', value: '0' },
+            { label: '출력 토큰', value: '0' },
+            { label: '캐시 토큰', value: '0' },
+            { label: '총 비용', value: '$0.00' },
+          ]}
+          latestRun={null}
+          metrics={[
+            {
+              icon: Activity,
+              label: '실행 현황',
+              value: '초안',
+              description: '최근 14일',
+            },
+            {
+              icon: FileText,
+              label: '우선순위별 이슈',
+              value: '0',
+              description: '최근 14일',
+            },
+            {
+              icon: BarChart3,
+              label: '상태별 이슈',
+              value: '0',
+              description: '최근 14일',
+            },
+            {
+              icon: Clock,
+              label: '성공률',
+              value: '0',
+              description: '최근 14일',
+            },
+          ]}
+          recentTitle="최근 이슈"
+          recentEmptyText="최근 이슈가 없습니다."
+          recentItems={[]}
+        />
       )}
 
-      {tab === 'configuration' && (
-        <div className="max-w-3xl">
+      <div className={tab === 'configuration' ? '' : 'hidden'}>
+        <AgentConfigurationPanel>
           <SubAgentDraftForm
             key={item.id}
             initialAgent={item.agent}
-            onCancel={() => setTab('dashboard')}
+            onCancel={() => selectTab('dashboard')}
             onSave={onSave}
             reservedNames={reservedNames}
           />
-        </div>
-      )}
+        </AgentConfigurationPanel>
+      </div>
 
-      {tab === 'instructions' && (
-        <div className="max-w-3xl space-y-4">
-          <section className="space-y-3">
-            <h3 className="text-sm font-medium">Instructions</h3>
-            <div className="border-border bg-background rounded-lg border p-4">
-              <p className="text-sm leading-6 whitespace-pre-wrap">
-                {item.agent.description || 'No instructions configured yet.'}
-              </p>
-            </div>
-          </section>
-        </div>
-      )}
+      <div className={tab === 'instructions' ? '' : 'hidden'}>
+        <AgentInstructionsPanel>
+          <AgentInstructionsBundlePanel
+            content={instructionsDraft}
+            entryFile={instructionsEntryFile}
+            files={instructionsFiles}
+            mode={instructionsMode}
+            rootPath={instructionsRootPath}
+            onContentChange={(value) => {
+              setInstructionsDraft(value)
+              setSaved(false)
+            }}
+            onEntryFileChange={(value) => {
+              setInstructionsEntryFile(value)
+              setSaved(false)
+            }}
+            onFilesChange={(value) => {
+              setInstructionsFiles(value)
+              setSaved(false)
+            }}
+            onModeChange={(value) => {
+              setInstructionsMode(value)
+              setSaved(false)
+            }}
+            onRootPathChange={(value) => {
+              setInstructionsRootPath(value)
+              setSaved(false)
+            }}
+          />
+        </AgentInstructionsPanel>
+      </div>
 
       {tab === 'skills' && (
-        <section className="border-border border">
-          {selectedSkills.length === 0 ? (
-            <p className="text-muted-foreground px-4 py-3 text-sm">No optional skills selected.</p>
-          ) : (
-            selectedSkills.map((skill) => (
-              <Row key={skill.id} label={skill.label} value={skill.description} />
-            ))
-          )}
-        </section>
+        <AgentSkillsPanel>
+          <AgentSkillsLibraryPanel
+            adapterLabel={item.agent.adapterType ?? 'local'}
+            applicationLabel="에이전트 실행 시 적용"
+            rows={SUB_AGENT_SKILLS.map((skill) => ({
+              key: skill.id,
+              name: skill.label,
+              description: skill.description,
+              checked: item.agent.skills?.includes(skill.id) ?? false,
+              linkLabel: '보기',
+            }))}
+            selectedCount={selectedSkills.length}
+            saving={skillSaving}
+            onSkillToggle={toggleSkill}
+          />
+        </AgentSkillsPanel>
       )}
 
-      {tab === 'runs' && (
-        <section className="border-border text-muted-foreground border px-4 py-6 text-sm">
-          No runs yet.
-        </section>
-      )}
+      {tab === 'runs' && <AgentRunsPanel emptyText="아직 실행 기록이 없습니다." items={[]} />}
 
       {tab === 'budget' && (
-        <div className="max-w-3xl">
-          <section className="space-y-3">
-            <h3 className="text-sm font-medium">Budget</h3>
-            <div className="border-border bg-background text-muted-foreground rounded-lg border p-4 text-sm">
-              No budget policy configured.
-            </div>
-          </section>
+        <AgentBudgetPanel
+          summary={{
+            amountLabel: '사용 안 함',
+            observedLabel: '$0.00',
+            remainingLabel: '제한 없음',
+            scopeName: item.agent.name,
+            scopeType: '에이전트',
+            status: 'healthy',
+            utilizationPercent: 0,
+            warnPercent: 80,
+            windowLabel: '월간 예산',
+          }}
+        />
+      )}
+
+      {instructionsDirty && (
+        <div className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-sm sm:hidden">
+          <div className="flex items-center justify-end gap-2 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
+            <Button variant="ghost" size="sm" onClick={resetInstructionsDraft}>
+              취소
+            </Button>
+            <Button size="sm" onClick={saveInstructionsDraft}>
+              저장
+            </Button>
+          </div>
+        </div>
+      )}
+      {instructionsDirty && (
+        <div className="fixed right-6 bottom-6 z-30 hidden sm:block">
+          <div className="bg-background/90 border-border flex items-center gap-2 rounded-lg border px-3 py-1.5 shadow-lg backdrop-blur-sm">
+            <Button variant="ghost" size="sm" onClick={resetInstructionsDraft}>
+              취소
+            </Button>
+            <Button size="sm" onClick={saveInstructionsDraft}>
+              저장
+            </Button>
+          </div>
         </div>
       )}
     </div>
@@ -174,31 +307,9 @@ function getDetailTab(value: string | null | undefined): SubAgentDetailTab {
   return DETAIL_TABS.some((tab) => tab.value === value) ? (value as SubAgentDetailTab) : 'dashboard'
 }
 
-function MetricCard({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: typeof Activity
-  label: string
-  value: string
-}) {
-  return (
-    <div className="border-border rounded-lg border p-4">
-      <div className="text-muted-foreground flex items-center gap-2 text-xs">
-        <Icon className="h-3.5 w-3.5" />
-        {label}
-      </div>
-      <div className="mt-2 text-lg font-semibold">{value}</div>
-    </div>
-  )
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="border-border flex items-center justify-between gap-4 border-b px-4 py-2.5 last:border-b-0">
-      <span className="text-sm font-medium">{label}</span>
-      <span className="text-muted-foreground min-w-0 truncate text-sm">{value || '-'}</span>
-    </div>
-  )
+function shallowStringRecordEqual(left: Record<string, string>, right: Record<string, string>) {
+  const leftEntries = Object.entries(left)
+  const rightEntries = Object.entries(right)
+  if (leftEntries.length !== rightEntries.length) return false
+  return leftEntries.every(([key, value]) => right[key] === value)
 }

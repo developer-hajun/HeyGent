@@ -45,6 +45,11 @@ type PersistedAgentPanelItem = {
     Agent,
     | 'name'
     | 'description'
+    | 'instructions'
+    | 'instructionsEntryFile'
+    | 'instructionsFiles'
+    | 'instructionsMode'
+    | 'instructionsRootPath'
     | 'accent'
     | 'title'
     | 'role'
@@ -219,6 +224,11 @@ function serializeAgentPanelsBySessionId(
         agent: {
           name: panel.agent.name,
           description: panel.agent.description,
+          instructions: panel.agent.instructions,
+          instructionsEntryFile: panel.agent.instructionsEntryFile,
+          instructionsFiles: panel.agent.instructionsFiles,
+          instructionsMode: panel.agent.instructionsMode,
+          instructionsRootPath: panel.agent.instructionsRootPath,
           accent: panel.agent.accent,
           title: panel.agent.title,
           role: panel.agent.role,

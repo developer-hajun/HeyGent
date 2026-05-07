@@ -9,63 +9,48 @@ import { normalizeSubAgentAdapterType } from './subAgentConfigOptions'
 
 export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const {
-    addAgentPanelToSession,
-    getAgentPanelsForSession,
-    removeAgentPanelFromSession,
-    updateAgentPanelInSession,
-  } = useSessionStore()
+  const { addAgentPanelToSession, getAgentPanelsForSession, updateAgentPanelInSession } =
+    useSessionStore()
   const agentPanels = getAgentPanelsForSession(sessionId)
-  const editingId = searchParams.get('edit')
   const detailId = searchParams.get('agent')
   const createDialogOpen = searchParams.get('create') === '1'
   const initialAdapterType = normalizeSubAgentAdapterType(
     searchParams.get('adapterType') ?? undefined,
   )
-  const editingItem =
-    editingId === null ? undefined : agentPanels.find((panel) => panel.id === editingId)
   const detailItem =
     detailId === null ? undefined : agentPanels.find((panel) => panel.id === detailId)
-  const draftMode =
-    searchParams.get('new') === '1' ? 'create' : editingItem !== undefined ? 'edit' : null
+  const draftMode = searchParams.get('new') === '1'
 
   const resetDraft = () => {
     setSearchParams({})
-  }
-
-  const openEditDraft = (itemId: string) => {
-    setSearchParams({ agent: itemId, subAgentTab: 'configuration' })
   }
 
   const openDetail = (itemId: string) => {
     setSearchParams({ agent: itemId })
   }
 
+  const openDetailTab = (itemId: string, tab: string) => {
+    if (tab === 'dashboard') {
+      setSearchParams({ agent: itemId })
+      return
+    }
+    setSearchParams({ agent: itemId, subAgentTab: tab })
+  }
+
   const openCreateDraft = () => {
     setSearchParams({ create: '1' })
   }
 
-  if (draftMode !== null) {
+  if (draftMode) {
     return (
-      <SubAgentsPanelShell
-        title={draftMode === 'edit' ? 'Edit Agent' : 'New Agent'}
-        description="Advanced agent configuration"
-      >
+      <SubAgentsPanelShell title="새 에이전트" description="세부 설정">
         <SubAgentDraftForm
-          key={draftMode === 'edit' ? editingItem?.id : 'create'}
+          key="create"
           initialAdapterType={initialAdapterType}
-          initialAgent={draftMode === 'edit' ? editingItem?.agent : undefined}
           onCancel={resetDraft}
-          reservedNames={agentPanels
-            .filter((item) => item.id !== editingItem?.id)
-            .map((item) => item.agent.name)}
+          reservedNames={agentPanels.map((item) => item.agent.name)}
           onSave={(agent) => {
-            if (draftMode === 'edit') {
-              if (editingItem === undefined) return
-              updateAgentPanelInSession(sessionId, editingItem.id, agent)
-            } else {
-              addAgentPanelToSession(sessionId, agent)
-            }
+            addAgentPanelToSession(sessionId, agent)
             resetDraft()
           }}
         />
@@ -77,14 +62,15 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
     return (
       <SubAgentsPanelShell
         title={detailItem.agent.name}
-        description={detailItem.agent.title || 'Agent detail'}
+        description={detailItem.agent.title || '에이전트 상세'}
         hideHeader
         width="wide"
       >
         <SubAgentDetailView
-          key={`${detailItem.id}:${searchParams.get('subAgentTab') ?? 'dashboard'}`}
+          key={detailItem.id}
           item={detailItem}
           onSave={(agent) => updateAgentPanelInSession(sessionId, detailItem.id, agent)}
+          onTabChange={(tab) => openDetailTab(detailItem.id, tab)}
           requestedTab={searchParams.get('subAgentTab')}
           reservedNames={agentPanels
             .filter((item) => item.id !== detailItem.id)
@@ -95,14 +81,8 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
   }
 
   return (
-    <SubAgentsPanelShell title="Agents" description="Session agent configuration">
-      <SubAgentList
-        agentPanels={agentPanels}
-        onCreate={openCreateDraft}
-        onEdit={openEditDraft}
-        onOpen={openDetail}
-        onRemove={(itemId) => removeAgentPanelFromSession(sessionId, itemId)}
-      />
+    <SubAgentsPanelShell title="에이전트" description="세션 에이전트 설정">
+      <SubAgentList agentPanels={agentPanels} onCreate={openCreateDraft} onOpen={openDetail} />
       <SubAgentCreateDialog
         open={createDialogOpen}
         onOpenChange={(open) => {

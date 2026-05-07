@@ -1,26 +1,15 @@
-import { MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+import { Plus } from 'lucide-react'
 import type { AgentPanelItem } from '@/store/useSessionStore'
 import { SubAgentProfileImage } from './SubAgentProfileImage'
 
 export function SubAgentList({
   agentPanels,
   onCreate,
-  onEdit,
   onOpen,
-  onRemove,
 }: {
   agentPanels: AgentPanelItem[]
   onCreate: () => void
-  onEdit: (itemId: string) => void
   onOpen: (itemId: string) => void
-  onRemove: (itemId: string) => void
 }) {
   return (
     <section className="space-y-3">
@@ -48,65 +37,36 @@ export function SubAgentList({
           </p>
         ) : (
           agentPanels.map((item) => (
-            <div
+            <button
               key={item.id}
-              className="group/agent border-border hover:bg-accent/50 flex items-center gap-3 border-b px-4 py-2 text-sm transition-colors last:border-b-0"
+              type="button"
+              onClick={() => onOpen(item.id)}
+              className="border-border hover:bg-accent/50 flex w-full items-center gap-3 border-b px-4 py-2 text-left text-sm transition-colors last:border-b-0"
             >
-              <button
-                type="button"
-                onClick={() => onOpen(item.id)}
-                className="flex min-w-0 flex-1 items-center gap-3 text-left"
-              >
-                <SubAgentProfileImage
-                  accent={item.agent.accent}
-                  profileImage={item.agent.profileImage}
-                  spriteId={item.agent.spriteId}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate">{item.agent.name}</span>
-                  {item.agent.title && (
-                    <span className="text-muted-foreground mt-0.5 block truncate text-xs">
-                      {item.agent.title}
-                    </span>
-                  )}
-                  {item.agent.description && (
-                    <span className="text-muted-foreground mt-0.5 block truncate text-xs">
-                      {item.agent.description}
-                    </span>
-                  )}
-                </span>
-                {item.agent.skills?.length ? (
-                  <span className="text-muted-foreground hidden shrink-0 text-xs sm:inline">
-                    {item.agent.skills.length} skills
+              <SubAgentProfileImage
+                accent={item.agent.accent}
+                profileImage={item.agent.profileImage}
+                spriteId={item.agent.spriteId}
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{item.agent.name}</span>
+                {item.agent.title && (
+                  <span className="text-muted-foreground mt-0.5 block truncate text-xs">
+                    {item.agent.title}
                   </span>
-                ) : null}
-              </button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className="text-muted-foreground hover:bg-accent/50 hover:text-foreground pointer-events-none flex h-8 w-8 items-center justify-center opacity-0 transition-opacity group-focus-within/agent:pointer-events-auto group-focus-within/agent:opacity-100 group-hover/agent:pointer-events-auto group-hover/agent:opacity-100 data-[state=open]:pointer-events-auto data-[state=open]:opacity-100"
-                    aria-label={`${item.agent.name} 액션`}
-                  >
-                    <MoreHorizontal className="h-3.5 w-3.5" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-36">
-                  <DropdownMenuItem onClick={() => onEdit(item.id)}>
-                    <Pencil className="size-4" />
-                    <span>Configuration</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onClick={() => onRemove(item.id)}
-                  >
-                    <Trash2 className="size-4" />
-                    <span>삭제</span>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+                )}
+                {item.agent.description && (
+                  <span className="text-muted-foreground mt-0.5 block truncate text-xs">
+                    {item.agent.description}
+                  </span>
+                )}
+              </span>
+              {item.agent.skills?.length ? (
+                <span className="text-muted-foreground hidden shrink-0 text-xs sm:inline">
+                  {item.agent.skills.length} skills
+                </span>
+              ) : null}
+            </button>
           ))
         )}
       </div>

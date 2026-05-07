@@ -2,25 +2,43 @@ import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useSearchParams } from 'react-router'
 import {
+  Activity,
+  BarChart3,
   Check,
   ChevronLeft,
   ChevronRight,
-  Copy,
   FileText,
   Loader2,
-  MoreHorizontal,
   Play,
-  RotateCcw,
 } from 'lucide-react'
 import { PageTabBar } from '@/components/PageTabBar'
 import { Button } from '@/components/ui/button'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tabs } from '@/components/ui/tabs'
+import {
+  AgentDetailHeader,
+  type AgentRunItemData,
+  AgentBudgetPanel,
+  AgentConfigurationPanel,
+  AgentDashboardPanel,
+  AgentInstructionsBundlePanel,
+  AgentInstructionsPanel,
+  AgentAdapterTypeDropdown,
+  AgentModelDropdown,
+  AgentRunsPanel,
+  AgentSectionCard,
+  AgentSkillsLibraryPanel,
+  AgentSkillsPanel,
+} from '@/components/sessionWorkspace/AgentDetailPanels'
 import { SubAgentsPanel } from '@/components/sessionWorkspace/subAgents'
+import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
+import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useChatStore } from '@/store/useChatStore'
-import type { JsonObject } from '@/realtime/aiRealtimeTypes'
-import type { AiModelOption, AiSessionSettingsPatch, RawAiSession } from '@/types/aiChat'
+import { useTaskRunStore } from '@/store/useTaskRunStore'
+import type { JsonObject, RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
+import type { AiSessionSettingsPatch, ChatMessageView, RawAiSession } from '@/types/aiChat'
+import type { RawTaskRun } from '@/types/taskRuns'
+import { isInternalStepAnchorEvent, toTaskRunSummaryView } from '@/utils/taskRunStatusView'
 import {
   getModelFamilies,
   getModelOptions,
@@ -39,6 +57,8 @@ interface SessionWorkspaceDetailPanelProps {
   sessionId: string
   session: RawAiSession | null
 }
+
+const EMPTY_MESSAGES: never[] = []
 
 export function SessionWorkspaceDetailPanel({
   activePanel,
@@ -74,22 +94,35 @@ export function SessionWorkspaceDetailPanel({
 }
 
 function PurposePage({ session }: { session: RawAiSession }) {
+  const authenticatedReady = useAiRealtimeStore((state) => state.authenticatedReady)
+  const commandClient = useAiRealtimeStore((state) => state.commandClient)
+  const messages = useChatStore(
+    (state) => state.messagesBySessionId[session.session_id] ?? EMPTY_MESSAGES,
+  )
+  const fetchMessages = useChatStore((state) => state.fetchMessages)
   const updateSession = useChatStore((state) => state.updateSession)
   const updateSessionSettings = useChatStore((state) => state.updateSessionSettings)
   const fetchModelOptions = useChatStore((state) => state.fetchModelOptions)
+  const taskRunsById = useTaskRunStore((state) => state.taskRunsById)
+  const eventsByTaskRunId = useTaskRunStore((state) => state.eventsByTaskRunId)
+  const fetchActiveTaskRuns = useTaskRunStore((state) => state.fetchActiveTaskRuns)
   const [searchParams, setSearchParams] = useSearchParams()
 
   const metadata = useMemo(() => toJsonObject(session.metadata), [session.metadata])
   const uiMetadata = useMemo(() => toJsonObject(metadata.ui), [metadata])
   const settings = useMemo(() => toJsonObject(session.settings), [session.settings])
   const sessionId = session.session_id
-  const currentPurpose = getString(uiMetadata, 'sessionPurpose') ?? ''
   const currentAgentName = getString(uiMetadata, 'agentName') ?? ''
   const currentCallName = getString(uiMetadata, 'callName') ?? ''
+  const currentCapabilities = getString(uiMetadata, 'agentCapabilities') ?? ''
+  const currentSkillIds = normalizeMainAgentSkillIds(uiMetadata.agentSkills)
   const currentPersona =
     getString(settings, 'systemPrompt') ?? getString(settings, 'system_prompt') ?? ''
-  const currentSuccessCriteria = getString(uiMetadata, 'successCriteria') ?? ''
-  const currentConstraints = getString(uiMetadata, 'constraints') ?? ''
+  const currentInstructionsEntryFile = getString(uiMetadata, 'instructionsEntryFile') ?? 'AGENTS.md'
+  const currentInstructionsFiles = getInstructionsFiles(uiMetadata.instructionsFiles)
+  const currentInstructionsMode =
+    getString(uiMetadata, 'instructionsMode') === 'external' ? 'external' : 'managed'
+  const currentInstructionsRootPath = getString(uiMetadata, 'instructionsRootPath') ?? ''
   const currentModel = getString(settings, 'model') ?? ''
   const currentToolsets = normalizeToolsets(settings.toolsets)
   const currentDelegationPolicy = toJsonObject(settings.delegationPolicy)
@@ -101,12 +134,17 @@ function PurposePage({ session }: { session: RawAiSession }) {
   const currentProfileImage = normalizeAgentProfileImage(
     getString(uiMetadata, 'agentProfileImage') ?? undefined,
   )
-  const [purpose, setPurpose] = useState(currentPurpose)
   const [agentName, setAgentName] = useState(currentAgentName)
   const [callName, setCallName] = useState(currentCallName)
+  const [capabilities, setCapabilities] = useState(currentCapabilities)
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>(currentSkillIds)
   const [persona, setPersona] = useState(currentPersona)
-  const [successCriteria, setSuccessCriteria] = useState(currentSuccessCriteria)
-  const [constraints, setConstraints] = useState(currentConstraints)
+  const [instructionsEntryFile, setInstructionsEntryFile] = useState(currentInstructionsEntryFile)
+  const [instructionsFiles, setInstructionsFiles] = useState(currentInstructionsFiles)
+  const [instructionsMode, setInstructionsMode] = useState<'managed' | 'external'>(
+    currentInstructionsMode,
+  )
+  const [instructionsRootPath, setInstructionsRootPath] = useState(currentInstructionsRootPath)
   const [selectedModel, setSelectedModel] = useState(currentModel)
   const [selectedToolsets, setSelectedToolsets] = useState<string[]>(currentToolsets)
   const [canDelegate, setCanDelegate] = useState(currentCanDelegate)
@@ -128,6 +166,11 @@ function PurposePage({ session }: { session: RawAiSession }) {
     ? selectedFamily
     : (modelFamilies[0]?.id ?? 'gpt')
   const visibleModels = modelGroups[effectiveSelectedFamily]
+  const visibleModelOptions = visibleModels.map((model) => ({
+    value: model.id,
+    label: model.label,
+    description: model.provider ?? effectiveSelectedFamily,
+  }))
   const selectedImageIndex = Math.max(
     0,
     CEO_IMAGE_OPTIONS.findIndex((option) => option.src === profileImage),
@@ -136,12 +179,15 @@ function PurposePage({ session }: { session: RawAiSession }) {
   const displayRole = callName.trim() || 'CEO'
   const activeTab = getMainAgentTab(searchParams.get('agentTab'))
   const isDirty =
-    purpose.trim() !== currentPurpose ||
     agentName.trim() !== currentAgentName ||
     callName.trim() !== currentCallName ||
+    capabilities.trim() !== currentCapabilities ||
+    !stringArraysEqual(selectedSkillIds, currentSkillIds) ||
     persona.trim() !== currentPersona ||
-    successCriteria.trim() !== currentSuccessCriteria ||
-    constraints.trim() !== currentConstraints ||
+    instructionsEntryFile.trim() !== currentInstructionsEntryFile ||
+    !shallowStringRecordEqual(instructionsFiles, currentInstructionsFiles) ||
+    instructionsMode !== currentInstructionsMode ||
+    instructionsRootPath.trim() !== currentInstructionsRootPath ||
     selectedModel !== modelBaseline ||
     profileImage !== currentProfileImage ||
     !stringArraysEqual(selectedToolsets, currentToolsets) ||
@@ -149,6 +195,26 @@ function PurposePage({ session }: { session: RawAiSession }) {
     maxWorkerDepth !== currentMaxWorkerDepth
   const showConfigActionBar =
     (activeTab === 'configuration' || activeTab === 'instructions') && (isDirty || saving)
+  const sessionRuns = useMemo(
+    () => buildSessionRunItems(session, messages, taskRunsById, eventsByTaskRunId),
+    [eventsByTaskRunId, messages, session, taskRunsById],
+  )
+
+  useEffect(() => {
+    if (!authenticatedReady || commandClient === null || sessionId.startsWith('pending_session_')) {
+      return
+    }
+
+    let cancelled = false
+    void Promise.all([fetchMessages(sessionId), fetchActiveTaskRuns(sessionId)]).catch((error) => {
+      if (cancelled) return
+      console.error(error)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [authenticatedReady, commandClient, fetchActiveTaskRuns, fetchMessages, sessionId])
 
   useEffect(() => {
     let active = true
@@ -206,12 +272,15 @@ function PurposePage({ session }: { session: RawAiSession }) {
   }
 
   const resetDraft = () => {
-    setPurpose(currentPurpose)
     setAgentName(currentAgentName)
     setCallName(currentCallName)
+    setCapabilities(currentCapabilities)
+    setSelectedSkillIds(currentSkillIds)
     setPersona(currentPersona)
-    setSuccessCriteria(currentSuccessCriteria)
-    setConstraints(currentConstraints)
+    setInstructionsEntryFile(currentInstructionsEntryFile)
+    setInstructionsFiles(currentInstructionsFiles)
+    setInstructionsMode(currentInstructionsMode)
+    setInstructionsRootPath(currentInstructionsRootPath)
     setSelectedModel(modelBaseline)
     setSelectedFamily(inferModelFamily(modelBaseline))
     setSelectedToolsets(currentToolsets)
@@ -222,29 +291,25 @@ function PurposePage({ session }: { session: RawAiSession }) {
     setSaved(false)
   }
 
-  const copyAgentId = async () => {
-    try {
-      await navigator.clipboard.writeText(sessionId)
-      setSaved(true)
-      window.setTimeout(() => setSaved(false), 1200)
-    } catch {
-      setSaveError('에이전트 ID 복사에 실패했습니다.')
-    }
-  }
-
-  const resetSessionDraft = () => {
-    resetDraft()
-    setConfigRevisionsOpen(false)
-  }
-
   const handleSave = async () => {
     const nextUiMetadata: JsonObject = { ...uiMetadata }
-    setOptionalUiString(nextUiMetadata, 'sessionPurpose', purpose)
     setOptionalUiString(nextUiMetadata, 'agentName', agentName)
     setOptionalUiString(nextUiMetadata, 'callName', callName)
-    setOptionalUiString(nextUiMetadata, 'successCriteria', successCriteria)
-    setOptionalUiString(nextUiMetadata, 'constraints', constraints)
+    setOptionalUiString(nextUiMetadata, 'agentCapabilities', capabilities)
+    if (selectedSkillIds.length === 0) {
+      delete nextUiMetadata.agentSkills
+    } else {
+      nextUiMetadata.agentSkills = selectedSkillIds
+    }
     setOptionalUiString(nextUiMetadata, 'agentProfileImage', profileImage)
+    setOptionalUiString(nextUiMetadata, 'instructionsEntryFile', instructionsEntryFile)
+    if (Object.keys(instructionsFiles).length === 0) {
+      delete nextUiMetadata.instructionsFiles
+    } else {
+      nextUiMetadata.instructionsFiles = instructionsFiles
+    }
+    setOptionalUiString(nextUiMetadata, 'instructionsMode', instructionsMode)
+    setOptionalUiString(nextUiMetadata, 'instructionsRootPath', instructionsRootPath)
 
     const settingsPatch: AiSessionSettingsPatch = {}
     const nextPersona = persona.trim()
@@ -275,12 +340,12 @@ function PurposePage({ session }: { session: RawAiSession }) {
       if (settingsPatch.model !== undefined) {
         setModelBaseline(selectedModel)
       }
-      setPurpose(purpose.trim())
       setAgentName(agentName.trim())
       setCallName(callName.trim())
+      setCapabilities(capabilities.trim())
       setPersona(nextPersona)
-      setSuccessCriteria(successCriteria.trim())
-      setConstraints(constraints.trim())
+      setInstructionsEntryFile(instructionsEntryFile.trim() || 'AGENTS.md')
+      setInstructionsRootPath(instructionsRootPath.trim())
       setSaved(true)
       window.setTimeout(() => setSaved(false), 1400)
     } catch (error) {
@@ -296,9 +361,7 @@ function PurposePage({ session }: { session: RawAiSession }) {
         <MainAgentHeader
           callName={displayRole}
           onConfigure={() => selectTab('configuration')}
-          onCopyAgentId={copyAgentId}
           onInstructions={() => selectTab('instructions')}
-          onReset={resetSessionDraft}
           onRuns={() => selectTab('runs')}
           model={selectedModel}
           name={displayName}
@@ -317,267 +380,308 @@ function PurposePage({ session }: { session: RawAiSession }) {
         </Tabs>
 
         {activeTab === 'dashboard' && (
-          <div className="space-y-4 pt-2">
-            <SectionCard title="Profile">
-              <div className="grid gap-3 text-sm sm:grid-cols-2">
-                <SummaryItem label="이름" value={displayName} />
-                <SummaryItem label="호칭" value={displayRole} />
-                <SummaryItem label="모델" value={selectedModel || '기본 모델'} />
-                <SummaryItem label="도구" value={selectedToolsets.join(', ') || '없음'} />
-              </div>
-            </SectionCard>
-            <SectionCard title="Session Goal">
-              <div className="space-y-3 text-sm">
-                <SummaryItem label="대화 목표" value={purpose || '지정되지 않음'} />
-                <SummaryItem label="성공 기준" value={successCriteria || '지정되지 않음'} />
-              </div>
-            </SectionCard>
-          </div>
+          <AgentDashboardPanel
+            costs={[
+              { label: '입력 토큰', value: '0' },
+              { label: '출력 토큰', value: '0' },
+              { label: '캐시 토큰', value: '0' },
+              { label: '총 비용', value: '$0.00' },
+            ]}
+            latestRun={sessionRuns[0] ?? null}
+            metrics={[
+              {
+                icon: Activity,
+                label: '실행 현황',
+                value: formatSessionRunStatus(session.last_task_run_status),
+                description: '최근 14일',
+              },
+              {
+                icon: FileText,
+                label: '우선순위별 이슈',
+                value: '0',
+                description: '최근 14일',
+              },
+              {
+                icon: BarChart3,
+                label: '상태별 이슈',
+                value: '0',
+                description: '최근 14일',
+              },
+              {
+                icon: Play,
+                label: '성공률',
+                value: session.last_message_at ? '1+' : '0',
+                description: '최근 14일',
+              },
+            ]}
+            recentTitle="최근 이슈"
+            recentEmptyText="최근 이슈가 없습니다."
+            recentItems={[]}
+          />
         )}
 
         {activeTab === 'skills' && (
-          <div className="space-y-4 pt-2">
-            <SectionCard title="Skills">
-              <div className="grid gap-2 sm:grid-cols-2">
-                {PUBLIC_TOOLSET_OPTIONS.map((toolset) => (
-                  <ToggleRow
-                    key={toolset.id}
-                    checked={selectedToolsets.includes(toolset.id)}
-                    description={toolset.description}
-                    label={toolset.label}
-                    onChange={(checked) => {
-                      setSelectedToolsets((current) =>
-                        checked
-                          ? [...current, toolset.id]
-                          : current.filter((item) => item !== toolset.id),
-                      )
-                      markDirty()
-                    }}
-                  />
-                ))}
-              </div>
-            </SectionCard>
-          </div>
+          <AgentSkillsPanel>
+            <AgentSkillsLibraryPanel
+              adapterLabel="세션"
+              applicationLabel="에이전트 실행 시 적용"
+              rows={MAIN_AGENT_SKILL_OPTIONS.map((skill) => ({
+                key: skill.id,
+                name: skill.label,
+                description: skill.description,
+                checked: selectedSkillIds.includes(skill.id),
+                linkLabel: 'View',
+              }))}
+              selectedCount={selectedSkillIds.length}
+              onSkillToggle={(skillId, checked) => {
+                setSelectedSkillIds((current) =>
+                  checked ? [...current, skillId] : current.filter((item) => item !== skillId),
+                )
+                markDirty()
+              }}
+            />
+          </AgentSkillsPanel>
         )}
 
         {activeTab === 'instructions' && (
-          <div className="space-y-4 pt-2">
-            <SectionCard title="Session Goal">
-              <Field label="대화 목표">
-                <DraftTextarea
-                  minRows={2}
-                  onChange={(value) => {
-                    setPurpose(value)
-                    markDirty()
-                  }}
-                  placeholder="예: 이번 대화에서는 3분 발표용 서비스 소개안을 완성한다."
-                  value={purpose}
-                />
-              </Field>
-              <Field label="성공 기준">
-                <DraftTextarea
-                  minRows={3}
-                  onChange={(value) => {
-                    setSuccessCriteria(value)
-                    markDirty()
-                  }}
-                  placeholder="예: 최종 답변에 문제 정의, 해결안, 다음 액션 3개가 포함되어야 합니다."
-                  value={successCriteria}
-                />
-              </Field>
-            </SectionCard>
-            <SectionCard title="Instructions">
-              <Field label="응답 역할">
-                <DraftTextarea
-                  minRows={4}
-                  onChange={(value) => {
-                    setPersona(value)
-                    markDirty()
-                  }}
-                  placeholder="예: PM처럼 질문하고, 근거가 부족하면 먼저 확인하며, 답변은 실행 항목 중심으로 정리한다."
-                  value={persona}
-                />
-              </Field>
-              <Field label="제약">
-                <DraftTextarea
-                  minRows={3}
-                  onChange={(value) => {
-                    setConstraints(value)
-                    markDirty()
-                  }}
-                  placeholder="예: 추측하지 말고 모르는 내용은 확인 질문으로 남겨주세요."
-                  value={constraints}
-                />
-              </Field>
-            </SectionCard>
-          </div>
+          <AgentInstructionsPanel>
+            <AgentInstructionsBundlePanel
+              content={persona}
+              entryFile={instructionsEntryFile}
+              files={instructionsFiles}
+              mode={instructionsMode}
+              rootPath={instructionsRootPath}
+              onContentChange={(value) => {
+                setPersona(value)
+                markDirty()
+              }}
+              onEntryFileChange={(value) => {
+                setInstructionsEntryFile(value)
+                markDirty()
+              }}
+              onFilesChange={(value) => {
+                setInstructionsFiles(value)
+                markDirty()
+              }}
+              onModeChange={(value) => {
+                setInstructionsMode(value)
+                markDirty()
+              }}
+              onRootPathChange={(value) => {
+                setInstructionsRootPath(value)
+                markDirty()
+              }}
+            />
+          </AgentInstructionsPanel>
         )}
 
         {activeTab === 'configuration' && (
-          <div className="max-w-5xl space-y-4 pt-2">
-            <SectionCard title="Identity">
-              <div className="grid gap-4 sm:grid-cols-[10rem_minmax(0,1fr)]">
-                <Field label="프로필 이미지">
-                  <AgentImageStepper
-                    profileImage={profileImage}
-                    selectedImageIndex={selectedImageIndex}
-                    onProfileImageChange={(image) => {
-                      setProfileImage(image)
+          <AgentConfigurationPanel>
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,0.82fr)]">
+              <div className="space-y-4">
+                <AgentSectionCard title="프로필">
+                  <div className="grid gap-4 sm:grid-cols-[14rem_minmax(0,1fr)]">
+                    <div aria-label="프로필 이미지">
+                      <AgentImageStepper
+                        profileImage={profileImage}
+                        selectedImageIndex={selectedImageIndex}
+                        onProfileImageChange={(image) => {
+                          setProfileImage(image)
+                          markDirty()
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-3">
+                      <Field label="이름">
+                        <DraftInput
+                          onChange={(value) => {
+                            setAgentName(value)
+                            markDirty()
+                          }}
+                          placeholder="예: 기획 도우미"
+                          value={agentName}
+                        />
+                      </Field>
+                      <Field label="호칭">
+                        <DraftInput
+                          onChange={(value) => {
+                            setCallName(value)
+                            markDirty()
+                          }}
+                          placeholder="예: 팀장님, 사용자님"
+                          value={callName}
+                        />
+                      </Field>
+                    </div>
+                  </div>
+                </AgentSectionCard>
+                <AgentSectionCard title="실행 환경">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <Field label="기본 환경">
+                      <select
+                        className={`${inputClass} cursor-not-allowed opacity-70`}
+                        value=""
+                        disabled
+                      >
+                        <option value="">회사 기본값 (로컬)</option>
+                      </select>
+                    </Field>
+                    <Field label="역할">
+                      <input className={`${inputClass} opacity-70`} value="CEO" disabled readOnly />
+                    </Field>
+                    <Field label="상위 에이전트">
+                      <input
+                        className={`${inputClass} opacity-70`}
+                        value="Root"
+                        disabled
+                        readOnly
+                      />
+                    </Field>
+                  </div>
+                </AgentSectionCard>
+                <AgentSectionCard title="역할과 능력">
+                  <Field label="할 수 있는 일">
+                    <DraftTextarea
+                      minRows={3}
+                      onChange={(value) => {
+                        setCapabilities(value)
+                        markDirty()
+                      }}
+                      placeholder="이 에이전트가 할 수 있는 일을 적어주세요."
+                      value={capabilities}
+                    />
+                  </Field>
+                </AgentSectionCard>
+              </div>
+              <div className="space-y-4">
+                <AgentSectionCard title="연결 방식">
+                  <ModelSelector
+                    effectiveSelectedFamily={effectiveSelectedFamily}
+                    modelFamilies={modelFamilies}
+                    onFamilySelect={setSelectedFamily}
+                  />
+                </AgentSectionCard>
+                <AgentSectionCard title="모델과 권한">
+                  <Field label="모델">
+                    {modelOptionsLoading && (
+                      <span className="text-muted-foreground mb-1 inline-flex items-center gap-1.5 text-xs">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        조회 중
+                      </span>
+                    )}
+                    {modelOptionsError ? (
+                      <p className="text-destructive text-sm">
+                        {formatServerError(modelOptionsError)}
+                      </p>
+                    ) : (
+                      <AgentModelDropdown
+                        value={selectedModel}
+                        options={visibleModelOptions}
+                        onChange={(modelId) => {
+                          setSelectedModel(modelId)
+                          markDirty()
+                        }}
+                        allowDefault
+                      />
+                    )}
+                  </Field>
+                  <div className="grid gap-2">
+                    {PUBLIC_TOOLSET_OPTIONS.map((toolset) => (
+                      <ToggleRow
+                        key={toolset.id}
+                        checked={selectedToolsets.includes(toolset.id)}
+                        description={toolset.description}
+                        label={toolset.label}
+                        onChange={(checked) => {
+                          setSelectedToolsets((current) =>
+                            checked
+                              ? [...current, toolset.id]
+                              : current.filter((item) => item !== toolset.id),
+                          )
+                          markDirty()
+                        }}
+                      />
+                    ))}
+                  </div>
+                </AgentSectionCard>
+                <AgentSectionCard title="실행 규칙">
+                  <ToggleRow
+                    checked={canDelegate}
+                    description="승인된 범위 안에서 서브 작업을 맡길 수 있게 합니다."
+                    label="필요할 때 실행 허용"
+                    onChange={(checked) => {
+                      setCanDelegate(checked)
+                      if (!checked) setMaxWorkerDepth(0)
                       markDirty()
                     }}
                   />
-                </Field>
+                  {canDelegate && (
+                    <Field label="동시 실행 수">
+                      <select
+                        className={inputClass}
+                        value={maxWorkerDepth}
+                        onChange={(event) => {
+                          setMaxWorkerDepth(Number(event.target.value))
+                          markDirty()
+                        }}
+                      >
+                        <option value={0}>0</option>
+                        <option value={1}>1</option>
+                      </select>
+                    </Field>
+                  )}
+                </AgentSectionCard>
                 <div className="space-y-3">
-                  <Field label="이름">
-                    <DraftInput
-                      onChange={(value) => {
-                        setAgentName(value)
-                        markDirty()
-                      }}
-                      placeholder="예: 기획 도우미"
-                      value={agentName}
-                    />
-                  </Field>
-                  <Field label="호칭">
-                    <DraftInput
-                      onChange={(value) => {
-                        setCallName(value)
-                        markDirty()
-                      }}
-                      placeholder="예: 팀장님, 사용자님"
-                      value={callName}
-                    />
-                  </Field>
+                  <h3 className="text-sm font-medium">API 키</h3>
+                  <div className="border-border rounded-lg border p-4">
+                    <p className="text-muted-foreground text-sm">
+                      API 키는 전역 설정의 제공자 연결에서 관리합니다.
+                    </p>
+                  </div>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    className="hover:text-foreground flex items-center gap-2 text-sm font-medium transition-colors"
+                    onClick={() => setConfigRevisionsOpen((open) => !open)}
+                  >
+                    {configRevisionsOpen ? (
+                      <ChevronLeft className="text-muted-foreground h-3.5 w-3.5 -rotate-90" />
+                    ) : (
+                      <ChevronRight className="text-muted-foreground h-3.5 w-3.5" />
+                    )}
+                    설정 변경 기록
+                    <span className="text-muted-foreground text-xs font-normal">0</span>
+                  </button>
+                  {configRevisionsOpen && (
+                    <p className="text-muted-foreground mt-3 text-sm">
+                      아직 설정 변경 기록이 없습니다.
+                    </p>
+                  )}
                 </div>
               </div>
-            </SectionCard>
-            <SectionCard title="Execution">
-              <Field label="Default environment">
-                <select className={`${inputClass} cursor-not-allowed opacity-70`} value="" disabled>
-                  <option value="">Company default (Local)</option>
-                </select>
-              </Field>
-            </SectionCard>
-            <SectionCard title="Adapter">
-              <ModelSelector
-                effectiveSelectedFamily={effectiveSelectedFamily}
-                modelFamilies={modelFamilies}
-                modelOptionsError={modelOptionsError}
-                modelOptionsLoading={modelOptionsLoading}
-                onModelSelect={(modelId) => {
-                  setSelectedModel(modelId)
-                  markDirty()
-                }}
-                onFamilySelect={setSelectedFamily}
-                selectedModel={selectedModel}
-                visibleModels={visibleModels}
-              />
-            </SectionCard>
-            <SectionCard title="Permissions & Configuration">
-              <div className="grid gap-2 sm:grid-cols-2">
-                {PUBLIC_TOOLSET_OPTIONS.map((toolset) => (
-                  <ToggleRow
-                    key={toolset.id}
-                    checked={selectedToolsets.includes(toolset.id)}
-                    description={toolset.description}
-                    label={toolset.label}
-                    onChange={(checked) => {
-                      setSelectedToolsets((current) =>
-                        checked
-                          ? [...current, toolset.id]
-                          : current.filter((item) => item !== toolset.id),
-                      )
-                      markDirty()
-                    }}
-                  />
-                ))}
-              </div>
-            </SectionCard>
-            <SectionCard title="Run Policy">
-              <ToggleRow
-                checked={canDelegate}
-                description="승인된 범위 안에서 서브 작업을 맡길 수 있게 합니다."
-                label="Wake on demand"
-                onChange={(checked) => {
-                  setCanDelegate(checked)
-                  if (!checked) setMaxWorkerDepth(0)
-                  markDirty()
-                }}
-              />
-              {canDelegate && (
-                <Field label="Max concurrent runs">
-                  <select
-                    className={inputClass}
-                    value={maxWorkerDepth}
-                    onChange={(event) => {
-                      setMaxWorkerDepth(Number(event.target.value))
-                      markDirty()
-                    }}
-                  >
-                    <option value={0}>0</option>
-                    <option value={1}>1</option>
-                  </select>
-                </Field>
-              )}
-            </SectionCard>
-            <div className="space-y-3">
-              <h3 className="text-sm font-medium">API Keys</h3>
-              <div className="border-border rounded-lg border p-4">
-                <p className="text-muted-foreground text-sm">
-                  API 키는 전역 설정의 제공자 연결에서 관리합니다.
-                </p>
-              </div>
             </div>
-            <div>
-              <button
-                type="button"
-                className="hover:text-foreground flex items-center gap-2 text-sm font-medium transition-colors"
-                onClick={() => setConfigRevisionsOpen((open) => !open)}
-              >
-                {configRevisionsOpen ? (
-                  <ChevronLeft className="text-muted-foreground h-3.5 w-3.5 -rotate-90" />
-                ) : (
-                  <ChevronRight className="text-muted-foreground h-3.5 w-3.5" />
-                )}
-                Configuration Revisions
-                <span className="text-muted-foreground text-xs font-normal">0</span>
-              </button>
-              {configRevisionsOpen && (
-                <p className="text-muted-foreground mt-3 text-sm">
-                  No configuration revisions yet.
-                </p>
-              )}
-            </div>
-          </div>
+          </AgentConfigurationPanel>
         )}
 
         {activeTab === 'runs' && (
-          <div className="max-w-5xl space-y-4 pt-2">
-            <SectionCard title="Runs">
-              <div className="space-y-3 text-sm">
-                <SummaryItem label="최근 메시지" value={session.last_message || '없음'} />
-                <SummaryItem label="최근 메시지 시각" value={session.last_message_at || '없음'} />
-                <SummaryItem
-                  label="최근 실행 상태"
-                  value={session.last_task_run_status || '없음'}
-                />
-              </div>
-            </SectionCard>
-          </div>
+          <AgentRunsPanel emptyText="아직 실행 기록이 없습니다." items={sessionRuns} />
         )}
 
         {activeTab === 'budget' && (
-          <div className="space-y-4 pt-2">
-            <div className="max-w-3xl">
-              <SectionCard title="Budget">
-                <div className="grid gap-3 text-sm sm:grid-cols-3">
-                  <SummaryItem label="Monthly limit" value="정책 없음" />
-                  <SummaryItem label="Current spend" value="사용량 데이터 없음" />
-                  <SummaryItem label="Run budget" value="연동 전" />
-                </div>
-              </SectionCard>
-            </div>
-          </div>
+          <AgentBudgetPanel
+            summary={{
+              amountLabel: '사용 안 함',
+              observedLabel: '$0.00',
+              remainingLabel: '제한 없음',
+              scopeName: displayName,
+              scopeType: '에이전트',
+              status: 'healthy',
+              utilizationPercent: 0,
+              warnPercent: 80,
+              windowLabel: '월간 예산',
+            }}
+          />
         )}
 
         {saveError && (
@@ -614,15 +718,209 @@ function PurposePage({ session }: { session: RawAiSession }) {
   )
 }
 
+function buildSessionRunItems(
+  session: RawAiSession,
+  messages: ChatMessageView[],
+  taskRunsById: Record<string, RawTaskRun>,
+  eventsByTaskRunId: Record<string, RawTaskEventPayload[]>,
+): AgentRunItemData[] {
+  const ids = new Set<string>()
+
+  messages.forEach((message) => {
+    if (message.taskRunId !== undefined) {
+      ids.add(message.taskRunId)
+    }
+  })
+
+  Object.values(taskRunsById).forEach((taskRun) => {
+    if (taskRun.session_id === session.session_id) {
+      ids.add(taskRun.task_run_id)
+    }
+  })
+
+  if (typeof session.active_task_run_id === 'string' && session.active_task_run_id.trim()) {
+    ids.add(session.active_task_run_id)
+  }
+
+  const runItems = [...ids]
+    .map((taskRunId) =>
+      buildSessionRunItem(taskRunId, session, messages, taskRunsById[taskRunId], eventsByTaskRunId),
+    )
+    .sort((first, second) => second.sortTime - first.sortTime)
+    .map(toAgentRunItem)
+
+  if (runItems.length > 0 || (!session.last_message && !session.last_task_run_status)) {
+    return runItems
+  }
+
+  return [
+    {
+      id: session.session_id,
+      status: normalizeRunStatus(session.last_task_run_status),
+      source: 'chat',
+      createdAt: formatRunTimestamp(getTime(session.last_message_at)),
+      summary: session.last_message || '아직 요약이 없습니다.',
+      tokens: '0 tok',
+      cost: '$0.00',
+      adapter: 'openai',
+    },
+  ]
+}
+
+function buildSessionRunItem(
+  taskRunId: string,
+  session: RawAiSession,
+  messages: ChatMessageView[],
+  taskRun: RawTaskRun | undefined,
+  eventsByTaskRunId: Record<string, RawTaskEventPayload[]>,
+): AgentRunItemData & { sortTime: number } {
+  const events = (eventsByTaskRunId[taskRunId] ?? []).filter(
+    (event) => !isInternalStepAnchorEvent(event),
+  )
+  const summary = toTaskRunSummaryView(taskRun, events)
+  const relatedMessages = messages.filter((message) => message.taskRunId === taskRunId)
+  const prompt = relatedMessages.find((message) => message.role === 'user')?.content
+  const answer = [...relatedMessages]
+    .reverse()
+    .find((message) => message.role === 'assistant')?.content
+  const sortTime = getRunSortTime(taskRun, events, relatedMessages, session)
+
+  return {
+    id: taskRunId,
+    status: normalizeRunStatus(summary.tone),
+    source: 'chat',
+    createdAt: formatRunTimestamp(sortTime),
+    summary:
+      getCompactRunSummary(prompt) ??
+      getCompactRunSummary(answer) ??
+      getCompactRunSummary(summary.title) ??
+      '아직 요약이 없습니다.',
+    tokens: '0 tok',
+    cost: '$0.00',
+    adapter: 'openai',
+    model: getString(toJsonObject(session.settings), 'model') ?? undefined,
+    sortTime,
+  }
+}
+
+function toAgentRunItem(item: AgentRunItemData & { sortTime: number }): AgentRunItemData {
+  return {
+    id: item.id,
+    status: item.status,
+    source: item.source,
+    createdAt: item.createdAt,
+    summary: item.summary,
+    tokens: item.tokens,
+    cost: item.cost,
+    adapter: item.adapter,
+    model: item.model,
+  }
+}
+
+function getRunSortTime(
+  taskRun: RawTaskRun | undefined,
+  events: RawTaskEventPayload[],
+  messages: ChatMessageView[],
+  session: RawAiSession,
+) {
+  const eventTimes = events.map((event) => getTime(event.occurred_at))
+  const messageTimes = messages.map((message) => getTime(message.createdAt))
+  return Math.max(
+    getTime(taskRun?.completed_at),
+    getTime(taskRun?.updated_at),
+    getTime(taskRun?.created_at),
+    getTime(session.last_message_at),
+    ...eventTimes,
+    ...messageTimes,
+    0,
+  )
+}
+
+function getCompactRunSummary(value?: string | null) {
+  const text = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : ''
+  if (!text) return undefined
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text
+}
+
+function formatRunTimestamp(time: number) {
+  if (time <= 0) return undefined
+  return new Intl.DateTimeFormat('ko-KR', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(time))
+}
+
+function normalizeRunStatus(status?: string | null) {
+  switch (status) {
+    case 'completed':
+    case 'COMPLETED':
+      return 'succeeded'
+    case 'failed':
+    case 'FAILED':
+    case 'CANCELLED':
+    case 'CANCELED':
+      return 'failed'
+    case 'running':
+    case 'RUNNING':
+      return 'running'
+    case 'waiting':
+    case 'WAITING':
+    case 'PENDING':
+      return 'waiting'
+    case 'idle':
+    case undefined:
+    case null:
+      return 'pending'
+    default:
+      return status
+  }
+}
+
+function formatSessionRunStatus(status?: string | null) {
+  switch (normalizeRunStatus(status)) {
+    case 'succeeded':
+      return '완료'
+    case 'running':
+      return '실행 중'
+    case 'waiting':
+      return '대기 중'
+    case 'pending':
+      return '준비 중'
+    case 'failed':
+      return '오류'
+    default:
+      return status || '없음'
+  }
+}
+
+function getInstructionsFiles(value: unknown): Record<string, string> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] =>
+        typeof entry[0] === 'string' && typeof entry[1] === 'string',
+    ),
+  )
+}
+
+function shallowStringRecordEqual(left: Record<string, string>, right: Record<string, string>) {
+  const leftEntries = Object.entries(left)
+  const rightEntries = Object.entries(right)
+  if (leftEntries.length !== rightEntries.length) return false
+  return leftEntries.every(([key, value]) => right[key] === value)
+}
+
 type MainAgentTab = 'dashboard' | 'instructions' | 'skills' | 'configuration' | 'runs' | 'budget'
 
 const MAIN_AGENT_TABS: Array<{ value: MainAgentTab; label: string }> = [
-  { value: 'dashboard', label: 'Dashboard' },
-  { value: 'instructions', label: 'Instructions' },
-  { value: 'skills', label: 'Skills' },
-  { value: 'configuration', label: 'Configuration' },
-  { value: 'runs', label: 'Runs' },
-  { value: 'budget', label: 'Budget' },
+  { value: 'dashboard', label: '대시보드' },
+  { value: 'instructions', label: '지침' },
+  { value: 'skills', label: '스킬' },
+  { value: 'configuration', label: '설정' },
+  { value: 'runs', label: '실행 기록' },
+  { value: 'budget', label: '예산' },
 ]
 
 const inputClass =
@@ -635,11 +933,21 @@ const CEO_IMAGE_OPTIONS = [
 ] as const
 
 const PUBLIC_TOOLSET_OPTIONS = [
-  { id: 'session', label: 'Session', description: '세션 기록과 맥락을 사용합니다.' },
-  { id: 'planning', label: 'Planning', description: '계획/진행 상태 도구를 사용합니다.' },
-  { id: 'web', label: 'Web', description: '웹 검색/조회 도구를 사용합니다.' },
-  { id: 'skills', label: 'Skills', description: '등록된 스킬 도구를 사용합니다.' },
-  { id: 'safe', label: 'Safe', description: '안전한 기본 도구만 허용합니다.' },
+  { id: 'session', label: '세션 기록', description: '세션 기록과 맥락을 사용합니다.' },
+  { id: 'planning', label: '계획', description: '계획/진행 상태 도구를 사용합니다.' },
+  { id: 'web', label: '웹', description: '웹 검색/조회 도구를 사용합니다.' },
+  { id: 'skills', label: '스킬', description: '등록된 스킬 도구를 사용합니다.' },
+  { id: 'safe', label: '안전 모드', description: '안전한 기본 도구만 허용합니다.' },
+] as const
+
+const MAIN_AGENT_SKILL_OPTIONS = [
+  { id: 'notion', label: 'Notion', description: '문서와 데이터베이스를 정리합니다.' },
+  {
+    id: 'samsung-health',
+    label: 'Samsung Health',
+    description: '건강 기록과 루틴 맥락을 확인합니다.',
+  },
+  { id: 'code', label: 'Code', description: '코드 읽기와 구현 작업을 맡습니다.' },
 ] as const
 
 function MainAgentHeader({
@@ -647,9 +955,7 @@ function MainAgentHeader({
   model,
   name,
   onConfigure,
-  onCopyAgentId,
   onInstructions,
-  onReset,
   onRuns,
   profileImage,
   saved,
@@ -659,17 +965,24 @@ function MainAgentHeader({
   model: string
   name: string
   onConfigure: () => void
-  onCopyAgentId: () => void
   onInstructions: () => void
-  onReset: () => void
   onRuns: () => void
   profileImage: string
   saved: boolean
   saving: boolean
 }) {
   return (
-    <div className="flex items-center justify-between gap-2">
-      <div className="flex min-w-0 items-center gap-3">
+    <AgentDetailHeader
+      name={name}
+      onInstructions={onInstructions}
+      onRuns={onRuns}
+      status="활성"
+      subtitle={
+        <>
+          {callName} · {model || '기본 모델'}
+        </>
+      }
+      profile={
         <button
           type="button"
           onClick={onConfigure}
@@ -678,92 +991,24 @@ function MainAgentHeader({
         >
           <img src={profileImage} alt="" className="h-10 w-10 object-contain" draggable={false} />
         </button>
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            <h2 className="truncate text-2xl font-bold">{name}</h2>
-            {saved && (
-              <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
-                <Check className="h-3.5 w-3.5" />
-                저장됨
-              </span>
-            )}
-            {saving && (
-              <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                저장 중
-              </span>
-            )}
-          </div>
-          <p className="text-muted-foreground mt-1 truncate text-sm">
-            {callName} · {model || '기본 모델'}
-          </p>
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-        <Button variant="outline" size="sm" onClick={onInstructions}>
-          <FileText className="h-3.5 w-3.5 sm:mr-1" />
-          <span className="hidden sm:inline">Instructions</span>
-        </Button>
-        <Button variant="outline" size="sm" onClick={onRuns}>
-          <Play className="h-3.5 w-3.5 sm:mr-1" />
-          <span className="hidden sm:inline">Runs</span>
-        </Button>
-        <span className="border-border bg-muted/40 hidden rounded-full border px-2 py-0.5 text-xs sm:inline">
-          active
-        </span>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon-xs">
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-44 p-1" align="end">
-            <button
-              type="button"
-              onClick={onCopyAgentId}
-              className="hover:bg-accent/50 flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs"
-            >
-              <Copy className="size-4" />
-              <span>Copy Agent ID</span>
-            </button>
-            <button
-              type="button"
-              onClick={onReset}
-              className="hover:bg-accent/50 flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs"
-            >
-              <RotateCcw className="size-4" />
-              <span>Reset Draft</span>
-            </button>
-            <button
-              type="button"
-              onClick={onRuns}
-              className="hover:bg-accent/50 flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs"
-            >
-              <Play className="size-4" />
-              <span>View Runs</span>
-            </button>
-          </PopoverContent>
-        </Popover>
-      </div>
-    </div>
-  )
-}
-
-function SectionCard({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="space-y-3">
-      <h3 className="text-sm font-medium">{title}</h3>
-      <div className="border-border bg-background space-y-4 rounded-lg border p-4">{children}</div>
-    </section>
-  )
-}
-
-function SummaryItem({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-muted-foreground text-xs">{label}</div>
-      <div className="mt-1 min-w-0 text-sm break-words">{value}</div>
-    </div>
+      }
+      savedIndicator={
+        <>
+          {saved && (
+            <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
+              <Check className="h-3.5 w-3.5" />
+              저장됨
+            </span>
+          )}
+          {saving && (
+            <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              저장 중
+            </span>
+          )}
+        </>
+      }
+    />
   )
 }
 
@@ -859,6 +1104,14 @@ function normalizeToolsets(value: unknown): string[] {
   )
 }
 
+function normalizeMainAgentSkillIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const allowed = new Set<string>(MAIN_AGENT_SKILL_OPTIONS.map((skill) => skill.id))
+  return Array.from(
+    new Set(value.filter((item): item is string => typeof item === 'string' && allowed.has(item))),
+  )
+}
+
 function stringArraysEqual(left: string[], right: string[]) {
   if (left.length !== right.length) return false
   const leftSet = new Set(left)
@@ -874,73 +1127,25 @@ function getMainAgentTab(value: string | null): MainAgentTab {
 function ModelSelector({
   effectiveSelectedFamily,
   modelFamilies,
-  modelOptionsError,
-  modelOptionsLoading,
   onFamilySelect,
-  onModelSelect,
-  selectedModel,
-  visibleModels,
 }: {
   effectiveSelectedFamily: ModelFamily
   modelFamilies: Array<{ id: ModelFamily; label: string }>
-  modelOptionsError: string | null
-  modelOptionsLoading: boolean
   onFamilySelect: (family: ModelFamily) => void
-  onModelSelect: (modelId: string) => void
-  selectedModel: string
-  visibleModels: AiModelOption[]
 }) {
   return (
-    <section className="space-y-3">
-      <div className="text-muted-foreground text-xs">모델</div>
-      <div className="border-border flex items-center gap-1 border-b">
-        {modelFamilies.map((family) => (
-          <button
-            key={family.id}
-            type="button"
-            onClick={() => onFamilySelect(family.id)}
-            className={`border-b px-5 py-2 text-sm font-medium transition-colors ${
-              effectiveSelectedFamily === family.id
-                ? 'border-foreground text-foreground'
-                : 'text-muted-foreground hover:text-foreground border-transparent'
-            }`}
-          >
-            {family.label}
-          </button>
-        ))}
-        {modelOptionsLoading && (
-          <span className="text-muted-foreground ml-auto inline-flex items-center gap-1.5 text-xs">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            조회 중
-          </span>
-        )}
-      </div>
-
-      {modelOptionsError && (
-        <p className="text-destructive text-sm">{formatServerError(modelOptionsError)}</p>
-      )}
-
-      <div className="border-border max-h-80 overflow-y-auto rounded-lg border">
-        {visibleModels.map((model) => (
-          <button
-            key={`${model.provider ?? 'model'}:${model.id}`}
-            type="button"
-            onClick={() => onModelSelect(model.id)}
-            disabled={modelOptionsLoading || modelOptionsError !== null}
-            className="border-border hover:bg-accent/50 flex w-full items-center gap-3 border-b px-4 py-2 text-left text-sm transition-colors last:border-b-0 disabled:opacity-60"
-          >
-            <span className="text-muted-foreground hidden w-20 shrink-0 text-xs capitalize sm:inline">
-              {model.provider ?? effectiveSelectedFamily}
-            </span>
-            <span className="min-w-0 flex-1 truncate">{model.label}</span>
-            {selectedModel === model.id && <Check className="h-4 w-4 shrink-0" />}
-          </button>
-        ))}
-        {!modelOptionsLoading && visibleModels.length === 0 && (
-          <p className="text-muted-foreground px-4 py-2 text-sm">선택 가능한 모델이 없습니다.</p>
-        )}
-      </div>
-    </section>
+    <div className="space-y-3">
+      <Field label="연결 방식">
+        <AgentAdapterTypeDropdown
+          value={effectiveSelectedFamily}
+          options={modelFamilies.map((family) => ({
+            value: family.id,
+            label: family.id === 'gpt' ? 'OpenAI API' : family.label,
+          }))}
+          onChange={(value) => onFamilySelect(value as ModelFamily)}
+        />
+      </Field>
+    </div>
   )
 }
 
@@ -956,7 +1161,10 @@ function AgentImageStepper({
   const selectedImage = CEO_IMAGE_OPTIONS[selectedImageIndex]
 
   return (
-    <div className="flex w-full min-w-0 items-center gap-2" aria-label="에이전트 이미지">
+    <div
+      className="flex min-h-36 w-full min-w-0 items-center justify-center gap-5 rounded-lg"
+      aria-label="에이전트 이미지"
+    >
       <button
         type="button"
         onClick={() => {
@@ -964,7 +1172,7 @@ function AgentImageStepper({
             (selectedImageIndex - 1 + CEO_IMAGE_OPTIONS.length) % CEO_IMAGE_OPTIONS.length
           onProfileImageChange(CEO_IMAGE_OPTIONS[nextIndex].src)
         }}
-        className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded transition-colors"
+        className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-10 w-10 shrink-0 items-center justify-center rounded transition-colors"
         aria-label="이전 에이전트 이미지"
       >
         <ChevronLeft className="h-4 w-4" />
@@ -975,10 +1183,10 @@ function AgentImageStepper({
           const nextIndex = (selectedImageIndex + 1) % CEO_IMAGE_OPTIONS.length
           onProfileImageChange(CEO_IMAGE_OPTIONS[nextIndex].src)
         }}
-        className="bg-accent hover:bg-accent/80 flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg transition-colors"
+        className="bg-accent hover:bg-accent/80 flex h-28 w-28 shrink-0 items-center justify-center overflow-hidden rounded-lg transition-colors"
         aria-label={`${selectedImage?.label ?? '메인 에이전트'} 이미지 변경`}
       >
-        <img src={profileImage} alt="" className="h-10 w-10 object-contain" draggable={false} />
+        <img src={profileImage} alt="" className="h-24 w-24 object-contain" draggable={false} />
       </button>
       <button
         type="button"
@@ -986,14 +1194,11 @@ function AgentImageStepper({
           const nextIndex = (selectedImageIndex + 1) % CEO_IMAGE_OPTIONS.length
           onProfileImageChange(CEO_IMAGE_OPTIONS[nextIndex].src)
         }}
-        className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded transition-colors"
+        className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-10 w-10 shrink-0 items-center justify-center rounded transition-colors"
         aria-label="다음 에이전트 이미지"
       >
         <ChevronRight className="h-4 w-4" />
       </button>
-      <span className="text-muted-foreground min-w-0 truncate text-xs">
-        {selectedImage?.label ?? '메인 에이전트'}
-      </span>
     </div>
   )
 }
