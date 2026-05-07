@@ -36,7 +36,7 @@ public class OpenAiProviderStatusService {
 
     @Transactional(readOnly = true)
     public AiProviderModelListResponse getProviderModels() {
-        List<AiProviderModelItemResponse> providers = userManagedProviders().stream()
+        List<AiProviderModelItemResponse> providers = modelProviders().stream()
             .map(providerName -> AiProviderModelItemResponse.builder()
                 .providerName(providerName.getValue())
                 .providerType(providerName.getProviderType())
@@ -59,6 +59,7 @@ public class OpenAiProviderStatusService {
             providers.add(userApiKeyStatus(userId, providerName));
         }
         providers.add(oauthStatus(userId));
+        providers.add(codexOAuthStatus(userId));
         if (runtimePolicyService.isDevFallbackProfile()) {
             providers.add(devFallbackStatus());
         }
@@ -73,6 +74,15 @@ public class OpenAiProviderStatusService {
             OpenAiProviderName.OPENAI_API_KEY,
             OpenAiProviderName.GEMINI_API_KEY,
             OpenAiProviderName.CLAUDE_API_KEY
+        );
+    }
+
+    private List<OpenAiProviderName> modelProviders() {
+        return List.of(
+            OpenAiProviderName.OPENAI_API_KEY,
+            OpenAiProviderName.GEMINI_API_KEY,
+            OpenAiProviderName.CLAUDE_API_KEY,
+            OpenAiProviderName.OPENAI_CODEX_OAUTH
         );
     }
 
@@ -118,6 +128,37 @@ public class OpenAiProviderStatusService {
             .providerType(OpenAiProviderName.OPENAI_OAUTH.getProviderType())
             .authType(OpenAiProviderName.OPENAI_OAUTH.getAuthType())
             .defaultModel(runtimePolicyService.defaultModel(OpenAiProviderName.OPENAI_OAUTH))
+            .connected(true)
+            .available(available)
+            .expiresAt(connection.getExpiresAt())
+            .status(available ? "connected" : "expired")
+            .build();
+    }
+
+    private OpenAiProviderStatusItemResponse codexOAuthStatus(Long userId) {
+        return openAiProviderConnectionRepository
+            .findByUserIdAndProviderName(userId, OpenAiProviderName.OPENAI_CODEX_OAUTH.getValue())
+            .map(this::connectedCodexOAuthStatus)
+            .orElseGet(() -> OpenAiProviderStatusItemResponse.builder()
+                .providerName(OpenAiProviderName.OPENAI_CODEX_OAUTH.getValue())
+                .providerType(OpenAiProviderName.OPENAI_CODEX_OAUTH.getProviderType())
+                .authType(OpenAiProviderName.OPENAI_CODEX_OAUTH.getAuthType())
+                .defaultModel(runtimePolicyService.defaultModel(OpenAiProviderName.OPENAI_CODEX_OAUTH))
+                .connected(false)
+                .available(false)
+                .expiresAt(null)
+                .status("not_connected")
+                .build());
+    }
+
+    private OpenAiProviderStatusItemResponse connectedCodexOAuthStatus(OpenAiProviderConnection connection) {
+        boolean available = !connection.isExpired(LocalDateTime.now())
+            || StringUtils.hasText(connection.getEncryptedRefreshToken());
+        return OpenAiProviderStatusItemResponse.builder()
+            .providerName(OpenAiProviderName.OPENAI_CODEX_OAUTH.getValue())
+            .providerType(OpenAiProviderName.OPENAI_CODEX_OAUTH.getProviderType())
+            .authType(OpenAiProviderName.OPENAI_CODEX_OAUTH.getAuthType())
+            .defaultModel(runtimePolicyService.defaultModel(OpenAiProviderName.OPENAI_CODEX_OAUTH))
             .connected(true)
             .available(available)
             .expiresAt(connection.getExpiresAt())
