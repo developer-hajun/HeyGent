@@ -25,15 +25,20 @@ public class OpenAiApiKeyService {
 
     @Transactional
     public OpenAiApiKeyConnectionResponse upsert(Long userId, String apiKey) {
+        return upsert(userId, OpenAiProviderName.OPENAI_API_KEY.getValue(), apiKey);
+    }
+
+    @Transactional
+    public OpenAiApiKeyConnectionResponse upsert(Long userId, String providerNameValue, String apiKey) {
         if (!StringUtils.hasText(apiKey)) {
             throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
         }
+        OpenAiProviderName providerName = requireUserManagedApiKeyProvider(providerNameValue);
 
-        OpenAiProviderConnection connection = openAiProviderConnectionRepository
-            .findByUserIdAndProviderName(userId, OpenAiProviderName.OPENAI_USER_API_KEY.getValue())
+        OpenAiProviderConnection connection = findConnection(userId, providerName)
             .orElseGet(() -> OpenAiProviderConnection.builder()
                 .userId(userId)
-                .providerName(OpenAiProviderName.OPENAI_USER_API_KEY.getValue())
+                .providerName(providerName.getValue())
                 .build());
 
         connection.updateToken(
@@ -47,7 +52,7 @@ public class OpenAiApiKeyService {
 
         OpenAiProviderConnection saved = openAiProviderConnectionRepository.save(connection);
         return OpenAiApiKeyConnectionResponse.builder()
-            .providerName(OpenAiProviderName.OPENAI_USER_API_KEY.getValue())
+            .providerName(providerName.getValue())
             .connected(true)
             .status("connected")
             .updatedAt(saved.getUpdatedAt())
@@ -56,13 +61,18 @@ public class OpenAiApiKeyService {
 
     @Transactional
     public OpenAiApiKeyConnectionResponse delete(Long userId) {
-        openAiProviderConnectionRepository.deleteByUserIdAndProviderName(
-            userId,
-            OpenAiProviderName.OPENAI_USER_API_KEY.getValue()
-        );
+        return delete(userId, OpenAiProviderName.OPENAI_API_KEY.getValue());
+    }
+
+    @Transactional
+    public OpenAiApiKeyConnectionResponse delete(Long userId, String providerNameValue) {
+        OpenAiProviderName providerName = requireUserManagedApiKeyProvider(providerNameValue);
+        for (String lookupValue : providerName.lookupValues()) {
+            openAiProviderConnectionRepository.deleteByUserIdAndProviderName(userId, lookupValue);
+        }
 
         return OpenAiApiKeyConnectionResponse.builder()
-            .providerName(OpenAiProviderName.OPENAI_USER_API_KEY.getValue())
+            .providerName(providerName.getValue())
             .connected(false)
             .status("disconnected")
             .updatedAt(null)
@@ -71,9 +81,32 @@ public class OpenAiApiKeyService {
 
     @Transactional(readOnly = true)
     public String resolveApiKey(Long userId) {
-        OpenAiProviderConnection connection = openAiProviderConnectionRepository
-            .findByUserIdAndProviderName(userId, OpenAiProviderName.OPENAI_USER_API_KEY.getValue())
+        return resolveApiKey(userId, OpenAiProviderName.OPENAI_API_KEY);
+    }
+
+    @Transactional(readOnly = true)
+    public String resolveApiKey(Long userId, OpenAiProviderName providerName) {
+        OpenAiProviderConnection connection = findConnection(userId, providerName)
             .orElseThrow(() -> new CustomException(ErrorCode.OPENAI_PROVIDER_NOT_CONNECTED));
         return credentialCipher.decrypt(connection.getEncryptedAccessToken());
+    }
+
+    private OpenAiProviderName requireUserManagedApiKeyProvider(String providerNameValue) {
+        OpenAiProviderName providerName = OpenAiProviderName.from(providerNameValue);
+        if (!providerName.isUserManagedApiKeyProvider()) {
+            throw new CustomException(ErrorCode.OPENAI_PROVIDER_NOT_SUPPORTED);
+        }
+        return providerName;
+    }
+
+    private java.util.Optional<OpenAiProviderConnection> findConnection(Long userId, OpenAiProviderName providerName) {
+        for (String lookupValue : providerName.lookupValues()) {
+            java.util.Optional<OpenAiProviderConnection> connection =
+                openAiProviderConnectionRepository.findByUserIdAndProviderName(userId, lookupValue);
+            if (connection.isPresent()) {
+                return connection;
+            }
+        }
+        return java.util.Optional.empty();
     }
 }

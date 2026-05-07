@@ -38,7 +38,9 @@ class Settings:
     openai_rest_api_base_url: str = "https://api.openai.com/v1"
     openai_response_model: str = "gpt-5.4"
     openai_embedding_model: str = "text-embedding-3-small"
+    backend_base_url: str = "http://127.0.0.1:8080"
     backend_auth_verify_url: str = "http://127.0.0.1:8080/internal/ai/auth/validate"
+    backend_memory_timeout_seconds: float = 5.0
     internal_service_token: str | None = None
     redis_url: str | None = None
     cors_allowed_origins: list[str] = field(default_factory=list)
@@ -178,10 +180,15 @@ def get_settings() -> Settings:
         openai_rest_api_base_url=_read_env("HEYGENT_OPENAI_REST_API_BASE_URL", "https://api.openai.com/v1", dotenv_values),
         openai_response_model=_read_env("HEYGENT_OPENAI_RESPONSE_MODEL", "gpt-5.4", dotenv_values),
         openai_embedding_model=_read_env("HEYGENT_OPENAI_EMBEDDING_MODEL", "text-embedding-3-small", dotenv_values),
+        backend_base_url=_read_env("HEYGENT_BACKEND_BASE_URL", "http://127.0.0.1:8080", dotenv_values),
         backend_auth_verify_url=_read_env(
             "HEYGENT_BACKEND_AUTH_VERIFY_URL",
             "http://127.0.0.1:8080/internal/ai/auth/validate",
             dotenv_values,
+        ),
+        backend_memory_timeout_seconds=_parse_float(
+            _read_env("HEYGENT_BACKEND_MEMORY_TIMEOUT_SECONDS", 5.0, dotenv_values),
+            default=5.0,
         ),
         internal_service_token=_read_env("HEYGENT_INTERNAL_SERVICE_TOKEN", None, dotenv_values),
         redis_url=_read_env("HEYGENT_REDIS_URL", None, dotenv_values),

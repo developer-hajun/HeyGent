@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import com.ssafy.heygent.domain.ai.openai.config.OpenAiProperties;
+import com.ssafy.heygent.domain.ai.openai.model.OpenAiProviderName;
 import com.ssafy.heygent.global.exception.CustomException;
 import com.ssafy.heygent.global.exception.ErrorCode;
 
@@ -22,12 +23,16 @@ public class OpenAiRuntimePolicyService {
     private final Environment environment;
 
     public String requireAllowedModel(String requestedModel) {
+        return requireAllowedModel(OpenAiProviderName.OPENAI_API_KEY, requestedModel);
+    }
+
+    public String requireAllowedModel(OpenAiProviderName providerName, String requestedModel) {
         if (!StringUtils.hasText(requestedModel)) {
             throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
         }
 
         String model = requestedModel.trim();
-        List<String> allowedModels = properties.normalizedAllowedModels();
+        List<String> allowedModels = allowedModels(providerName);
         if (!allowedModels.isEmpty() && !allowedModels.contains(model)) {
             throw new CustomException(ErrorCode.OPENAI_MODEL_NOT_ALLOWED);
         }
@@ -45,8 +50,23 @@ public class OpenAiRuntimePolicyService {
         return properties.normalizedAllowedModels();
     }
 
+    public List<String> allowedModels(OpenAiProviderName providerName) {
+        if (providerName.getProviderType().equals("openai")) {
+            return properties.normalizedAllowedModels();
+        }
+        return providerName.getDefaultModels();
+    }
+
     public String defaultModel() {
         return properties.getDefaultModel();
+    }
+
+    public String defaultModel(OpenAiProviderName providerName) {
+        List<String> models = allowedModels(providerName);
+        if (models.isEmpty()) {
+            return properties.getDefaultModel();
+        }
+        return models.get(0);
     }
 
     public boolean isDevFallbackAvailable() {

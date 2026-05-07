@@ -40,7 +40,7 @@ class OpenAiApiKeyServiceTest {
     void upsertEncryptsAndStoresUserApiKey() {
         when(openAiProviderConnectionRepository.findByUserIdAndProviderName(
             1L,
-            OpenAiProviderName.OPENAI_USER_API_KEY.getValue()
+            OpenAiProviderName.OPENAI_API_KEY.getValue()
         )).thenReturn(Optional.empty());
         when(credentialCipher.encrypt("sk-test")).thenReturn("encrypted");
         when(openAiProviderConnectionRepository.save(any(OpenAiProviderConnection.class)))
@@ -50,8 +50,29 @@ class OpenAiApiKeyServiceTest {
 
         ArgumentCaptor<OpenAiProviderConnection> captor = ArgumentCaptor.forClass(OpenAiProviderConnection.class);
         verify(openAiProviderConnectionRepository).save(captor.capture());
-        assertThat(captor.getValue().getProviderName()).isEqualTo("openai_user_api_key");
+        assertThat(captor.getValue().getProviderName()).isEqualTo("openai_api_key");
         assertThat(captor.getValue().getEncryptedAccessToken()).isEqualTo("encrypted");
+        assertThat(response.isConnected()).isTrue();
+    }
+
+    @Test
+    void upsertEncryptsAndStoresGeminiApiKey() {
+        when(openAiProviderConnectionRepository.findByUserIdAndProviderName(
+            1L,
+            OpenAiProviderName.GEMINI_API_KEY.getValue()
+        )).thenReturn(Optional.empty());
+        when(credentialCipher.encrypt("gemini-key")).thenReturn("encrypted-gemini");
+        when(openAiProviderConnectionRepository.save(any(OpenAiProviderConnection.class)))
+            .thenAnswer(invocation -> invocation.getArgument(0));
+
+        OpenAiApiKeyConnectionResponse response =
+            openAiApiKeyService.upsert(1L, "gemini_api_key", " gemini-key ");
+
+        ArgumentCaptor<OpenAiProviderConnection> captor = ArgumentCaptor.forClass(OpenAiProviderConnection.class);
+        verify(openAiProviderConnectionRepository).save(captor.capture());
+        assertThat(captor.getValue().getProviderName()).isEqualTo("gemini_api_key");
+        assertThat(captor.getValue().getEncryptedAccessToken()).isEqualTo("encrypted-gemini");
+        assertThat(response.getProviderName()).isEqualTo("gemini_api_key");
         assertThat(response.isConnected()).isTrue();
     }
 
@@ -61,8 +82,9 @@ class OpenAiApiKeyServiceTest {
 
         verify(openAiProviderConnectionRepository).deleteByUserIdAndProviderName(
             1L,
-            OpenAiProviderName.OPENAI_USER_API_KEY.getValue()
+            OpenAiProviderName.OPENAI_API_KEY.getValue()
         );
+        verify(openAiProviderConnectionRepository).deleteByUserIdAndProviderName(1L, "openai_user_api_key");
         assertThat(response.isConnected()).isFalse();
     }
 }

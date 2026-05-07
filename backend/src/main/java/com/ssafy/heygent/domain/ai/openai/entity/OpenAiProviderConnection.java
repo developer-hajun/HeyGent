@@ -50,10 +50,10 @@ public class OpenAiProviderConnection {
     @Column(name = "token_type", length = 30)
     private String tokenType;
 
-    @Column(name = "encrypted_access_token", nullable = false, length = 3000)
+    @Column(name = "encrypted_access_token", nullable = false, length = 30000)
     private String encryptedAccessToken;
 
-    @Column(name = "encrypted_refresh_token", length = 3000)
+    @Column(name = "encrypted_refresh_token", length = 30000)
     private String encryptedRefreshToken;
 
     @Column(name = "scope_text", nullable = false, length = 500)

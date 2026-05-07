@@ -20,19 +20,32 @@ public class OpenAiCredentialIssueService {
     private final OpenAiRuntimePolicyService runtimePolicyService;
     private final OpenAiApiKeyService openAiApiKeyService;
     private final OpenAiOAuthService openAiOAuthService;
+    private final OpenAiCodexOAuthService openAiCodexOAuthService;
 
     @Transactional
     public OpenAiCredentialIssueResponse issue(OpenAiCredentialIssueRequest request) {
         OpenAiProviderName providerName = OpenAiProviderName.from(request.getProviderName());
-        String model = runtimePolicyService.requireAllowedModel(request.getModel());
+        String model = runtimePolicyService.requireAllowedModel(providerName, request.getModel());
 
-        if (providerName == OpenAiProviderName.OPENAI_USER_API_KEY) {
-            return response(providerName, model, "api_key", openAiApiKeyService.resolveApiKey(request.getUserId()), null);
+        if (providerName.isUserManagedApiKeyProvider()) {
+            return response(
+                providerName,
+                model,
+                "api_key",
+                openAiApiKeyService.resolveApiKey(request.getUserId(), providerName),
+                null
+            );
         }
 
         if (providerName == OpenAiProviderName.OPENAI_OAUTH) {
             OpenAiOAuthService.AccessTokenCredential credential =
                 openAiOAuthService.resolveAccessTokenCredential(request.getUserId());
+            return response(providerName, model, "bearer", credential.accessToken(), credential.expiresAt());
+        }
+
+        if (providerName.isCodexOAuthProvider()) {
+            OpenAiCodexOAuthService.AccessTokenCredential credential =
+                openAiCodexOAuthService.resolveAccessTokenCredential(request.getUserId());
             return response(providerName, model, "bearer", credential.accessToken(), credential.expiresAt());
         }
 
