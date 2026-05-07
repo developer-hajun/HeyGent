@@ -1242,6 +1242,9 @@ def _event_frame(frame_type: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 def _create_public_session(context: WebSocketCommandContext, *, content: str, model: str | None, settings: dict[str, Any] | None = None) -> dict[str, Any]:
     session_id = new_id("session")
+    metadata = {"source": _PUBLIC_SESSION_SOURCE}
+    if context.auth.workspace_key:
+        metadata["workspace_key"] = context.auth.workspace_key
     context.websocket.app.state.session_store.create_session(
         session_id=session_id,
         session_key=session_id,
@@ -1249,7 +1252,7 @@ def _create_public_session(context: WebSocketCommandContext, *, content: str, mo
         user_id=context.auth.user_id,
         model=model,
         title=_derive_session_title(content),
-        metadata={"source": _PUBLIC_SESSION_SOURCE},
+        metadata=metadata,
         settings=settings or {},
     )
     session = context.websocket.app.state.session_store.get_session(session_id)

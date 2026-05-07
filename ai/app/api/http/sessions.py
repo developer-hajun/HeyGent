@@ -82,7 +82,7 @@ async def create_message_in_new_session(
         session = _get_public_session_or_404(request, payload.session_id)
         ensure_owner(user, session.get("user_id"))
     else:
-        session = _create_public_session_for_message(request, owner_key=user.user_id, payload=payload)
+        session = _create_public_session_for_message(request, owner_key=user.user_id, payload=payload, workspace_key=user.workspace_key)
     return await _create_message_in_session(request, payload, session=session, user=user)
 
 
@@ -460,6 +460,7 @@ def _create_public_session_for_message(
     *,
     owner_key: str,
     payload: CreateSessionMessageRequest,
+    workspace_key: str | None = None,
 ) -> dict[str, Any]:
     session_store = request.app.state.session_store
     session_limit = max(1, int(getattr(request.app.state.settings, "public_session_limit_per_user", 10)))
@@ -471,6 +472,9 @@ def _create_public_session_for_message(
         )
 
     session_id = new_id("session")
+    metadata = {"source": _PUBLIC_SESSION_SOURCE}
+    if workspace_key:
+        metadata["workspace_key"] = workspace_key
     session_store.create_session(
         session_id=session_id,
         session_key=session_id,
@@ -478,7 +482,7 @@ def _create_public_session_for_message(
         user_id=owner_key,
         model=payload.model,
         title=_derive_session_title(payload.content),
-        metadata={"source": _PUBLIC_SESSION_SOURCE},
+        metadata=metadata,
     )
     session = session_store.get_session(session_id)
     if session is None:
