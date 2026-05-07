@@ -1,7 +1,8 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 
 export const DEFAULT_SIDEBAR_WIDTH = 260
-export const DEFAULT_SIDEBAR_COLLAPSED_WIDTH = 48
+export const DEFAULT_SIDEBAR_COLLAPSED_WIDTH = 64
 
 interface UIState {
   // 좌측 사이드바
@@ -18,15 +19,26 @@ interface UIState {
   setTaskActivityPanelOpen: (open: boolean) => void
 }
 
-export const useUIStore = create<UIState>((set) => ({
-  sidebarCollapsed: false,
-  sessionWorkspaceCollapsed: false,
-  settingsOpen: false,
-  settingsInitialTab: 'general',
-  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
-  setSessionWorkspaceCollapsed: (collapsed) => set({ sessionWorkspaceCollapsed: collapsed }),
-  setSettingsOpen: (open, initialTab) =>
-    set({ settingsOpen: open, ...(initialTab ? { settingsInitialTab: initialTab } : {}) }),
-  taskActivityPanelOpen: false,
-  setTaskActivityPanelOpen: (open) => set({ taskActivityPanelOpen: open }),
-}))
+export const useUIStore = create<UIState>()(
+  persist(
+    (set) => ({
+      sidebarCollapsed: false,
+      sessionWorkspaceCollapsed: false,
+      settingsOpen: false,
+      settingsInitialTab: 'general',
+      setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+      setSessionWorkspaceCollapsed: (collapsed) => set({ sessionWorkspaceCollapsed: collapsed }),
+      setSettingsOpen: (open, initialTab) =>
+        set({ settingsOpen: open, ...(initialTab ? { settingsInitialTab: initialTab } : {}) }),
+      taskActivityPanelOpen: false,
+      setTaskActivityPanelOpen: (open) => set({ taskActivityPanelOpen: open }),
+    }),
+    {
+      name: 'heygent-ui-state',
+      partialize: (state) => ({
+        sidebarCollapsed: state.sidebarCollapsed,
+        sessionWorkspaceCollapsed: state.sessionWorkspaceCollapsed,
+      }),
+    },
+  ),
+)
