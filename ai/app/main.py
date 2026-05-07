@@ -9,6 +9,7 @@ from app.api.router import build_api_router
 from app.api.ws.gateway import build_websocket_auth_rate_limiter
 from app.bridge import BridgeSessionManager
 from app.clients.backend_auth import BackendAuthClient
+from app.clients.backend_memory import BackendMemoryClient
 from app.core.cors import configure_cors
 from app.core.config import get_settings
 from app.core.logger import configure_logging
@@ -87,6 +88,7 @@ async def lifespan(app: FastAPI):
     )
     broadcaster = EventBroadcaster(ws_manager, topic_router, fanout_publisher=fanout_publisher)
     backend_auth_client = BackendAuthClient(settings=settings)
+    backend_memory_client = BackendMemoryClient(settings=settings)
     approval_service = ApprovalService(repository, ApprovalQueue())
     provider_registry = ProviderRegistry(
         [
@@ -139,6 +141,7 @@ async def lifespan(app: FastAPI):
     app.state.ws_auth_rate_limiter = build_websocket_auth_rate_limiter(settings)
     app.state.session_service = session_service
     app.state.backend_auth_client = backend_auth_client
+    app.state.backend_memory_client = backend_memory_client
     app.state.provider_registry = provider_registry
     app.state.session_store = session_store
     # app.state.recall_service = recall_service
@@ -160,6 +163,7 @@ async def lifespan(app: FastAPI):
         with suppress(asyncio.CancelledError):
             await redis_fanout_task
     await backend_auth_client.aclose()
+    await backend_memory_client.aclose()
     await connection_registry.aclose()
     task_projection_store.close()
     session_store.close()

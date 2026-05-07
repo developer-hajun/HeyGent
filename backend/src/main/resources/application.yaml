@@ -100,3 +100,8 @@ openai:
     token-url: ${OPENAI_CODEX_OAUTH_TOKEN_URL:https://auth.openai.com/oauth/token}
     scopes: ${OPENAI_CODEX_OAUTH_SCOPES:openid,profile,email,offline_access}
     refresh-skew-seconds: ${OPENAI_CODEX_OAUTH_REFRESH_SKEW_SECONDS:300}
+  codex-device-oauth:
+    command: ${OPENAI_CODEX_DEVICE_OAUTH_COMMAND:codex}
+    workspace-root: ${OPENAI_CODEX_DEVICE_OAUTH_WORKSPACE_ROOT:}
+    start-timeout-seconds: ${OPENAI_CODEX_DEVICE_OAUTH_START_TIMEOUT_SECONDS:30}
+    auth-timeout-seconds: ${OPENAI_CODEX_DEVICE_OAUTH_AUTH_TIMEOUT_SECONDS:900}

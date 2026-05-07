@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
 from app.api.deps.openapi_auth import document_bearer_auth
 from app.api.deps.task_context import TaskContext, get_task_context
+from app.api.memory_context import attach_persistent_memory_context, select_memory_recall_query
 from app.core.time import utc_now
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_request import CreateTaskRequest, ResumeTaskRequest
@@ -604,6 +605,14 @@ async def list_active_tasks(
 async def create_task(request: Request, payload: CreateTaskRequest, context: TaskContext = Depends(get_task_context)) -> TaskRunResponse:
     user = await authenticate_http_user(request)
     owner_key = user.user_id if user is not None else payload.owner_key
+    task_input = dict(payload.input_payload)
+    await attach_persistent_memory_context(
+        app_state=request.app.state,
+        task_input=task_input,
+        user_id=str(owner_key),
+        query=select_memory_recall_query(task_input),
+        workspace_key=user.workspace_key if user is not None else None,
+    )
     orchestrator = request.app.state.orchestrator
     active_lock_task_id = None
     if payload.session_key:
@@ -620,7 +629,7 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
             OrchestrationRequest(
                 owner_key=owner_key,
                 session_key=payload.session_key,
-                input_payload=payload.input_payload,
+                input_payload=task_input,
             )
         )
         if payload.session_key and active_lock_task_id and context.task_projection_store is not None:

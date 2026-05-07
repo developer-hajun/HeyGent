@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.clients.backend_auth import BackendAuthVerifyResult
+from app.clients.backend_memory import BackendMemoryItem
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse
 from app.domain.tasks.models import TaskRun
 
@@ -112,6 +113,47 @@ def test_ws_session_message_create_returns_accepted_before_completed_and_stores_
         assert "token-secret" not in str(task.input_payload)
         messages = client.app.state.session_store.list_messages(accepted["payload"]["session_id"])
         assert [message["role"] for message in messages] == ["user", "assistant"]
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_session_message_create_attaches_backend_memory_context(client, monkeypatch):
+    client.app.state.backend_memory_client.memories = [
+        BackendMemoryItem(
+            id=21,
+            memory_type="PREFERENCE",
+            store_type="PROFILE",
+            scope_type="GLOBAL",
+            content="사용자는 코드 변경 내역을 기능 단위로 분리해 보길 원한다.",
+        )
+    ]
+    _patch_respond(monkeypatch, text="WS_MEMORY_DONE")
+    context, websocket = _authenticated_socket(client, user_id="77")
+    try:
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.create",
+                "requestId": "req_memory",
+                "payload": {
+                    "content": "이번 작업 커밋 분리해줘",
+                    "clientMessageId": "client_msg_memory_1",
+                    "model": "gpt-test",
+                    "inputPayload": {"persistent_memory_context": "client supplied context"},
+                },
+            }
+        )
+
+        accepted = websocket.receive_json()
+        assert accepted["type"] == "session.message.accepted"
+        completed = _receive_until(websocket, "session.message.completed")
+        assert completed["payload"]["content"] == "WS_MEMORY_DONE"
+
+        task = client.app.state.repository.get_task(accepted["payload"]["task_run_id"])
+        assert task is not None
+        assert "사용자는 코드 변경 내역을 기능 단위로 분리해 보길 원한다." in task.input_payload["persistent_memory_context"]
+        assert "client supplied context" not in str(task.input_payload)
+        assert client.app.state.backend_memory_client.calls[-1]["user_id"] == "77"
     finally:
         context.__exit__(None, None, None)
 
