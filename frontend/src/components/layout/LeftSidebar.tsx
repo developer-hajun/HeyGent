@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router'
 import {
   Activity,
@@ -9,8 +9,6 @@ import {
   LayoutDashboard,
   MessageCircle,
   MessageSquare,
-  Clock,
-  GripVertical,
   PanelRightOpen,
   Plus,
   User,
@@ -30,7 +28,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { NewSessionModal, type CustomAgentConfig } from '@/components/session/NewSessionModal'
 import { SessionSettingsModal } from '@/components/session/SessionSettingsModal'
-import { useUIStore } from '@/store/useUIStore'
+import { DEFAULT_SIDEBAR_WIDTH, useUIStore } from '@/store/useUIStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
@@ -59,18 +57,15 @@ type SessionConfirmState = {
 export function LeftSidebar() {
   const {
     sidebarCollapsed: collapsed,
-    sidebarWidth: width,
     settingsOpen,
     settingsInitialTab,
     setSidebarCollapsed,
-    clampSidebarWidth,
     setSettingsOpen,
     setTaskActivityPanelOpen,
   } = useUIStore()
   const { selectedSessionId, setSelectedSessionId, pinnedSessionIds, togglePinSession } =
     useSessionStore()
   const [profileOpen, setProfileOpen] = useState(false)
-  const [sessionsPopoverOpen, setSessionsPopoverOpen] = useState(false)
   const [newSessionModalOpen, setNewSessionModalOpen] = useState(false)
   const [sessionSettingsSessionId, setSessionSettingsSessionId] = useState<string | null>(null)
   const [sessionConfirm, setSessionConfirm] = useState<SessionConfirmState | null>(null)
@@ -84,9 +79,6 @@ export function LeftSidebar() {
   const chatError = useChatStore((state) => state.sessionListError ?? state.lastError)
   const fetchSessions = useChatStore((state) => state.fetchSessions)
   const deleteSession = useChatStore((state) => state.deleteSession)
-  const isResizing = useRef(false)
-  const startX = useRef(0)
-  const startWidth = useRef(0)
   const navigate = useNavigate()
   const location = useLocation()
   const currentChatSessionId = getCurrentChatSessionId(location.pathname)
@@ -99,10 +91,6 @@ export function LeftSidebar() {
     const unpinned = all.filter((s) => !pinnedSessionIds.has(s.id))
     return [...pinned, ...unpinned]
   }, [sessionsById, pinnedSessionIds])
-  const runningSessions = useMemo(
-    () => sidebarSessions.filter((session) => session.isRunning),
-    [sidebarSessions],
-  )
   const sessionSettingsSession =
     sessionSettingsSessionId === null ? null : (sessionsById[sessionSettingsSessionId] ?? null)
   const currentChatSession =
@@ -155,38 +143,6 @@ export function LeftSidebar() {
       setSessionConfirm(null)
     }
   }
-
-  const startResize = useCallback(
-    (e: React.MouseEvent) => {
-      isResizing.current = true
-      startX.current = e.clientX
-      startWidth.current = width
-      document.body.style.cursor = 'col-resize'
-      document.body.style.userSelect = 'none'
-      e.preventDefault()
-    },
-    [width],
-  )
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing.current) return
-      const delta = e.clientX - startX.current
-      clampSidebarWidth(startWidth.current + delta)
-    }
-    const handleMouseUp = () => {
-      if (!isResizing.current) return
-      isResizing.current = false
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-    }
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [clampSidebarWidth])
 
   return (
     <>
@@ -253,7 +209,7 @@ export function LeftSidebar() {
 
       <div
         className="bg-sidebar border-sidebar-border relative flex shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200 ease-in-out"
-        style={{ width: collapsed ? 52 : width }}
+        style={{ width: collapsed ? 52 : DEFAULT_SIDEBAR_WIDTH }}
       >
         {/* ── Collapsed Rail ── */}
         {collapsed && (
@@ -342,104 +298,21 @@ export function LeftSidebar() {
               </button>
             </CollapsedTooltip>
 
-            {/* Sessions icon — hover로 팝오버 */}
-            <Popover open={sessionsPopoverOpen} onOpenChange={setSessionsPopoverOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  onMouseEnter={() => setSessionsPopoverOpen(true)}
-                  onMouseLeave={() => setSessionsPopoverOpen(false)}
-                  className="hover:bg-sidebar-accent text-muted-foreground relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
-                >
-                  <MessageSquare className="h-4 w-4" />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent
-                side="right"
-                align="start"
-                className="w-72 rounded-2xl p-3"
-                onMouseEnter={() => setSessionsPopoverOpen(true)}
-                onMouseLeave={() => setSessionsPopoverOpen(false)}
-              >
-                <div className="mb-2">
-                  <h3 className="text-foreground mb-1 text-sm font-semibold">대화 세션</h3>
-                  <p className="text-muted-foreground text-xs">최근 대화 세션</p>
-                </div>
-                <div className="space-y-1.5">
-                  {sidebarSessions.slice(0, 3).map((session) => {
-                    const isActive =
-                      location.pathname === '/agent-status' && selectedSessionId === session.id
-                    const isChatActive = location.pathname === `/session/${session.id}`
-                    return (
-                      <div
-                        key={session.id}
-                        onClick={() => {
-                          setSelectedSessionId(session.id)
-                          navigate('/agent-status')
-                          setSessionsPopoverOpen(false)
-                        }}
-                        className={`cursor-pointer rounded-lg p-2.5 transition-colors ${
-                          isActive
-                            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                            : 'hover:bg-muted'
-                        }`}
-                      >
-                        <div className="mb-1 flex items-center justify-between gap-1">
-                          <p
-                            className={`truncate text-sm ${isActive ? 'text-sidebar-accent-foreground font-medium' : 'text-foreground/80'}`}
-                          >
-                            {session.title}
-                          </p>
-                          <button
-                            type="button"
-                            aria-label="채팅 열기"
-                            onClick={(event) => {
-                              handleOpenChatSession(session.id, event)
-                              setSessionsPopoverOpen(false)
-                            }}
-                            className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors ${
-                              isChatActive
-                                ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-                                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                            }`}
-                          >
-                            {session.isRunning && (
-                              <Loader2 className="text-primary absolute -top-0.5 -right-0.5 h-3 w-3 animate-spin" />
-                            )}
-                            <MessageCircle className="h-4 w-4" />
-                          </button>
-                        </div>
-                        <p className="text-muted-foreground truncate text-xs">{session.preview}</p>
-                        <div className="mt-1 flex items-center gap-1">
-                          <Clock className="text-muted-foreground h-3 w-3" />
-                          <span className="text-muted-foreground text-xs">{session.time}</span>
-                        </div>
-                      </div>
-                    )
-                  })}
-                  {sidebarSessions.length === 0 && (
-                    <EmptySessionNotice
-                      realtimeStatus={realtimeStatus}
-                      loading={sessionListLoading}
-                      error={chatError}
-                    />
-                  )}
-                </div>
-              </PopoverContent>
-            </Popover>
-
-            {/* Running session loading indicators */}
-            {runningSessions.map((session) => (
+            {sidebarSessions.map((session) => (
               <CollapsedTooltip key={session.id} label={session.title}>
                 <button
+                  type="button"
                   onClick={(event) => handleOpenChatSession(session.id, event)}
-                  aria-label="채팅 열기"
+                  aria-label={`${session.title} 채팅 열기`}
                   className={`hover:bg-sidebar-accent relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
                     location.pathname === `/session/${session.id}`
-                      ? 'text-primary'
-                      : 'text-muted-foreground'
+                      ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
-                  <Loader2 className="text-primary absolute top-1 right-1 h-3 w-3 animate-spin" />
+                  {session.isRunning && (
+                    <Loader2 className="text-primary absolute top-1 right-1 h-3 w-3 animate-spin" />
+                  )}
                   <MessageCircle className="h-4 w-4" strokeWidth={2.5} />
                 </button>
               </CollapsedTooltip>
@@ -483,7 +356,7 @@ export function LeftSidebar() {
                   <img
                     src="/logo-sidebar.png"
                     alt="HeyGent"
-                    className="h-14 w-28 shrink-0 rounded-lg object-contain"
+                    className="h-12 w-22 shrink-0 rounded-lg object-contain"
                   />
                 </button>
                 <div className="flex items-center gap-1">
@@ -502,7 +375,7 @@ export function LeftSidebar() {
                 <button
                   type="button"
                   onClick={() => navigate('/')}
-                  className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
+                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm transition-colors ${
                     location.pathname === '/'
                       ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
                       : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
@@ -514,7 +387,7 @@ export function LeftSidebar() {
                 <button
                   type="button"
                   onClick={() => navigate('/agent-status')}
-                  className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
+                  className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm transition-colors ${
                     location.pathname.startsWith('/agent-status')
                       ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
                       : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
@@ -546,10 +419,10 @@ export function LeftSidebar() {
                   {/* New Chat button */}
                   <button
                     onClick={handleNewChat}
-                    className="hover:bg-sidebar-accent border-sidebar-border flex w-full items-center gap-2 rounded-lg border border-dashed p-2.5 transition-colors"
+                    className="hover:bg-sidebar-accent border-sidebar-border flex w-full items-center gap-2 rounded-lg border border-dashed p-2 transition-colors"
                   >
                     <Plus className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-                    <span className="text-muted-foreground text-sm">새 채팅 시작</span>
+                    <span className="text-muted-foreground truncate text-sm">새 채팅</span>
                   </button>
 
                   {sidebarSessions.map((session) => {
@@ -564,27 +437,20 @@ export function LeftSidebar() {
                           setSelectedSessionId(session.id)
                           navigate('/agent-status')
                         }}
-                        className={`group flex cursor-pointer items-center gap-2 rounded-lg p-2.5 transition-colors ${
+                        className={`group flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-2 transition-colors ${
                           isActive
                             ? 'bg-sidebar-accent text-sidebar-accent-foreground'
                             : 'hover:bg-sidebar-accent'
                         }`}
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="mb-0.5 flex items-center gap-1">
+                          <div className="flex items-center gap-1">
                             {isPinned && <Pin className="text-primary h-3 w-3 shrink-0" />}
                             <p
                               className={`truncate text-sm ${isActive ? 'text-sidebar-accent-foreground font-medium' : 'text-foreground/80'}`}
                             >
                               {session.title}
                             </p>
-                          </div>
-                          <p className="text-muted-foreground truncate text-xs">
-                            {session.preview}
-                          </p>
-                          <div className="mt-1.5 flex items-center gap-1">
-                            <Clock className="text-muted-foreground h-3 w-3" />
-                            <span className="text-muted-foreground text-xs">{session.time}</span>
                           </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-1">
@@ -595,7 +461,7 @@ export function LeftSidebar() {
                                 type="button"
                                 aria-label="세션 옵션"
                                 onClick={(e) => e.stopPropagation()}
-                                className="text-muted-foreground hover:bg-sidebar-accent hover:text-foreground flex h-7 w-7 items-center justify-center rounded-md opacity-0 transition-all group-hover:opacity-100"
+                                className="text-muted-foreground hover:bg-sidebar-accent hover:text-foreground flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition-all group-hover:opacity-100"
                               >
                                 <MoreHorizontal className="h-4 w-4" />
                               </button>
@@ -706,17 +572,6 @@ export function LeftSidebar() {
             </div>
           </div>
         )}
-
-        {/* ── Resize Handle ── */}
-        {!collapsed && (
-          <div
-            className="group absolute top-0 right-0 bottom-0 z-10 flex w-1 cursor-col-resize items-center justify-center"
-            onMouseDown={startResize}
-          >
-            <div className="group-hover:bg-primary/30 h-8 w-0.5 rounded-full bg-transparent transition-colors" />
-            <GripVertical className="text-muted-foreground/40 absolute h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
-          </div>
-        )}
       </div>
     </>
   )
@@ -745,7 +600,7 @@ function CurrentChatSidebarControl({
   const isError = connectionState === 'error'
 
   return (
-    <div className="border-sidebar-border mt-3 rounded-lg border p-2.5">
+    <div className="border-sidebar-border mt-3 rounded-lg border p-2">
       <div className="mb-2 flex min-w-0 items-center gap-2">
         <div className="bg-muted text-muted-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
           <MessageCircle className="h-4 w-4" />
@@ -772,18 +627,18 @@ function CurrentChatSidebarControl({
         <button
           type="button"
           onClick={onOpenSettings}
-          className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs transition-colors"
+          className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-8 items-center justify-center rounded-md transition-colors"
+          aria-label="세션 설정 열기"
         >
           <Settings className="h-3.5 w-3.5" />
-          <span>설정</span>
         </button>
         <button
           type="button"
           onClick={onOpenActivity}
-          className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs transition-colors"
+          className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-8 items-center justify-center rounded-md transition-colors"
+          aria-label="활동 패널 열기"
         >
           <PanelRightOpen className="h-3.5 w-3.5" />
-          <span>활동</span>
         </button>
       </div>
     </div>
