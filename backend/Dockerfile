@@ -21,9 +21,23 @@ RUN --mount=type=cache,target=/root/.gradle \
 FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
 
+# Codex device OAuth 용 Node.js 20 + @openai/codex CLI 설치
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && npm install -g @openai/codex \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
+
 # 비루트 유저로 실행
 RUN groupadd --system app && useradd --system --gid app app
 COPY --from=build --chown=app:app /workspace/build/libs/*.jar /app/app.jar
+
+# Codex device OAuth 작업 폴더 (app 유저 소유, 본인만 접근)
+RUN mkdir -p /tmp/heygent-codex-device-oauth \
+ && chown app:app /tmp/heygent-codex-device-oauth \
+ && chmod 700 /tmp/heygent-codex-device-oauth
 
 USER app
 EXPOSE 8080
