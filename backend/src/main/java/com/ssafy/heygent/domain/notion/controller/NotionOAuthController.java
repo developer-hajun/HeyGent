@@ -77,4 +77,5 @@ public class NotionOAuthController {
         }
         return user.getUserId();
     }
+
 }

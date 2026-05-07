@@ -15,6 +15,15 @@ class DummySessionStore:
     pass
 
 
+class SearchRecordingSessionStore:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def search_transcript_sessions(self, query, *, owner_key, limit=10):
+        self.calls.append({"query": query, "owner_key": owner_key, "limit": limit})
+        return [{"id": "session_match", "owner_key": owner_key}]
+
+
 def test_runtime_exposes_todo_schema_without_legacy_write_name():
     runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
 
@@ -59,6 +68,20 @@ def test_runtime_exposes_file_tool_definitions_from_file_tool_module():
     assert schema_by_name["read_file"]["parameters"]["properties"]["path"]["type"] == "string"
     assert schema_by_name["write_file"]["parameters"]["properties"]["content"]["type"] == "string"
     assert schema_by_name["search_files"]["parameters"]["properties"]["query"]["type"] == "string"
+
+
+def test_session_search_requires_bound_owner_and_scopes_query():
+    store = SearchRecordingSessionStore()
+    unbound = LocalToolRuntime(skill_registry=object(), session_store=store)
+    bound = unbound.bind_request_context(owner_key="owner-a")
+
+    denied = unbound.run_call(name="session.search", args={"query": "검색"}, enabled_toolsets=("session",))
+    result = bound.run_call(name="session.search", args={"query": "검색", "owner_key": "spoof"}, enabled_toolsets=("session",))
+
+    assert denied["ok"] is False
+    assert denied["error"]["code"] == "owner_required"
+    assert result["count"] == 1
+    assert store.calls == [{"query": "검색", "owner_key": "owner-a", "limit": 5}]
 
 
 def test_file_toolset_is_available_for_coding_and_local_core_but_not_safe():

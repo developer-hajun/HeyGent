@@ -43,6 +43,12 @@ const DEFAULT_TIMEOUT_MS = 30_000
 
 const MUTATING_COMMAND_IDEMPOTENCY_KEYS: Partial<Record<AiRealtimeCommandType, string[]>> = {
   'session.message.create': ['clientMessageId'],
+  'session.message.retry': ['clientCommandId'],
+  'session.message.undo': ['clientCommandId'],
+  'session.history.compact': ['clientCommandId'],
+  'session.update': ['clientCommandId'],
+  'session.delete': ['clientCommandId'],
+  'session.settings.update': ['clientCommandId'],
   'taskRun.resume': ['approvalResponseId', 'clientCommandId'],
   'taskRun.cancel': ['clientCommandId'],
 }

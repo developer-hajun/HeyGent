@@ -10,7 +10,9 @@ import lombok.Getter;
 public class OpenAiProviderStatusItemResponse {
 
     private String providerName;
+    private String providerType;
     private String authType;
+    private String defaultModel;
     private boolean connected;
     private boolean available;
     private LocalDateTime expiresAt;
