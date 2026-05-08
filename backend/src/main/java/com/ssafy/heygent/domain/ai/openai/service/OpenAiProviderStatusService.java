@@ -41,6 +41,9 @@ public class OpenAiProviderStatusService {
                 .providerName(providerName.getValue())
                 .providerType(providerName.getProviderType())
                 .authType(providerName.getAuthType())
+                .displayName(providerName.getDisplayName())
+                .description(providerName.getDescription())
+                .connectType(providerName.getConnectType())
                 .defaultModel(runtimePolicyService.defaultModel(providerName))
                 .models(runtimePolicyService.allowedModels(providerName))
                 .build())
@@ -58,7 +61,6 @@ public class OpenAiProviderStatusService {
         for (OpenAiProviderName providerName : userManagedProviders()) {
             providers.add(userApiKeyStatus(userId, providerName));
         }
-        providers.add(codexOAuthStatus(userId));
         if (runtimePolicyService.isDevFallbackProfile()) {
             providers.add(devFallbackStatus());
         }
@@ -80,8 +82,7 @@ public class OpenAiProviderStatusService {
         return List.of(
             OpenAiProviderName.OPENAI_API_KEY,
             OpenAiProviderName.GEMINI_API_KEY,
-            OpenAiProviderName.CLAUDE_API_KEY,
-            OpenAiProviderName.OPENAI_CODEX_OAUTH
+            OpenAiProviderName.CLAUDE_API_KEY
         );
     }
 
@@ -95,7 +96,11 @@ public class OpenAiProviderStatusService {
             .providerName(providerName.getValue())
             .providerType(providerName.getProviderType())
             .authType(providerName.getAuthType())
+            .displayName(providerName.getDisplayName())
+            .description(providerName.getDescription())
+            .connectType(providerName.getConnectType())
             .defaultModel(runtimePolicyService.defaultModel(providerName))
+            .models(runtimePolicyService.allowedModels(providerName))
             .connected(connected)
             .available(connected)
             .expiresAt(null)
@@ -111,7 +116,11 @@ public class OpenAiProviderStatusService {
                 .providerName(OpenAiProviderName.OPENAI_CODEX_OAUTH.getValue())
                 .providerType(OpenAiProviderName.OPENAI_CODEX_OAUTH.getProviderType())
                 .authType(OpenAiProviderName.OPENAI_CODEX_OAUTH.getAuthType())
+                .displayName(OpenAiProviderName.OPENAI_CODEX_OAUTH.getDisplayName())
+                .description(OpenAiProviderName.OPENAI_CODEX_OAUTH.getDescription())
+                .connectType(OpenAiProviderName.OPENAI_CODEX_OAUTH.getConnectType())
                 .defaultModel(runtimePolicyService.defaultModel(OpenAiProviderName.OPENAI_CODEX_OAUTH))
+                .models(runtimePolicyService.allowedModels(OpenAiProviderName.OPENAI_CODEX_OAUTH))
                 .connected(false)
                 .available(false)
                 .expiresAt(null)
@@ -126,7 +135,11 @@ public class OpenAiProviderStatusService {
             .providerName(OpenAiProviderName.OPENAI_CODEX_OAUTH.getValue())
             .providerType(OpenAiProviderName.OPENAI_CODEX_OAUTH.getProviderType())
             .authType(OpenAiProviderName.OPENAI_CODEX_OAUTH.getAuthType())
+            .displayName(OpenAiProviderName.OPENAI_CODEX_OAUTH.getDisplayName())
+            .description(OpenAiProviderName.OPENAI_CODEX_OAUTH.getDescription())
+            .connectType(OpenAiProviderName.OPENAI_CODEX_OAUTH.getConnectType())
             .defaultModel(runtimePolicyService.defaultModel(OpenAiProviderName.OPENAI_CODEX_OAUTH))
+            .models(runtimePolicyService.allowedModels(OpenAiProviderName.OPENAI_CODEX_OAUTH))
             .connected(true)
             .available(available)
             .expiresAt(connection.getExpiresAt())
@@ -140,7 +153,11 @@ public class OpenAiProviderStatusService {
             .providerName(OpenAiProviderName.OPENAI_DEV_FALLBACK.getValue())
             .providerType(OpenAiProviderName.OPENAI_DEV_FALLBACK.getProviderType())
             .authType(OpenAiProviderName.OPENAI_DEV_FALLBACK.getAuthType())
+            .displayName(OpenAiProviderName.OPENAI_DEV_FALLBACK.getDisplayName())
+            .description(OpenAiProviderName.OPENAI_DEV_FALLBACK.getDescription())
+            .connectType(OpenAiProviderName.OPENAI_DEV_FALLBACK.getConnectType())
             .defaultModel(runtimePolicyService.defaultModel(OpenAiProviderName.OPENAI_DEV_FALLBACK))
+            .models(runtimePolicyService.allowedModels(OpenAiProviderName.OPENAI_DEV_FALLBACK))
             .connected(available)
             .available(available)
             .expiresAt(null)

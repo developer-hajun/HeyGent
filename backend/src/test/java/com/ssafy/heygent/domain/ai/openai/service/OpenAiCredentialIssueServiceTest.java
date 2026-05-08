@@ -1,10 +1,10 @@
 package com.ssafy.heygent.domain.ai.openai.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import java.lang.reflect.Field;
-import java.time.LocalDateTime;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +17,7 @@ import org.springframework.core.env.Environment;
 import com.ssafy.heygent.domain.ai.dto.request.OpenAiCredentialIssueRequest;
 import com.ssafy.heygent.domain.ai.dto.response.OpenAiCredentialIssueResponse;
 import com.ssafy.heygent.domain.ai.openai.config.OpenAiProperties;
+import com.ssafy.heygent.global.exception.CustomException;
 
 @ExtendWith(MockitoExtension.class)
 class OpenAiCredentialIssueServiceTest {
@@ -78,19 +79,11 @@ class OpenAiCredentialIssueServiceTest {
     }
 
     @Test
-    void issueReturnsCodexOauthAccessToken() throws Exception {
+    void issueRejectsCodexOauthCredential() throws Exception {
         OpenAiCredentialIssueRequest request = request("openai_codex_oauth", "gpt-5.3-codex");
-        LocalDateTime expiresAt = LocalDateTime.now().plusHours(1);
-        when(openAiCodexOAuthService.resolveAccessTokenCredential(1L))
-            .thenReturn(new OpenAiCodexOAuthService.AccessTokenCredential("codex-access-token", expiresAt));
 
-        OpenAiCredentialIssueResponse response = openAiCredentialIssueService.issue(request);
-
-        assertThat(response.getProviderName()).isEqualTo("openai_codex_oauth");
-        assertThat(response.getAuthType()).isEqualTo("oauth");
-        assertThat(response.getCredentialType()).isEqualTo("bearer");
-        assertThat(response.getCredential()).isEqualTo("codex-access-token");
-        assertThat(response.getExpiresAt()).isEqualTo(expiresAt);
+        assertThatThrownBy(() -> openAiCredentialIssueService.issue(request))
+            .isInstanceOf(CustomException.class);
     }
 
     private OpenAiCredentialIssueRequest request(String providerName) throws Exception {
