@@ -22,6 +22,7 @@ import { Switch } from './ui/switch'
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { motion, AnimatePresence } from 'motion/react'
 import { useChatStore } from '@/store/useChatStore'
+import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import type { AiModelOption } from '@/types/aiChat'
 import { startOpenAiOAuth } from '@/apis/openaiOAuth'
 import { saveOpenAiApiKey } from '@/apis/openaiApiKey'
@@ -126,7 +127,6 @@ export function SettingsDialog({ open, onOpenChange, sessionId, initialTab }: Se
 function GeneralContent() {
   const [settings, setSettings] = useState({
     language: '한국어',
-    theme: '시스템 설정',
     notifications: true,
     soundEffects: true,
   })
@@ -165,39 +165,6 @@ function GeneralContent() {
                   >
                     <span className="text-foreground text-sm font-medium">{lang}</span>
                     {settings.language === lang && <Check className="text-primary h-4 w-4" />}
-                  </button>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
-        </div>
-
-        {/* Theme */}
-        <div className="border-border rounded-xl border p-4">
-          <div className="mb-1 flex items-start justify-between">
-            <div className="flex-1">
-              <h4 className="text-foreground mb-1 text-sm font-medium">테마</h4>
-              <p className="text-muted-foreground text-xs">화면 테마를 선택합니다</p>
-            </div>
-          </div>
-
-          <Popover>
-            <PopoverTrigger asChild>
-              <button className="border-border hover:bg-muted/30 mt-3 flex w-full items-center justify-between rounded-lg border px-3 py-2 transition-colors">
-                <span className="text-foreground text-sm">{settings.theme}</span>
-                <ChevronDown className="text-muted-foreground h-4 w-4" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="w-80 p-2" align="start">
-              <div className="space-y-1">
-                {['시스템 설정', '라이트 모드', '다크 모드'].map((theme) => (
-                  <button
-                    key={theme}
-                    onClick={() => setSettings({ ...settings, theme })}
-                    className="hover:bg-muted flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-colors"
-                  >
-                    <span className="text-foreground text-sm font-medium">{theme}</span>
-                    {settings.theme === theme && <Check className="text-primary h-4 w-4" />}
                   </button>
                 ))}
               </div>
@@ -326,6 +293,7 @@ function ModelsContent({ sessionId }: { sessionId?: string }) {
   const modelOptionsError = useChatStore((state) => state.modelOptionsError)
   const fetchModelOptions = useChatStore((state) => state.fetchModelOptions)
   const updateSessionSettings = useChatStore((state) => state.updateSessionSettings)
+  const authenticatedReady = useAiRealtimeStore((state) => state.authenticatedReady)
   const [optimisticModel, setOptimisticModel] = useState<{
     sessionId?: string
     modelId: string
@@ -333,8 +301,11 @@ function ModelsContent({ sessionId }: { sessionId?: string }) {
   const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!authenticatedReady) {
+      return
+    }
     void fetchModelOptions(sessionId).catch(() => undefined)
-  }, [fetchModelOptions, sessionId])
+  }, [authenticatedReady, fetchModelOptions, sessionId])
 
   const models = modelOptions?.models ?? []
   const selectedModel =
@@ -375,20 +346,20 @@ function ModelsContent({ sessionId }: { sessionId?: string }) {
         </p>
       </div>
 
-      {modelOptionsLoading && (
+      {authenticatedReady && modelOptionsLoading && (
         <div className="text-muted-foreground flex items-center gap-2 text-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
           모델 목록을 불러오는 중입니다.
         </div>
       )}
 
-      {modelOptionsError && (
+      {authenticatedReady && modelOptionsError && (
         <div className="border-border bg-muted/30 text-muted-foreground rounded-xl border p-4 text-sm">
           {modelOptionsError}
         </div>
       )}
 
-      {!modelOptionsLoading && !modelOptionsError && models.length === 0 && (
+      {authenticatedReady && !modelOptionsLoading && !modelOptionsError && models.length === 0 && (
         <div className="border-border bg-muted/30 text-muted-foreground rounded-xl border p-4 text-sm">
           사용할 수 있는 모델 목록이 아직 제공되지 않았습니다.
         </div>

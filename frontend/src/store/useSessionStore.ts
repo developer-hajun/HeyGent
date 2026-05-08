@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import type { Agent } from '@/components/layout/RightPanel'
+import { Bot } from 'lucide-react'
 import type { Session } from '@/data/sessions'
+import type { Agent } from '@/types/agent'
 import { sessions as staticSessions } from '@/data/sessions'
 
 export interface AgentPanelItem {
@@ -13,12 +14,19 @@ export interface AgentPanelItem {
 interface SessionState {
   selectedSessionId: string | null
   agentPanels: AgentPanelItem[]
+  agentPanelsBySessionId: Record<string, AgentPanelItem[]>
   dynamicSessions: Session[]
   pinnedSessionIds: Set<string>
   setSelectedSessionId: (id: string | null) => void
   addAgentPanel: (agent: Agent) => void
+  addAgentPanelToSession: (sessionId: string, agent: Agent) => void
+  updateAgentPanel: (id: string, agent: Agent) => void
+  updateAgentPanelInSession: (sessionId: string, id: string, agent: Agent) => void
   removeAgentPanel: (id: string) => void
+  removeAgentPanelFromSession: (sessionId: string, id: string) => void
   toggleAgentPanel: (id: string) => void
+  toggleAgentPanelInSession: (sessionId: string, id: string) => void
+  getAgentPanelsForSession: (sessionId: string | null) => AgentPanelItem[]
   addDynamicSession: (session: Session) => void
   removeDynamicSession: (id: string) => void
   togglePinSession: (id: string) => void
@@ -28,13 +36,45 @@ interface SessionState {
 type PersistedSessionState = Partial<{
   selectedSessionId: string | null
   pinnedSessionIds: string[]
+  agentPanelsBySessionId: Record<string, PersistedAgentPanelItem[]>
 }>
+
+type PersistedAgentPanelItem = {
+  id: string
+  agent: Pick<
+    Agent,
+    | 'name'
+    | 'description'
+    | 'instructions'
+    | 'instructionsEntryFile'
+    | 'instructionsFiles'
+    | 'instructionsMode'
+    | 'instructionsRootPath'
+    | 'accent'
+    | 'title'
+    | 'role'
+    | 'adapterType'
+    | 'command'
+    | 'model'
+    | 'extraArgs'
+    | 'webSearchEnabled'
+    | 'bypassSandbox'
+    | 'heartbeatEnabled'
+    | 'intervalSec'
+    | 'profileImage'
+    | 'spriteId'
+    | 'reportsToAgentId'
+    | 'skills'
+  >
+  panelOpen: boolean
+}
 
 export const useSessionStore = create<SessionState>()(
   persist(
     (set, get) => ({
       selectedSessionId: null,
       agentPanels: [],
+      agentPanelsBySessionId: {},
       dynamicSessions: [],
       pinnedSessionIds: new Set(),
 
@@ -49,8 +89,49 @@ export const useSessionStore = create<SessionState>()(
         }))
       },
 
+      addAgentPanelToSession: (sessionId, agent) =>
+        set((s) => {
+          const current = s.agentPanelsBySessionId[sessionId] ?? []
+          const existing = current.find((p) => p.agent.name === agent.name)
+          if (existing) return s
+          const id = `${agent.name}-${Date.now()}`
+          return {
+            agentPanelsBySessionId: {
+              ...s.agentPanelsBySessionId,
+              [sessionId]: [...current, { id, agent, panelOpen: false }],
+            },
+          }
+        }),
+
+      updateAgentPanel: (id, agent) =>
+        set((s) => ({
+          agentPanels: s.agentPanels.map((p) => (p.id === id ? { ...p, agent } : p)),
+        })),
+
+      updateAgentPanelInSession: (sessionId, id, agent) =>
+        set((s) => {
+          const current = s.agentPanelsBySessionId[sessionId] ?? []
+          return {
+            agentPanelsBySessionId: {
+              ...s.agentPanelsBySessionId,
+              [sessionId]: current.map((p) => (p.id === id ? { ...p, agent } : p)),
+            },
+          }
+        }),
+
       removeAgentPanel: (id) =>
         set((s) => ({ agentPanels: s.agentPanels.filter((p) => p.id !== id) })),
+
+      removeAgentPanelFromSession: (sessionId, id) =>
+        set((s) => {
+          const current = s.agentPanelsBySessionId[sessionId] ?? []
+          return {
+            agentPanelsBySessionId: {
+              ...s.agentPanelsBySessionId,
+              [sessionId]: current.filter((p) => p.id !== id),
+            },
+          }
+        }),
 
       toggleAgentPanel: (id) =>
         set((s) => ({
@@ -58,6 +139,24 @@ export const useSessionStore = create<SessionState>()(
             p.id === id ? { ...p, panelOpen: !p.panelOpen } : p,
           ),
         })),
+
+      toggleAgentPanelInSession: (sessionId, id) =>
+        set((s) => {
+          const current = s.agentPanelsBySessionId[sessionId] ?? []
+          return {
+            agentPanelsBySessionId: {
+              ...s.agentPanelsBySessionId,
+              [sessionId]: current.map((p) =>
+                p.id === id ? { ...p, panelOpen: !p.panelOpen } : p,
+              ),
+            },
+          }
+        }),
+
+      getAgentPanelsForSession: (sessionId) => {
+        if (sessionId === null) return []
+        return get().agentPanelsBySessionId[sessionId] ?? []
+      },
 
       addDynamicSession: (session) =>
         set((s) => ({
@@ -97,6 +196,7 @@ export const useSessionStore = create<SessionState>()(
       partialize: (state) => ({
         selectedSessionId: state.selectedSessionId,
         pinnedSessionIds: [...state.pinnedSessionIds],
+        agentPanelsBySessionId: serializeAgentPanelsBySessionId(state.agentPanelsBySessionId),
       }),
       merge: (persisted, current) => {
         const value = persisted as PersistedSessionState
@@ -104,8 +204,67 @@ export const useSessionStore = create<SessionState>()(
           ...current,
           selectedSessionId: value.selectedSessionId ?? current.selectedSessionId,
           pinnedSessionIds: new Set(value.pinnedSessionIds ?? []),
+          agentPanelsBySessionId: deserializeAgentPanelsBySessionId(
+            value.agentPanelsBySessionId ?? {},
+          ),
         }
       },
     },
   ),
 )
+
+function serializeAgentPanelsBySessionId(
+  source: Record<string, AgentPanelItem[]>,
+): Record<string, PersistedAgentPanelItem[]> {
+  return Object.fromEntries(
+    Object.entries(source).map(([sessionId, panels]) => [
+      sessionId,
+      panels.map((panel) => ({
+        id: panel.id,
+        agent: {
+          name: panel.agent.name,
+          description: panel.agent.description,
+          instructions: panel.agent.instructions,
+          instructionsEntryFile: panel.agent.instructionsEntryFile,
+          instructionsFiles: panel.agent.instructionsFiles,
+          instructionsMode: panel.agent.instructionsMode,
+          instructionsRootPath: panel.agent.instructionsRootPath,
+          accent: panel.agent.accent,
+          title: panel.agent.title,
+          role: panel.agent.role,
+          adapterType: panel.agent.adapterType,
+          command: panel.agent.command,
+          model: panel.agent.model,
+          extraArgs: panel.agent.extraArgs,
+          webSearchEnabled: panel.agent.webSearchEnabled,
+          bypassSandbox: panel.agent.bypassSandbox,
+          heartbeatEnabled: panel.agent.heartbeatEnabled,
+          intervalSec: panel.agent.intervalSec,
+          profileImage: panel.agent.profileImage,
+          spriteId: panel.agent.spriteId,
+          reportsToAgentId: panel.agent.reportsToAgentId,
+          skills: panel.agent.skills,
+        },
+        panelOpen: panel.panelOpen,
+      })),
+    ]),
+  )
+}
+
+function deserializeAgentPanelsBySessionId(
+  source: Record<string, PersistedAgentPanelItem[]>,
+): Record<string, AgentPanelItem[]> {
+  return Object.fromEntries(
+    Object.entries(source).map(([sessionId, panels]) => [
+      sessionId,
+      panels.map((panel) => ({
+        id: panel.id,
+        agent: {
+          ...panel.agent,
+          icon: Bot,
+        },
+        panelOpen: panel.panelOpen,
+      })),
+    ]),
+  )
+}

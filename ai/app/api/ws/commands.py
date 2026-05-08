@@ -9,6 +9,8 @@ from typing import Any, Awaitable, Callable
 
 from pydantic import BaseModel
 
+from app.api.memory_context import attach_persistent_memory_context
+from app.api.memory_writeback import writeback_persistent_memory_candidates
 from app.contracts.task.task_status import TaskStatus
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
@@ -246,6 +248,13 @@ class WebSocketCommandRouter:
             )
             if _is_public_session(session)
         ]
+        sessions.sort(
+            key=lambda session: (
+                session.get("updated_at") or session.get("started_at"),
+                session.get("archived_at") is not None,
+            ),
+            reverse=True,
+        )
         selected = sessions[offset : offset + page_size]
         return (
             "session.list.result",
@@ -346,6 +355,13 @@ class WebSocketCommandRouter:
         _apply_session_settings_snapshot(task_input, settings_snapshot, session=session)
         # token memory context는 durable payload에 넣지 않는다. backend 호출이 필요해지면
         # context.auth.access_token에서만 꺼내 쓰도록 경계를 고정한다.
+        await attach_persistent_memory_context(
+            app_state=context.websocket.app.state,
+            task_input=task_input,
+            user_id=str(context.auth.user_id),
+            query=content,
+            workspace_key=context.auth.workspace_key or session.get("workspace_key"),
+        )
 
         handler = context.websocket.app.state.tool_registry.resolve()
         task = context.websocket.app.state.task_engine.planner.materialize_task(
@@ -466,6 +482,13 @@ class WebSocketCommandRouter:
             if effective_model:
                 task_input["model"] = effective_model
             _apply_session_settings_snapshot(task_input, settings_snapshot, session=session)
+            await attach_persistent_memory_context(
+                app_state=context.websocket.app.state,
+                task_input=task_input,
+                user_id=str(context.auth.user_id),
+                query=str(content),
+                workspace_key=context.auth.workspace_key or session.get("workspace_key"),
+            )
             handler = context.websocket.app.state.tool_registry.resolve()
             task = context.websocket.app.state.task_engine.planner.materialize_task(
                 owner_key=context.auth.user_id,
@@ -1041,6 +1064,18 @@ class WebSocketCommandRouter:
                     },
                 )
             )
+            session = context.websocket.app.state.session_store.get_session(session_id) or {}
+            await writeback_persistent_memory_candidates(
+                app_state=context.websocket.app.state,
+                user_id=str(completed_task.owner_key),
+                user_message=str((completed_task.input_payload or {}).get("prompt") or ""),
+                assistant_message=content,
+                session_id=session_id,
+                workspace_key=str(session.get("workspace_key") or "") or None,
+                task_run_id=completed_task.task_run_id,
+                user_message_id=str(user_message_id),
+                assistant_message_id=str(assistant_append["message_id"]),
+            )
         except Exception:
             logger.exception("session.message.create background 실행에 실패했습니다.")
             try:
@@ -1207,6 +1242,9 @@ def _event_frame(frame_type: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 def _create_public_session(context: WebSocketCommandContext, *, content: str, model: str | None, settings: dict[str, Any] | None = None) -> dict[str, Any]:
     session_id = new_id("session")
+    metadata = {"source": _PUBLIC_SESSION_SOURCE}
+    if context.auth.workspace_key:
+        metadata["workspace_key"] = context.auth.workspace_key
     context.websocket.app.state.session_store.create_session(
         session_id=session_id,
         session_key=session_id,
@@ -1214,7 +1252,7 @@ def _create_public_session(context: WebSocketCommandContext, *, content: str, mo
         user_id=context.auth.user_id,
         model=model,
         title=_derive_session_title(content),
-        metadata={"source": _PUBLIC_SESSION_SOURCE},
+        metadata=metadata,
         settings=settings or {},
     )
     session = context.websocket.app.state.session_store.get_session(session_id)

@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 
 from app.clients.backend_auth import BackendAuthVerifyResult
+from app.clients.backend_memory import BackendMemoryItem
 from app.contracts.event.task_events import TaskEventEnvelope
 from app.contracts.task.task_status import TaskStatus
 from app.domain.orchestration.delegation.spec import ChildSessionLaunchResult
@@ -147,6 +148,44 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert [message["role"] for message in transcript] == ["user", "assistant", "tool", "tool", "tool", "tool", "assistant"]
     assert transcript[1]["tool_calls"][0]["id"] == "call_step"
     assert transcript[2]["tool_call_id"] == "call_step"
+
+
+def test_direct_task_run_attaches_backend_memory_context(client, monkeypatch):
+    client.app.state.backend_memory_client.memories = [
+        BackendMemoryItem(
+            id=11,
+            memory_type="PREFERENCE",
+            store_type="PROFILE",
+            scope_type="GLOBAL",
+            content="사용자는 결과를 세 줄 요약으로 받는 것을 선호한다.",
+            metadata={"workspaceKey": "team-a"},
+        )
+    ]
+    provider_calls = _patch_respond(monkeypatch, [_response(text="MEMORY_CONTEXT_DONE")])
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        headers={"Authorization": "Bearer 42", "X-Workspace-Key": "team-a"},
+        json={
+            "owner_key": "ignored-owner",
+            "session_key": "sess_memory_context",
+            "input_payload": {
+                "prompt": "회의 내용을 정리해줘",
+                "persistent_memory_context": "client supplied context",
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    task = client.app.state.repository.get_task(body["task_run_id"])
+    assert task is not None
+    assert "사용자는 결과를 세 줄 요약으로 받는 것을 선호한다." in task.input_payload["persistent_memory_context"]
+    assert "client supplied context" not in str(task.input_payload)
+    assert client.app.state.backend_memory_client.calls[0]["user_id"] == "42"
+    assert client.app.state.backend_memory_client.calls[0]["workspace_key"] == "team-a"
+    assert "사용자는 결과를 세 줄 요약" in str(provider_calls[0]["messages"])
 
 
 def test_agent_loop_emits_runtime_tool_progress_events_before_completion(client, monkeypatch, tmp_path):

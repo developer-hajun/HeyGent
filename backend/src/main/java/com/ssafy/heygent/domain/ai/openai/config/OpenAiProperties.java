@@ -60,10 +60,7 @@ public class OpenAiProperties {
     public static class CodexOAuth {
 
         private String clientId = "app_EMoamEEZ73f0CkXaXp7hrann";
-        private String redirectUri = "http://localhost:1455/auth/callback";
-        private String authorizeUrl = "https://auth.openai.com/oauth/authorize";
         private String tokenUrl = "https://auth.openai.com/oauth/token";
-        private List<String> scopes = new ArrayList<>(List.of("openid", "profile", "email", "offline_access"));
         private int refreshSkewSeconds = 300;
     }
 

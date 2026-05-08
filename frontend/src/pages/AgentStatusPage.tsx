@@ -618,14 +618,6 @@ export function AgentStatusPage() {
   const [selectedId, setSelectedId] = useState('agent01')
   const [ceoMode, setCeoMode] = useState<'desk' | 'explain'>('desk')
   const [panelTop, setPanelTop] = useState(false)
-  const [obstacleMode, setObstacleMode] = useState(false)
-  const [lineMode, setLineMode] = useState(false)
-  const [drawnRects, setDrawnRects] = useState<
-    { x1: number; y1: number; x2: number; y2: number }[]
-  >([])
-  const [drawnLines, setDrawnLines] = useState<
-    { x1: number; y1: number; x2: number; y2: number }[]
-  >([])
   const [navmeshGrid, setNavmeshGrid] = useState<boolean[][] | null>(null)
   const runtimeGridRef = useRef<boolean[][]>(OBSTACLE_GRID)
   const walkTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({})
@@ -648,22 +640,8 @@ export function AgentStatusPage() {
   }, [])
 
   useEffect(() => {
-    const g = (navmeshGrid ?? OBSTACLE_GRID).map((r) => [...r])
-    for (const rect of drawnRects) {
-      for (let gy = Math.floor(rect.y1 / CELL); gy <= Math.floor(rect.y2 / CELL); gy++) {
-        for (let gx = Math.floor(rect.x1 / CELL); gx <= Math.floor(rect.x2 / CELL); gx++) {
-          if (gy >= 0 && gy < GRID_H && gx >= 0 && gx < GRID_W) g[gy][gx] = true
-        }
-      }
-    }
-    for (const line of drawnLines) {
-      for (const cell of rasterizeLine(line.x1, line.y1, line.x2, line.y2)) {
-        if (cell.gy >= 0 && cell.gy < GRID_H && cell.gx >= 0 && cell.gx < GRID_W)
-          g[cell.gy][cell.gx] = true
-      }
-    }
-    runtimeGridRef.current = g
-  }, [drawnLines, drawnRects, navmeshGrid])
+    runtimeGridRef.current = (navmeshGrid ?? OBSTACLE_GRID).map((r) => [...r])
+  }, [navmeshGrid])
 
   const clearWalkTimer = (agentId: string) => {
     const timer = walkTimersRef.current[agentId]
@@ -737,8 +715,11 @@ export function AgentStatusPage() {
         findPath(agent.position, destPoint, passableRects, pathGrid, passableLines)
 
       const lastStop = waypoints[waypoints.length - 1]
+      // 소파는 SOFA_SPOTS의 고정 좌표를 항상 사용 — isOccupiedByAnotherAgent 반경(90px)이 소파 두 자리 간격(~51px)보다 커서 좌표가 셀 중심으로 벗어나는 문제 방지
       const finalPosition =
-        lastStop && isOccupiedByAnotherAgent(destPoint, prev, agentId) ? lastStop : destPoint
+        internalDest !== 'sofa' && lastStop && isOccupiedByAnotherAgent(destPoint, prev, agentId)
+          ? lastStop
+          : destPoint
       const allStops = waypoints
       const firstStop = allStops[0]
       if (!firstStop) {
@@ -869,61 +850,9 @@ export function AgentStatusPage() {
 
   const selectedAgent = agents.find((a) => a.config.id === selectedId)
 
-  const handleNewRect = (rect: { x1: number; y1: number; x2: number; y2: number }) => {
-    setDrawnRects((prev) => [...prev, rect])
-  }
-
-  const handleNewLine = (line: { x1: number; y1: number; x2: number; y2: number }) => {
-    setDrawnLines((prev) => [...prev, line])
-  }
-
   return (
     <div className="relative flex flex-1 overflow-hidden">
-      <OfficeMap
-        agents={agents}
-        onAgentArrived={handleAgentArrived}
-        ceoMode={ceoMode}
-        obstacleMode={obstacleMode}
-        obstacleRects={drawnRects}
-        onNewRect={handleNewRect}
-        obstacleLineMode={lineMode}
-        obstacleLines={drawnLines}
-        onNewLine={handleNewLine}
-      />
-
-      {/* 장애물 좌표 패널 */}
-      {(drawnRects.length > 0 || drawnLines.length > 0) && (
-        <div className="absolute top-4 left-4 z-20 max-w-xs">
-          <div className="flex flex-col gap-2 rounded-xl border border-red-500/40 bg-black/80 px-4 py-3 backdrop-blur-md">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-red-400">
-                장애물 좌표 (사각형 {drawnRects.length} / 선 {drawnLines.length})
-              </span>
-              <button
-                onClick={() => {
-                  setDrawnRects([])
-                  setDrawnLines([])
-                }}
-                className="text-xs text-white/40 hover:text-white"
-              >
-                전체 삭제
-              </button>
-            </div>
-            {drawnRects.length > 0 && (
-              <pre className="font-mono text-xs whitespace-pre-wrap text-green-300">
-                {drawnRects
-                  .map((r) => `{ x1: ${r.x1}, y1: ${r.y1}, x2: ${r.x2}, y2: ${r.y2} },`)
-                  .join('\n')}
-              </pre>
-            )}
-            {drawnLines.length > 0 && (
-              <pre className="font-mono text-xs whitespace-pre-wrap text-orange-300">
-                {drawnLines.map((l) => `선: (${l.x1},${l.y1})→(${l.x2},${l.y2})`).join('\n')}
-              </pre>
-            )}
-          </div>
-        </div>
-      )}
+      <OfficeMap agents={agents} onAgentArrived={handleAgentArrived} ceoMode={ceoMode} />
 
       <div className={`absolute left-1/2 z-20 -translate-x-1/2 ${panelTop ? 'top-4' : 'bottom-6'}`}>
         <div className="flex flex-col gap-2.5 rounded-2xl border border-white/20 bg-black/60 px-5 py-3 shadow-2xl backdrop-blur-md">
@@ -952,33 +881,6 @@ export function AgentStatusPage() {
               title="패널 위치 이동"
             >
               {panelTop ? '▼' : '▲'}
-            </button>
-            <div className="mx-0.5 h-4 w-px bg-white/20" />
-            <button
-              onClick={() => {
-                setObstacleMode((prev) => !prev)
-                setLineMode(false)
-              }}
-              className={`rounded-lg px-3 py-1 text-xs font-bold transition-colors ${
-                obstacleMode
-                  ? 'bg-red-500 text-white'
-                  : 'bg-white/10 text-white/60 hover:bg-white/20 hover:text-white'
-              }`}
-            >
-              {obstacleMode ? '사각형 그리기 중...' : '사각형 장애물'}
-            </button>
-            <button
-              onClick={() => {
-                setLineMode((prev) => !prev)
-                setObstacleMode(false)
-              }}
-              className={`rounded-lg px-3 py-1 text-xs font-bold transition-colors ${
-                lineMode
-                  ? 'bg-orange-500 text-white'
-                  : 'bg-white/10 text-white/60 hover:bg-white/20 hover:text-white'
-              }`}
-            >
-              {lineMode ? '선 그리기 중...' : '선 장애물'}
             </button>
             <div className="mx-0.5 h-4 w-px bg-white/20" />
             <button

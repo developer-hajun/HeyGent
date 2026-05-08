@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.clients.backend_auth import BackendAuthVerifyResult
+from app.clients.backend_memory import BackendMemoryClientError
 from app.domain.tasks.models import StepRun, TaskRun
 from tests.fakes import InMemoryTaskRepository, InMemoryTranscriptStore
 
@@ -16,6 +17,42 @@ class FakeBackendAuthClient:
 
     async def aclose(self) -> None:
         return None
+
+
+class FakeBackendMemoryClient:
+    def __init__(self) -> None:
+        self.calls = []
+        self.created_candidates = []
+        self.memories = []
+        self.fail = False
+
+    async def recall(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.fail:
+            raise BackendMemoryClientError("test memory recall failure")
+        return list(self.memories)
+
+    async def create_candidates(self, **kwargs):
+        self.created_candidates.append(kwargs)
+        if self.fail:
+            raise BackendMemoryClientError("test memory writeback failure")
+        return []
+
+    async def aclose(self) -> None:
+        return None
+
+
+class FakeMemoryExtractor:
+    def __init__(self) -> None:
+        self.calls = []
+        self.candidates = []
+        self.fail = False
+
+    async def extract_candidates(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.fail:
+            raise RuntimeError("test memory extraction failure")
+        return list(self.candidates)
 
 
 @pytest.fixture(autouse=True)
@@ -72,12 +109,22 @@ def configure_test_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(agent_session_routes, "authenticate_http_user", optional_task_user)
     monkeypatch.setattr(agent_session_routes, "ensure_owner", optional_ensure_owner)
 
-    def list_public_sessions(store, *, owner_key: str | None, limit: int, offset: int):
+    def list_public_sessions(store, *, owner_key: str | None, limit: int, offset: int, include_archived: bool = False):
         sessions = [
             session
             for session in store.list_sessions(limit=10_000)
-            if session.get("source") == "api.session" and (owner_key is None or session.get("user_id") == owner_key)
+            if session.get("source") == "api.session"
+            and (owner_key is None or session.get("user_id") == owner_key)
+            and session.get("deleted_at") is None
+            and (include_archived or session.get("archived_at") is None)
         ]
+        sessions.sort(
+            key=lambda session: (
+                session.get("updated_at") or session.get("started_at"),
+                session.get("archived_at") is not None,
+            ),
+            reverse=True,
+        )
         return sessions[offset : offset + limit], len(sessions)
 
     monkeypatch.setattr(session_routes, "_list_public_sessions", list_public_sessions)
@@ -106,6 +153,9 @@ def _patch_app_runtime(app_main, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_main, "PostgresSessionStore", lambda _connection_factory: InMemoryTranscriptStore())
     monkeypatch.setattr(app_main, "build_task_projection_store", lambda **_kwargs: RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60))
     monkeypatch.setattr(app_main, "BackendAuthClient", lambda settings: FakeBackendAuthClient())
+    monkeypatch.setattr(app_main, "BackendMemoryClient", lambda settings: FakeBackendMemoryClient())
+    monkeypatch.setattr(app_main, "ProviderMemoryExtractionClient", lambda **_kwargs: object())
+    monkeypatch.setattr(app_main, "LlmMemoryExtractor", lambda **_kwargs: FakeMemoryExtractor())
     monkeypatch.setattr(app_main, "LocalToolRuntime", local_tool_runtime_without_bridge)
     build_memory_connection_registry = app_main.build_connection_registry
     monkeypatch.setattr(app_main, "build_connection_registry", lambda **_kwargs: build_memory_connection_registry(redis_url=None, ttl_seconds=60))
