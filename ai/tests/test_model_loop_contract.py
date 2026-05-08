@@ -182,6 +182,7 @@ def test_first_batch_k_skills_are_loaded_from_app_skills():
 
     assert expected <= set(loaded)
     assert "https://k-skill-proxy.nomadamas.org" in loaded["korea-weather"]["body"]
+    assert "`http_get` runtime tool" in loaded["korea-weather"]["body"]
     assert "https://k-skill-proxy.nomadamas.org" in loaded["seoul-subway-arrival"]["body"]
     assert (Path(loaded["zipcode-search"]["path"]).parent / "scripts" / "zipcode_search.py").is_file()
     assert "scripts/geeknews_search.py" in loaded["geeknews-search"]["body"]
