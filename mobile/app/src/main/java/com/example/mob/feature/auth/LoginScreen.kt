@@ -35,6 +35,7 @@ import com.example.mob.data.remote.RetrofitClient
 import com.example.mob.ui.theme.TextSecondary
 import com.kakao.sdk.common.model.ClientError
 import com.kakao.sdk.common.model.ClientErrorCause
+import com.kakao.sdk.common.util.Utility
 import com.kakao.sdk.user.UserApiClient
 import kotlinx.coroutines.launch
 
@@ -42,6 +43,7 @@ import kotlinx.coroutines.launch
 fun LoginScreen(onLoginSuccess: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val kakaoKeyHash = remember { Utility.getKeyHash(context) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
@@ -88,6 +90,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
     val loginWithKakaoAccount: () -> Unit = {
         UserApiClient.instance.loginWithKakaoAccount(context) { token, error ->
             if (error != null) {
+                Log.e("KAKAO_LOGIN", "Register this Android key hash in Kakao Developers: $kakaoKeyHash")
                 Log.e("KAKAO_LOGIN", "카카오계정 로그인 실패: ${error.javaClass.simpleName} - ${error.message}", error)
             } else if (token != null) {
                 Log.d("KAKAO_LOGIN", "카카오 accessToken 발급 성공: ${token.accessToken.take(20)}...")
@@ -102,6 +105,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 Log.d("KAKAO_LOGIN", "카카오톡 앱으로 로그인 시도")
                 UserApiClient.instance.loginWithKakaoTalk(context) { token, error ->
                     if (error != null) {
+                        Log.e("KAKAO_LOGIN", "Current Android key hash: $kakaoKeyHash")
                         Log.e("KAKAO_LOGIN", "카카오톡 로그인 실패, 카카오계정으로 fallback", error)
                         if (error is ClientError && error.reason == ClientErrorCause.Cancelled) return@loginWithKakaoTalk
                         loginWithKakaoAccount()
