@@ -147,6 +147,21 @@ export function BuildingOverviewPage() {
             display: 'block',
           }}
         />
+
+        {/* 회사 로고 오버레이 */}
+        <img
+          src="/assets/maps/logo.png"
+          alt="Logo"
+          draggable={false}
+          style={{
+            position: 'absolute',
+            top: 48,
+            left: 1070,
+            width: 180,
+            height: 'auto',
+            pointerEvents: 'none',
+          }}
+        />
         {FLOORS.map((floor) => (
           <div
             key={floor.sessionId}
