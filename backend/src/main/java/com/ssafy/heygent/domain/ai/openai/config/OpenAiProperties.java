@@ -24,7 +24,6 @@ public class OpenAiProperties {
     private String embeddingModel = "text-embedding-3-small";
     private int timeoutSeconds = 60;
     private String credentialEncryptionKey = "";
-    private OAuth oauth = new OAuth();
     private CodexOAuth codexOAuth = new CodexOAuth();
     private CodexDeviceOAuth codexDeviceOAuth = new CodexDeviceOAuth();
 
@@ -41,18 +40,6 @@ public class OpenAiProperties {
 
     public boolean hasCredentialEncryptionKey() {
         return StringUtils.hasText(credentialEncryptionKey);
-    }
-
-    @Getter
-    @Setter
-    public static class OAuth {
-
-        private String clientId = "";
-        private String clientSecret = "";
-        private String redirectUri = "http://localhost:8080/api/v1/ai/openai/oauth/callback";
-        private String authorizeUrl = "https://auth.openai.com/oauth/authorize";
-        private String tokenUrl = "https://auth.openai.com/oauth/token";
-        private List<String> scopes = new ArrayList<>(List.of("openid", "profile", "email", "offline_access"));
     }
 
     @Getter

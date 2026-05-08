@@ -35,13 +35,6 @@ public enum OpenAiProviderName {
         List.of("anthropic_api_key"),
         List.of("claude-sonnet-4.5", "claude-haiku-4.5")
     ),
-    OPENAI_OAUTH(
-        "openai_oauth",
-        "oauth",
-        "openai",
-        List.of(),
-        List.of("gpt-5.4", "gpt-5.4-mini")
-    ),
     OPENAI_CODEX_OAUTH(
         "openai_codex_oauth",
         "oauth",
@@ -103,7 +96,7 @@ public enum OpenAiProviderName {
     }
 
     public boolean supportsUsageQuery() {
-        return this == OPENAI_API_KEY || this == OPENAI_OAUTH || this == OPENAI_DEV_FALLBACK;
+        return this == OPENAI_API_KEY || this == OPENAI_DEV_FALLBACK;
     }
 
     public List<String> lookupValues() {
