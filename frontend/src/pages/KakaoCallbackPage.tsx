@@ -41,7 +41,7 @@ export function KakaoCallbackPage() {
   }, [navigate, setTokens, setUserInfo])
 
   return (
-    <div className="flex h-screen w-full flex-col items-center justify-center gap-4 bg-[#f2f3f8] dark:bg-[#0f1117]">
+    <div className="flex h-screen w-full flex-col items-center justify-center gap-4 bg-[#f2f3f8]">
       <Loader2 className="text-primary h-8 w-8 animate-spin" />
       <p className="text-muted-foreground text-sm">카카오 로그인 중...</p>
     </div>

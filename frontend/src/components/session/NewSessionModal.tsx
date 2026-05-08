@@ -147,10 +147,10 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                 {/* 기본 제공 에이전트 */}
                 <button
                   onClick={() => onConfirm()}
-                  className="border-border hover:border-primary/40 hover:bg-primary/3 group flex w-full items-start gap-4 rounded-xl border p-4 text-left transition-all duration-150"
+                  className="border-border hover:bg-accent/40 group flex w-full items-start gap-4 rounded-xl border p-4 text-left transition-all duration-150"
                 >
-                  <div className="bg-primary/10 group-hover:bg-primary/15 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl transition-colors">
-                    <Bot className="text-primary h-5 w-5" />
+                  <div className="bg-muted group-hover:bg-muted/80 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors">
+                    <Bot className="text-foreground/70 h-5 w-5" />
                   </div>
                   <div>
                     <p className="text-foreground text-sm font-semibold">기본 제공 에이전트</p>
@@ -166,10 +166,10 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                     setCustomizeStep('settings')
                     setView('customize')
                   }}
-                  className="border-border group flex w-full items-start gap-4 rounded-xl border p-4 text-left transition-all duration-150 hover:border-violet-300 hover:bg-violet-50/50"
+                  className="border-border hover:bg-accent/40 group flex w-full items-start gap-4 rounded-xl border p-4 text-left transition-all duration-150"
                 >
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-violet-100 transition-colors group-hover:bg-violet-200/70">
-                    <SlidersHorizontal className="h-5 w-5 text-violet-600" />
+                  <div className="bg-muted group-hover:bg-muted/80 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors">
+                    <SlidersHorizontal className="text-foreground/70 h-5 w-5" />
                   </div>
                   <div>
                     <p className="text-foreground text-sm font-semibold">에이전트 커스터마이징</p>

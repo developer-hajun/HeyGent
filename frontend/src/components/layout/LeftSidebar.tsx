@@ -133,16 +133,14 @@ export function LeftSidebar() {
         {collapsed && (
           <div className="flex h-full flex-col items-center gap-1.5 px-2 py-4">
             <div className="flex h-12 shrink-0 items-center justify-center">
-              <CollapsedTooltip label="에이전트 상태">
-                <button
-                  type="button"
-                  onClick={() => handleOpenPrimaryRoute('/agent-status')}
-                  className="hover:bg-accent/50 flex h-12 w-12 items-center justify-center rounded-xl transition-colors"
-                  aria-label="에이전트 상태로 이동"
-                >
-                  <img src="/onlylogo.png" alt="HeyGent" className="h-9 w-9 object-contain" />
-                </button>
-              </CollapsedTooltip>
+              <button
+                type="button"
+                onClick={() => handleOpenPrimaryRoute('/agent-status')}
+                className="flex h-12 w-12 items-center justify-center rounded-xl"
+                aria-label="에이전트 상태로 이동"
+              >
+                <img src="/onlylogo.png" alt="HeyGent" className="h-9 w-9 object-contain" />
+              </button>
             </div>
 
             <div className="bg-border my-1 h-px w-10" />
@@ -241,7 +239,7 @@ export function LeftSidebar() {
               <button
                 type="button"
                 onClick={() => handleOpenPrimaryRoute('/agent-status')}
-                className="hover:bg-accent/50 flex min-w-0 flex-1 items-center justify-center rounded-lg px-2 py-2 transition-colors"
+                className="flex min-w-0 flex-1 items-center justify-center rounded-lg px-2 py-2"
                 aria-label="에이전트 상태로 이동"
               >
                 <img
@@ -340,9 +338,9 @@ export function LeftSidebar() {
             <div className="border-border shrink-0 border-t px-4 py-3">
               <Popover open={profileOpen} onOpenChange={setProfileOpen}>
                 <PopoverTrigger asChild>
-                  <button className="hover:bg-accent/50 flex w-full items-center gap-3 rounded-lg p-2 transition-colors">
-                    <ProfileAvatar size={32} />
-                    <div className="min-w-0 flex-1 text-left">
+                  <button className="hover:bg-accent/50 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors">
+                    <ProfileAvatar size={20} />
+                    <div className="min-w-0 flex-1">
                       <p className="text-foreground truncate text-sm font-medium">
                         <ProfileName />
                       </p>

@@ -727,7 +727,7 @@ export function AgentSkillsLibraryPanel({
       </div>
 
       {warnings.length > 0 ? (
-        <div className="space-y-1 rounded-xl border border-amber-300/60 bg-amber-50/60 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200">
+        <div className="space-y-1 rounded-xl border border-amber-300/60 bg-amber-50/60 px-4 py-3 text-sm text-amber-800">
           {warnings.map((warning) => (
             <div key={warning}>{warning}</div>
           ))}
@@ -799,7 +799,7 @@ export function AgentSkillsLibraryPanel({
       ) : null}
 
       {missingSkills.length > 0 ? (
-        <div className="rounded-xl border border-amber-300/60 bg-amber-50/60 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/20 dark:text-amber-200">
+        <div className="rounded-xl border border-amber-300/60 bg-amber-50/60 px-4 py-3 text-sm text-amber-800">
           <div className="font-medium">회사 스킬 목록에 없는 요청 스킬</div>
           <div className="mt-1 text-xs">{missingSkills.join(', ')}</div>
         </div>
@@ -850,7 +850,7 @@ export function AgentAdapterTypeDropdown({
           <span className="inline-flex min-w-0 items-center gap-1.5">
             <span className="truncate">{selected?.label ?? value}</span>
             {selected?.badge ? (
-              <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] leading-none font-medium text-amber-700 dark:text-amber-200">
+              <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] leading-none font-medium text-amber-700">
                 {selected.badge}
               </span>
             ) : null}
@@ -881,7 +881,7 @@ export function AgentAdapterTypeDropdown({
             <span className="inline-flex min-w-0 items-center gap-1.5">
               <span className="truncate">{option.label}</span>
               {option.badge ? (
-                <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] leading-none font-medium text-amber-700 dark:text-amber-200">
+                <span className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] leading-none font-medium text-amber-700">
                   {option.badge}
                 </span>
               ) : null}

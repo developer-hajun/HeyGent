@@ -430,11 +430,7 @@ function ConnectionStatusRow({ state }: { state: WorkspaceConnectionState }) {
   return (
     <div
       className={`flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium ${
-        isError
-          ? 'text-destructive'
-          : isConnected
-            ? 'text-emerald-600 dark:text-emerald-400'
-            : 'text-muted-foreground'
+        isError ? 'text-destructive' : isConnected ? 'text-emerald-600' : 'text-muted-foreground'
       }`}
     >
       <Icon className="h-4 w-4 shrink-0" />
