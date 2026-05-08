@@ -869,19 +869,21 @@ class ToolCallingLoopHandler:
         messages.append(tool_message)
         self._append_transcript_message(transcript_session_id, tool_message, tool_name=tool_name)
         # tool_call_id는 assistant가 보낸 호출 id와 정확히 맞아야 replay 시 결과를 대응시킬 수 있다.
-        operations.append(
-            {
-                "key": self._next_operation_key(
-                    operation_counters,
-                    namespace="tool",
-                    base_key=tool_name,
-                ),
-                "title": tool_name,
-                "kind": "tool",
-                "status": self._tool_operation_status(result),
-                "summary": self._tool_summary(result),
-            }
-        )
+        operation = {
+            "key": self._next_operation_key(
+                operation_counters,
+                namespace="tool",
+                base_key=tool_name,
+            ),
+            "title": tool_name,
+            "kind": "tool",
+            "status": self._tool_operation_status(result),
+            "summary": self._tool_summary(result),
+        }
+        operation_error = self._tool_operation_error(result)
+        if operation_error is not None:
+            operation["error"] = operation_error
+        operations.append(operation)
 
     @staticmethod
     def _guard_decision(guard_result: ToolGuardResult) -> ToolGuardDecision:
@@ -1346,6 +1348,29 @@ class ToolCallingLoopHandler:
                     return f"{key}={value}"
             return json.dumps(result, ensure_ascii=False)[:80]
         return str(result)[:80]
+
+    @classmethod
+    def _tool_operation_error(cls, result: Any) -> dict[str, Any] | None:
+        if not isinstance(result, dict) or result.get("ok") is not False:
+            return None
+
+        raw_error = result.get("error")
+        source = raw_error if isinstance(raw_error, dict) else {}
+        message = cls._optional_text(source.get("message") or (raw_error if isinstance(raw_error, str) else None))
+        if message is None:
+            message = cls._tool_summary(result)
+
+        normalized: dict[str, Any] = {"message": message}
+        code = cls._optional_text(source.get("code"))
+        error_type = cls._optional_text(source.get("type"))
+        retryable = source.get("retryable")
+        if code is not None:
+            normalized["code"] = code
+        if error_type is not None:
+            normalized["type"] = error_type
+        if isinstance(retryable, bool):
+            normalized["retryable"] = retryable
+        return normalized
 
     @staticmethod
     def _next_operation_key(operation_counters: dict[str, int], *, namespace: str, base_key: str) -> str:
