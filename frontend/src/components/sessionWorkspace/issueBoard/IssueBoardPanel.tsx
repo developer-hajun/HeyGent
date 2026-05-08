@@ -597,9 +597,9 @@ function IssueListView({
     groupBy !== 'none' ? buildIssueGroups(issues, groupBy) : [{ key: 'all', title: null, issues }]
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto py-6 pr-10 pl-6">
+    <div className="min-h-0 flex-1 overflow-auto py-6 pr-16 pl-6">
       <div className="bg-background/70 overflow-x-auto rounded-lg border">
-        <div style={{ minWidth: listMinWidth(visibleColumns) }}>
+        <div style={{ minWidth: listMinWidth(visibleColumns), width: '100%' }}>
           <div
             className="text-muted-foreground grid items-center gap-3 border-b px-4 py-2 text-[11px] font-semibold tracking-widest uppercase"
             style={{ gridTemplateColumns: listGridTemplate(visibleColumns) }}
