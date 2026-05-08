@@ -1365,8 +1365,8 @@ function RelatedIssuePill({ item }: { item: IssueBoardIssue['relatedItems'][numb
 function TodoProperty({ children, label }: { children: ReactNode; label: string }) {
   return (
     <>
-      <div className="text-muted-foreground text-xs">{label}</div>
-      <div className="text-foreground flex min-w-0 items-center gap-2">{children}</div>
+      <div className="text-muted-foreground flex min-h-9 items-center text-xs">{label}</div>
+      <div className="text-foreground flex min-h-9 min-w-0 items-center gap-2">{children}</div>
     </>
   )
 }
