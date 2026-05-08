@@ -70,6 +70,7 @@ export function NewChatPage() {
   const realtimeError = useAiRealtimeStore((state) => state.lastError)
   const accessToken = useAuthStore((state) => state.accessToken)
   const sendMessage = useChatStore((state) => state.sendMessage)
+  const updateSession = useChatStore((state) => state.updateSession)
   const providerMessage =
     commandClient === null
       ? getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError, accessToken)
@@ -99,14 +100,22 @@ export function NewChatPage() {
       const clientMessageId = createClientMessageId()
       const pendingSessionId = `pending_session_${clientMessageId}`
       const pendingConfig = readPendingSessionConfig()
+      const pendingSettings =
+        pendingConfig === null
+          ? undefined
+          : {
+              ...(pendingConfig.persona.trim()
+                ? { systemPrompt: pendingConfig.persona.trim() }
+                : {}),
+              ...(pendingConfig.model.trim() ? { model: pendingConfig.model.trim() } : {}),
+              delegationPolicy: pendingConfig.delegationPolicy,
+            }
       // 첫 대화는 아직 서버 세션 id가 없어서 accepted 응답 전까지는 pending 세션을 화면에 보여 준다.
       // sendMessage가 같은 clientMessageId로 optimistic 메시지를 먼저 넣기 때문에 즉시 스피너가 렌더링된다.
       const acceptedPromise = sendMessage({
         content,
         clientMessageId,
-        settings: pendingConfig?.persona.trim()
-          ? { systemPrompt: pendingConfig.persona.trim() }
-          : undefined,
+        settings: pendingSettings,
         inputPayload:
           pendingConfig === null
             ? undefined
@@ -115,6 +124,14 @@ export function NewChatPage() {
                   agentName: pendingConfig.agentName,
                   persona: pendingConfig.persona,
                   callName: pendingConfig.callName,
+                  capabilities: pendingConfig.capabilities,
+                  model: pendingConfig.model,
+                  delegationPolicy: pendingConfig.delegationPolicy,
+                  instructionsEntryFile: pendingConfig.instructionsEntryFile,
+                  instructionsMode: pendingConfig.instructionsMode,
+                  instructionsRootPath: pendingConfig.instructionsRootPath,
+                  instructionsFiles: pendingConfig.instructionsFiles,
+                  profileImage: pendingConfig.profileImage,
                   profileImageProvided: pendingConfig.profileImage !== null,
                 },
               },
@@ -128,6 +145,24 @@ export function NewChatPage() {
 
       if (acceptedSessionId === undefined) {
         throw new Error('accepted 응답에 sessionId가 없습니다.')
+      }
+
+      if (pendingConfig !== null) {
+        await updateSession({
+          sessionId: acceptedSessionId,
+          metadataPatch: {
+            ui: {
+              agentName: pendingConfig.agentName,
+              callName: pendingConfig.callName,
+              agentCapabilities: pendingConfig.capabilities,
+              agentProfileImage: pendingConfig.profileImage,
+              instructionsEntryFile: pendingConfig.instructionsEntryFile,
+              instructionsMode: pendingConfig.instructionsMode,
+              instructionsRootPath: pendingConfig.instructionsRootPath,
+              instructionsFiles: pendingConfig.instructionsFiles,
+            },
+          },
+        })
       }
 
       navigate(`/session/${acceptedSessionId}`, { replace: true })
@@ -310,7 +345,45 @@ function readPendingSessionConfig(): CustomAgentConfig | null {
   try {
     const parsed = JSON.parse(raw)
     if (typeof parsed === 'object' && parsed !== null && typeof parsed.persona === 'string') {
-      return parsed as CustomAgentConfig
+      const value = parsed as Partial<CustomAgentConfig>
+      const instructionsFiles =
+        typeof value.instructionsFiles === 'object' &&
+        value.instructionsFiles !== null &&
+        !Array.isArray(value.instructionsFiles)
+          ? Object.fromEntries(
+              Object.entries(value.instructionsFiles).filter(
+                (entry): entry is [string, string] =>
+                  typeof entry[0] === 'string' && typeof entry[1] === 'string',
+              ),
+            )
+          : {}
+      return {
+        agentName: typeof value.agentName === 'string' ? value.agentName : '',
+        persona: parsed.persona,
+        callName: typeof value.callName === 'string' ? value.callName : '',
+        capabilities: typeof value.capabilities === 'string' ? value.capabilities : '',
+        profileImage: typeof value.profileImage === 'string' ? value.profileImage : null,
+        model: typeof value.model === 'string' ? value.model : '',
+        instructionsEntryFile:
+          typeof value.instructionsEntryFile === 'string'
+            ? value.instructionsEntryFile
+            : 'AGENTS.md',
+        instructionsMode: value.instructionsMode === 'external' ? 'external' : 'managed',
+        instructionsRootPath:
+          typeof value.instructionsRootPath === 'string' ? value.instructionsRootPath : '',
+        instructionsFiles,
+        delegationPolicy:
+          typeof value.delegationPolicy === 'object' &&
+          value.delegationPolicy !== null &&
+          typeof value.delegationPolicy.canDelegate === 'boolean'
+            ? {
+                canDelegate: value.delegationPolicy.canDelegate,
+                ...(typeof value.delegationPolicy.maxWorkerDepth === 'number'
+                  ? { maxWorkerDepth: value.delegationPolicy.maxWorkerDepth }
+                  : {}),
+              }
+            : { canDelegate: false },
+      }
     }
   } catch {
     return null

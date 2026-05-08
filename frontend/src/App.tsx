@@ -140,8 +140,12 @@ function SessionWorkspaceRoutePage() {
 function AuthenticatedShell() {
   return (
     <div className="bg-background flex h-screen w-full overflow-hidden">
-      <LeftSidebar />
-      <SessionWorkspaceSidebar />
+      <div className="hidden md:contents">
+        <LeftSidebar />
+      </div>
+      <div className="hidden md:contents">
+        <SessionWorkspaceSidebar />
+      </div>
       <WorkspaceRoutes />
     </div>
   )

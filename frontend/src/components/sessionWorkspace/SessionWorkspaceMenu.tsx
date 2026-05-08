@@ -9,23 +9,25 @@ import {
   Loader2,
   Map,
   MessageSquare,
-  MoreHorizontal,
-  Pencil,
   Plus,
   Target,
   Trash2,
   Wifi,
 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { SubAgentProfileImage } from '@/components/sessionWorkspace/subAgents'
 import { useChatStore } from '@/store/useChatStore'
 import { useSessionStore } from '@/store/useSessionStore'
-import { DEFAULT_SIDEBAR_WIDTH } from '@/store/useUIStore'
+import { DEFAULT_SIDEBAR_COLLAPSED_WIDTH, DEFAULT_SIDEBAR_WIDTH } from '@/store/useUIStore'
 import type { RawAiSession } from '@/types/aiChat'
 import { getString, getWorkspaceConnectionText, toJsonObject } from './sessionWorkspaceUtils'
 import type { WorkspaceConnectionState } from './sessionWorkspaceUtils'
@@ -41,7 +43,8 @@ interface SessionWorkspaceMenuProps {
   activeSubAgentId: string | null
   onCollapsedChange: (collapsed: boolean) => void
   onCreateSubAgent: () => void
-  onEditSubAgent: (agentPanelId: string) => void
+  onDeleteSession: () => Promise<void>
+  onOpenSubAgent: (agentPanelId: string) => void
   onSelectPanel: (panelId: WorkspaceNavId) => void
 }
 
@@ -64,17 +67,21 @@ export function SessionWorkspaceMenu({
   activeSubAgentId,
   onCollapsedChange,
   onCreateSubAgent,
-  onEditSubAgent,
+  onDeleteSession,
+  onOpenSubAgent,
   onSelectPanel,
 }: SessionWorkspaceMenuProps) {
   const updateSession = useChatStore((state) => state.updateSession)
-  const { agentPanelsBySessionId, removeAgentPanelFromSession } = useSessionStore()
+  const { agentPanelsBySessionId } = useSessionStore()
   const agentPanels = agentPanelsBySessionId[sessionId] ?? []
   const title = getSessionTitle(session)
   const mainAgentName = getMainAgentName(session)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(title)
   const [titleSaving, setTitleSaving] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const handleSaveTitle = async () => {
     const trimmed = titleDraft.trim()
@@ -98,19 +105,56 @@ export function SessionWorkspaceMenu({
     }
   }
 
+  const handleDeleteSession = async () => {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await onDeleteSession()
+      setDeleteDialogOpen(false)
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : '대화를 삭제하지 못했습니다.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   if (collapsed) {
     return (
-      <aside className="bg-background border-border flex h-full w-12 shrink-0 flex-col items-center border-r">
+      <aside
+        className="bg-background border-border relative flex h-full shrink-0 flex-col items-center gap-1.5 overflow-hidden border-r px-2 py-4 transition-[width] duration-200 ease-in-out"
+        style={{ width: DEFAULT_SIDEBAR_COLLAPSED_WIDTH }}
+      >
         <div className="flex h-12 items-center justify-center">
           <button
             type="button"
             onClick={() => onCollapsedChange(false)}
-            className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-8 w-8 items-center justify-center transition-colors"
+            className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-12 w-12 items-center justify-center rounded-xl transition-colors"
             aria-label="세션 메뉴 펼치기"
           >
             <ChevronRight className="h-5 w-5" />
           </button>
         </div>
+        <div className="mt-auto flex h-12 items-center justify-center">
+          <button
+            type="button"
+            onClick={() => setDeleteDialogOpen(true)}
+            className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive flex h-12 w-12 items-center justify-center rounded-xl transition-colors"
+            aria-label="대화 삭제"
+          >
+            <Trash2 className="h-5 w-5" />
+          </button>
+        </div>
+        <DeleteSessionDialog
+          deleteError={deleteError}
+          deleting={deleting}
+          open={deleteDialogOpen}
+          sessionTitle={title}
+          onConfirm={() => void handleDeleteSession()}
+          onOpenChange={(open) => {
+            if (!open && !deleting) setDeleteError(null)
+            setDeleteDialogOpen(open)
+          }}
+        />
       </aside>
     )
   }
@@ -120,7 +164,7 @@ export function SessionWorkspaceMenu({
       className="bg-background border-border flex h-full shrink-0 flex-col border-r"
       style={{ width: DEFAULT_SIDEBAR_WIDTH }}
     >
-      <div className="flex h-12 shrink-0 items-center gap-1 px-3">
+      <div className="flex h-14 shrink-0 items-center gap-1 px-5 pt-2">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           {editingTitle ? (
             <input
@@ -149,7 +193,7 @@ export function SessionWorkspaceMenu({
                 setTitleDraft(title)
                 setEditingTitle(true)
               }}
-              className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-7 w-7 shrink-0 items-center justify-center transition-colors"
+              className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors"
               aria-label="세션 이름 편집"
             >
               {titleSaving ? (
@@ -165,14 +209,14 @@ export function SessionWorkspaceMenu({
         <button
           type="button"
           onClick={() => onCollapsedChange(true)}
-          className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-8 w-8 shrink-0 items-center justify-center transition-colors"
+          className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors"
           aria-label="세션 메뉴 접기"
         >
           <ChevronLeft className="h-5 w-5" />
         </button>
       </div>
 
-      <nav className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3 py-2">
+      <nav className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-3">
         <div>
           <ConnectionStatusRow state={connectionState} />
           <div className="mt-0.5 flex flex-col gap-0.5">
@@ -185,7 +229,7 @@ export function SessionWorkspaceMenu({
                   key={item.id}
                   type="button"
                   onClick={() => onSelectPanel(item.id)}
-                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
                     isActive
                       ? 'bg-accent text-foreground'
                       : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
@@ -205,7 +249,7 @@ export function SessionWorkspaceMenu({
             <button
               type="button"
               onClick={() => onSelectPanel('purpose')}
-              className={`flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 pr-8 text-left text-sm font-medium transition-colors ${
+              className={`flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5 pr-8 text-left text-sm font-medium transition-colors ${
                 activePanel === 'purpose'
                   ? 'bg-accent text-foreground'
                   : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
@@ -217,7 +261,7 @@ export function SessionWorkspaceMenu({
             <button
               type="button"
               onClick={() => onSelectPanel('purpose')}
-              className="text-muted-foreground hover:bg-accent/50 hover:text-foreground absolute top-1/2 right-1 flex h-7 w-7 -translate-y-1/2 items-center justify-center opacity-0 transition-opacity group-focus-within/main:opacity-100 group-hover/main:opacity-100 data-[state=open]:opacity-100"
+              className="text-muted-foreground hover:bg-accent/50 hover:text-foreground absolute top-1/2 right-1 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg opacity-0 transition-opacity group-focus-within/main:opacity-100 group-hover/main:opacity-100 data-[state=open]:opacity-100"
               aria-label={`${mainAgentName} 메인 에이전트 편집`}
             >
               <Edit3 className="h-4 w-4" />
@@ -230,17 +274,17 @@ export function SessionWorkspaceMenu({
             <button
               type="button"
               onClick={() => onSelectPanel('subAgents')}
-              className="flex min-w-0 flex-1 items-center gap-1 px-3 py-1.5 text-left"
+              className="flex min-w-0 flex-1 items-center gap-1 rounded-lg px-3 py-1.5 text-left"
             >
               <ChevronRight className="text-muted-foreground/60 h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
               <span className="text-muted-foreground/60 font-mono text-[10px] font-medium tracking-widest uppercase">
-                AGENT
+                에이전트
               </span>
             </button>
             <button
               type="button"
               onClick={onCreateSubAgent}
-              className="text-muted-foreground/60 hover:bg-accent/50 hover:text-foreground mr-1 flex h-7 w-7 items-center justify-center transition-colors"
+              className="text-muted-foreground/60 hover:bg-accent/50 hover:text-foreground mr-1 flex h-7 w-7 items-center justify-center rounded-lg transition-colors"
               aria-label="에이전트 추가"
             >
               <Plus className="h-4 w-4" />
@@ -254,57 +298,94 @@ export function SessionWorkspaceMenu({
             ) : (
               <div className="flex flex-col gap-0.5">
                 {agentPanels.map((item) => (
-                  <div key={item.id} className="group/agent relative flex items-center">
-                    <button
-                      type="button"
-                      onClick={() => onEditSubAgent(item.id)}
-                      className={`flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 pr-8 text-left text-sm font-medium transition-colors ${
-                        activePanel === 'subAgents' && activeSubAgentId === item.id
-                          ? 'bg-accent text-foreground'
-                          : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
-                      }`}
-                    >
-                      <item.agent.icon
-                        className="text-muted-foreground h-5 w-5 shrink-0"
-                        style={{ color: item.agent.accent }}
-                      />
-                      <span className="truncate">{item.agent.name}</span>
-                    </button>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button
-                          type="button"
-                          className="text-muted-foreground hover:bg-accent/50 hover:text-foreground pointer-events-none absolute top-1/2 right-1 flex h-7 w-7 -translate-y-1/2 items-center justify-center opacity-0 transition-opacity group-focus-within/agent:pointer-events-auto group-focus-within/agent:opacity-100 group-hover/agent:pointer-events-auto group-hover/agent:opacity-100 data-[state=open]:pointer-events-auto data-[state=open]:opacity-100"
-                          aria-label={`${item.agent.name} 액션`}
-                        >
-                          <MoreHorizontal className="h-4 w-4" />
-                        </button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-36">
-                        <DropdownMenuItem onClick={() => onEditSubAgent(item.id)}>
-                          <Pencil className="size-4" />
-                          <span>편집</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          className="text-destructive focus:text-destructive"
-                          onClick={() => {
-                            removeAgentPanelFromSession(sessionId, item.id)
-                          }}
-                        >
-                          <Trash2 className="size-4" />
-                          <span>삭제</span>
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onOpenSubAgent(item.id)}
+                    className={`flex min-w-0 items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+                      activePanel === 'subAgents' && activeSubAgentId === item.id
+                        ? 'bg-accent text-foreground'
+                        : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
+                    }`}
+                  >
+                    <SubAgentProfileImage
+                      accent={item.agent.accent}
+                      profileImage={item.agent.profileImage}
+                      spriteId={item.agent.spriteId}
+                    />
+                    <span className="truncate">{item.agent.name}</span>
+                  </button>
                 ))}
               </div>
             )}
           </div>
         </section>
       </nav>
+      <div className="border-border/70 shrink-0 border-t px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setDeleteDialogOpen(true)}
+          className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors"
+        >
+          <Trash2 className="h-4 w-4 shrink-0" />
+          <span className="truncate">대화 삭제</span>
+        </button>
+      </div>
+      <DeleteSessionDialog
+        deleteError={deleteError}
+        deleting={deleting}
+        open={deleteDialogOpen}
+        sessionTitle={title}
+        onConfirm={() => void handleDeleteSession()}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeleteError(null)
+          setDeleteDialogOpen(open)
+        }}
+      />
     </aside>
+  )
+}
+
+function DeleteSessionDialog({
+  deleteError,
+  deleting,
+  open,
+  sessionTitle,
+  onConfirm,
+  onOpenChange,
+}: {
+  deleteError: string | null
+  deleting: boolean
+  open: boolean
+  sessionTitle: string
+  onConfirm: () => void
+  onOpenChange: (open: boolean) => void
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>정말로 삭제하시겠습니까?</AlertDialogTitle>
+          <AlertDialogDescription>
+            `{sessionTitle}` 대화와 저장된 메시지가 삭제됩니다. 이 작업은 되돌릴 수 없습니다.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {deleteError ? <p className="text-destructive text-sm">{deleteError}</p> : null}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleting}>취소</AlertDialogCancel>
+          <Button variant="destructive" onClick={onConfirm} disabled={deleting}>
+            {deleting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                삭제 중
+              </>
+            ) : (
+              '삭제'
+            )}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
