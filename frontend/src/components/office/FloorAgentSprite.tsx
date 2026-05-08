@@ -111,7 +111,7 @@ export function FloorAgentSprite({
 
     rafId = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(rafId)
-  }, [agentId, size])
+  }, [agentId, size, initialXPct, maxXPct, minXPct])
 
   return (
     <div
