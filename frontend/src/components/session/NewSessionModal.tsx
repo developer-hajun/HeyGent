@@ -111,7 +111,7 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent
-        className="max-h-[calc(100vh-24px)] w-[920px] max-w-[calc(100vw-24px)] gap-0 overflow-hidden p-0 [&>button]:hidden"
+        className="max-h-[calc(100vh-24px)] w-full max-w-lg gap-0 overflow-hidden p-0 [&>button]:hidden"
         aria-describedby="new-session-description"
       >
         <DialogTitle className="sr-only">새 대화 시작</DialogTitle>
@@ -218,9 +218,9 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                 </button>
               </div>
 
-              <div className="space-y-4 px-5 py-4">
+              <div className="max-h-[calc(100vh-200px)] space-y-4 overflow-y-auto px-5 py-4">
                 {customizeStep === 'settings' ? (
-                  <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.78fr)]">
+                  <div className="grid gap-3">
                     <div className="space-y-3">
                       <AgentSectionCard title="프로필">
                         <div className="grid gap-3 sm:grid-cols-[13rem_minmax(0,1fr)]">
