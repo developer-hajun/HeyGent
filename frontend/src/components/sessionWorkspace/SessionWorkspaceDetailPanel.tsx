@@ -391,25 +391,25 @@ function PurposePage({ session }: { session: RawAiSession }) {
               },
               {
                 icon: FileText,
-                label: '우선순위별 이슈',
+                label: '담당 작업',
                 value: '0',
                 description: '최근 14일',
               },
               {
                 icon: BarChart3,
-                label: '상태별 이슈',
+                label: '상태별 작업',
                 value: '0',
                 description: '최근 14일',
               },
               {
                 icon: Play,
-                label: '성공률',
+                label: '완료 횟수',
                 value: session.last_message_at ? '1+' : '0',
                 description: '최근 14일',
               },
             ]}
-            recentTitle="최근 이슈"
-            recentEmptyText="최근 이슈가 없습니다."
+            recentTitle="최근 작업"
+            recentEmptyText="최근 작업이 없습니다."
             recentItems={[]}
           />
         )}

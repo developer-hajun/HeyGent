@@ -1,28 +1,19 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
-  ArrowDownAZ,
   ArrowUpDown,
   Bot,
   Check,
-  ChevronDown,
-  Copy,
   Circle,
   CircleCheck,
-  CircleSlash2,
   Clock3,
   Columns3,
   Filter,
   FolderKanban,
-  HardDrive,
-  Layers,
   List,
-  ListTree,
   PauseCircle,
   Plus,
   Search,
-  SlidersHorizontal,
-  Tag,
   UserRound,
   X,
 } from 'lucide-react'
@@ -30,8 +21,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/components/ui/utils'
+import { useSessionStore } from '@/store/useSessionStore'
 import {
-  ISSUE_BOARD_PRIORITY_ORDER,
   ISSUE_BOARD_STATUSES,
   createIssueBoardIdentifier,
   createIssueBoardFixtures,
@@ -39,231 +30,143 @@ import {
   issueBoardStatusLabel,
   moveIssueToStatus,
   type IssueBoardIssue,
-  type IssueBoardPriority,
   type IssueBoardStatus,
 } from './issueBoardModel'
 
-const ASSIGNEES = [
-  { id: 'agent-ceo', name: 'CEO' },
-  { id: 'agent-coder', name: '빌더' },
-  { id: 'agent-review', name: '리뷰봇' },
-] as const
-
-const ASSIGNEE_FILTERS = [{ id: '__unassigned', name: '담당자 없음' }, ...ASSIGNEES] as const
-
-const CREATORS = [
-  { id: 'user:operator', name: '운영자', icon: UserRound },
-  { id: 'agent:builder', name: '빌더', icon: Bot },
-] as const
-
-const PROJECTS = [
-  { id: 'project-board', name: '보드 UI', color: 'bg-teal-500' },
-  { id: 'project-runtime', name: '에이전트 런타임', color: 'bg-amber-500' },
-] as const
-
-const WORKSPACES = [
-  { id: 'workspace-session', name: '세션 작업공간' },
-  { id: 'workspace-isolated', name: '격리 작업공간' },
-] as const
-
-const LABELS = [
-  { id: 'ui', name: 'UI', color: 'bg-teal-500' },
-  { id: 'api', name: 'API', color: 'bg-blue-500' },
-  { id: 'risk', name: '리스크', color: 'bg-red-500' },
-  { id: 'docs', name: '문서', color: 'bg-violet-500' },
-] as const
+const MAIN_AGENT_ASSIGNEE = { id: 'main-agent', name: '메인 에이전트', icon: UserRound } as const
 
 const QUICK_FILTERS = [
   { id: 'all', label: '전체', statuses: [] },
-  { id: 'active', label: '진행 항목', statuses: ['todo', 'in_progress', 'in_review', 'blocked'] },
-  { id: 'backlog', label: '대기', statuses: ['backlog'] },
-  { id: 'done', label: '종료', statuses: ['done', 'cancelled'] },
+  { id: 'active', label: '진행 항목', statuses: ['todo', 'in_progress', 'blocked'] },
+  { id: 'blocked', label: '차단됨', statuses: ['blocked'] },
+  { id: 'done', label: '완료', statuses: ['done'] },
 ] as const
 
-const STATUS_FILTER_ORDER: IssueBoardStatus[] = [
-  'in_progress',
-  'todo',
-  'backlog',
-  'in_review',
-  'blocked',
-  'done',
-  'cancelled',
-]
-
 type ViewMode = 'list' | 'board'
-type SortField = 'updated' | 'priority' | 'title'
-type IssueColumn =
-  | 'status'
-  | 'id'
-  | 'assignee'
-  | 'project'
-  | 'workspace'
-  | 'parent'
-  | 'labels'
-  | 'updated'
-type GroupBy = 'status' | 'priority' | 'assignee' | 'project' | 'workspace' | 'parent' | 'none'
+type SortField = 'updated' | 'title' | 'status'
+type BoardAssignee = {
+  id: string
+  name: string
+  icon: typeof UserRound
+}
 
-interface PersistedIssueBoardState {
+interface PersistedTodoBoardState {
   issues: IssueBoardIssue[]
   query: string
   viewMode: ViewMode
-  selectedStatuses: IssueBoardStatus[]
-  selectedPriorities: IssueBoardPriority[]
-  selectedAssignees: string[]
-  selectedCreators: string[]
-  selectedProjects: string[]
-  selectedWorkspaces: string[]
-  selectedLabels: string[]
-  liveOnly: boolean
   sortField: SortField
-  groupBy: GroupBy
-  nestingEnabled: boolean
-  visibleColumns: IssueColumn[]
+  selectedStatuses: IssueBoardStatus[]
+  selectedAssignees: string[]
+  liveOnly: boolean
 }
 
 export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
-  const storageKey = `heygent-issue-board:v2:${sessionId}`
-  const [initialState] = useState(() => loadIssueBoardState(storageKey, sessionId))
+  const storageKey = `heygent-task-board:v2:${sessionId}`
+  const agentPanelsBySessionId = useSessionStore((state) => state.agentPanelsBySessionId)
+  const assignees = useMemo<BoardAssignee[]>(() => {
+    const agentPanels = agentPanelsBySessionId[sessionId] ?? []
+    return [
+      MAIN_AGENT_ASSIGNEE,
+      ...agentPanels.map((panel) => ({
+        id: panel.id,
+        name: panel.agent.name,
+        icon: Bot,
+      })),
+    ]
+  }, [agentPanelsBySessionId, sessionId])
+  const [initialState] = useState(() => loadTodoBoardState(storageKey, sessionId))
   const [issues, setIssues] = useState(initialState.issues)
   const [query, setQuery] = useState(initialState.query)
   const [viewMode, setViewMode] = useState<ViewMode>(initialState.viewMode)
+  const [sortField, setSortField] = useState<SortField>(initialState.sortField)
   const [selectedStatuses, setSelectedStatuses] = useState<IssueBoardStatus[]>(
     initialState.selectedStatuses,
-  )
-  const [selectedPriorities, setSelectedPriorities] = useState<IssueBoardPriority[]>(
-    initialState.selectedPriorities,
   )
   const [selectedAssignees, setSelectedAssignees] = useState<string[]>(
     initialState.selectedAssignees,
   )
-  const [selectedCreators, setSelectedCreators] = useState<string[]>(initialState.selectedCreators)
-  const [selectedProjects, setSelectedProjects] = useState<string[]>(initialState.selectedProjects)
-  const [selectedWorkspaces, setSelectedWorkspaces] = useState<string[]>(
-    initialState.selectedWorkspaces,
-  )
-  const [selectedLabels, setSelectedLabels] = useState<string[]>(initialState.selectedLabels)
   const [liveOnly, setLiveOnly] = useState(initialState.liveOnly)
-  const [sortField, setSortField] = useState<SortField>(initialState.sortField)
-  const [groupBy, setGroupBy] = useState<GroupBy>(initialState.groupBy)
-  const [nestingEnabled, setNestingEnabled] = useState(initialState.nestingEnabled)
-  const [visibleColumns, setVisibleColumns] = useState<IssueColumn[]>(initialState.visibleColumns)
   const [draggedIssueId, setDraggedIssueId] = useState<string | null>(null)
   const [dragOverStatus, setDragOverStatus] = useState<IssueBoardStatus | null>(null)
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null)
 
   useEffect(() => {
-    saveIssueBoardState(storageKey, {
+    saveTodoBoardState(storageKey, {
       issues,
       query,
       viewMode,
-      selectedStatuses,
-      selectedPriorities,
-      selectedAssignees,
-      selectedCreators,
-      selectedProjects,
-      selectedWorkspaces,
-      selectedLabels,
-      liveOnly,
       sortField,
-      groupBy,
-      nestingEnabled,
-      visibleColumns,
+      selectedStatuses,
+      selectedAssignees,
+      liveOnly,
     })
   }, [
-    groupBy,
     issues,
     liveOnly,
-    nestingEnabled,
     query,
     selectedAssignees,
-    selectedCreators,
-    selectedLabels,
-    selectedPriorities,
-    selectedProjects,
     selectedStatuses,
-    selectedWorkspaces,
     sortField,
     storageKey,
-    visibleColumns,
     viewMode,
   ])
 
   const filteredIssues = useMemo(
     () =>
-      sortIssues(
-        filterIssues(issues, {
-          query,
-          statuses: selectedStatuses,
-          priorities: selectedPriorities,
-          assignees: selectedAssignees,
-          creators: selectedCreators,
-          projects: selectedProjects,
-          workspaces: selectedWorkspaces,
-          labels: selectedLabels,
-          liveOnly,
-        }),
+      sortTodos(
+        filterTodos(
+          issues,
+          {
+            query,
+            statuses: selectedStatuses,
+            assignees: selectedAssignees,
+            liveOnly,
+          },
+          assignees,
+        ),
         sortField,
       ),
-    [
-      issues,
-      liveOnly,
-      query,
-      selectedAssignees,
-      selectedCreators,
-      selectedLabels,
-      selectedPriorities,
-      selectedProjects,
-      selectedStatuses,
-      selectedWorkspaces,
-      sortField,
-    ],
+    [assignees, issues, liveOnly, query, selectedAssignees, selectedStatuses, sortField],
   )
   const grouped = useMemo(() => groupIssuesByStatus(filteredIssues), [filteredIssues])
   const selectedIssue = selectedIssueId
     ? (issues.find((issue) => issue.id === selectedIssueId) ?? null)
     : null
   const activeFilterCount =
-    Number(selectedStatuses.length > 0) +
-    Number(selectedPriorities.length > 0) +
-    Number(selectedAssignees.length > 0) +
-    Number(selectedCreators.length > 0) +
-    Number(selectedProjects.length > 0) +
-    Number(selectedWorkspaces.length > 0) +
-    Number(selectedLabels.length > 0) +
-    Number(liveOnly)
+    Number(selectedStatuses.length > 0) + Number(selectedAssignees.length > 0) + Number(liveOnly)
 
   const moveIssue = (issueId: string, status: IssueBoardStatus) => {
     setIssues((current) => moveIssueToStatus(current, issueId, status))
   }
+
+  const assignIssue = (issueId: string, assigneeAgentId: string | null) => {
+    const now = new Date().toISOString()
+    setIssues((current) =>
+      current.map((issue) =>
+        issue.id === issueId ? { ...issue, assigneeAgentId, updatedAt: now } : issue,
+      ),
+    )
+  }
+
   const resetFilters = () => {
     setQuery('')
     setSelectedStatuses([])
-    setSelectedPriorities([])
     setSelectedAssignees([])
-    setSelectedCreators([])
-    setSelectedProjects([])
-    setSelectedWorkspaces([])
-    setSelectedLabels([])
     setLiveOnly(false)
   }
 
-  const createNewIssue = () => {
+  const createNewTodo = () => {
     const now = new Date().toISOString()
     const sequence = issues.length + 1
-    const issueId = `${sessionId}:issue:${String(sequence).padStart(3, '0')}`
+    const todoId = `${sessionId}:todo:${String(sequence).padStart(3, '0')}`
     setIssues((current) => [
       {
-        id: issueId,
-        identifier: createIssueBoardIdentifier(sessionId, sequence),
-        title: '새 운영 이슈',
-        description: '새 작업 항목입니다. 실제 이슈 API가 연결되면 생성 입력으로 대체됩니다.',
-        status: 'backlog',
-        priority: 'medium',
+        id: todoId,
+        identifier: createIssueBoardIdentifier(sequence),
+        title: '새 작업',
+        description: '담당 에이전트 한 명에게 맡길 작업입니다.',
+        status: 'todo',
         assigneeAgentId: null,
-        creatorId: 'user:operator',
-        projectId: 'project-board',
-        workspaceId: 'workspace-session',
-        labels: ['ui'],
         createdAt: now,
         updatedAt: now,
         live: false,
@@ -273,25 +176,25 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   }
 
   return (
-    <section className="bg-background flex h-full min-h-0 flex-col overflow-hidden">
+    <section className="bg-background flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden">
       <header className="border-border/70 flex shrink-0 flex-col gap-3 border-b px-6 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="text-muted-foreground flex items-center gap-2 text-[11px] font-semibold tracking-widest uppercase">
               <FolderKanban className="h-3.5 w-3.5" />
-              이슈보드
+              작업 보드
             </div>
-            <h1 className="text-foreground mt-1 truncate text-xl font-semibold">이슈보드</h1>
+            <h1 className="text-foreground mt-1 truncate text-xl font-semibold">작업</h1>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="border-border bg-muted/20 rounded-full border px-2 py-1 text-[11px] font-medium">
-              이슈 {issues.length}개
+              작업 {issues.length}개
             </span>
             <span className="border-border bg-muted/20 rounded-full border px-2 py-1 text-[11px] font-medium">
-              에이전트 {ASSIGNEES.length}명
+              작업당 에이전트 1명
             </span>
             <span className="border-border bg-muted/20 rounded-full border px-2 py-1 text-[11px] font-medium">
-              세션 연동
+              동시 실행 1개
             </span>
           </div>
         </div>
@@ -302,17 +205,17 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
             variant="outline"
             size="sm"
             className="h-9 gap-2"
-            onClick={createNewIssue}
+            onClick={createNewTodo}
           >
-            <Plus className="h-4 w-4" />새 이슈
+            <Plus className="h-4 w-4" />새 작업
           </Button>
           <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
             <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="이슈 검색..."
-              aria-label="이슈 검색"
+              placeholder="작업 검색..."
+              aria-label="작업 검색"
               className="h-9 pl-9"
             />
           </div>
@@ -339,48 +242,34 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
                 <Columns3 className="h-4 w-4" />
               </Button>
             </div>
+            <FilterPopover
+              activeFilterCount={activeFilterCount}
+              assignees={assignees}
+              liveOnly={liveOnly}
+              selectedAssignees={selectedAssignees}
+              selectedStatuses={selectedStatuses}
+              onAssigneesChange={setSelectedAssignees}
+              onClear={resetFilters}
+              onLiveOnlyChange={setLiveOnly}
+              onStatusesChange={setSelectedStatuses}
+            />
             <Button
               type="button"
               variant="ghost"
-              size="icon-sm"
-              className={cn('h-9 w-9', nestingEnabled && 'bg-accent text-foreground')}
-              title="계층 보기"
-              onClick={() => setNestingEnabled((value) => !value)}
+              size="sm"
+              className="h-9 gap-1.5 px-2.5"
+              title="정렬"
+              onClick={() => setSortField(nextSortField(sortField))}
             >
-              <ListTree className="h-4 w-4" />
+              <ArrowUpDown className="h-4 w-4" />
+              {sortFieldLabel(sortField)}
             </Button>
-            <ColumnMenu
-              visibleColumns={visibleColumns}
-              onVisibleColumnsChange={setVisibleColumns}
-            />
-            <FilterPopover
-              activeFilterCount={activeFilterCount}
-              liveOnly={liveOnly}
-              selectedAssignees={selectedAssignees}
-              selectedCreators={selectedCreators}
-              selectedLabels={selectedLabels}
-              selectedPriorities={selectedPriorities}
-              selectedProjects={selectedProjects}
-              selectedStatuses={selectedStatuses}
-              selectedWorkspaces={selectedWorkspaces}
-              onAssigneesChange={setSelectedAssignees}
-              onClear={resetFilters}
-              onCreatorsChange={setSelectedCreators}
-              onLabelsChange={setSelectedLabels}
-              onLiveOnlyChange={setLiveOnly}
-              onPrioritiesChange={setSelectedPriorities}
-              onProjectsChange={setSelectedProjects}
-              onStatusesChange={setSelectedStatuses}
-              onWorkspacesChange={setSelectedWorkspaces}
-            />
-            <SortButton iconOnly sortField={sortField} onSortFieldChange={setSortField} />
-            <GroupMenu groupBy={groupBy} onGroupByChange={setGroupBy} />
           </div>
         </div>
       </header>
 
       {viewMode === 'board' ? (
-        <IssueKanbanBoard
+        <TodoKanbanBoard
           draggedIssueId={draggedIssueId}
           dragOverStatus={dragOverStatus}
           grouped={grouped}
@@ -397,17 +286,20 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
           }}
           onDragStart={setDraggedIssueId}
           onOpenIssue={setSelectedIssueId}
+          assignees={assignees}
         />
       ) : (
-        <IssueListView
+        <TodoListView
           issues={filteredIssues}
           onOpenIssue={setSelectedIssueId}
-          groupBy={groupBy}
-          visibleColumns={visibleColumns}
+          assignees={assignees}
         />
       )}
-      <IssueDetailPanel
+
+      <TodoDetailPanel
+        assignees={assignees}
         issue={selectedIssue}
+        onAssignIssue={assignIssue}
         onMoveStatus={(issueId, status) => moveIssue(issueId, status)}
         onOpenChange={(open) => !open && setSelectedIssueId(null)}
       />
@@ -415,7 +307,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   )
 }
 
-function IssueKanbanBoard({
+function TodoKanbanBoard({
   draggedIssueId,
   dragOverStatus,
   grouped,
@@ -425,10 +317,12 @@ function IssueKanbanBoard({
   onDragReset,
   onDragStart,
   onOpenIssue,
+  assignees,
 }: {
   draggedIssueId: string | null
   dragOverStatus: IssueBoardStatus | null
   grouped: Record<IssueBoardStatus, IssueBoardIssue[]>
+  assignees: BoardAssignee[]
   onDragEnd: (issueId: string, status: IssueBoardStatus) => void
   onDragLeave: () => void
   onDragOverStatus: (status: IssueBoardStatus) => void
@@ -442,7 +336,6 @@ function IssueKanbanBoard({
         {ISSUE_BOARD_STATUSES.map((status) => {
           const issues = grouped[status]
           const isOver = dragOverStatus === status
-          const isEmpty = issues.length === 0
           return (
             <section
               key={status}
@@ -456,29 +349,16 @@ function IssueKanbanBoard({
                 const issueId = event.dataTransfer.getData('text/plain') || draggedIssueId
                 if (issueId) onDragEnd(issueId, status)
               }}
-              className={cn(
-                'flex shrink-0 flex-col transition-[width,min-width] duration-150',
-                isEmpty && !isOver ? 'w-12 min-w-12' : 'w-[260px] min-w-[260px]',
-              )}
+              className="flex w-[280px] min-w-[280px] shrink-0 flex-col"
             >
-              <div
-                className={cn(
-                  'mb-1 flex items-center gap-2 px-2 py-2',
-                  isEmpty && !isOver && 'justify-center',
-                )}
-                title={isEmpty && !isOver ? issueBoardStatusLabel(status) : undefined}
-              >
+              <div className="mb-1 flex items-center gap-2 px-2 py-2">
                 <StatusIcon status={status} />
-                {(!isEmpty || isOver) && (
-                  <>
-                    <span className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
-                      {issueBoardStatusLabel(status)}
-                    </span>
-                    <span className="text-muted-foreground/60 ml-auto text-xs tabular-nums">
-                      {issues.length}
-                    </span>
-                  </>
-                )}
+                <span className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">
+                  {issueBoardStatusLabel(status)}
+                </span>
+                <span className="text-muted-foreground/60 ml-auto text-xs tabular-nums">
+                  {issues.length}
+                </span>
               </div>
               <div
                 className={cn(
@@ -487,9 +367,10 @@ function IssueKanbanBoard({
                 )}
               >
                 {issues.map((issue) => (
-                  <IssueCard
+                  <TodoCard
                     key={issue.id}
                     issue={issue}
+                    assignees={assignees}
                     dragging={draggedIssueId === issue.id}
                     onDragReset={onDragReset}
                     onDragStart={onDragStart}
@@ -506,22 +387,22 @@ function IssueKanbanBoard({
   )
 }
 
-function IssueCard({
+function TodoCard({
   dragging,
   issue,
   onDragReset,
   onDragStart,
   onOpenIssue,
+  assignees,
 }: {
   dragging: boolean
   issue: IssueBoardIssue
+  assignees: BoardAssignee[]
   onDragReset: () => void
   onDragStart: (issueId: string) => void
   onOpenIssue: (issueId: string) => void
 }) {
-  const assigneeName = issue.assigneeAgentId
-    ? ASSIGNEES.find((assignee) => assignee.id === issue.assigneeAgentId)?.name
-    : null
+  const assigneeName = assigneeLabel(issue.assigneeAgentId, assignees)
 
   return (
     <article
@@ -566,248 +447,102 @@ function IssueCard({
         )}
       </div>
       <p className="mb-2 line-clamp-2 text-sm leading-snug">{issue.title}</p>
-      <div className="flex min-w-0 items-center gap-2">
-        <PriorityIcon priority={issue.priority} />
-        {assigneeName ? (
-          <span className="text-muted-foreground inline-flex min-w-0 items-center gap-1 text-xs">
-            <UserRound className="h-3 w-3 shrink-0" />
-            <span className="truncate">{assigneeName}</span>
-          </span>
-        ) : (
-          <span className="text-muted-foreground text-xs">담당자 없음</span>
-        )}
+      <div className="text-muted-foreground inline-flex min-w-0 items-center gap-1 text-xs">
+        <UserRound className="h-3 w-3 shrink-0" />
+        <span className="truncate">{assigneeName}</span>
       </div>
     </article>
   )
 }
 
-function IssueListView({
-  groupBy,
+function TodoListView({
   issues,
   onOpenIssue,
-  visibleColumns,
+  assignees,
 }: {
-  groupBy: GroupBy
   issues: IssueBoardIssue[]
   onOpenIssue: (issueId: string) => void
-  visibleColumns: IssueColumn[]
+  assignees: BoardAssignee[]
 }) {
-  const rows =
-    groupBy !== 'none' ? buildIssueGroups(issues, groupBy) : [{ key: 'all', title: null, issues }]
+  const grouped = ISSUE_BOARD_STATUSES.map((status) => ({
+    key: status,
+    title: issueBoardStatusLabel(status),
+    issues: issues.filter((issue) => issue.status === status),
+  })).filter((group) => group.issues.length > 0)
 
   return (
     <div className="min-h-0 flex-1 overflow-auto py-6 pr-16 pl-6">
-      <div className="bg-background/70 overflow-x-auto rounded-lg border">
-        <div style={{ minWidth: listMinWidth(visibleColumns), width: '100%' }}>
-          <div
-            className="text-muted-foreground grid items-center gap-3 border-b px-4 py-2 text-[11px] font-semibold tracking-widest uppercase"
-            style={{ gridTemplateColumns: listGridTemplate(visibleColumns) }}
-          >
-            <span>이슈</span>
-            {visibleColumns.includes('status') && <span>상태</span>}
-            {visibleColumns.includes('id') && <span>ID</span>}
-            {visibleColumns.includes('assignee') && <span>담당자</span>}
-            {visibleColumns.includes('project') && <span>프로젝트</span>}
-            {visibleColumns.includes('workspace') && <span>작업공간</span>}
-            {visibleColumns.includes('labels') && <span>태그</span>}
-            {visibleColumns.includes('updated') && <span className="text-right">수정</span>}
-          </div>
-          {issues.length === 0 ? (
-            <p className="text-muted-foreground px-4 py-6 text-sm">
-              현재 필터나 검색어에 맞는 이슈가 없습니다.
-            </p>
-          ) : (
-            rows.map((group) => (
-              <div key={group.key}>
-                {group.title && (
-                  <div className="text-muted-foreground flex items-center gap-2 border-b px-4 py-3 text-xs font-semibold tracking-wide uppercase">
-                    <StatusIcon status={group.key as IssueBoardStatus} />
-                    {group.title}
-                    <span className="ml-auto text-[11px] font-medium normal-case">
-                      이슈 {group.issues.length}개
-                    </span>
-                    <button
-                      type="button"
-                      className="hover:bg-accent rounded p-0.5"
-                      aria-label={`${group.title}에 이슈 추가`}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                )}
-                {group.issues.map((issue) => (
-                  <button
-                    key={issue.id}
-                    type="button"
-                    onClick={() => onOpenIssue(issue.id)}
-                    className="hover:bg-accent/30 grid w-full items-center gap-3 border-b px-4 py-3 text-left transition-colors last:border-b-0"
-                    style={{ gridTemplateColumns: listGridTemplate(visibleColumns) }}
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
-                      <StatusIcon status={issue.status} />
-                      {issue.live && <span className="h-2 w-2 shrink-0 rounded-full bg-blue-500" />}
-                      <span className="text-muted-foreground shrink-0 font-mono text-xs">
-                        {issue.identifier}
-                      </span>
-                      <span className="truncate text-sm font-medium">{issue.title}</span>
-                    </div>
-                    {visibleColumns.includes('status') && (
-                      <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
-                        <StatusIcon status={issue.status} />
-                        {issueBoardStatusLabel(issue.status)}
-                      </span>
-                    )}
-                    {visibleColumns.includes('id') && (
-                      <span className="text-muted-foreground shrink-0 font-mono text-xs">
-                        {issue.identifier}
-                      </span>
-                    )}
-                    {visibleColumns.includes('assignee') && (
-                      <span className="text-muted-foreground truncate text-xs">
-                        {issue.assigneeAgentId
-                          ? ASSIGNEES.find((assignee) => assignee.id === issue.assigneeAgentId)
-                              ?.name
-                          : '담당자 없음'}
-                      </span>
-                    )}
-                    {visibleColumns.includes('project') && (
-                      <IssueProjectPill projectId={issue.projectId} />
-                    )}
-                    {visibleColumns.includes('workspace') && (
-                      <span className="text-muted-foreground truncate text-xs">
-                        {WORKSPACES.find((workspace) => workspace.id === issue.workspaceId)?.name ??
-                          ''}
-                      </span>
-                    )}
-                    {visibleColumns.includes('parent') && (
-                      <span className="text-muted-foreground truncate text-xs">상위 이슈 없음</span>
-                    )}
-                    {visibleColumns.includes('labels') && <IssueLabelPills labels={issue.labels} />}
-                    {visibleColumns.includes('updated') && (
-                      <span className="text-muted-foreground truncate text-right text-xs">
-                        {formatRelativeTime(issue.updatedAt)}
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            ))
-          )}
+      <div className="bg-background/70 overflow-hidden rounded-lg border">
+        <div className="text-muted-foreground grid grid-cols-[minmax(18rem,1fr)_8rem_6rem] items-center gap-3 border-b px-4 py-2 text-[11px] font-semibold tracking-widest uppercase">
+          <span>작업</span>
+          <span>담당자</span>
+          <span className="text-right">수정</span>
         </div>
+        {issues.length === 0 ? (
+          <p className="text-muted-foreground px-4 py-6 text-sm">
+            현재 필터나 검색어에 맞는 작업이 없습니다.
+          </p>
+        ) : (
+          grouped.map((group) => (
+            <div key={group.key}>
+              <div className="text-muted-foreground flex items-center gap-2 border-b px-4 py-3 text-xs font-semibold tracking-wide uppercase">
+                <StatusIcon status={group.key} />
+                {group.title}
+                <span className="ml-auto text-[11px] font-medium normal-case">
+                  작업 {group.issues.length}개
+                </span>
+              </div>
+              {group.issues.map((issue) => (
+                <button
+                  key={issue.id}
+                  type="button"
+                  onClick={() => onOpenIssue(issue.id)}
+                  className="hover:bg-accent/30 grid w-full grid-cols-[minmax(18rem,1fr)_8rem_6rem] items-center gap-3 border-b px-4 py-3 text-left transition-colors last:border-b-0"
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    <StatusIcon status={issue.status} />
+                    {issue.live && <span className="h-2 w-2 shrink-0 rounded-full bg-blue-500" />}
+                    <span className="text-muted-foreground shrink-0 font-mono text-xs">
+                      {issue.identifier}
+                    </span>
+                    <span className="truncate text-sm font-medium">{issue.title}</span>
+                  </div>
+                  <span className="text-muted-foreground truncate text-xs">
+                    {assigneeLabel(issue.assigneeAgentId, assignees)}
+                  </span>
+                  <span className="text-muted-foreground truncate text-right text-xs">
+                    {formatRelativeTime(issue.updatedAt)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          ))
+        )}
       </div>
     </div>
   )
 }
 
-function listGridTemplate(visibleColumns: IssueColumn[]) {
-  const columnWidths: Record<IssueColumn, string> = {
-    status: 'minmax(4.75rem,6rem)',
-    id: 'minmax(4.25rem,5rem)',
-    assignee: 'minmax(5rem,6.5rem)',
-    project: 'minmax(5rem,6.5rem)',
-    workspace: 'minmax(6.25rem,8rem)',
-    parent: 'minmax(3.75rem,5rem)',
-    labels: 'minmax(3.75rem,6rem)',
-    updated: 'minmax(3.75rem,4.75rem)',
-  }
-  return ['minmax(18rem,1fr)', ...visibleColumns.map((column) => columnWidths[column])].join(' ')
-}
-
-function listMinWidth(visibleColumns: IssueColumn[]) {
-  return visibleColumns.length > 3 ? '1040px' : '760px'
-}
-
-function buildIssueGroups(issues: IssueBoardIssue[], groupBy: GroupBy) {
-  if (groupBy === 'status') {
-    return ISSUE_BOARD_STATUSES.map((status) => ({
-      key: status,
-      title: issueBoardStatusLabel(status),
-      issues: issues.filter((issue) => issue.status === status),
-    })).filter((group) => group.issues.length > 0)
-  }
-
-  const groups = new Map<string, { key: string; title: string; issues: IssueBoardIssue[] }>()
-  for (const issue of issues) {
-    const key = resolveGroupKey(issue, groupBy)
-    const title = resolveGroupTitle(issue, groupBy)
-    const group = groups.get(key)
-    if (group) {
-      group.issues.push(issue)
-    } else {
-      groups.set(key, { key, title, issues: [issue] })
-    }
-  }
-  return [...groups.values()]
-}
-
-function resolveGroupKey(issue: IssueBoardIssue, groupBy: GroupBy) {
-  if (groupBy === 'priority') return issue.priority
-  if (groupBy === 'assignee') return issue.assigneeAgentId ?? 'unassigned'
-  if (groupBy === 'project') return issue.projectId ?? 'no-project'
-  if (groupBy === 'workspace') return issue.workspaceId ?? 'no-workspace'
-  if (groupBy === 'parent') return 'no-parent'
-  return issue.status
-}
-
-function resolveGroupTitle(issue: IssueBoardIssue, groupBy: GroupBy) {
-  if (groupBy === 'priority') return `${priorityLabel(issue.priority)} 우선순위`
-  if (groupBy === 'assignee') {
-    if (!issue.assigneeAgentId) return '담당자 없음'
-    return (
-      ASSIGNEES.find((assignee) => assignee.id === issue.assigneeAgentId)?.name ??
-      issue.assigneeAgentId
-    )
-  }
-  if (groupBy === 'project') {
-    return PROJECTS.find((project) => project.id === issue.projectId)?.name ?? '프로젝트 없음'
-  }
-  if (groupBy === 'workspace') {
-    return (
-      WORKSPACES.find((workspace) => workspace.id === issue.workspaceId)?.name ?? '작업공간 없음'
-    )
-  }
-  if (groupBy === 'parent') return '상위 이슈 없음'
-  return issueBoardStatusLabel(issue.status)
-}
-
 function FilterPopover({
   activeFilterCount,
+  assignees,
   liveOnly,
   selectedAssignees,
-  selectedCreators,
-  selectedLabels,
-  selectedPriorities,
-  selectedProjects,
   selectedStatuses,
-  selectedWorkspaces,
   onAssigneesChange,
   onClear,
-  onCreatorsChange,
-  onLabelsChange,
   onLiveOnlyChange,
-  onPrioritiesChange,
-  onProjectsChange,
   onStatusesChange,
-  onWorkspacesChange,
 }: {
   activeFilterCount: number
+  assignees: BoardAssignee[]
   liveOnly: boolean
   selectedAssignees: string[]
-  selectedCreators: string[]
-  selectedLabels: string[]
-  selectedPriorities: IssueBoardPriority[]
-  selectedProjects: string[]
   selectedStatuses: IssueBoardStatus[]
-  selectedWorkspaces: string[]
   onAssigneesChange: (value: string[]) => void
   onClear: () => void
-  onCreatorsChange: (value: string[]) => void
-  onLabelsChange: (value: string[]) => void
   onLiveOnlyChange: (value: boolean) => void
-  onPrioritiesChange: (value: IssueBoardPriority[]) => void
-  onProjectsChange: (value: string[]) => void
   onStatusesChange: (value: IssueBoardStatus[]) => void
-  onWorkspacesChange: (value: string[]) => void
 }) {
   return (
     <Popover>
@@ -827,17 +562,14 @@ function FilterPopover({
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        className="max-h-[min(80vh,42rem)] w-[min(760px,calc(100vw-2rem))] overflow-y-auto p-0"
-      >
+      <PopoverContent align="end" className="w-80 p-0">
         <div className="space-y-4">
           <div className="border-border/70 flex items-center justify-between gap-3 border-b px-3 py-3">
             <div>
               <div className="text-muted-foreground text-[11px] font-semibold tracking-widest uppercase">
                 필터
               </div>
-              <div className="text-sm font-medium">표시할 이슈</div>
+              <div className="text-sm font-medium">표시할 작업</div>
             </div>
             <button
               type="button"
@@ -847,7 +579,7 @@ function FilterPopover({
               초기화
             </button>
           </div>
-          <div className="space-y-3 px-3 pb-3">
+          <div className="space-y-4 px-3 pb-3">
             <div className="space-y-1.5">
               <span className="text-muted-foreground text-xs">빠른 필터</span>
               <div className="flex flex-wrap gap-1.5">
@@ -871,114 +603,41 @@ function FilterPopover({
                 })}
               </div>
             </div>
-
-            <div className="border-border border-t" />
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="min-w-0 space-y-3">
-                <FilterSection title="상태">
-                  {STATUS_FILTER_ORDER.map((status) => (
-                    <FilterCheck
-                      key={status}
-                      checked={selectedStatuses.includes(status)}
-                      icon={<StatusIcon status={status} />}
-                      label={issueBoardStatusLabel(status)}
-                      onChange={() => onStatusesChange(toggleValue(selectedStatuses, status))}
-                    />
-                  ))}
-                </FilterSection>
-                <FilterSection title="우선순위">
-                  {ISSUE_BOARD_PRIORITY_ORDER.map((priority) => (
-                    <FilterCheck
-                      key={priority}
-                      checked={selectedPriorities.includes(priority)}
-                      icon={<PriorityIcon priority={priority} />}
-                      label={priorityLabel(priority)}
-                      onChange={() => onPrioritiesChange(toggleValue(selectedPriorities, priority))}
-                    />
-                  ))}
-                </FilterSection>
-              </div>
-
-              <div className="min-w-0 space-y-3">
-                <FilterSection title="담당자">
-                  {ASSIGNEE_FILTERS.map((assignee) => (
-                    <FilterCheck
-                      key={assignee.id}
-                      checked={selectedAssignees.includes(assignee.id)}
-                      icon={
-                        assignee.id === '__unassigned' ? undefined : (
-                          <UserRound className="h-3.5 w-3.5" />
-                        )
-                      }
-                      label={assignee.name}
-                      onChange={() =>
-                        onAssigneesChange(toggleValue(selectedAssignees, assignee.id))
-                      }
-                    />
-                  ))}
-                </FilterSection>
-                <FilterSection title="생성자">
-                  {CREATORS.map((creator) => {
-                    const Icon = creator.icon
-                    return (
-                      <FilterCheck
-                        key={creator.id}
-                        checked={selectedCreators.includes(creator.id)}
-                        icon={<Icon className="h-3.5 w-3.5" />}
-                        label={creator.name}
-                        onChange={() => onCreatorsChange(toggleValue(selectedCreators, creator.id))}
-                      />
-                    )
-                  })}
-                </FilterSection>
-                <FilterSection title="프로젝트">
-                  {PROJECTS.map((project) => (
-                    <FilterCheck
-                      key={project.id}
-                      checked={selectedProjects.includes(project.id)}
-                      icon={<span className={cn('h-2.5 w-2.5 rounded-full', project.color)} />}
-                      label={project.name}
-                      onChange={() => onProjectsChange(toggleValue(selectedProjects, project.id))}
-                    />
-                  ))}
-                </FilterSection>
-              </div>
-
-              <div className="min-w-0 space-y-3">
-                <FilterSection title="라벨">
-                  {LABELS.map((label) => (
-                    <FilterCheck
-                      key={label.id}
-                      checked={selectedLabels.includes(label.id)}
-                      icon={<span className={cn('h-2.5 w-2.5 rounded-full', label.color)} />}
-                      label={label.name}
-                      onChange={() => onLabelsChange(toggleValue(selectedLabels, label.id))}
-                    />
-                  ))}
-                </FilterSection>
-                <FilterSection title="작업공간">
-                  {WORKSPACES.map((workspace) => (
-                    <FilterCheck
-                      key={workspace.id}
-                      checked={selectedWorkspaces.includes(workspace.id)}
-                      icon={<HardDrive className="h-3.5 w-3.5" />}
-                      label={workspace.name}
-                      onChange={() =>
-                        onWorkspacesChange(toggleValue(selectedWorkspaces, workspace.id))
-                      }
-                    />
-                  ))}
-                </FilterSection>
-                <FilterSection title="표시 범위">
+            <FilterSection title="상태">
+              {ISSUE_BOARD_STATUSES.map((status) => (
+                <FilterCheck
+                  key={status}
+                  checked={selectedStatuses.includes(status)}
+                  icon={<StatusIcon status={status} />}
+                  label={issueBoardStatusLabel(status)}
+                  onChange={() => onStatusesChange(toggleValue(selectedStatuses, status))}
+                />
+              ))}
+            </FilterSection>
+            <FilterSection title="담당 에이전트">
+              {[{ id: '__unassigned', name: '담당자 없음', icon: UserRound }, ...assignees].map(
+                (assignee) => (
                   <FilterCheck
-                    checked={liveOnly}
-                    label="실행 중 항목만"
-                    onChange={() => onLiveOnlyChange(!liveOnly)}
+                    key={assignee.id}
+                    checked={selectedAssignees.includes(assignee.id)}
+                    icon={
+                      assignee.id === '__unassigned' ? undefined : (
+                        <assignee.icon className="h-3.5 w-3.5" />
+                      )
+                    }
+                    label={assignee.name}
+                    onChange={() => onAssigneesChange(toggleValue(selectedAssignees, assignee.id))}
                   />
-                </FilterSection>
-              </div>
-            </div>
+                ),
+              )}
+            </FilterSection>
+            <FilterSection title="실행">
+              <FilterCheck
+                checked={liveOnly}
+                label="실행 중인 작업만"
+                onChange={() => onLiveOnlyChange(!liveOnly)}
+              />
+            </FilterSection>
           </div>
         </div>
       </PopoverContent>
@@ -1032,252 +691,37 @@ function FilterCheck({
   )
 }
 
-function SortButton({
-  iconOnly = false,
-  sortField,
-  onSortFieldChange,
-}: {
-  iconOnly?: boolean
-  sortField: SortField
-  onSortFieldChange: (value: SortField) => void
-}) {
-  const next = sortField === 'updated' ? 'priority' : sortField === 'priority' ? 'title' : 'updated'
-  const Icon = sortField === 'title' ? ArrowDownAZ : ArrowUpDown
-
-  return (
-    <Button
-      type="button"
-      variant={iconOnly ? 'ghost' : 'outline'}
-      size={iconOnly ? 'icon-sm' : 'sm'}
-      className={iconOnly ? 'h-9 w-9' : 'h-9 gap-2'}
-      title={sortFieldLabel(sortField)}
-      onClick={() => onSortFieldChange(next)}
-    >
-      <Icon className="h-4 w-4" />
-      {!iconOnly && sortFieldLabel(sortField)}
-    </Button>
-  )
-}
-
-const COLUMN_LABELS: Record<IssueColumn, string> = {
-  status: '상태',
-  id: 'ID',
-  assignee: '담당자',
-  project: '프로젝트',
-  workspace: '작업공간',
-  parent: '상위 이슈',
-  labels: '태그',
-  updated: '최근 수정',
-}
-
-const DEFAULT_VISIBLE_COLUMNS: IssueColumn[] = ['assignee', 'workspace', 'updated']
-
-function ColumnMenu({
-  visibleColumns,
-  onVisibleColumnsChange,
-}: {
-  visibleColumns: IssueColumn[]
-  onVisibleColumnsChange: (columns: IssueColumn[]) => void
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button type="button" variant="ghost" size="icon-sm" className="h-9 w-9" title="열">
-          <SlidersHorizontal className="h-4 w-4" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-72 p-2">
-        <div className="space-y-2">
-          <div className="px-2 py-1">
-            <div className="text-muted-foreground text-[11px] font-semibold tracking-widest uppercase">
-              목록 표시 항목
-            </div>
-            <div className="text-sm font-medium">열</div>
-          </div>
-          {(Object.keys(COLUMN_LABELS) as IssueColumn[]).map((column) => (
-            <button
-              key={column}
-              type="button"
-              role="checkbox"
-              aria-checked={visibleColumns.includes(column)}
-              className="hover:bg-accent/50 flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm"
-              onClick={() => {
-                const next = toggleValue(visibleColumns, column)
-                onVisibleColumnsChange(next.length > 0 ? next : ['updated'])
-              }}
-            >
-              <Check
-                className={cn('h-3.5 w-3.5', !visibleColumns.includes(column) && 'opacity-0')}
-              />
-              {COLUMN_LABELS[column]}
-            </button>
-          ))}
-          <div className="border-border border-t" />
-          <button
-            type="button"
-            className="hover:bg-accent/50 flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-sm"
-            onClick={() => onVisibleColumnsChange(DEFAULT_VISIBLE_COLUMNS)}
-          >
-            기본값으로
-            <span className="text-muted-foreground text-xs">담당자, 작업공간, 최근 수정</span>
-          </button>
-        </div>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-const GROUP_OPTIONS: { id: GroupBy; label: string }[] = [
-  { id: 'status', label: '상태' },
-  { id: 'priority', label: '우선순위' },
-  { id: 'assignee', label: '담당자' },
-  { id: 'project', label: '프로젝트' },
-  { id: 'workspace', label: '작업공간' },
-  { id: 'parent', label: '상위 이슈' },
-  { id: 'none', label: '없음' },
-]
-
-function GroupMenu({
-  groupBy,
-  onGroupByChange,
-}: {
-  groupBy: GroupBy
-  onGroupByChange: (value: GroupBy) => void
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          className={cn('h-9 w-9', groupBy !== 'none' && 'bg-accent text-foreground')}
-          title="그룹"
-        >
-          <Layers className="h-4 w-4" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-56 p-2">
-        <div className="space-y-2">
-          <div className="px-2 py-1">
-            <div className="text-muted-foreground text-[11px] font-semibold tracking-widest uppercase">
-              그룹 기준
-            </div>
-            <div className="text-sm font-medium">
-              {GROUP_OPTIONS.find((option) => option.id === groupBy)?.label}
-            </div>
-          </div>
-          {GROUP_OPTIONS.map((option) => (
-            <button
-              key={option.id}
-              type="button"
-              className="hover:bg-accent/50 flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm"
-              onClick={() => onGroupByChange(option.id)}
-            >
-              <Check className={cn('h-3.5 w-3.5', groupBy !== option.id && 'opacity-0')} />
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
 function StatusIcon({ status }: { status: IssueBoardStatus }) {
   const Icon =
     status === 'done'
       ? CircleCheck
       : status === 'blocked'
         ? PauseCircle
-        : status === 'cancelled'
-          ? CircleSlash2
-          : status === 'in_progress'
-            ? Clock3
-            : Circle
-  const color =
-    status === 'backlog'
-      ? 'text-muted-foreground/70'
-      : status === 'todo'
-        ? 'text-blue-500'
         : status === 'in_progress'
-          ? 'text-yellow-500'
-          : status === 'in_review'
-            ? 'text-violet-500'
-            : status === 'done'
-              ? 'text-green-500'
-              : status === 'blocked'
-                ? 'text-red-500'
-                : 'text-neutral-400'
+          ? Clock3
+          : Circle
+  const color =
+    status === 'todo'
+      ? 'text-blue-500'
+      : status === 'in_progress'
+        ? 'text-yellow-500'
+        : status === 'blocked'
+          ? 'text-red-500'
+          : 'text-green-500'
 
   return <Icon className={cn('h-4 w-4 shrink-0', color)} />
 }
 
-function PriorityIcon({
-  priority,
-  showLabel = false,
-}: {
-  priority: IssueBoardPriority
-  showLabel?: boolean
-}) {
-  const color =
-    priority === 'critical'
-      ? 'bg-red-500'
-      : priority === 'high'
-        ? 'bg-orange-500'
-        : priority === 'medium'
-          ? 'bg-blue-500'
-          : 'bg-neutral-400'
-
-  return (
-    <span className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
-      <span className={cn('h-2 w-2 rounded-full', color)} />
-      {showLabel && priorityLabel(priority)}
-    </span>
-  )
-}
-
-function IssueProjectPill({ projectId }: { projectId: string | null }) {
-  const project = PROJECTS.find((option) => option.id === projectId)
-  if (!project) return <span className="text-muted-foreground text-xs">프로젝트 없음</span>
-
-  return (
-    <span className="inline-flex min-w-0 items-center gap-1.5 text-xs">
-      <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', project.color)} />
-      <span className="truncate">{project.name}</span>
-    </span>
-  )
-}
-
-function IssueLabelPills({ labels }: { labels: string[] }) {
-  if (labels.length === 0) return <span className="text-muted-foreground text-xs">라벨 없음</span>
-
-  return (
-    <span className="flex min-w-0 flex-wrap gap-1">
-      {labels.map((labelId) => {
-        const label = LABELS.find((option) => option.id === labelId)
-        if (!label) return null
-        return (
-          <span
-            key={label.id}
-            className="border-border inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium"
-          >
-            <Tag className="h-3 w-3" />
-            <span className={cn('h-1.5 w-1.5 rounded-full', label.color)} />
-            {label.name}
-          </span>
-        )
-      })}
-    </span>
-  )
-}
-
-function IssueDetailPanel({
+function TodoDetailPanel({
+  assignees,
   issue,
+  onAssignIssue,
   onMoveStatus,
   onOpenChange,
 }: {
+  assignees: BoardAssignee[]
   issue: IssueBoardIssue | null
+  onAssignIssue: (issueId: string, assigneeAgentId: string | null) => void
   onMoveStatus: (issueId: string, status: IssueBoardStatus) => void
   onOpenChange: (open: boolean) => void
 }) {
@@ -1292,10 +736,10 @@ function IssueDetailPanel({
       <button
         type="button"
         className="absolute inset-0 cursor-default"
-        aria-label="이슈 상세 닫기"
+        aria-label="작업 상세 닫기"
         onClick={() => onOpenChange(false)}
       />
-      <aside className="bg-background relative flex h-full w-[min(520px,100vw)] flex-col border-l shadow-2xl">
+      <aside className="bg-background relative flex h-full w-[min(500px,100vw)] flex-col border-l shadow-2xl">
         <header className="border-border/70 shrink-0 border-b px-5 py-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div className="text-muted-foreground flex min-w-0 items-center gap-2 text-xs font-medium">
@@ -1305,6 +749,7 @@ function IssueDetailPanel({
             </div>
             <Button
               type="button"
+              aria-label="작업 상세 닫기"
               variant="ghost"
               size="icon-sm"
               onClick={() => onOpenChange(false)}
@@ -1318,34 +763,19 @@ function IssueDetailPanel({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <section className="grid [grid-template-columns:7rem_minmax(0,1fr)] gap-x-5 gap-y-3 text-sm">
-            <IssueProperty label="상태">
+            <TodoProperty label="상태">
               <StatusIcon status={issue.status} />
               {issueBoardStatusLabel(issue.status)}
-            </IssueProperty>
-            <IssueProperty label="우선순위">
-              <PriorityIcon priority={issue.priority} showLabel />
-            </IssueProperty>
-            <IssueProperty label="라벨">
-              <IssueLabelPills labels={issue.labels} />
-            </IssueProperty>
-            <IssueProperty label="담당자">
-              {issue.assigneeAgentId
-                ? ASSIGNEES.find((assignee) => assignee.id === issue.assigneeAgentId)?.name
-                : '담당자 없음'}
-            </IssueProperty>
-            <IssueProperty label="프로젝트">
-              <IssueProjectPill projectId={issue.projectId} />
-            </IssueProperty>
-            <IssueProperty label="상위 이슈">상위 이슈 없음</IssueProperty>
-            <IssueProperty label="작업공간">
+            </TodoProperty>
+            <TodoProperty label="담당">
               <span className="inline-flex items-center gap-1.5">
-                <HardDrive className="h-3.5 w-3.5" />
-                {WORKSPACES.find((workspace) => workspace.id === issue.workspaceId)?.name ??
-                  '작업공간 없음'}
+                <UserRound className="h-3.5 w-3.5" />
+                {assigneeLabel(issue.assigneeAgentId, assignees)}
               </span>
-            </IssueProperty>
-            <IssueProperty label="생성">{formatRelativeTime(issue.createdAt)}</IssueProperty>
-            <IssueProperty label="수정">{formatRelativeTime(issue.updatedAt)}</IssueProperty>
+            </TodoProperty>
+            <TodoProperty label="실행">{issue.live ? '실행 중' : '대기'}</TodoProperty>
+            <TodoProperty label="생성">{formatRelativeTime(issue.createdAt)}</TodoProperty>
+            <TodoProperty label="수정">{formatRelativeTime(issue.updatedAt)}</TodoProperty>
           </section>
 
           <section className="border-border/70 mt-5 border-t pt-4">
@@ -1369,40 +799,52 @@ function IssueDetailPanel({
             </div>
           </section>
 
-          <DetailSection title="문서" action="새 문서">
-            <DetailDocument
-              kind="계획"
-              title="계획"
-              body="정의된 상태와 담당자를 기준으로 다음 실행 단계를 정리합니다."
-            />
-            <DetailDocument
-              kind="메모"
-              title="검토 메모"
-              body="필터, 상세, 실행 상태가 한 화면에서 확인되는지 검토합니다."
-            />
-          </DetailSection>
-
-          <DetailSection title="실행 기록" action="최근 실행">
-            <div className="space-y-2">
-              <RunLedgerRow status={issue.live ? '실행 중' : '성공'} text="완료 후 확인" />
-              <RunLedgerRow status="성공" text="이어받기 인수인계" />
+          <section className="border-border/70 mt-5 border-t pt-4">
+            <div className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-widest uppercase">
+              담당 변경
             </div>
+            <div className="flex flex-wrap gap-1.5">
+              <Button
+                type="button"
+                variant={issue.assigneeAgentId === null ? 'secondary' : 'outline'}
+                size="sm"
+                className="h-8 gap-1.5"
+                onClick={() => onAssignIssue(issue.id, null)}
+              >
+                <UserRound className="h-3.5 w-3.5" />
+                담당자 없음
+              </Button>
+              {assignees.map((assignee) => {
+                const AssigneeIcon = assignee.icon
+                return (
+                  <Button
+                    key={assignee.id}
+                    type="button"
+                    variant={issue.assigneeAgentId === assignee.id ? 'secondary' : 'outline'}
+                    size="sm"
+                    className="h-8 gap-1.5"
+                    onClick={() => onAssignIssue(issue.id, assignee.id)}
+                  >
+                    <AssigneeIcon className="h-3.5 w-3.5" />
+                    {assignee.name}
+                  </Button>
+                )
+              })}
+            </div>
+          </section>
+
+          <DetailSection title="실행 기록">
+            <RunLedgerRow
+              status={issue.live ? '실행 중' : issue.status === 'done' ? '완료' : '대기'}
+              text={issue.live ? '담당 에이전트가 처리 중입니다.' : '아직 연결된 실행이 없습니다.'}
+            />
           </DetailSection>
 
-          <DetailSection title="작업공간" action="작업 보기">
+          <DetailSection title="메모">
             <div className="rounded-md border p-3 text-sm">
-              <div className="flex items-center gap-2 font-medium">
-                <HardDrive className="h-4 w-4" />
-                런타임 상태
-              </div>
-              <div className="text-muted-foreground mt-2 grid grid-cols-[5rem_minmax(0,1fr)] gap-y-1 text-xs">
-                <span>브랜치</span>
-                <span className="font-mono">{issue.identifier.toLowerCase()}-workspace</span>
-                <span>경로</span>
-                <span className="font-mono">~/workspaces/{issue.identifier.toLowerCase()}</span>
-                <span>서비스</span>
-                <span>{issue.live ? '실행 중' : '대기'}</span>
-              </div>
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                실제 서버 연결 후에는 작업별 실행 결과와 사용자가 남긴 메모가 여기에 쌓입니다.
+              </p>
             </div>
           </DetailSection>
         </div>
@@ -1411,7 +853,7 @@ function IssueDetailPanel({
   )
 }
 
-function IssueProperty({ children, label }: { children: ReactNode; label: string }) {
+function TodoProperty({ children, label }: { children: ReactNode; label: string }) {
   return (
     <>
       <div className="text-muted-foreground text-xs">{label}</div>
@@ -1420,41 +862,12 @@ function IssueProperty({ children, label }: { children: ReactNode; label: string
   )
 }
 
-function DetailSection({
-  action,
-  children,
-  title,
-}: {
-  action: string
-  children: ReactNode
-  title: string
-}) {
+function DetailSection({ children, title }: { children: ReactNode; title: string }) {
   return (
     <section className="border-border/70 mt-5 border-t pt-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold">{title}</h3>
-        <button type="button" className="text-muted-foreground hover:text-foreground text-xs">
-          {action}
-        </button>
-      </div>
+      <h3 className="mb-3 text-sm font-semibold">{title}</h3>
       {children}
     </section>
-  )
-}
-
-function DetailDocument({ body, kind, title }: { body: string; kind: string; title: string }) {
-  return (
-    <div className="mb-2 rounded-md border p-3 text-sm">
-      <div className="mb-1 flex items-center gap-2">
-        <ChevronDown className="h-3.5 w-3.5" />
-        <span className="text-muted-foreground rounded border px-1.5 py-0.5 text-[10px] uppercase">
-          {kind}
-        </span>
-        <span className="font-medium">{title}</span>
-        <Copy className="text-muted-foreground ml-auto h-3.5 w-3.5" />
-      </div>
-      <p className="text-muted-foreground text-xs leading-relaxed">{body}</p>
-    </div>
   )
 }
 
@@ -1466,86 +879,65 @@ function RunLedgerRow({ status, text }: { status: string; text: string }) {
         <span className="rounded-full border px-1.5 py-0.5">{status}</span>
         <span className="text-muted-foreground ml-auto">방금 전</span>
       </div>
-      <div className="text-muted-foreground mt-2">다음 조치: {text}</div>
+      <div className="text-muted-foreground mt-2">{text}</div>
     </div>
   )
 }
 
-function priorityLabel(priority: IssueBoardPriority) {
-  const labels: Record<IssueBoardPriority, string> = {
-    critical: '긴급',
-    high: '높음',
-    medium: '보통',
-    low: '낮음',
-  }
-  return labels[priority]
-}
-
-function sortFieldLabel(sortField: SortField) {
-  const labels: Record<SortField, string> = {
-    updated: '최근 수정',
-    priority: '우선순위',
-    title: '제목',
-  }
-  return labels[sortField]
-}
-
-function filterIssues(
+function filterTodos(
   issues: IssueBoardIssue[],
   filters: {
     query: string
     statuses: IssueBoardStatus[]
-    priorities: IssueBoardPriority[]
     assignees: string[]
-    creators: string[]
-    projects: string[]
-    workspaces: string[]
-    labels: string[]
     liveOnly: boolean
   },
+  assignees: BoardAssignee[],
 ) {
   const normalizedQuery = filters.query.trim().toLowerCase()
   return issues.filter((issue) => {
     if (filters.liveOnly && !issue.live) return false
     if (filters.statuses.length > 0 && !filters.statuses.includes(issue.status)) return false
-    if (filters.priorities.length > 0 && !filters.priorities.includes(issue.priority)) return false
     if (filters.assignees.length > 0) {
       if (!issue.assigneeAgentId) return filters.assignees.includes('__unassigned')
       if (!filters.assignees.includes(issue.assigneeAgentId)) return false
     }
-    if (filters.creators.length > 0 && !filters.creators.includes(issue.creatorId)) return false
-    if (filters.projects.length > 0) {
-      if (!issue.projectId || !filters.projects.includes(issue.projectId)) return false
-    }
-    if (filters.workspaces.length > 0) {
-      if (!issue.workspaceId || !filters.workspaces.includes(issue.workspaceId)) return false
-    }
-    if (
-      filters.labels.length > 0 &&
-      !filters.labels.some((labelId) => issue.labels.includes(labelId))
-    ) {
-      return false
-    }
     if (!normalizedQuery) return true
-    return [issue.identifier, issue.title, issue.description].some((value) =>
-      value.toLowerCase().includes(normalizedQuery),
-    )
+    return [
+      issue.identifier,
+      issue.title,
+      issue.description,
+      assigneeLabel(issue.assigneeAgentId, assignees),
+    ].some((value) => value.toLowerCase().includes(normalizedQuery))
   })
 }
 
-function sortIssues(issues: IssueBoardIssue[], sortField: SortField) {
+function sortTodos(issues: IssueBoardIssue[], sortField: SortField) {
   return [...issues].sort((left, right) => {
-    if (sortField === 'priority') {
+    if (sortField === 'title') return left.title.localeCompare(right.title)
+    if (sortField === 'status') {
       return (
-        ISSUE_BOARD_PRIORITY_ORDER.indexOf(left.priority) -
-        ISSUE_BOARD_PRIORITY_ORDER.indexOf(right.priority)
+        ISSUE_BOARD_STATUSES.indexOf(left.status) - ISSUE_BOARD_STATUSES.indexOf(right.status) ||
+        new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
       )
-    }
-    if (sortField === 'title') {
-      return left.title.localeCompare(right.title)
     }
     return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
   })
+}
+
+function nextSortField(sortField: SortField): SortField {
+  if (sortField === 'updated') return 'status'
+  if (sortField === 'status') return 'title'
+  return 'updated'
+}
+
+function sortFieldLabel(sortField: SortField) {
+  const labels: Record<SortField, string> = {
+    updated: '최근 수정',
+    status: '상태순',
+    title: '제목순',
+  }
+  return labels[sortField]
 }
 
 function toggleValue<T>(values: T[], value: T) {
@@ -1559,30 +951,22 @@ function arraysEqual(left: readonly string[], right: readonly string[]) {
   return leftSorted.every((value, index) => value === rightSorted[index])
 }
 
-function loadIssueBoardState(storageKey: string, sessionId: string): PersistedIssueBoardState {
-  const fallback: PersistedIssueBoardState = {
+function loadTodoBoardState(storageKey: string, sessionId: string): PersistedTodoBoardState {
+  const fallback: PersistedTodoBoardState = {
     issues: createIssueBoardFixtures(sessionId),
     query: '',
     viewMode: 'list',
-    selectedStatuses: [],
-    selectedPriorities: [],
-    selectedAssignees: [],
-    selectedCreators: [],
-    selectedProjects: [],
-    selectedWorkspaces: [],
-    selectedLabels: [],
-    liveOnly: false,
     sortField: 'updated',
-    groupBy: 'status',
-    nestingEnabled: true,
-    visibleColumns: DEFAULT_VISIBLE_COLUMNS,
+    selectedStatuses: [],
+    selectedAssignees: [],
+    liveOnly: false,
   }
 
   if (typeof window === 'undefined') return fallback
   try {
     const raw = window.localStorage.getItem(storageKey)
     if (raw === null) return fallback
-    const parsed = JSON.parse(raw) as Partial<PersistedIssueBoardState>
+    const parsed = JSON.parse(raw) as Partial<PersistedTodoBoardState>
     return {
       issues: normalizeIssues(parsed.issues, fallback.issues),
       query: typeof parsed.query === 'string' ? parsed.query : fallback.query,
@@ -1590,45 +974,17 @@ function loadIssueBoardState(storageKey: string, sessionId: string): PersistedIs
         parsed.viewMode === 'list' || parsed.viewMode === 'board'
           ? parsed.viewMode
           : fallback.viewMode,
+      sortField: normalizeSortField(parsed.sortField, fallback.sortField),
       selectedStatuses: normalizeStatuses(parsed.selectedStatuses),
-      selectedPriorities: normalizePriorities(parsed.selectedPriorities),
       selectedAssignees: normalizeAssignees(parsed.selectedAssignees),
-      selectedCreators: normalizeKnownValues(
-        parsed.selectedCreators,
-        CREATORS.map((creator) => creator.id),
-      ),
-      selectedProjects: normalizeKnownValues(
-        parsed.selectedProjects,
-        PROJECTS.map((project) => project.id),
-      ),
-      selectedWorkspaces: normalizeKnownValues(
-        parsed.selectedWorkspaces,
-        WORKSPACES.map((workspace) => workspace.id),
-      ),
-      selectedLabels: normalizeKnownValues(
-        parsed.selectedLabels,
-        LABELS.map((label) => label.id),
-      ),
       liveOnly: parsed.liveOnly === true,
-      sortField:
-        parsed.sortField === 'updated' ||
-        parsed.sortField === 'priority' ||
-        parsed.sortField === 'title'
-          ? parsed.sortField
-          : fallback.sortField,
-      groupBy: normalizeGroupBy(parsed.groupBy, fallback.groupBy),
-      nestingEnabled:
-        typeof parsed.nestingEnabled === 'boolean'
-          ? parsed.nestingEnabled
-          : fallback.nestingEnabled,
-      visibleColumns: normalizeColumns(parsed.visibleColumns, fallback.visibleColumns),
     }
   } catch {
     return fallback
   }
 }
 
-function saveIssueBoardState(storageKey: string, state: PersistedIssueBoardState) {
+function saveTodoBoardState(storageKey: string, state: PersistedTodoBoardState) {
   if (typeof window === 'undefined') return
   try {
     window.localStorage.setItem(storageKey, JSON.stringify(state))
@@ -1652,24 +1008,7 @@ function isIssueBoardIssue(value: unknown): value is IssueBoardIssue {
     typeof issue.title === 'string' &&
     typeof issue.description === 'string' &&
     isIssueBoardStatus(issue.status) &&
-    isIssueBoardPriority(issue.priority) &&
     isKnownAssigneeId(issue.assigneeAgentId) &&
-    isKnownCreatorId(issue.creatorId) &&
-    isKnownNullableOptionId(
-      issue.projectId,
-      PROJECTS.map((project) => project.id),
-    ) &&
-    isKnownNullableOptionId(
-      issue.workspaceId,
-      WORKSPACES.map((workspace) => workspace.id),
-    ) &&
-    Array.isArray(issue.labels) &&
-    issue.labels.every((label) =>
-      isKnownOptionId(
-        label,
-        LABELS.map((option) => option.id),
-      ),
-    ) &&
     typeof issue.createdAt === 'string' &&
     typeof issue.updatedAt === 'string' &&
     typeof issue.live === 'boolean' &&
@@ -1678,42 +1017,11 @@ function isIssueBoardIssue(value: unknown): value is IssueBoardIssue {
 }
 
 function normalizeAssignees(value: unknown): string[] {
-  const allowed = new Set<string>(ASSIGNEE_FILTERS.map((assignee) => assignee.id))
-  return normalizeStringArray(value).filter((item) => allowed.has(item))
+  return normalizeStringArray(value)
 }
 
-function normalizeKnownValues(value: unknown, allowedValues: readonly string[]): string[] {
-  const allowed = new Set(allowedValues)
-  return normalizeStringArray(value).filter((item) => allowed.has(item))
-}
-
-function normalizeColumns(value: unknown, fallback: IssueColumn[]): IssueColumn[] {
-  const columns = normalizeKnownValues(value, Object.keys(COLUMN_LABELS)) as IssueColumn[]
-  return columns.length > 0 ? columns : fallback
-}
-
-function normalizeGroupBy(value: unknown, fallback: GroupBy): GroupBy {
-  return typeof value === 'string' && GROUP_OPTIONS.some((option) => option.id === value)
-    ? (value as GroupBy)
-    : fallback
-}
-
-function isKnownAssigneeId(value: unknown): value is IssueBoardIssue['assigneeAgentId'] {
-  if (value === null) return true
-  if (typeof value !== 'string') return false
-  return ASSIGNEES.some((assignee) => assignee.id === value)
-}
-
-function isKnownCreatorId(value: unknown): value is IssueBoardIssue['creatorId'] {
-  return typeof value === 'string' && CREATORS.some((creator) => creator.id === value)
-}
-
-function isKnownNullableOptionId(value: unknown, allowedValues: readonly string[]) {
-  return value === null || isKnownOptionId(value, allowedValues)
-}
-
-function isKnownOptionId(value: unknown, allowedValues: readonly string[]) {
-  return typeof value === 'string' && allowedValues.includes(value)
+function normalizeSortField(value: unknown, fallback: SortField): SortField {
+  return value === 'updated' || value === 'status' || value === 'title' ? value : fallback
 }
 
 function normalizeStatuses(value: unknown): IssueBoardStatus[] {
@@ -1722,16 +1030,15 @@ function normalizeStatuses(value: unknown): IssueBoardStatus[] {
   )
 }
 
-function normalizePriorities(value: unknown): IssueBoardPriority[] {
-  return normalizeStringArray(value).filter((item): item is IssueBoardPriority =>
-    isIssueBoardPriority(item),
-  )
-}
-
 function normalizeStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
     : []
+}
+
+function assigneeLabel(value: string | null, assignees: BoardAssignee[]) {
+  if (value === null) return '담당자 없음'
+  return assignees.find((assignee) => assignee.id === value)?.name ?? value
 }
 
 function formatRelativeTime(value: string) {
@@ -1749,8 +1056,7 @@ function isIssueBoardStatus(value: unknown): value is IssueBoardStatus {
   return typeof value === 'string' && ISSUE_BOARD_STATUSES.includes(value as IssueBoardStatus)
 }
 
-function isIssueBoardPriority(value: unknown): value is IssueBoardPriority {
-  return (
-    typeof value === 'string' && ISSUE_BOARD_PRIORITY_ORDER.includes(value as IssueBoardPriority)
-  )
+function isKnownAssigneeId(value: unknown): value is IssueBoardIssue['assigneeAgentId'] {
+  if (value === null) return true
+  return typeof value === 'string'
 }
