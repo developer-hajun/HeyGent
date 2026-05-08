@@ -66,7 +66,16 @@ export function moveIssueToStatus(
 }
 
 export function issueBoardStatusLabel(status: IssueBoardStatus) {
-  return status.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
+  const labels: Record<IssueBoardStatus, string> = {
+    backlog: '대기',
+    todo: '할 일',
+    in_progress: '진행 중',
+    in_review: '검토 중',
+    blocked: '차단됨',
+    done: '완료',
+    cancelled: '취소됨',
+  }
+  return labels[status]
 }
 
 export function createIssueBoardIdentifier(sessionId: string, sequence: number) {
@@ -86,7 +95,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
     {
       id: `${sessionId}:issue:001`,
       identifier: createIssueBoardIdentifier(sessionId, 1),
-      title: 'Sketch company analytics dashboard',
+      title: '회사 분석 대시보드 초안 정리',
       description: '운영자가 한 화면에서 실행 흐름과 병목을 확인할 수 있게 정리합니다.',
       status: 'backlog',
       priority: 'low',
@@ -102,7 +111,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
     {
       id: `${sessionId}:issue:002`,
       identifier: createIssueBoardIdentifier(sessionId, 2),
-      title: 'Wire issue board status transitions',
+      title: '이슈보드 상태 전환 연결',
       description: '상태 변경이 카드 이동과 상세 표시에서 같은 값으로 보이게 만듭니다.',
       status: 'todo',
       priority: 'high',
@@ -118,7 +127,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
     {
       id: `${sessionId}:issue:003`,
       identifier: createIssueBoardIdentifier(sessionId, 3),
-      title: 'Connect running task marker to active execution',
+      title: '실행 중 작업 표시 연결',
       description: '실행 중인 작업을 보드 카드에서 파란 표시로 드러냅니다.',
       status: 'in_progress',
       priority: 'critical',
@@ -135,7 +144,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
     {
       id: `${sessionId}:issue:004`,
       identifier: createIssueBoardIdentifier(sessionId, 4),
-      title: 'Review generated handoff summary',
+      title: '생성된 인수인계 요약 검토',
       description: '완료 판단 전에 산출물 요약과 다음 조치를 검토합니다.',
       status: 'in_review',
       priority: 'medium',
@@ -151,7 +160,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
     {
       id: `${sessionId}:issue:005`,
       identifier: createIssueBoardIdentifier(sessionId, 5),
-      title: 'Resolve missing workspace decision',
+      title: '작업공간 결정 누락 해결',
       description: '작업 범위를 정하지 못해 실행이 멈춘 항목입니다.',
       status: 'blocked',
       priority: 'high',
@@ -167,7 +176,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
     {
       id: `${sessionId}:issue:006`,
       identifier: createIssueBoardIdentifier(sessionId, 6),
-      title: 'Close completed chat loading fix',
+      title: '완료된 채팅 로딩 수정 닫기',
       description: '완료된 작업을 닫고 이후 실행에서 제외합니다.',
       status: 'done',
       priority: 'medium',
@@ -183,7 +192,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
     {
       id: `${sessionId}:issue:007`,
       identifier: createIssueBoardIdentifier(sessionId, 7),
-      title: 'Remove obsolete board color migration',
+      title: '사용하지 않는 보드 색상 이전 제거',
       description: '더 이상 진행하지 않는 작업을 보드 뒤쪽으로 보냅니다.',
       status: 'cancelled',
       priority: 'medium',

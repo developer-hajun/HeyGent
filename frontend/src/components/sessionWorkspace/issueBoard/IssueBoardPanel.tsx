@@ -45,39 +45,39 @@ import {
 
 const ASSIGNEES = [
   { id: 'agent-ceo', name: 'CEO' },
-  { id: 'agent-coder', name: 'Builder' },
-  { id: 'agent-review', name: 'ReviewBot' },
+  { id: 'agent-coder', name: '빌더' },
+  { id: 'agent-review', name: '리뷰봇' },
 ] as const
 
-const ASSIGNEE_FILTERS = [{ id: '__unassigned', name: 'No assignee' }, ...ASSIGNEES] as const
+const ASSIGNEE_FILTERS = [{ id: '__unassigned', name: '담당자 없음' }, ...ASSIGNEES] as const
 
 const CREATORS = [
-  { id: 'user:operator', name: 'Operator', icon: UserRound },
-  { id: 'agent:builder', name: 'Builder', icon: Bot },
+  { id: 'user:operator', name: '운영자', icon: UserRound },
+  { id: 'agent:builder', name: '빌더', icon: Bot },
 ] as const
 
 const PROJECTS = [
-  { id: 'project-board', name: 'Board UI', color: 'bg-teal-500' },
-  { id: 'project-runtime', name: 'Agent Runtime', color: 'bg-amber-500' },
+  { id: 'project-board', name: '보드 UI', color: 'bg-teal-500' },
+  { id: 'project-runtime', name: '에이전트 런타임', color: 'bg-amber-500' },
 ] as const
 
 const WORKSPACES = [
-  { id: 'workspace-session', name: 'Session workspace' },
-  { id: 'workspace-isolated', name: 'Isolated workspace' },
+  { id: 'workspace-session', name: '세션 작업공간' },
+  { id: 'workspace-isolated', name: '격리 작업공간' },
 ] as const
 
 const LABELS = [
   { id: 'ui', name: 'UI', color: 'bg-teal-500' },
   { id: 'api', name: 'API', color: 'bg-blue-500' },
-  { id: 'risk', name: 'Risk', color: 'bg-red-500' },
-  { id: 'docs', name: 'Docs', color: 'bg-violet-500' },
+  { id: 'risk', name: '리스크', color: 'bg-red-500' },
+  { id: 'docs', name: '문서', color: 'bg-violet-500' },
 ] as const
 
 const QUICK_FILTERS = [
-  { id: 'all', label: 'All', statuses: [] },
-  { id: 'active', label: 'Active', statuses: ['todo', 'in_progress', 'in_review', 'blocked'] },
-  { id: 'backlog', label: 'Backlog', statuses: ['backlog'] },
-  { id: 'done', label: 'Done', statuses: ['done', 'cancelled'] },
+  { id: 'all', label: '전체', statuses: [] },
+  { id: 'active', label: '진행 항목', statuses: ['todo', 'in_progress', 'in_review', 'blocked'] },
+  { id: 'backlog', label: '대기', statuses: ['backlog'] },
+  { id: 'done', label: '종료', statuses: ['done', 'cancelled'] },
 ] as const
 
 const STATUS_FILTER_ORDER: IssueBoardStatus[] = [
@@ -122,7 +122,7 @@ interface PersistedIssueBoardState {
 }
 
 export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
-  const storageKey = `heygent-issue-board:${sessionId}`
+  const storageKey = `heygent-issue-board:v2:${sessionId}`
   const [initialState] = useState(() => loadIssueBoardState(storageKey, sessionId))
   const [issues, setIssues] = useState(initialState.issues)
   const [query, setQuery] = useState(initialState.query)
@@ -255,7 +255,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
       {
         id: issueId,
         identifier: createIssueBoardIdentifier(sessionId, sequence),
-        title: 'New operator issue',
+        title: '새 운영 이슈',
         description: '새 작업 항목입니다. 실제 이슈 API가 연결되면 생성 입력으로 대체됩니다.',
         status: 'backlog',
         priority: 'medium',
@@ -279,19 +279,19 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
           <div className="min-w-0">
             <div className="text-muted-foreground flex items-center gap-2 text-[11px] font-semibold tracking-widest uppercase">
               <FolderKanban className="h-3.5 w-3.5" />
-              Issue board
+              이슈보드
             </div>
             <h1 className="text-foreground mt-1 truncate text-xl font-semibold">이슈보드</h1>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="border-border bg-muted/20 rounded-full border px-2 py-1 text-[11px] font-medium">
-              {issues.length} issues
+              이슈 {issues.length}개
             </span>
             <span className="border-border bg-muted/20 rounded-full border px-2 py-1 text-[11px] font-medium">
-              {ASSIGNEES.length} agents
+              에이전트 {ASSIGNEES.length}명
             </span>
             <span className="border-border bg-muted/20 rounded-full border px-2 py-1 text-[11px] font-medium">
-              session aware
+              세션 연동
             </span>
           </div>
         </div>
@@ -304,16 +304,15 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
             className="h-9 gap-2"
             onClick={createNewIssue}
           >
-            <Plus className="h-4 w-4" />
-            New issue
+            <Plus className="h-4 w-4" />새 이슈
           </Button>
           <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
             <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search issues..."
-              aria-label="Search issues"
+              placeholder="이슈 검색..."
+              aria-label="이슈 검색"
               className="h-9 pl-9"
             />
           </div>
@@ -324,7 +323,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
                 variant="ghost"
                 size="icon-sm"
                 className={cn(viewMode === 'list' && 'bg-accent text-foreground')}
-                title="List"
+                title="목록"
                 onClick={() => setViewMode('list')}
               >
                 <List className="h-4 w-4" />
@@ -334,7 +333,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
                 variant="ghost"
                 size="icon-sm"
                 className={cn(viewMode === 'board' && 'bg-accent text-foreground')}
-                title="Board"
+                title="보드"
                 onClick={() => setViewMode('board')}
               >
                 <Columns3 className="h-4 w-4" />
@@ -345,7 +344,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
               variant="ghost"
               size="icon-sm"
               className={cn('h-9 w-9', nestingEnabled && 'bg-accent text-foreground')}
-              title="Nesting"
+              title="계층 보기"
               onClick={() => setNestingEnabled((value) => !value)}
             >
               <ListTree className="h-4 w-4" />
@@ -552,11 +551,11 @@ function IssueCard({
         {issue.needsNextStep && (
           <span
             className="inline-flex items-center gap-1 rounded-full border border-amber-400/45 bg-amber-50/60 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:border-amber-300/35 dark:bg-amber-400/10 dark:text-amber-300"
-            title="This issue needs a next step"
-            aria-label="Needs next step"
+            title="다음 조치가 필요합니다"
+            aria-label="다음 조치 필요"
           >
             <AlertTriangle className="h-3 w-3" />
-            Next step
+            다음 조치
           </span>
         )}
         {issue.live && (
@@ -575,7 +574,7 @@ function IssueCard({
             <span className="truncate">{assigneeName}</span>
           </span>
         ) : (
-          <span className="text-muted-foreground font-mono text-xs">unassigned</span>
+          <span className="text-muted-foreground text-xs">담당자 없음</span>
         )}
       </div>
     </article>
@@ -604,18 +603,18 @@ function IssueListView({
             className="text-muted-foreground grid items-center gap-3 border-b px-4 py-2 text-[11px] font-semibold tracking-widest uppercase"
             style={{ gridTemplateColumns: listGridTemplate(visibleColumns) }}
           >
-            <span>Issue</span>
-            {visibleColumns.includes('status') && <span>Status</span>}
+            <span>이슈</span>
+            {visibleColumns.includes('status') && <span>상태</span>}
             {visibleColumns.includes('id') && <span>ID</span>}
-            {visibleColumns.includes('assignee') && <span>Assignee</span>}
-            {visibleColumns.includes('project') && <span>Project</span>}
-            {visibleColumns.includes('workspace') && <span>Workspace</span>}
-            {visibleColumns.includes('labels') && <span>Tags</span>}
-            {visibleColumns.includes('updated') && <span className="text-right">Updated</span>}
+            {visibleColumns.includes('assignee') && <span>담당자</span>}
+            {visibleColumns.includes('project') && <span>프로젝트</span>}
+            {visibleColumns.includes('workspace') && <span>작업공간</span>}
+            {visibleColumns.includes('labels') && <span>태그</span>}
+            {visibleColumns.includes('updated') && <span className="text-right">수정</span>}
           </div>
           {issues.length === 0 ? (
             <p className="text-muted-foreground px-4 py-6 text-sm">
-              No issues match the current filters or search.
+              현재 필터나 검색어에 맞는 이슈가 없습니다.
             </p>
           ) : (
             rows.map((group) => (
@@ -625,12 +624,12 @@ function IssueListView({
                     <StatusIcon status={group.key as IssueBoardStatus} />
                     {group.title}
                     <span className="ml-auto text-[11px] font-medium normal-case">
-                      {group.issues.length} issue{group.issues.length === 1 ? '' : 's'}
+                      이슈 {group.issues.length}개
                     </span>
                     <button
                       type="button"
                       className="hover:bg-accent rounded p-0.5"
-                      aria-label={`Add issue to ${group.title}`}
+                      aria-label={`${group.title}에 이슈 추가`}
                     >
                       <Plus className="h-3.5 w-3.5" />
                     </button>
@@ -668,7 +667,7 @@ function IssueListView({
                         {issue.assigneeAgentId
                           ? ASSIGNEES.find((assignee) => assignee.id === issue.assigneeAgentId)
                               ?.name
-                          : 'unassigned'}
+                          : '담당자 없음'}
                       </span>
                     )}
                     {visibleColumns.includes('project') && (
@@ -681,7 +680,7 @@ function IssueListView({
                       </span>
                     )}
                     {visibleColumns.includes('parent') && (
-                      <span className="text-muted-foreground truncate text-xs">No parent</span>
+                      <span className="text-muted-foreground truncate text-xs">상위 이슈 없음</span>
                     )}
                     {visibleColumns.includes('labels') && <IssueLabelPills labels={issue.labels} />}
                     {visibleColumns.includes('updated') && (
@@ -751,23 +750,23 @@ function resolveGroupKey(issue: IssueBoardIssue, groupBy: GroupBy) {
 }
 
 function resolveGroupTitle(issue: IssueBoardIssue, groupBy: GroupBy) {
-  if (groupBy === 'priority') return `${priorityLabel(issue.priority)} priority`
+  if (groupBy === 'priority') return `${priorityLabel(issue.priority)} 우선순위`
   if (groupBy === 'assignee') {
-    if (!issue.assigneeAgentId) return 'Unassigned'
+    if (!issue.assigneeAgentId) return '담당자 없음'
     return (
       ASSIGNEES.find((assignee) => assignee.id === issue.assigneeAgentId)?.name ??
       issue.assigneeAgentId
     )
   }
   if (groupBy === 'project') {
-    return PROJECTS.find((project) => project.id === issue.projectId)?.name ?? 'No project'
+    return PROJECTS.find((project) => project.id === issue.projectId)?.name ?? '프로젝트 없음'
   }
   if (groupBy === 'workspace') {
     return (
-      WORKSPACES.find((workspace) => workspace.id === issue.workspaceId)?.name ?? 'No workspace'
+      WORKSPACES.find((workspace) => workspace.id === issue.workspaceId)?.name ?? '작업공간 없음'
     )
   }
-  if (groupBy === 'parent') return 'No parent'
+  if (groupBy === 'parent') return '상위 이슈 없음'
   return issueBoardStatusLabel(issue.status)
 }
 
@@ -818,7 +817,7 @@ function FilterPopover({
           variant="ghost"
           size="icon-sm"
           className="relative h-9 w-9"
-          title="Filter"
+          title="필터"
         >
           <Filter className="h-4 w-4" />
           {activeFilterCount > 0 && (
@@ -836,21 +835,21 @@ function FilterPopover({
           <div className="border-border/70 flex items-center justify-between gap-3 border-b px-3 py-3">
             <div>
               <div className="text-muted-foreground text-[11px] font-semibold tracking-widest uppercase">
-                Filters
+                필터
               </div>
-              <div className="text-sm font-medium">Visible issue set</div>
+              <div className="text-sm font-medium">표시할 이슈</div>
             </div>
             <button
               type="button"
               className="text-muted-foreground hover:text-foreground text-xs font-medium"
               onClick={onClear}
             >
-              Clear
+              초기화
             </button>
           </div>
           <div className="space-y-3 px-3 pb-3">
             <div className="space-y-1.5">
-              <span className="text-muted-foreground text-xs">Quick filters</span>
+              <span className="text-muted-foreground text-xs">빠른 필터</span>
               <div className="flex flex-wrap gap-1.5">
                 {QUICK_FILTERS.map((filter) => {
                   const active = arraysEqual(selectedStatuses, [...filter.statuses])
@@ -877,7 +876,7 @@ function FilterPopover({
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div className="min-w-0 space-y-3">
-                <FilterSection title="Status">
+                <FilterSection title="상태">
                   {STATUS_FILTER_ORDER.map((status) => (
                     <FilterCheck
                       key={status}
@@ -888,7 +887,7 @@ function FilterPopover({
                     />
                   ))}
                 </FilterSection>
-                <FilterSection title="Priority">
+                <FilterSection title="우선순위">
                   {ISSUE_BOARD_PRIORITY_ORDER.map((priority) => (
                     <FilterCheck
                       key={priority}
@@ -902,7 +901,7 @@ function FilterPopover({
               </div>
 
               <div className="min-w-0 space-y-3">
-                <FilterSection title="Assignee">
+                <FilterSection title="담당자">
                   {ASSIGNEE_FILTERS.map((assignee) => (
                     <FilterCheck
                       key={assignee.id}
@@ -919,7 +918,7 @@ function FilterPopover({
                     />
                   ))}
                 </FilterSection>
-                <FilterSection title="Creator">
+                <FilterSection title="생성자">
                   {CREATORS.map((creator) => {
                     const Icon = creator.icon
                     return (
@@ -933,7 +932,7 @@ function FilterPopover({
                     )
                   })}
                 </FilterSection>
-                <FilterSection title="Project">
+                <FilterSection title="프로젝트">
                   {PROJECTS.map((project) => (
                     <FilterCheck
                       key={project.id}
@@ -947,7 +946,7 @@ function FilterPopover({
               </div>
 
               <div className="min-w-0 space-y-3">
-                <FilterSection title="Labels">
+                <FilterSection title="라벨">
                   {LABELS.map((label) => (
                     <FilterCheck
                       key={label.id}
@@ -958,7 +957,7 @@ function FilterPopover({
                     />
                   ))}
                 </FilterSection>
-                <FilterSection title="Workspace">
+                <FilterSection title="작업공간">
                   {WORKSPACES.map((workspace) => (
                     <FilterCheck
                       key={workspace.id}
@@ -971,10 +970,10 @@ function FilterPopover({
                     />
                   ))}
                 </FilterSection>
-                <FilterSection title="Visibility">
+                <FilterSection title="표시 범위">
                   <FilterCheck
                     checked={liveOnly}
-                    label="Live runs only"
+                    label="실행 중 항목만"
                     onChange={() => onLiveOnlyChange(!liveOnly)}
                   />
                 </FilterSection>
@@ -1051,25 +1050,24 @@ function SortButton({
       variant={iconOnly ? 'ghost' : 'outline'}
       size={iconOnly ? 'icon-sm' : 'sm'}
       className={iconOnly ? 'h-9 w-9' : 'h-9 gap-2'}
-      title={sortField === 'updated' ? 'Updated' : sortField === 'priority' ? 'Priority' : 'Title'}
+      title={sortFieldLabel(sortField)}
       onClick={() => onSortFieldChange(next)}
     >
       <Icon className="h-4 w-4" />
-      {!iconOnly &&
-        (sortField === 'updated' ? 'Updated' : sortField === 'priority' ? 'Priority' : 'Title')}
+      {!iconOnly && sortFieldLabel(sortField)}
     </Button>
   )
 }
 
 const COLUMN_LABELS: Record<IssueColumn, string> = {
-  status: 'Status',
+  status: '상태',
   id: 'ID',
-  assignee: 'Assignee',
-  project: 'Project',
-  workspace: 'Workspace',
-  parent: 'Parent issue',
-  labels: 'Tags',
-  updated: 'Last updated',
+  assignee: '담당자',
+  project: '프로젝트',
+  workspace: '작업공간',
+  parent: '상위 이슈',
+  labels: '태그',
+  updated: '최근 수정',
 }
 
 const DEFAULT_VISIBLE_COLUMNS: IssueColumn[] = ['assignee', 'workspace', 'updated']
@@ -1084,7 +1082,7 @@ function ColumnMenu({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button type="button" variant="ghost" size="icon-sm" className="h-9 w-9" title="Columns">
+        <Button type="button" variant="ghost" size="icon-sm" className="h-9 w-9" title="열">
           <SlidersHorizontal className="h-4 w-4" />
         </Button>
       </PopoverTrigger>
@@ -1092,9 +1090,9 @@ function ColumnMenu({
         <div className="space-y-2">
           <div className="px-2 py-1">
             <div className="text-muted-foreground text-[11px] font-semibold tracking-widest uppercase">
-              Desktop issue rows
+              목록 표시 항목
             </div>
-            <div className="text-sm font-medium">Columns</div>
+            <div className="text-sm font-medium">열</div>
           </div>
           {(Object.keys(COLUMN_LABELS) as IssueColumn[]).map((column) => (
             <button
@@ -1120,8 +1118,8 @@ function ColumnMenu({
             className="hover:bg-accent/50 flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-sm"
             onClick={() => onVisibleColumnsChange(DEFAULT_VISIBLE_COLUMNS)}
           >
-            Reset defaults
-            <span className="text-muted-foreground text-xs">status, id, updated</span>
+            기본값으로
+            <span className="text-muted-foreground text-xs">담당자, 작업공간, 최근 수정</span>
           </button>
         </div>
       </PopoverContent>
@@ -1130,13 +1128,13 @@ function ColumnMenu({
 }
 
 const GROUP_OPTIONS: { id: GroupBy; label: string }[] = [
-  { id: 'status', label: 'Status' },
-  { id: 'priority', label: 'Priority' },
-  { id: 'assignee', label: 'Assignee' },
-  { id: 'project', label: 'Project' },
-  { id: 'workspace', label: 'Workspace' },
-  { id: 'parent', label: 'Parent Issue' },
-  { id: 'none', label: 'None' },
+  { id: 'status', label: '상태' },
+  { id: 'priority', label: '우선순위' },
+  { id: 'assignee', label: '담당자' },
+  { id: 'project', label: '프로젝트' },
+  { id: 'workspace', label: '작업공간' },
+  { id: 'parent', label: '상위 이슈' },
+  { id: 'none', label: '없음' },
 ]
 
 function GroupMenu({
@@ -1154,7 +1152,7 @@ function GroupMenu({
           variant="ghost"
           size="icon-sm"
           className={cn('h-9 w-9', groupBy !== 'none' && 'bg-accent text-foreground')}
-          title="Group"
+          title="그룹"
         >
           <Layers className="h-4 w-4" />
         </Button>
@@ -1163,7 +1161,7 @@ function GroupMenu({
         <div className="space-y-2">
           <div className="px-2 py-1">
             <div className="text-muted-foreground text-[11px] font-semibold tracking-widest uppercase">
-              Group by
+              그룹 기준
             </div>
             <div className="text-sm font-medium">
               {GROUP_OPTIONS.find((option) => option.id === groupBy)?.label}
@@ -1241,7 +1239,7 @@ function PriorityIcon({
 
 function IssueProjectPill({ projectId }: { projectId: string | null }) {
   const project = PROJECTS.find((option) => option.id === projectId)
-  if (!project) return <span className="text-muted-foreground text-xs">No project</span>
+  if (!project) return <span className="text-muted-foreground text-xs">프로젝트 없음</span>
 
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5 text-xs">
@@ -1252,7 +1250,7 @@ function IssueProjectPill({ projectId }: { projectId: string | null }) {
 }
 
 function IssueLabelPills({ labels }: { labels: string[] }) {
-  if (labels.length === 0) return <span className="text-muted-foreground text-xs">No labels</span>
+  if (labels.length === 0) return <span className="text-muted-foreground text-xs">라벨 없음</span>
 
   return (
     <span className="flex min-w-0 flex-wrap gap-1">
@@ -1294,7 +1292,7 @@ function IssueDetailPanel({
       <button
         type="button"
         className="absolute inset-0 cursor-default"
-        aria-label="Close issue details"
+        aria-label="이슈 상세 닫기"
         onClick={() => onOpenChange(false)}
       />
       <aside className="bg-background relative flex h-full w-[min(520px,100vw)] flex-col border-l shadow-2xl">
@@ -1320,39 +1318,39 @@ function IssueDetailPanel({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <section className="grid [grid-template-columns:7rem_minmax(0,1fr)] gap-x-5 gap-y-3 text-sm">
-            <IssueProperty label="Status">
+            <IssueProperty label="상태">
               <StatusIcon status={issue.status} />
               {issueBoardStatusLabel(issue.status)}
             </IssueProperty>
-            <IssueProperty label="Priority">
+            <IssueProperty label="우선순위">
               <PriorityIcon priority={issue.priority} showLabel />
             </IssueProperty>
-            <IssueProperty label="Labels">
+            <IssueProperty label="라벨">
               <IssueLabelPills labels={issue.labels} />
             </IssueProperty>
-            <IssueProperty label="Assignee">
+            <IssueProperty label="담당자">
               {issue.assigneeAgentId
                 ? ASSIGNEES.find((assignee) => assignee.id === issue.assigneeAgentId)?.name
-                : 'unassigned'}
+                : '담당자 없음'}
             </IssueProperty>
-            <IssueProperty label="Project">
+            <IssueProperty label="프로젝트">
               <IssueProjectPill projectId={issue.projectId} />
             </IssueProperty>
-            <IssueProperty label="Parent">No parent</IssueProperty>
-            <IssueProperty label="Workspace">
+            <IssueProperty label="상위 이슈">상위 이슈 없음</IssueProperty>
+            <IssueProperty label="작업공간">
               <span className="inline-flex items-center gap-1.5">
                 <HardDrive className="h-3.5 w-3.5" />
                 {WORKSPACES.find((workspace) => workspace.id === issue.workspaceId)?.name ??
-                  'No workspace'}
+                  '작업공간 없음'}
               </span>
             </IssueProperty>
-            <IssueProperty label="Created">{formatRelativeTime(issue.createdAt)}</IssueProperty>
-            <IssueProperty label="Updated">{formatRelativeTime(issue.updatedAt)}</IssueProperty>
+            <IssueProperty label="생성">{formatRelativeTime(issue.createdAt)}</IssueProperty>
+            <IssueProperty label="수정">{formatRelativeTime(issue.updatedAt)}</IssueProperty>
           </section>
 
           <section className="border-border/70 mt-5 border-t pt-4">
             <div className="text-muted-foreground mb-2 text-[11px] font-semibold tracking-widest uppercase">
-              Move to
+              상태 변경
             </div>
             <div className="flex flex-wrap gap-1.5">
               {ISSUE_BOARD_STATUSES.map((status) => (
@@ -1371,42 +1369,39 @@ function IssueDetailPanel({
             </div>
           </section>
 
-          <DetailSection title="Documents" action="New document">
+          <DetailSection title="문서" action="새 문서">
             <DetailDocument
-              kind="plan"
-              title="Plan"
+              kind="계획"
+              title="계획"
               body="정의된 상태와 담당자를 기준으로 다음 실행 단계를 정리합니다."
             />
             <DetailDocument
-              kind="notes"
-              title="Review Notes"
+              kind="메모"
+              title="검토 메모"
               body="필터, 상세, 실행 상태가 한 화면에서 확인되는지 검토합니다."
             />
           </DetailSection>
 
-          <DetailSection title="Run ledger" action="Latest run">
+          <DetailSection title="실행 기록" action="최근 실행">
             <div className="space-y-2">
-              <RunLedgerRow
-                status={issue.live ? 'Running' : 'Succeeded'}
-                text="Checks after finish"
-              />
-              <RunLedgerRow status="Succeeded" text="Continuation handoff" />
+              <RunLedgerRow status={issue.live ? '실행 중' : '성공'} text="완료 후 확인" />
+              <RunLedgerRow status="성공" text="이어받기 인수인계" />
             </div>
           </DetailSection>
 
-          <DetailSection title="Workspace" action="View tasks">
+          <DetailSection title="작업공간" action="작업 보기">
             <div className="rounded-md border p-3 text-sm">
               <div className="flex items-center gap-2 font-medium">
                 <HardDrive className="h-4 w-4" />
-                Runtime status
+                런타임 상태
               </div>
               <div className="text-muted-foreground mt-2 grid grid-cols-[5rem_minmax(0,1fr)] gap-y-1 text-xs">
-                <span>Branch</span>
+                <span>브랜치</span>
                 <span className="font-mono">{issue.identifier.toLowerCase()}-workspace</span>
-                <span>Path</span>
+                <span>경로</span>
                 <span className="font-mono">~/workspaces/{issue.identifier.toLowerCase()}</span>
-                <span>Service</span>
-                <span>{issue.live ? 'running' : 'idle'}</span>
+                <span>서비스</span>
+                <span>{issue.live ? '실행 중' : '대기'}</span>
               </div>
             </div>
           </DetailSection>
@@ -1467,17 +1462,32 @@ function RunLedgerRow({ status, text }: { status: string; text: string }) {
   return (
     <div className="rounded-md border p-3 text-xs">
       <div className="flex items-center gap-2">
-        <span className="font-mono">run</span>
+        <span>실행</span>
         <span className="rounded-full border px-1.5 py-0.5">{status}</span>
-        <span className="text-muted-foreground ml-auto">just now</span>
+        <span className="text-muted-foreground ml-auto">방금 전</span>
       </div>
-      <div className="text-muted-foreground mt-2">Next action: {text}</div>
+      <div className="text-muted-foreground mt-2">다음 조치: {text}</div>
     </div>
   )
 }
 
 function priorityLabel(priority: IssueBoardPriority) {
-  return priority.replace(/\b\w/g, (char) => char.toUpperCase())
+  const labels: Record<IssueBoardPriority, string> = {
+    critical: '긴급',
+    high: '높음',
+    medium: '보통',
+    low: '낮음',
+  }
+  return labels[priority]
+}
+
+function sortFieldLabel(sortField: SortField) {
+  const labels: Record<SortField, string> = {
+    updated: '최근 수정',
+    priority: '우선순위',
+    title: '제목',
+  }
+  return labels[sortField]
 }
 
 function filterIssues(
@@ -1726,13 +1736,13 @@ function normalizeStringArray(value: unknown): string[] {
 
 function formatRelativeTime(value: string) {
   const timestamp = new Date(value).getTime()
-  if (Number.isNaN(timestamp)) return 'unknown'
+  if (Number.isNaN(timestamp)) return '알 수 없음'
   const diffMinutes = Math.max(0, Math.round((Date.now() - timestamp) / 60_000))
-  if (diffMinutes < 1) return 'just now'
-  if (diffMinutes < 60) return `${diffMinutes}m ago`
+  if (diffMinutes < 1) return '방금 전'
+  if (diffMinutes < 60) return `${diffMinutes}분 전`
   const diffHours = Math.round(diffMinutes / 60)
-  if (diffHours < 24) return `${diffHours}h ago`
-  return `${Math.round(diffHours / 24)}d ago`
+  if (diffHours < 24) return `${diffHours}시간 전`
+  return `${Math.round(diffHours / 24)}일 전`
 }
 
 function isIssueBoardStatus(value: unknown): value is IssueBoardStatus {
