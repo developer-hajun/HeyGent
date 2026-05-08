@@ -37,9 +37,7 @@ public class OpenAiCredentialIssueService {
         }
 
         if (providerName.isCodexOAuthProvider()) {
-            OpenAiCodexOAuthService.AccessTokenCredential credential =
-                openAiCodexOAuthService.resolveAccessTokenCredential(request.getUserId());
-            return response(providerName, model, "bearer", credential.accessToken(), credential.expiresAt());
+            throw new CustomException(ErrorCode.OPENAI_PROVIDER_NOT_SUPPORTED);
         }
 
         if (providerName == OpenAiProviderName.OPENAI_DEV_FALLBACK) {

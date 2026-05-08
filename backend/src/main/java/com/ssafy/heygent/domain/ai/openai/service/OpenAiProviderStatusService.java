@@ -61,7 +61,6 @@ public class OpenAiProviderStatusService {
         for (OpenAiProviderName providerName : userManagedProviders()) {
             providers.add(userApiKeyStatus(userId, providerName));
         }
-        providers.add(codexOAuthStatus(userId));
         if (runtimePolicyService.isDevFallbackProfile()) {
             providers.add(devFallbackStatus());
         }
@@ -83,8 +82,7 @@ public class OpenAiProviderStatusService {
         return List.of(
             OpenAiProviderName.OPENAI_API_KEY,
             OpenAiProviderName.GEMINI_API_KEY,
-            OpenAiProviderName.CLAUDE_API_KEY,
-            OpenAiProviderName.OPENAI_CODEX_OAUTH
+            OpenAiProviderName.CLAUDE_API_KEY
         );
     }
 
