@@ -18,6 +18,9 @@ public enum OpenAiProviderName {
         "openai_api_key",
         "api_key",
         "openai",
+        "OpenAI API Key",
+        "일반 GPT 모델을 사용합니다.",
+        "api_key",
         List.of("openai_user_api_key"),
         List.of("gpt-5.4", "gpt-5.4-mini")
     ),
@@ -25,6 +28,9 @@ public enum OpenAiProviderName {
         "gemini_api_key",
         "api_key",
         "gemini",
+        "Gemini API Key",
+        "Gemini 모델을 사용합니다.",
+        "api_key",
         List.of(),
         List.of("gemini-2.5-pro", "gemini-2.5-flash")
     ),
@@ -32,6 +38,9 @@ public enum OpenAiProviderName {
         "claude_api_key",
         "api_key",
         "claude",
+        "Claude API Key",
+        "Claude 모델을 사용합니다.",
+        "api_key",
         List.of("anthropic_api_key"),
         List.of("claude-sonnet-4.5", "claude-haiku-4.5")
     ),
@@ -39,6 +48,9 @@ public enum OpenAiProviderName {
         "openai_codex_oauth",
         "oauth",
         "openai_codex",
+        "Codex 연결",
+        "Codex 전용 모델을 사용합니다.",
+        "device_auth",
         List.of("codex_oauth", "openai-codex"),
         List.of("gpt-5.3-codex", "gpt-5.2-codex", "gpt-5-codex-mini")
     ),
@@ -46,6 +58,9 @@ public enum OpenAiProviderName {
         "openai_dev_fallback",
         "api_key",
         "openai",
+        "개발용 OpenAI",
+        "개발 환경에서 서버 API Key를 사용합니다.",
+        "dev_fallback",
         List.of(),
         List.of("gpt-5.4", "gpt-5.4-mini")
     );
@@ -53,6 +68,9 @@ public enum OpenAiProviderName {
     private final String value;
     private final String authType;
     private final String providerType;
+    private final String displayName;
+    private final String description;
+    private final String connectType;
     private final List<String> aliases;
     private final List<String> defaultModels;
 
@@ -60,12 +78,18 @@ public enum OpenAiProviderName {
         String value,
         String authType,
         String providerType,
+        String displayName,
+        String description,
+        String connectType,
         List<String> aliases,
         List<String> defaultModels
     ) {
         this.value = value;
         this.authType = authType;
         this.providerType = providerType;
+        this.displayName = displayName;
+        this.description = description;
+        this.connectType = connectType;
         this.aliases = aliases;
         this.defaultModels = defaultModels;
     }
