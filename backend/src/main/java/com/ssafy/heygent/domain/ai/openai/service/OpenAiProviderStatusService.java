@@ -58,7 +58,6 @@ public class OpenAiProviderStatusService {
         for (OpenAiProviderName providerName : userManagedProviders()) {
             providers.add(userApiKeyStatus(userId, providerName));
         }
-        providers.add(oauthStatus(userId));
         providers.add(codexOAuthStatus(userId));
         if (runtimePolicyService.isDevFallbackProfile()) {
             providers.add(devFallbackStatus());
@@ -101,37 +100,6 @@ public class OpenAiProviderStatusService {
             .available(connected)
             .expiresAt(null)
             .status(connected ? "connected" : "not_connected")
-            .build();
-    }
-
-    private OpenAiProviderStatusItemResponse oauthStatus(Long userId) {
-        return openAiProviderConnectionRepository
-            .findByUserIdAndProviderName(userId, OpenAiProviderName.OPENAI_OAUTH.getValue())
-            .map(this::connectedOauthStatus)
-            .orElseGet(() -> OpenAiProviderStatusItemResponse.builder()
-                .providerName(OpenAiProviderName.OPENAI_OAUTH.getValue())
-                .providerType(OpenAiProviderName.OPENAI_OAUTH.getProviderType())
-                .authType(OpenAiProviderName.OPENAI_OAUTH.getAuthType())
-                .defaultModel(runtimePolicyService.defaultModel(OpenAiProviderName.OPENAI_OAUTH))
-                .connected(false)
-                .available(false)
-                .expiresAt(null)
-                .status("not_connected")
-                .build());
-    }
-
-    private OpenAiProviderStatusItemResponse connectedOauthStatus(OpenAiProviderConnection connection) {
-        boolean available = !connection.isExpired(LocalDateTime.now())
-            || StringUtils.hasText(connection.getEncryptedRefreshToken());
-        return OpenAiProviderStatusItemResponse.builder()
-            .providerName(OpenAiProviderName.OPENAI_OAUTH.getValue())
-            .providerType(OpenAiProviderName.OPENAI_OAUTH.getProviderType())
-            .authType(OpenAiProviderName.OPENAI_OAUTH.getAuthType())
-            .defaultModel(runtimePolicyService.defaultModel(OpenAiProviderName.OPENAI_OAUTH))
-            .connected(true)
-            .available(available)
-            .expiresAt(connection.getExpiresAt())
-            .status(available ? "connected" : "expired")
             .build();
     }
 
