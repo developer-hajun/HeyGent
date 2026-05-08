@@ -22,7 +22,6 @@ public class OpenAiUsageCostsProxyService {
     private final OpenAiProperties properties;
     private final OpenAiRuntimePolicyService runtimePolicyService;
     private final OpenAiApiKeyService openAiApiKeyService;
-    private final OpenAiOAuthService openAiOAuthService;
     private final OpenAiUsageCostsClient openAiUsageCostsClient;
 
     @Transactional
@@ -45,9 +44,6 @@ public class OpenAiUsageCostsProxyService {
     private String resolveCredential(Long userId, OpenAiProviderName providerName) {
         if (providerName == OpenAiProviderName.OPENAI_API_KEY) {
             return openAiApiKeyService.resolveApiKey(userId, providerName);
-        }
-        if (providerName == OpenAiProviderName.OPENAI_OAUTH) {
-            return openAiOAuthService.resolveAccessTokenCredential(userId).accessToken();
         }
         if (providerName == OpenAiProviderName.OPENAI_DEV_FALLBACK) {
             runtimePolicyService.validateDevFallbackAvailable();

@@ -28,9 +28,6 @@ class OpenAiCredentialIssueServiceTest {
     private OpenAiApiKeyService openAiApiKeyService;
 
     @Mock
-    private OpenAiOAuthService openAiOAuthService;
-
-    @Mock
     private OpenAiCodexOAuthService openAiCodexOAuthService;
 
     private OpenAiCredentialIssueService openAiCredentialIssueService;
@@ -45,7 +42,6 @@ class OpenAiCredentialIssueServiceTest {
             properties,
             runtimePolicyService,
             openAiApiKeyService,
-            openAiOAuthService,
             openAiCodexOAuthService
         );
     }
@@ -79,21 +75,6 @@ class OpenAiCredentialIssueServiceTest {
         assertThat(response.getAuthType()).isEqualTo("api_key");
         assertThat(response.getCredentialType()).isEqualTo("api_key");
         assertThat(response.getCredential()).isEqualTo("gemini-key");
-    }
-
-    @Test
-    void issueReturnsOauthAccessTokenOnly() throws Exception {
-        OpenAiCredentialIssueRequest request = request("openai_oauth");
-        LocalDateTime expiresAt = LocalDateTime.now().plusHours(1);
-        when(openAiOAuthService.resolveAccessTokenCredential(1L))
-            .thenReturn(new OpenAiOAuthService.AccessTokenCredential("access-token", expiresAt));
-
-        OpenAiCredentialIssueResponse response = openAiCredentialIssueService.issue(request);
-
-        assertThat(response.getProviderName()).isEqualTo("openai_oauth");
-        assertThat(response.getCredentialType()).isEqualTo("bearer");
-        assertThat(response.getCredential()).isEqualTo("access-token");
-        assertThat(response.getExpiresAt()).isEqualTo(expiresAt);
     }
 
     @Test
