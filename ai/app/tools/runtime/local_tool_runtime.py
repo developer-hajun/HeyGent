@@ -62,6 +62,7 @@ class LocalToolRuntime:
                 "web_search": self._run_web_search,
                 "web_extract": self._run_web_extract,
                 "web_crawl": self._run_web_crawl,
+                "http_get": self._run_http_get,
                 "browser_navigate": self._run_browser_navigate,
                 "browser_snapshot": self._run_browser_snapshot,
                 "browser_click": self._run_browser_click,
@@ -234,10 +235,18 @@ class LocalToolRuntime:
             )
 
     def _list_skills(self, args: dict[str, Any]) -> dict[str, object]:
-        names = sorted(getattr(self.skill_registry, "_skills", {}).keys())
+        skills = getattr(self.skill_registry, "_skills", {})
+        names = sorted(skills.keys())
         return {
             "count": len(names),
             "items": names,
+            "skills": [
+                {
+                    "name": name,
+                    "description": str(skills[name].get("description") or ""),
+                }
+                for name in names
+            ],
         }
 
     def _read_skill(self, args: dict[str, Any]) -> dict[str, object]:
@@ -364,6 +373,9 @@ class LocalToolRuntime:
 
     def _run_web_crawl(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.web.web_tools", "web_crawl_handler", args)
+
+    def _run_http_get(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.web.web_tools", "http_get_handler", args)
 
     def _run_browser_navigate(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_navigate_handler", args)
@@ -758,6 +770,7 @@ class LocalToolRuntime:
             "web_search": "web",
             "web_extract": "web",
             "web_crawl": "web",
+            "http_get": "web",
             "read_file": "file",
             "write_file": "file",
             "patch": "file",

@@ -2,6 +2,7 @@ import json
 import sys
 import types
 
+from app.domain.orchestration.prompts.skill_prompt import SkillLoader, SkillRegistry
 from app.domain.orchestration.runtime_planning.todo_state import (
     apply_tool_results_to_todo_state,
     build_task_todo_payload,
@@ -99,11 +100,26 @@ def test_runtime_exposes_heygent_web_tool_definitions():
 
     definitions = runtime.list_tool_definitions(enabled_toolsets=("web",))
 
-    assert [definition["name"] for definition in definitions] == ["web_crawl", "web_extract", "web_search"]
+    assert [definition["name"] for definition in definitions] == ["http_get", "web_crawl", "web_extract", "web_search"]
     schema_by_name = {definition["name"]: definition["schema"] for definition in definitions}
+    assert schema_by_name["http_get"]["parameters"]["properties"]["url"]["type"] == "string"
     assert schema_by_name["web_search"]["parameters"]["properties"]["query"]["type"] == "string"
+    assert "Korean weather" in schema_by_name["web_search"]["description"]
+    assert "skills.read" in schema_by_name["web_search"]["description"]
     assert schema_by_name["web_extract"]["parameters"]["properties"]["urls"]["items"]["type"] == "string"
     assert schema_by_name["web_crawl"]["parameters"]["properties"]["url"]["type"] == "string"
+
+
+def test_skills_list_includes_frontmatter_descriptions():
+    registry = SkillRegistry()
+    registry.register_many(SkillLoader().load_builtin())
+    runtime = LocalToolRuntime(skill_registry=registry, session_store=DummySessionStore())
+
+    result = runtime.run_call(name="skills.list", args={}, enabled_toolsets=("skills",))
+
+    descriptions = {item["name"]: item["description"] for item in result["skills"]}
+    assert "korea-weather" in result["items"]
+    assert "한국 날씨를 기상청 단기예보 조회서비스" in descriptions["korea-weather"]
 
 
 def test_runtime_exposes_heygent_browser_tool_definitions():
@@ -131,9 +147,9 @@ def test_web_browser_runtime_defaults_use_tolerant_timeouts():
 
 
 def test_web_is_available_in_local_core_and_safe_but_browser_is_explicit():
-    assert {"web_search", "web_extract", "web_crawl"} <= resolve_runtime_tool_names(("web",))
-    assert {"web_search", "web_extract", "web_crawl"} <= resolve_runtime_tool_names(("local-core",))
-    assert {"web_search", "web_extract", "web_crawl"} <= resolve_runtime_tool_names(("safe",))
+    assert {"web_search", "web_extract", "web_crawl", "http_get"} <= resolve_runtime_tool_names(("web",))
+    assert {"web_search", "web_extract", "web_crawl", "http_get"} <= resolve_runtime_tool_names(("local-core",))
+    assert {"web_search", "web_extract", "web_crawl", "http_get"} <= resolve_runtime_tool_names(("safe",))
     assert "browser_navigate" in resolve_runtime_tool_names(("browser",))
     assert "browser_navigate" not in resolve_runtime_tool_names(("local-core",))
 
@@ -157,6 +173,49 @@ def test_web_runtime_invokes_heygent_web_tool(monkeypatch):
     assert result["success"] is True
     assert result["data"]["web"][0]["title"] == "agent tool"
     assert result["limit"] == 2
+
+
+def test_http_get_runtime_fetches_json(monkeypatch):
+    class FakeHeaders:
+        def get_content_charset(self):
+            return "utf-8"
+
+        def get(self, name, default=None):
+            return "application/json" if name == "content-type" else default
+
+    class FakeResponse:
+        status = 200
+        headers = FakeHeaders()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, limit):
+            return b'{"ok": true, "weather": "clear"}'
+
+    def fake_urlopen(request, timeout=15):
+        assert request.full_url == "https://k-skill-proxy.example/v1/korea-weather/forecast?lat=37.5172&lon=127.0473"
+        return FakeResponse()
+
+    from app.tools.web import web_tools
+
+    monkeypatch.setattr(web_tools, "urlopen", fake_urlopen)
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    result = runtime.run_call(
+        name="http_get",
+        args={
+            "url": "https://k-skill-proxy.example/v1/korea-weather/forecast",
+            "params": {"lat": 37.5172, "lon": 127.0473},
+        },
+        enabled_toolsets=("web",),
+    )
+
+    assert result["ok"] is True
+    assert result["json"] == {"ok": True, "weather": "clear"}
 
 
 def test_browser_runtime_invokes_heygent_browser_tool(monkeypatch):

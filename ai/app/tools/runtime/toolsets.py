@@ -34,7 +34,7 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "web": RuntimeToolsetDefinition(
         description="Web research, extraction, and crawl tools.",
-        tools=("web_search", "web_extract", "web_crawl"),
+        tools=("web_search", "web_extract", "web_crawl", "http_get"),
     ),
     "browser": RuntimeToolsetDefinition(
         description="Browser automation tools.",
