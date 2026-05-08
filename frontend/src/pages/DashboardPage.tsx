@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from 'react'
-import { Server, Wifi, Bot, Eye, Plus, LayoutList, Loader2 } from 'lucide-react'
+import { Server, Wifi, Bot, Eye, Plus, Loader2, KeyRound } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useNavigate } from 'react-router'
 import { useUIStore } from '@/store/useUIStore'
 import { getIotDevices, deleteIotDevice, pairIotDevice, type IotDevice } from '@/apis/iot'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { NewSessionModal, type CustomAgentConfig } from '@/components/session/NewSessionModal'
 
 // ── Mock 상태 (서버·에이전트) ─────────────────────────────────────────────────
 type ServerStatus = 'ok' | 'error'
@@ -387,13 +388,14 @@ function agentStatusConfig(s: AgentStatus) {
 // ── DashboardPage ─────────────────────────────────────────────────────────────
 export function DashboardPage() {
   const navigate = useNavigate()
-  const { setSidebarCollapsed } = useUIStore()
+  const { setSidebarCollapsed, setSettingsOpen } = useUIStore()
 
   const [iotDevices, setIotDevices] = useState<IotDevice[]>([])
   const [iotLoading, setIotLoading] = useState(true)
   const [pairingOpen, setPairingOpen] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [pendingDeviceId, setPendingDeviceId] = useState<string | null>(null)
+  const [newSessionOpen, setNewSessionOpen] = useState(false)
 
   const fetchDevices = useCallback(
     () =>
@@ -488,12 +490,12 @@ export function DashboardPage() {
             <ActionButton
               icon={<Plus className="h-4 w-4" />}
               label="새 작업 요청하기"
-              onClick={() => navigate('/new-chat')}
+              onClick={() => setNewSessionOpen(true)}
             />
             <ActionButton
-              icon={<LayoutList className="h-4 w-4" />}
-              label="세션 목록 보기"
-              onClick={() => setSidebarCollapsed(false)}
+              icon={<KeyRound className="h-4 w-4" />}
+              label="API 키 등록"
+              onClick={() => setSettingsOpen(true, 'apiKeys')}
             />
           </div>
         </motion.section>
@@ -542,6 +544,30 @@ export function DashboardPage() {
         onOpenChange={setConfirmOpen}
         onConfirm={handleDeregisterConfirm}
       />
+
+      <NewSessionModal
+        open={newSessionOpen}
+        onOpenChange={setNewSessionOpen}
+        onConfirm={(config) => {
+          storePendingSessionConfig(config)
+          setNewSessionOpen(false)
+          if (config) {
+            setSidebarCollapsed(false)
+            navigate('/agent-status')
+          } else {
+            setSidebarCollapsed(true)
+            navigate('/new-chat')
+          }
+        }}
+      />
     </div>
   )
+}
+
+function storePendingSessionConfig(config: CustomAgentConfig | undefined) {
+  if (config === undefined) {
+    sessionStorage.removeItem('ai-new-session-config')
+    return
+  }
+  sessionStorage.setItem('ai-new-session-config', JSON.stringify(config))
 }
