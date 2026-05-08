@@ -18,12 +18,13 @@ class Settings:
     """
 
     app_name: str = "HeyGent AI Backbone"
-    api_prefix: str = "/api/v1"
+    api_prefix: str = "/ai/api/v1"
     host: str = "127.0.0.1"
     port: int = 8000
     reload: bool = False
     log_level: str = "info"
-    db_path: Path = Path("tmp/app.db")
+    postgres_dsn: str | None = None
+    postgres_migrations_enabled: bool = True
     api_base_url: str | None = None
     openai_api_key: str | None = None
     openai_oauth_client_id: str | None = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -37,6 +38,32 @@ class Settings:
     openai_rest_api_base_url: str = "https://api.openai.com/v1"
     openai_response_model: str = "gpt-5.4"
     openai_embedding_model: str = "text-embedding-3-small"
+    backend_base_url: str = "http://127.0.0.1:8080"
+    backend_auth_verify_url: str = "http://127.0.0.1:8080/internal/ai/auth/validate"
+    backend_memory_timeout_seconds: float = 5.0
+    internal_service_token: str | None = None
+    redis_url: str | None = None
+    cors_allowed_origins: list[str] = field(default_factory=list)
+    cors_allowed_methods: list[str] = field(default_factory=lambda: ["GET", "POST", "OPTIONS"])
+    cors_allowed_headers: list[str] = field(
+        default_factory=lambda: ["Authorization", "Content-Type", "X-Workspace-Key"]
+    )
+    cors_allow_credentials: bool = True
+    cors_max_age_seconds: int = 600
+    ws_connection_ttl_seconds: int = 60
+    ws_auth_first_message_timeout_seconds: float = 10.0
+    ws_allowed_origins: list[str] = field(default_factory=list)
+    ws_auth_rate_limit_max_failures: int = 5
+    ws_auth_rate_limit_window_seconds: int = 60
+    task_projection_ttl_seconds: int = 3600
+    task_projection_max_events: int = 200
+    public_session_limit_per_user: int = 10
+    agent_model_request_timeout_seconds: float = 300.0
+    agent_model_stream_timeout_seconds: float = 300.0
+    agent_loop_default_max_iterations: int = 90
+    agent_loop_worker_default_max_iterations: int = 80
+    agent_loop_max_iterations: int = 120
+    bridge_token: str | None = None
 
     def resolved_api_base_url(self) -> str:
         """CLI 와 외부 클라이언트가 공통으로 사용할 기본 API 주소를 계산한다."""
@@ -96,10 +123,22 @@ def _parse_int(value, *, default: int) -> int:
     return int(value)
 
 
+def _parse_float(value, *, default: float) -> float:
+    if value in {None, ""}:
+        return default
+    return float(value)
+
+
 def _parse_scopes(value) -> list[str]:
     if value in {None, ""}:
         return []
     return [scope.strip() for scope in str(value).split(",") if scope.strip()]
+
+
+def _parse_csv(value) -> list[str]:
+    if value in {None, ""}:
+        return []
+    return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
 def _parse_optional_path(value) -> Path | None:
@@ -118,12 +157,16 @@ def get_settings() -> Settings:
     dotenv_values = load_dotenv_values()
     return Settings(
         app_name=_read_env("HEYGENT_APP_NAME", "HeyGent AI Backbone", dotenv_values),
-        api_prefix=_read_env("HEYGENT_API_PREFIX", "/api/v1", dotenv_values),
+        api_prefix=_read_env("HEYGENT_API_PREFIX", "/ai/api/v1", dotenv_values),
         host=_read_env("HEYGENT_HOST", "127.0.0.1", dotenv_values),
         port=_parse_int(_read_env("HEYGENT_PORT", 8000, dotenv_values), default=8000),
         reload=_parse_bool(_read_env("HEYGENT_RELOAD", "false", dotenv_values)),
         log_level=_read_env("HEYGENT_LOG_LEVEL", "info", dotenv_values),
-        db_path=Path(_read_env("HEYGENT_AI_DB_PATH", "tmp/app.db", dotenv_values)),
+        postgres_dsn=_read_env("HEYGENT_POSTGRES_DSN", None, dotenv_values),
+        postgres_migrations_enabled=_parse_bool(
+            _read_env("HEYGENT_POSTGRES_MIGRATIONS_ENABLED", "true", dotenv_values),
+            default=True,
+        ),
         api_base_url=_read_env("HEYGENT_API_BASE_URL", None, dotenv_values),
         openai_api_key=_read_env("HEYGENT_OPENAI_API_KEY", None, dotenv_values),
         openai_oauth_client_id=_read_env("HEYGENT_OPENAI_OAUTH_CLIENT_ID", "app_EMoamEEZ73f0CkXaXp7hrann", dotenv_values),
@@ -137,4 +180,81 @@ def get_settings() -> Settings:
         openai_rest_api_base_url=_read_env("HEYGENT_OPENAI_REST_API_BASE_URL", "https://api.openai.com/v1", dotenv_values),
         openai_response_model=_read_env("HEYGENT_OPENAI_RESPONSE_MODEL", "gpt-5.4", dotenv_values),
         openai_embedding_model=_read_env("HEYGENT_OPENAI_EMBEDDING_MODEL", "text-embedding-3-small", dotenv_values),
+        backend_base_url=_read_env("HEYGENT_BACKEND_BASE_URL", "http://127.0.0.1:8080", dotenv_values),
+        backend_auth_verify_url=_read_env(
+            "HEYGENT_BACKEND_AUTH_VERIFY_URL",
+            "http://127.0.0.1:8080/internal/ai/auth/validate",
+            dotenv_values,
+        ),
+        backend_memory_timeout_seconds=_parse_float(
+            _read_env("HEYGENT_BACKEND_MEMORY_TIMEOUT_SECONDS", 5.0, dotenv_values),
+            default=5.0,
+        ),
+        internal_service_token=_read_env("HEYGENT_INTERNAL_SERVICE_TOKEN", None, dotenv_values),
+        redis_url=_read_env("HEYGENT_REDIS_URL", None, dotenv_values),
+        cors_allowed_origins=_parse_csv(_read_env("HEYGENT_CORS_ALLOWED_ORIGINS", "", dotenv_values)),
+        cors_allowed_methods=_parse_csv(
+            _read_env("HEYGENT_CORS_ALLOWED_METHODS", "GET,POST,OPTIONS", dotenv_values)
+        ),
+        cors_allowed_headers=_parse_csv(
+            _read_env("HEYGENT_CORS_ALLOWED_HEADERS", "Authorization,Content-Type,X-Workspace-Key", dotenv_values)
+        ),
+        cors_allow_credentials=_parse_bool(
+            _read_env("HEYGENT_CORS_ALLOW_CREDENTIALS", "true", dotenv_values),
+            default=True,
+        ),
+        cors_max_age_seconds=_parse_int(
+            _read_env("HEYGENT_CORS_MAX_AGE_SECONDS", 600, dotenv_values),
+            default=600,
+        ),
+        ws_connection_ttl_seconds=_parse_int(
+            _read_env("HEYGENT_WS_CONNECTION_TTL_SECONDS", 60, dotenv_values),
+            default=60,
+        ),
+        ws_auth_first_message_timeout_seconds=_parse_float(
+            _read_env("HEYGENT_WS_AUTH_FIRST_MESSAGE_TIMEOUT_SECONDS", 10.0, dotenv_values),
+            default=10.0,
+        ),
+        ws_allowed_origins=_parse_csv(_read_env("HEYGENT_WS_ALLOWED_ORIGINS", "", dotenv_values)),
+        ws_auth_rate_limit_max_failures=_parse_int(
+            _read_env("HEYGENT_WS_AUTH_RATE_LIMIT_MAX_FAILURES", 5, dotenv_values),
+            default=5,
+        ),
+        ws_auth_rate_limit_window_seconds=_parse_int(
+            _read_env("HEYGENT_WS_AUTH_RATE_LIMIT_WINDOW_SECONDS", 60, dotenv_values),
+            default=60,
+        ),
+        task_projection_ttl_seconds=_parse_int(
+            _read_env("HEYGENT_TASK_PROJECTION_TTL_SECONDS", 3600, dotenv_values),
+            default=3600,
+        ),
+        task_projection_max_events=_parse_int(
+            _read_env("HEYGENT_TASK_PROJECTION_MAX_EVENTS", 200, dotenv_values),
+            default=200,
+        ),
+        public_session_limit_per_user=_parse_int(
+            _read_env("HEYGENT_PUBLIC_SESSION_LIMIT_PER_USER", 10, dotenv_values),
+            default=10,
+        ),
+        agent_model_request_timeout_seconds=_parse_float(
+            _read_env("HEYGENT_AGENT_MODEL_REQUEST_TIMEOUT_SECONDS", 300.0, dotenv_values),
+            default=300.0,
+        ),
+        agent_model_stream_timeout_seconds=_parse_float(
+            _read_env("HEYGENT_AGENT_MODEL_STREAM_TIMEOUT_SECONDS", 300.0, dotenv_values),
+            default=300.0,
+        ),
+        agent_loop_default_max_iterations=_parse_int(
+            _read_env("HEYGENT_AGENT_LOOP_DEFAULT_MAX_ITERATIONS", 90, dotenv_values),
+            default=90,
+        ),
+        agent_loop_worker_default_max_iterations=_parse_int(
+            _read_env("HEYGENT_AGENT_LOOP_WORKER_DEFAULT_MAX_ITERATIONS", 80, dotenv_values),
+            default=80,
+        ),
+        agent_loop_max_iterations=_parse_int(
+            _read_env("HEYGENT_AGENT_LOOP_MAX_ITERATIONS", 120, dotenv_values),
+            default=120,
+        ),
+        bridge_token=_read_env("HEYGENT_BRIDGE_TOKEN", None, dotenv_values),
     )

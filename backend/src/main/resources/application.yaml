@@ -1,6 +1,13 @@
 spring:
+  config:
+    import: optional:file:.env[.properties]
   application:
     name: heygent
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
   profiles:
     default: local
   datasource:
@@ -23,6 +30,10 @@ spring:
       host: ${SPRING_DATA_REDIS_HOST:localhost}
       port: ${SPRING_DATA_REDIS_PORT:6379}
 
+server:
+  tomcat:
+    uri-encoding: UTF-8
+
 springdoc:
   swagger-ui:
     persistAuthorization: true
@@ -32,11 +43,30 @@ kakao:
   client-secret: ${KAKAO_CLIENT_SECRET}
   redirect-uri: ${KAKAO_REDIRECT_URI:http://localhost:5173/auth/kakao/callback}
 
+composio:
+  api-key: ${COMPOSIO_API_KEY}
+  notion:
+    redirect-uri: ${COMPOSIO_NOTION_REDIRECT_URI:http://localhost:5173/auth/notion/callback}
+    integration-id: ${COMPOSIO_NOTION_INTEGRATION_ID}
+
 jwt:
   secret: ${JWT_SECRET}
 
 cors:
   allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+
+iot:
+  mqtt:
+    enabled: ${IOT_MQTT_ENABLED:false}
+    host: ${IOT_MQTT_HOST:localhost}
+    port: ${IOT_MQTT_PORT:1883}
+    username: ${IOT_MQTT_USERNAME:}
+    password: ${IOT_MQTT_PASSWORD:}
+    client-id: ${IOT_MQTT_CLIENT_ID:heygent-backend}
+    connection-timeout-seconds: ${IOT_MQTT_CONNECTION_TIMEOUT_SECONDS:5}
+    publish-timeout-seconds: ${IOT_MQTT_PUBLISH_TIMEOUT_SECONDS:3}
+    default-qos: ${IOT_MQTT_DEFAULT_QOS:0}
+    topic-prefix: ${IOT_MQTT_TOPIC_PREFIX:devices}
 
 memory:
   embedding:
@@ -46,3 +76,27 @@ memory:
     model: ${MEMORY_EMBEDDING_MODEL:text-embedding-3-small}
     dimensions: ${MEMORY_EMBEDDING_DIMENSIONS:1536}
     timeout-seconds: ${MEMORY_EMBEDDING_TIMEOUT_SECONDS:10}
+
+openai:
+  api-key: ${OPENAI_API_KEY:}
+  rest-api-base-url: ${OPENAI_REST_API_BASE_URL:https://api.openai.com/v1}
+  usage-api-base-url: ${OPENAI_USAGE_API_BASE_URL:https://api.openai.com/v1}
+  default-model: ${OPENAI_DEFAULT_MODEL:gpt-5.4}
+  allowed-models: ${OPENAI_ALLOWED_MODELS:gpt-5.4,gpt-5.4-mini}
+  embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+  timeout-seconds: ${OPENAI_TIMEOUT_SECONDS:60}
+  credential-encryption-key: ${OPENAI_CREDENTIAL_ENCRYPTION_KEY:}
+  oauth:
+    client-id: ${OPENAI_OAUTH_CLIENT_ID:}
+    client-secret: ${OPENAI_OAUTH_CLIENT_SECRET:}
+    redirect-uri: ${OPENAI_OAUTH_REDIRECT_URI:http://localhost:8080/api/v1/ai/openai/oauth/callback}
+    authorize-url: ${OPENAI_OAUTH_AUTHORIZE_URL:https://auth.openai.com/oauth/authorize}
+    token-url: ${OPENAI_OAUTH_TOKEN_URL:https://auth.openai.com/oauth/token}
+    scopes: ${OPENAI_OAUTH_SCOPES:openid,profile,email,offline_access}
+  codex-oauth:
+    client-id: ${OPENAI_CODEX_OAUTH_CLIENT_ID:app_EMoamEEZ73f0CkXaXp7hrann}
+    redirect-uri: ${OPENAI_CODEX_OAUTH_REDIRECT_URI:http://localhost:1455/auth/callback}
+    authorize-url: ${OPENAI_CODEX_OAUTH_AUTHORIZE_URL:https://auth.openai.com/oauth/authorize}
+    token-url: ${OPENAI_CODEX_OAUTH_TOKEN_URL:https://auth.openai.com/oauth/token}
+    scopes: ${OPENAI_CODEX_OAUTH_SCOPES:openid,profile,email,offline_access}
+    refresh-skew-seconds: ${OPENAI_CODEX_OAUTH_REFRESH_SKEW_SECONDS:300}

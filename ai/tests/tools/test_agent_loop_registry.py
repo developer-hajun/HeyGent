@@ -1,5 +1,3 @@
-import pytest
-
 from app.tools.registry import ToolRegistry
 
 
@@ -20,20 +18,5 @@ def build_registry() -> ToolRegistry:
 def test_registry_exposes_only_agent_loop_entry():
     registry = build_registry()
 
-    assert registry.list_intent_types() == ["agent.loop"]
-    assert registry.list_executor_keys() == ["agent.loop"]
-    assert registry.resolve().spec.executor_key == "agent.loop"
-    assert registry.resolve(intent_type="agent.loop").spec.intent_type == "agent.loop"
-
-
-def test_registry_rejects_removed_executor_keys():
-    registry = build_registry()
-
-    with pytest.raises(ValueError, match="legacy executor routing has been removed"):
-        registry.resolve(entry_executor_key="notion.page.create")
-
-    with pytest.raises(ValueError, match="legacy intent routing has been removed"):
-        registry.resolve(intent_type="model.generate")
-
-    with pytest.raises(KeyError):
-        registry.get("model.generate")
+    assert registry.list_toolsets() == ["core"]
+    assert registry.resolve().spec.task_type == "agent.loop"

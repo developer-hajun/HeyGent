@@ -1,7 +1,18 @@
+import pytest
+
 from app.heygent import main
 
 
-def test_heygent_without_subcommand_defaults_to_cli(monkeypatch):
+EXPECTED_BASE_URL = "http://127.0.0.1:8000/ai/api/v1"
+
+
+@pytest.fixture
+def stable_api_base_url(monkeypatch):
+    monkeypatch.setenv("HEYGENT_API_BASE_URL", EXPECTED_BASE_URL)
+    return EXPECTED_BASE_URL
+
+
+def test_heygent_without_subcommand_defaults_to_cli(monkeypatch, stable_api_base_url):
     captured: dict[str, list[str]] = {}
 
     def fake_cli_main(argv=None):
@@ -16,7 +27,7 @@ def test_heygent_without_subcommand_defaults_to_cli(monkeypatch):
     exit_code = main([])
 
     assert exit_code == 0
-    assert captured["argv"] == ["--base-url", "http://127.0.0.1:8000/api/v1", "--timeout", "10.0"]
+    assert captured["argv"] == ["--base-url", stable_api_base_url, "--timeout", "10.0"]
 
 
 def test_heygent_server_delegates_to_cli(monkeypatch):
@@ -34,7 +45,7 @@ def test_heygent_server_delegates_to_cli(monkeypatch):
     assert captured["argv"] == ["serve"]
 
 
-def test_heygent_cli_remote_autostarts_local_server(monkeypatch, capsys):
+def test_heygent_cli_remote_autostarts_local_server(monkeypatch, capsys, stable_api_base_url):
     calls = {"ready": 0, "ensure": 0, "cli": []}
 
     def fake_ready(base_url: str) -> bool:
@@ -61,7 +72,7 @@ def test_heygent_cli_remote_autostarts_local_server(monkeypatch, capsys):
 
     assert exit_code == 0
     assert calls["ensure"] == 1
-    assert calls["cli"] == ["--base-url", "http://127.0.0.1:8000/api/v1", "--timeout", "10.0"]
+    assert calls["cli"] == ["--base-url", stable_api_base_url, "--timeout", "10.0"]
     assert "로컬 서버가 안 떠 있어서 heygent server 를 백그라운드로 시작할게." in captured
 
 
@@ -88,7 +99,7 @@ def test_heygent_cli_local_mode_skips_server_boot(monkeypatch):
     assert captured["argv"] == ["--mode", "local", "--json"]
 
 
-def test_heygent_cli_restarts_managed_local_server_by_default(monkeypatch, capsys):
+def test_heygent_cli_restarts_managed_local_server_by_default(monkeypatch, capsys, stable_api_base_url):
     calls = {"ensure": [], "cli": []}
 
     def fake_ensure(base_url: str, *, wait_seconds: float = 12.0, poll_interval: float = 0.5, restart: bool = False) -> bool:
@@ -99,7 +110,7 @@ def test_heygent_cli_restarts_managed_local_server_by_default(monkeypatch, capsy
         calls["cli"] = list(argv or [])
         return 0
 
-    monkeypatch.setattr("app.cli.launcher.main._read_pid_file", lambda: {"pid": 1234, "base_url": "http://127.0.0.1:8000/api/v1"})
+    monkeypatch.setattr("app.cli.launcher.main._read_pid_file", lambda: {"pid": 1234, "base_url": stable_api_base_url})
     monkeypatch.setattr("app.cli.launcher.main._ensure_local_server", fake_ensure)
     monkeypatch.setattr("app.cli.launcher.main._ensure_cli_dependencies", lambda: True)
     monkeypatch.setattr("app.cli.launcher.main.cli_main", fake_cli_main)
@@ -108,12 +119,12 @@ def test_heygent_cli_restarts_managed_local_server_by_default(monkeypatch, capsy
     captured = capsys.readouterr().out
 
     assert exit_code == 0
-    assert calls["ensure"] == [{"base_url": "http://127.0.0.1:8000/api/v1", "restart": True}]
-    assert calls["cli"] == ["--base-url", "http://127.0.0.1:8000/api/v1", "--timeout", "10.0"]
+    assert calls["ensure"] == [{"base_url": stable_api_base_url, "restart": True}]
+    assert calls["cli"] == ["--base-url", stable_api_base_url, "--timeout", "10.0"]
     assert "이전에 띄운 로컬 서버를 다시 시작할게." in captured
 
 
-def test_heygent_cli_can_skip_default_restart(monkeypatch):
+def test_heygent_cli_can_skip_default_restart(monkeypatch, stable_api_base_url):
     calls = {"ready": 0, "ensure": [], "cli": []}
 
     def fake_ready(base_url: str) -> bool:
@@ -128,7 +139,7 @@ def test_heygent_cli_can_skip_default_restart(monkeypatch):
         calls["cli"] = list(argv or [])
         return 0
 
-    monkeypatch.setattr("app.cli.launcher.main._read_pid_file", lambda: {"pid": 1234, "base_url": "http://127.0.0.1:8000/api/v1"})
+    monkeypatch.setattr("app.cli.launcher.main._read_pid_file", lambda: {"pid": 1234, "base_url": stable_api_base_url})
     monkeypatch.setattr("app.cli.launcher.main._server_ready", fake_ready)
     monkeypatch.setattr("app.cli.launcher.main._ensure_local_server", fake_ensure)
     monkeypatch.setattr("app.cli.launcher.main._ensure_cli_dependencies", lambda: True)
@@ -139,10 +150,10 @@ def test_heygent_cli_can_skip_default_restart(monkeypatch):
     assert exit_code == 0
     assert calls["ready"] == 1
     assert calls["ensure"] == []
-    assert calls["cli"] == ["--base-url", "http://127.0.0.1:8000/api/v1", "--timeout", "10.0"]
+    assert calls["cli"] == ["--base-url", stable_api_base_url, "--timeout", "10.0"]
 
 
-def test_heygent_cli_restart_server(monkeypatch, capsys):
+def test_heygent_cli_restart_server(monkeypatch, capsys, stable_api_base_url):
     calls = {"ensure": [], "cli": []}
 
     def fake_ensure(base_url: str, *, wait_seconds: float = 12.0, poll_interval: float = 0.5, restart: bool = False) -> bool:
@@ -162,8 +173,8 @@ def test_heygent_cli_restart_server(monkeypatch, capsys):
     captured = capsys.readouterr().out
 
     assert exit_code == 0
-    assert calls["ensure"] == [{"base_url": "http://127.0.0.1:8000/api/v1", "restart": True}]
-    assert calls["cli"] == ["--base-url", "http://127.0.0.1:8000/api/v1", "--timeout", "10.0"]
+    assert calls["ensure"] == [{"base_url": stable_api_base_url, "restart": True}]
+    assert calls["cli"] == ["--base-url", stable_api_base_url, "--timeout", "10.0"]
     assert "이전에 띄운 로컬 서버를 다시 시작할게." in captured
 
 

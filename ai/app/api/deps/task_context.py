@@ -7,6 +7,7 @@ from fastapi import Request
 from app.domain.orchestration.agent.loop import TaskEngine
 from app.domain.tasks.repository import TaskRepository
 from app.domain.tasks.runtime.service import TaskService
+from app.storage.redis import RedisTaskProjectionStore
 
 
 @dataclass(slots=True)
@@ -16,6 +17,7 @@ class TaskContext:
     repository: TaskRepository
     service: TaskService
     engine: TaskEngine
+    task_projection_store: RedisTaskProjectionStore | None = None
 
 
 def get_task_context(request: Request) -> TaskContext:
@@ -24,4 +26,5 @@ def get_task_context(request: Request) -> TaskContext:
         repository=repository,
         service=TaskService(repository),
         engine=request.app.state.task_engine,
+        task_projection_store=getattr(request.app.state, "task_projection_store", None),
     )

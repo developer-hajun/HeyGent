@@ -6,7 +6,7 @@ from app.core.config import Settings
 from app.domain.providers.model import OpenAIOAuthProvider
 from app.domain.providers.model.openai_api import OpenAIAPIProvider
 from app.domain.providers.registry import ProviderRegistry
-from app.storage.sqlite import SQLiteTaskRepository
+from tests.fakes import InMemoryTaskRepository
 
 
 class DummyHTTPResponse:
@@ -54,8 +54,8 @@ def _make_test_access_token() -> str:
     return f"{header}.{payload}.sig"
 
 
-def test_openai_provider_health_and_stub_respond(tmp_path):
-    repository = SQLiteTaskRepository(tmp_path / "provider.db")
+def test_openai_provider_health_and_stub_respond():
+    repository = InMemoryTaskRepository()
     provider = OpenAIOAuthProvider(Settings(), repository)
 
     health = provider.health()
@@ -69,7 +69,7 @@ def test_openai_provider_health_and_stub_respond(tmp_path):
 
 
 def test_openai_provider_imports_local_codex_auth_and_responds_live(monkeypatch, tmp_path):
-    repository = SQLiteTaskRepository(tmp_path / "provider-codex.db")
+    repository = InMemoryTaskRepository()
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(
         json.dumps(
@@ -126,6 +126,7 @@ def test_openai_api_provider_respond_preserves_native_tool_call(monkeypatch):
         captured["url"] = url
         captured["headers"] = headers
         captured["json"] = json
+        captured["timeout"] = timeout
         return DummyHTTPResponse(
             {
                 "id": "resp_tool",
@@ -183,6 +184,7 @@ def test_openai_api_provider_respond_preserves_native_tool_call(monkeypatch):
     )
 
     assert captured["url"] == "https://api.openai.test/v1/responses"
+    assert captured["timeout"] == settings.agent_model_request_timeout_seconds
     assert captured["json"]["model"] == "gpt-agent"
     assert captured["json"]["input"] == [
         {"role": "user", "content": "할 일을 정리해줘"},
@@ -203,7 +205,7 @@ def test_openai_api_provider_respond_preserves_native_tool_call(monkeypatch):
 
 
 def test_openai_oauth_provider_respond_streams_agent_contract(monkeypatch, tmp_path):
-    repository = SQLiteTaskRepository(tmp_path / "provider-respond.db")
+    repository = InMemoryTaskRepository()
     auth_path = tmp_path / "auth.json"
     auth_path.write_text(
         json.dumps(
@@ -231,6 +233,7 @@ def test_openai_oauth_provider_respond_streams_agent_contract(monkeypatch, tmp_p
         captured["url"] = url
         captured["headers"] = headers
         captured["json"] = json
+        captured["timeout"] = timeout
         return DummyStreamResponse(
             [
                 'data: {"type":"response.completed","response":{"id":"resp_oauth_tool","model":"gpt-test","status":"completed","output":[{"type":"function_call","call_id":"call_1","name":"todo","arguments":"{\\"todos\\":[]}"}],"usage":{"input_tokens":5,"output_tokens":2}}}',
@@ -253,6 +256,7 @@ def test_openai_oauth_provider_respond_streams_agent_contract(monkeypatch, tmp_p
     assert auth.status == "connected"
     assert captured["method"] == "POST"
     assert captured["url"] == f"{settings.openai_api_base_url}/codex/responses"
+    assert captured["timeout"] == settings.agent_model_stream_timeout_seconds
     assert captured["json"]["stream"] is True
     assert captured["json"]["input"][1] == {
         "type": "function_call_output",
@@ -265,8 +269,8 @@ def test_openai_oauth_provider_respond_streams_agent_contract(monkeypatch, tmp_p
     assert response.raw_response["id"] == "resp_oauth_tool"
 
 
-def test_openai_provider_completes_auth_and_responds_live(monkeypatch, tmp_path):
-    repository = SQLiteTaskRepository(tmp_path / "provider-live.db")
+def test_openai_provider_completes_auth_and_responds_live(monkeypatch):
+    repository = InMemoryTaskRepository()
     settings = Settings(
         openai_oauth_client_id="client-id",
         openai_oauth_redirect_uri="http://localhost:1455/auth/callback",
@@ -314,8 +318,8 @@ def test_openai_provider_completes_auth_and_responds_live(monkeypatch, tmp_path)
     assert response.metadata["mode"] == "live"
 
 
-def test_openai_provider_refresh_and_disconnect(monkeypatch, tmp_path):
-    repository = SQLiteTaskRepository(tmp_path / "provider-refresh.db")
+def test_openai_provider_refresh_and_disconnect(monkeypatch):
+    repository = InMemoryTaskRepository()
     settings = Settings(
         openai_oauth_client_id="client-id",
         openai_oauth_redirect_uri="http://localhost:1455/auth/callback",
@@ -359,8 +363,8 @@ def test_openai_provider_refresh_and_disconnect(monkeypatch, tmp_path):
     assert provider.health().connected is False
 
 
-def test_provider_registry_returns_health_list(tmp_path):
-    repository = SQLiteTaskRepository(tmp_path / "registry.db")
+def test_provider_registry_returns_health_list():
+    repository = InMemoryTaskRepository()
     registry = ProviderRegistry([OpenAIOAuthProvider(Settings(), repository)])
 
     names = registry.list_names()

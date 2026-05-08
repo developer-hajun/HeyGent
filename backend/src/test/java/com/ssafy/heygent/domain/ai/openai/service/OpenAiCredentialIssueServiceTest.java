@@ -1,0 +1,132 @@
+package com.ssafy.heygent.domain.ai.openai.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
+
+import java.lang.reflect.Field;
+import java.time.LocalDateTime;
+import java.util.List;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.env.Environment;
+
+import com.ssafy.heygent.domain.ai.dto.request.OpenAiCredentialIssueRequest;
+import com.ssafy.heygent.domain.ai.dto.response.OpenAiCredentialIssueResponse;
+import com.ssafy.heygent.domain.ai.openai.config.OpenAiProperties;
+
+@ExtendWith(MockitoExtension.class)
+class OpenAiCredentialIssueServiceTest {
+
+    @Mock
+    private Environment environment;
+
+    @Mock
+    private OpenAiApiKeyService openAiApiKeyService;
+
+    @Mock
+    private OpenAiOAuthService openAiOAuthService;
+
+    @Mock
+    private OpenAiCodexOAuthService openAiCodexOAuthService;
+
+    private OpenAiCredentialIssueService openAiCredentialIssueService;
+
+    @BeforeEach
+    void setUp() {
+        OpenAiProperties properties = new OpenAiProperties();
+        properties.setApiKey("dev-key");
+        properties.setAllowedModels(List.of("gpt-5.4"));
+        OpenAiRuntimePolicyService runtimePolicyService = new OpenAiRuntimePolicyService(properties, environment);
+        openAiCredentialIssueService = new OpenAiCredentialIssueService(
+            properties,
+            runtimePolicyService,
+            openAiApiKeyService,
+            openAiOAuthService,
+            openAiCodexOAuthService
+        );
+    }
+
+    @Test
+    void issueReturnsUserApiKeyCredential() throws Exception {
+        OpenAiCredentialIssueRequest request = request("openai_api_key");
+        when(openAiApiKeyService.resolveApiKey(
+            org.mockito.ArgumentMatchers.eq(1L),
+            org.mockito.ArgumentMatchers.any()
+        )).thenReturn("user-key");
+
+        OpenAiCredentialIssueResponse response = openAiCredentialIssueService.issue(request);
+
+        assertThat(response.getProviderName()).isEqualTo("openai_api_key");
+        assertThat(response.getCredentialType()).isEqualTo("api_key");
+        assertThat(response.getCredential()).isEqualTo("user-key");
+    }
+
+    @Test
+    void issueReturnsGeminiApiKeyCredential() throws Exception {
+        OpenAiCredentialIssueRequest request = request("gemini_api_key", "gemini-2.5-pro");
+        when(openAiApiKeyService.resolveApiKey(
+            org.mockito.ArgumentMatchers.eq(1L),
+            org.mockito.ArgumentMatchers.any()
+        )).thenReturn("gemini-key");
+
+        OpenAiCredentialIssueResponse response = openAiCredentialIssueService.issue(request);
+
+        assertThat(response.getProviderName()).isEqualTo("gemini_api_key");
+        assertThat(response.getAuthType()).isEqualTo("api_key");
+        assertThat(response.getCredentialType()).isEqualTo("api_key");
+        assertThat(response.getCredential()).isEqualTo("gemini-key");
+    }
+
+    @Test
+    void issueReturnsOauthAccessTokenOnly() throws Exception {
+        OpenAiCredentialIssueRequest request = request("openai_oauth");
+        LocalDateTime expiresAt = LocalDateTime.now().plusHours(1);
+        when(openAiOAuthService.resolveAccessTokenCredential(1L))
+            .thenReturn(new OpenAiOAuthService.AccessTokenCredential("access-token", expiresAt));
+
+        OpenAiCredentialIssueResponse response = openAiCredentialIssueService.issue(request);
+
+        assertThat(response.getProviderName()).isEqualTo("openai_oauth");
+        assertThat(response.getCredentialType()).isEqualTo("bearer");
+        assertThat(response.getCredential()).isEqualTo("access-token");
+        assertThat(response.getExpiresAt()).isEqualTo(expiresAt);
+    }
+
+    @Test
+    void issueReturnsCodexOauthAccessToken() throws Exception {
+        OpenAiCredentialIssueRequest request = request("openai_codex_oauth", "gpt-5.3-codex");
+        LocalDateTime expiresAt = LocalDateTime.now().plusHours(1);
+        when(openAiCodexOAuthService.resolveAccessTokenCredential(1L))
+            .thenReturn(new OpenAiCodexOAuthService.AccessTokenCredential("codex-access-token", expiresAt));
+
+        OpenAiCredentialIssueResponse response = openAiCredentialIssueService.issue(request);
+
+        assertThat(response.getProviderName()).isEqualTo("openai_codex_oauth");
+        assertThat(response.getAuthType()).isEqualTo("oauth");
+        assertThat(response.getCredentialType()).isEqualTo("bearer");
+        assertThat(response.getCredential()).isEqualTo("codex-access-token");
+        assertThat(response.getExpiresAt()).isEqualTo(expiresAt);
+    }
+
+    private OpenAiCredentialIssueRequest request(String providerName) throws Exception {
+        return request(providerName, "gpt-5.4");
+    }
+
+    private OpenAiCredentialIssueRequest request(String providerName, String model) throws Exception {
+        OpenAiCredentialIssueRequest request = new OpenAiCredentialIssueRequest();
+        set(request, "userId", 1L);
+        set(request, "providerName", providerName);
+        set(request, "model", model);
+        return request;
+    }
+
+    private void set(Object target, String name, Object value) throws Exception {
+        Field field = target.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(target, value);
+    }
+}

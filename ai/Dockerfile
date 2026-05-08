@@ -11,7 +11,8 @@ COPY pyproject.toml README.md ./
 # 2) 의존성 설치는 BuildKit cache mount 로 pip 다운로드 캐시를 재사용한다.
 #    `pip install -e .` (editable install) 로 설치하면 이후 코드만 바뀌어도 재설치가 필요 없다.
 #    프로젝트 패키지는 다음 COPY 단계에서 들어오므로, 의존성만 먼저 받게 하기 위해 임시 app/ 디렉터리를 만들어 둔다.
-RUN mkdir -p app && touch app/__init__.py
+RUN mkdir -p app \
+    && touch app/__init__.py
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -e .
 

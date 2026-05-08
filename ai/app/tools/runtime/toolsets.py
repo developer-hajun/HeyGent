@@ -16,6 +16,10 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
         description="Skill browsing and reading tools.",
         tools=("skills.list", "skills.read"),
     ),
+    "skill-runtime": RuntimeToolsetDefinition(
+        description="Restricted skill execution tools.",
+        tools=("skill.execute",),
+    ),
     "session": RuntimeToolsetDefinition(
         description="Session record and recall tools.",
         tools=("session.record", "session.search"),
@@ -28,6 +32,26 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
         description="Local terminal execution tools.",
         tools=("terminal.run",),
     ),
+    "web": RuntimeToolsetDefinition(
+        description="Web research, extraction, and crawl tools.",
+        tools=("web_search", "web_extract", "web_crawl"),
+    ),
+    "browser": RuntimeToolsetDefinition(
+        description="Browser automation tools.",
+        tools=(
+            "browser_navigate",
+            "browser_snapshot",
+            "browser_click",
+            "browser_type",
+            "browser_scroll",
+            "browser_back",
+            "browser_press",
+            "browser_get_images",
+            "browser_vision",
+            "browser_console",
+            "browser_cdp",
+        ),
+    ),
     "file": RuntimeToolsetDefinition(
         description="Local file read, write, patch, and search tools.",
         tools=("read_file", "write_file", "patch", "search_files"),
@@ -38,11 +62,15 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "safe": RuntimeToolsetDefinition(
         description="Safe runtime tools without terminal execution.",
-        includes=("skills", "session", "planning"),
+        includes=("skills", "session", "planning", "web"),
+    ),
+    "delegation": RuntimeToolsetDefinition(
+        description="Worker delegation tools.",
+        tools=("delegate_task",),
     ),
     "local-core": RuntimeToolsetDefinition(
         description="Current minimal local runtime tool bundle.",
-        includes=("skills", "session", "planning", "terminal", "file"),
+        includes=("skills", "session", "planning", "terminal", "file", "web", "delegation"),
     ),
 }
 
