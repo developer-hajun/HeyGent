@@ -9,8 +9,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.ssafy.heygent.domain.ai.dto.response.OpenAiUsageCostsProxyResponse;
-import com.ssafy.heygent.domain.ai.openai.service.OpenAiUsageCostsProxyService;
+import com.ssafy.heygent.domain.ai.dto.response.AiCommandUsageListResponse;
+import com.ssafy.heygent.domain.ai.openai.service.AiCommandUsageService;
 import com.ssafy.heygent.global.config.security.CustomUserPrincipal;
 import com.ssafy.heygent.global.exception.ApiResponse;
 import com.ssafy.heygent.global.exception.CustomException;
@@ -21,22 +21,29 @@ import lombok.RequiredArgsConstructor;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/v1/ai/openai/usages")
-public class OpenAiUsageCostsProxyController {
+@RequestMapping("/api/v1/ai/usages")
+public class AiUsageController {
 
-    private final OpenAiUsageCostsProxyService openAiUsageCostsProxyService;
+    private final AiCommandUsageService aiCommandUsageService;
 
-    @Operation(summary = "내 OpenAI usage 비용 조회", description = "로그인된 사용자의 provider별 OpenAI usage 비용을 기간 조건으로 조회합니다.")
-    @GetMapping("/me")
-    public ApiResponse<OpenAiUsageCostsProxyResponse> getMyOpenAiUsage(
+    @Operation(summary = "내 AI 명령 사용량 조회", description = "로그인된 사용자의 명령별 토큰 사용량과 예상 비용 기록을 조회합니다.")
+    @GetMapping("/me/commands")
+    public ApiResponse<AiCommandUsageListResponse> getMyCommandUsages(
         @AuthenticationPrincipal CustomUserPrincipal user,
-        @RequestParam String providerName,
         @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to
+        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+        @RequestParam(required = false) String taskRunId,
+        @RequestParam(required = false) String sessionId,
+        @RequestParam(required = false) Integer limit
     ) {
-        return ApiResponse.success(
-            openAiUsageCostsProxyService.getUsage(resolveUserId(user), providerName, from, to)
-        );
+        return ApiResponse.success(aiCommandUsageService.getMyUsages(
+            resolveUserId(user),
+            from,
+            to,
+            taskRunId,
+            sessionId,
+            limit
+        ));
     }
 
     private Long resolveUserId(CustomUserPrincipal user) {
