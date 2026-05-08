@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Bot, Camera, Check, Loader2, Sparkles, X } from 'lucide-react'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { useChatStore } from '@/store/useChatStore'
+import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import type { JsonObject } from '@/realtime/aiRealtimeTypes'
 import type {
   AiModelOption,
@@ -56,6 +57,7 @@ function SessionSettingsForm({ session, onOpenChange }: SessionSettingsFormProps
   const updateSession = useChatStore((state) => state.updateSession)
   const updateSessionSettings = useChatStore((state) => state.updateSessionSettings)
   const fetchModelOptions = useChatStore((state) => state.fetchModelOptions)
+  const authenticatedReady = useAiRealtimeStore((state) => state.authenticatedReady)
 
   const metadata = useMemo(() => toJsonObject(session.metadata), [session.metadata])
   const uiMetadata = useMemo(() => toJsonObject(metadata.ui), [metadata])
@@ -67,7 +69,7 @@ function SessionSettingsForm({ session, onOpenChange }: SessionSettingsFormProps
     getString(settings, 'systemPrompt') ?? getString(settings, 'system_prompt') ?? ''
   const currentModel = getString(settings, 'model') ?? ''
   const [localModelOptions, setLocalModelOptions] = useState<ModelOptionsResultPayload | null>(null)
-  const [modelOptionsLoading, setModelOptionsLoading] = useState(true)
+  const [modelOptionsLoading, setModelOptionsLoading] = useState(authenticatedReady)
   const [modelOptionsError, setModelOptionsError] = useState<string | null>(null)
   const models = useMemo(
     () => getModelOptions(localModelOptions?.models),
@@ -90,6 +92,10 @@ function SessionSettingsForm({ session, onOpenChange }: SessionSettingsFormProps
   const visibleModels = modelGroups[selectedFamily]
 
   useEffect(() => {
+    if (!authenticatedReady) {
+      return
+    }
+
     let active = true
 
     void fetchModelOptions(sessionId)
@@ -118,7 +124,7 @@ function SessionSettingsForm({ session, onOpenChange }: SessionSettingsFormProps
     return () => {
       active = false
     }
-  }, [currentModel, fetchModelOptions, sessionId])
+  }, [authenticatedReady, currentModel, fetchModelOptions, sessionId])
 
   const handleClose = () => {
     if (saving) {
@@ -280,7 +286,7 @@ function SessionSettingsForm({ session, onOpenChange }: SessionSettingsFormProps
         <aside className="border-border bg-muted/15 flex min-h-0 flex-col border-t px-4 py-5 sm:px-6 md:border-t-0 md:border-l">
           <div className="mb-4 flex items-center justify-between gap-3">
             <span className="text-foreground text-sm font-semibold">이 대화에서 사용할 모델</span>
-            {modelOptionsLoading && (
+            {authenticatedReady && modelOptionsLoading && (
               <span className="text-muted-foreground flex items-center gap-1.5 text-xs">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 불러오는 중
@@ -317,11 +323,11 @@ function SessionSettingsForm({ session, onOpenChange }: SessionSettingsFormProps
             role="group"
             aria-label="모델 선택"
           >
-            {modelOptionsError ? (
+            {authenticatedReady && modelOptionsError ? (
               <div className="border-border bg-background text-muted-foreground rounded-lg border p-3 text-xs">
                 {modelOptionsError}
               </div>
-            ) : visibleModels.length === 0 && !modelOptionsLoading ? (
+            ) : authenticatedReady && visibleModels.length === 0 && !modelOptionsLoading ? (
               <div className="border-border bg-background text-muted-foreground rounded-lg border p-3 text-xs">
                 선택 가능한 모델이 없습니다.
               </div>

@@ -2,8 +2,6 @@ import { useEffect, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router'
 import {
   Activity,
-  ChevronLeft,
-  ChevronRight,
   Loader2,
   LayoutDashboard,
   MessageSquare,
@@ -49,6 +47,7 @@ export function LeftSidebar() {
     settingsOpen,
     settingsInitialTab,
     setSidebarCollapsed,
+    setSessionWorkspaceCollapsed,
     setSettingsOpen,
   } = useUIStore()
   const { setSelectedSessionId, pinnedSessionIds } = useSessionStore()
@@ -85,12 +84,20 @@ export function LeftSidebar() {
     setNewSessionModalOpen(true)
   }
 
+  const handleOpenPrimaryRoute = (path: string) => {
+    if (collapsed) {
+      setSidebarCollapsed(false)
+    }
+    navigate(path)
+  }
+
   const handleOpenChatSession = (sessionId: string, event?: React.MouseEvent) => {
     event?.stopPropagation()
     setSelectedSessionId(sessionId)
     if (!collapsed) {
       setSidebarCollapsed(true)
     }
+    setSessionWorkspaceCollapsed(false)
     navigate(`/session/${sessionId}`)
   }
 
@@ -109,8 +116,10 @@ export function LeftSidebar() {
           storePendingSessionConfig(config)
           setNewSessionModalOpen(false)
           if (config) {
+            setSidebarCollapsed(false)
             navigate('/agent-status')
           } else {
+            setSidebarCollapsed(true)
             navigate('/new-chat')
           }
         }}
@@ -122,51 +131,27 @@ export function LeftSidebar() {
       >
         {/* ── Collapsed Rail ── */}
         {collapsed && (
-          <div className="flex h-full flex-col items-center gap-0.5 pb-3">
+          <div className="flex h-full flex-col items-center gap-1.5 px-2 py-4">
             <div className="flex h-12 shrink-0 items-center justify-center">
-              <button
-                type="button"
-                onClick={() => setSidebarCollapsed(false)}
-                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-8 w-8 items-center justify-center transition-colors"
-                aria-label="사이드바 펼치기"
-              >
-                <ChevronRight className="h-5 w-5" />
-              </button>
+              <CollapsedTooltip label="에이전트 상태">
+                <button
+                  type="button"
+                  onClick={() => handleOpenPrimaryRoute('/agent-status')}
+                  className="hover:bg-accent/50 flex h-12 w-12 items-center justify-center rounded-xl transition-colors"
+                  aria-label="에이전트 상태로 이동"
+                >
+                  <img src="/onlylogo.png" alt="HeyGent" className="h-9 w-9 object-contain" />
+                </button>
+              </CollapsedTooltip>
             </div>
 
-            <CollapsedTooltip label="홈">
-              <button
-                type="button"
-                onClick={() => navigate('/')}
-                className="hover:bg-accent/50 flex h-10 w-10 items-center justify-center transition-colors"
-                aria-label="홈으로 이동"
-              >
-                <img src="/onlylogo.png" alt="HeyGent" className="h-9 w-9 object-contain" />
-              </button>
-            </CollapsedTooltip>
-
-            <div className="bg-border my-1 h-px w-6" />
-
-            <CollapsedTooltip label="대시보드">
-              <button
-                type="button"
-                onClick={() => navigate('/')}
-                className={`hover:bg-accent/50 flex h-10 w-10 items-center justify-center transition-colors ${
-                  location.pathname === '/'
-                    ? 'bg-accent text-foreground'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-                aria-label="대시보드로 이동"
-              >
-                <LayoutDashboard className="h-5 w-5" />
-              </button>
-            </CollapsedTooltip>
+            <div className="bg-border my-1 h-px w-10" />
 
             <CollapsedTooltip label="에이전트 상태">
               <button
                 type="button"
-                onClick={() => navigate('/agent-status')}
-                className={`hover:bg-accent/50 flex h-10 w-10 items-center justify-center transition-colors ${
+                onClick={() => handleOpenPrimaryRoute('/agent-status')}
+                className={`hover:bg-accent/50 flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${
                   location.pathname.startsWith('/agent-status')
                     ? 'bg-accent text-foreground'
                     : 'text-muted-foreground hover:text-foreground'
@@ -177,14 +162,29 @@ export function LeftSidebar() {
               </button>
             </CollapsedTooltip>
 
-            <div className="bg-border my-1 h-px w-6" />
+            <CollapsedTooltip label="대시보드">
+              <button
+                type="button"
+                onClick={() => handleOpenPrimaryRoute('/')}
+                className={`hover:bg-accent/50 flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${
+                  location.pathname === '/'
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                aria-label="대시보드로 이동"
+              >
+                <LayoutDashboard className="h-5 w-5" />
+              </button>
+            </CollapsedTooltip>
+
+            <div className="bg-border my-1 h-px w-10" />
 
             {/* New Chat button */}
             <CollapsedTooltip label="새 대화">
               <button
                 type="button"
                 onClick={handleNewChat}
-                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-10 w-10 items-center justify-center transition-colors"
+                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-12 w-12 items-center justify-center rounded-xl transition-colors"
               >
                 <Plus className="h-5 w-5" />
               </button>
@@ -196,7 +196,7 @@ export function LeftSidebar() {
                   type="button"
                   onClick={(event) => handleOpenChatSession(session.id, event)}
                   aria-label={`${session.title} 채팅 열기`}
-                  className={`hover:bg-accent/50 relative flex h-10 w-10 items-center justify-center transition-colors ${
+                  className={`hover:bg-accent/50 relative flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${
                     currentWorkspaceSessionId === session.id
                       ? 'bg-accent text-foreground'
                       : 'text-muted-foreground hover:text-foreground'
@@ -213,15 +213,15 @@ export function LeftSidebar() {
             <div className="flex-1" />
 
             {/* Profile icon (collapsed) */}
-            <div className="bg-border my-1 h-px w-6" />
+            <div className="bg-border my-1 h-px w-10" />
             <Popover open={profileOpen} onOpenChange={setProfileOpen}>
-              <PopoverTrigger asChild>
-                <CollapsedTooltip label="프로필">
-                  <button className="hover:bg-accent/50 flex h-10 w-10 items-center justify-center transition-colors">
-                    <ProfileAvatar size={32} />
+              <CollapsedTooltip label="프로필">
+                <PopoverTrigger asChild>
+                  <button className="hover:bg-accent/50 flex h-12 w-12 items-center justify-center rounded-xl transition-colors">
+                    <ProfileAvatar size={34} />
                   </button>
-                </CollapsedTooltip>
-              </PopoverTrigger>
+                </PopoverTrigger>
+              </CollapsedTooltip>
               <PopoverContent side="right" align="end" className="w-52 rounded-2xl p-1.5">
                 <ProfileMenu
                   onSettingsClick={() => {
@@ -237,47 +237,27 @@ export function LeftSidebar() {
         {/* ── Expanded Panel ── */}
         {!collapsed && (
           <div className="flex h-full flex-col overflow-hidden">
-            <div className="flex h-12 shrink-0 items-center gap-1 px-3">
+            <div className="flex h-12 shrink-0 items-center gap-1 px-4">
               <button
                 type="button"
-                onClick={() => navigate('/')}
-                className="hover:bg-accent/50 flex min-w-0 flex-1 items-center gap-2 px-3 py-2 transition-colors"
-                aria-label="홈으로 이동"
+                onClick={() => handleOpenPrimaryRoute('/agent-status')}
+                className="hover:bg-accent/50 flex min-w-0 flex-1 items-center justify-center rounded-lg px-2 py-2 transition-colors"
+                aria-label="에이전트 상태로 이동"
               >
                 <img
                   src="/logo-no-character.png"
                   alt="HeyGent"
-                  className="h-8 w-44 shrink-0 object-contain"
+                  className="h-8 max-w-[150px] shrink-0 object-contain"
                 />
-              </button>
-              <button
-                type="button"
-                onClick={() => setSidebarCollapsed(true)}
-                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-8 w-8 shrink-0 items-center justify-center transition-colors"
-                aria-label="사이드바 접기"
-              >
-                <ChevronLeft className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-2">
-              <nav className="flex flex-col gap-0.5">
+            <div className="flex-1 overflow-x-hidden overflow-y-auto px-4 py-3">
+              <nav className="flex flex-col gap-1">
                 <button
                   type="button"
-                  onClick={() => navigate('/')}
-                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-sm font-medium transition-colors ${
-                    location.pathname === '/'
-                      ? 'bg-accent text-foreground'
-                      : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
-                  }`}
-                >
-                  <LayoutDashboard className="h-5 w-5 shrink-0" />
-                  <span>대시보드</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => navigate('/agent-status')}
-                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-sm font-medium transition-colors ${
+                  onClick={() => handleOpenPrimaryRoute('/agent-status')}
+                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
                     location.pathname.startsWith('/agent-status')
                       ? 'bg-accent text-foreground'
                       : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
@@ -285,6 +265,18 @@ export function LeftSidebar() {
                 >
                   <Activity className="h-5 w-5 shrink-0" />
                   <span>에이전트 상태</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenPrimaryRoute('/')}
+                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                    location.pathname === '/'
+                      ? 'bg-accent text-foreground'
+                      : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
+                  }`}
+                >
+                  <LayoutDashboard className="h-5 w-5 shrink-0" />
+                  <span>대시보드</span>
                 </button>
               </nav>
 
@@ -296,7 +288,7 @@ export function LeftSidebar() {
                 <div className="mt-0.5 flex flex-col gap-0.5">
                   <button
                     onClick={handleNewChat}
-                    className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm font-medium transition-colors"
+                    className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors"
                   >
                     <Plus className="text-muted-foreground h-5 w-5 shrink-0" />
                     <span className="text-muted-foreground truncate text-sm">새 대화</span>
@@ -312,9 +304,10 @@ export function LeftSidebar() {
                         onClick={() => {
                           setSelectedSessionId(session.id)
                           setSidebarCollapsed(true)
+                          setSessionWorkspaceCollapsed(false)
                           navigate(`/session/${session.id}`)
                         }}
-                        className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+                        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
                           isActive
                             ? 'bg-accent text-foreground'
                             : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
@@ -344,10 +337,10 @@ export function LeftSidebar() {
             </div>
 
             {/* ── Profile Footer (Fixed) ── */}
-            <div className="border-border shrink-0 border-t px-3 py-2">
+            <div className="border-border shrink-0 border-t px-4 py-3">
               <Popover open={profileOpen} onOpenChange={setProfileOpen}>
                 <PopoverTrigger asChild>
-                  <button className="hover:bg-accent/50 flex w-full items-center gap-3 p-2 transition-colors">
+                  <button className="hover:bg-accent/50 flex w-full items-center gap-3 rounded-lg p-2 transition-colors">
                     <ProfileAvatar size={32} />
                     <div className="min-w-0 flex-1 text-left">
                       <p className="text-foreground truncate text-sm font-medium">

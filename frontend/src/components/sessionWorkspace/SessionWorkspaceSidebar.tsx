@@ -17,9 +17,11 @@ export function SessionWorkspaceSidebar() {
   const location = useLocation()
   const navigate = useNavigate()
   const sessionWorkspaceCollapsed = useUIStore((state) => state.sessionWorkspaceCollapsed)
+  const setSidebarCollapsed = useUIStore((state) => state.setSidebarCollapsed)
   const setSessionWorkspaceCollapsed = useUIStore((state) => state.setSessionWorkspaceCollapsed)
   const setSelectedSessionId = useSessionStore((state) => state.setSelectedSessionId)
   const sessionsById = useChatStore((state) => state.sessionsById)
+  const deleteSession = useChatStore((state) => state.deleteSession)
   const connectionStatus = useAiRealtimeStore((state) => state.connectionStatus)
   const authStatus = useAiRealtimeStore((state) => state.authStatus)
   const realtimeError = useAiRealtimeStore((state) => state.lastError)
@@ -28,7 +30,8 @@ export function SessionWorkspaceSidebar() {
   const activePanel = getWorkspacePanelFromPath(location.pathname)
   const session = sessionId === null ? null : (sessionsById[sessionId] ?? null)
   const currentRoute = location.pathname.startsWith('/agent-status/') ? 'visualization' : 'chat'
-  const activeSubAgentId = new URLSearchParams(location.search).get('edit')
+  const searchParams = new URLSearchParams(location.search)
+  const activeSubAgentId = searchParams.get('agent')
   const connectionState = getWorkspaceConnectionState(
     connectionStatus,
     authStatus,
@@ -43,6 +46,7 @@ export function SessionWorkspaceSidebar() {
   const handleSelectPanel = (panelId: WorkspaceNavId) => {
     if (panelId === 'chat') {
       setSelectedSessionId(sessionId)
+      setSidebarCollapsed(true)
       navigate(`/session/${sessionId}`)
       return
     }
@@ -53,14 +57,20 @@ export function SessionWorkspaceSidebar() {
 
   const handleCreateSubAgent = () => {
     setSelectedSessionId(sessionId)
-    navigate(`${getWorkspacePanelPath(sessionId, 'subAgents')}?new=1`)
+    navigate(`${getWorkspacePanelPath(sessionId, 'subAgents')}?create=1`)
   }
 
-  const handleEditSubAgent = (agentPanelId: string) => {
+  const handleOpenSubAgent = (agentPanelId: string) => {
     setSelectedSessionId(sessionId)
     navigate(
-      `${getWorkspacePanelPath(sessionId, 'subAgents')}?edit=${encodeURIComponent(agentPanelId)}`,
+      `${getWorkspacePanelPath(sessionId, 'subAgents')}?agent=${encodeURIComponent(agentPanelId)}`,
     )
+  }
+
+  const handleDeleteSession = async () => {
+    await deleteSession(sessionId)
+    setSelectedSessionId(null)
+    navigate('/new-chat', { replace: true })
   }
 
   return (
@@ -75,7 +85,8 @@ export function SessionWorkspaceSidebar() {
       activeSubAgentId={activeSubAgentId}
       onCollapsedChange={setSessionWorkspaceCollapsed}
       onCreateSubAgent={handleCreateSubAgent}
-      onEditSubAgent={handleEditSubAgent}
+      onDeleteSession={handleDeleteSession}
+      onOpenSubAgent={handleOpenSubAgent}
       onSelectPanel={handleSelectPanel}
     />
   )
