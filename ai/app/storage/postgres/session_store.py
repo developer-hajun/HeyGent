@@ -717,7 +717,17 @@ def _message_from_row(row: Any) -> dict[str, Any]:
 
 
 def _json(value: Any) -> str:
-    return json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
+    return json.dumps(_sanitize_json_value(value or {}), ensure_ascii=False, sort_keys=True)
+
+
+def _sanitize_json_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, list):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _sanitize_json_value(item) for key, item in value.items()}
+    return value
 
 
 def _json_load(value: Any, default: Any) -> Any:

@@ -365,6 +365,35 @@ export function ChatSessionPage() {
       setErrorMessage(null)
       setWorkStatusMessage('작업을 생성하는 중입니다.')
       try {
+        const requestedIdentifier = extractWorkIdentifier(content)
+        if (requestedIdentifier) {
+          const latestItems = await fetchSessionWork(sessionId)
+          const existingWork = latestItems.find(
+            (work) => normalizeWorkIdentifier(work.identifier) === requestedIdentifier,
+          )
+          if (!existingWork) {
+            const message = `${requestedIdentifier} 작업을 찾지 못했습니다. 작업 보드에서 번호를 확인해 주세요.`
+            setErrorMessage(message)
+            setWorkStatusMessage(message)
+            return
+          }
+          await sendMessage({
+            sessionId,
+            content,
+            inputPayload: {
+              workId: existingWork.workId,
+              workIdentifier: existingWork.identifier,
+              workTitle: existingWork.title,
+              workAssigneeAgentId: existingWork.assigneeAgentId ?? 'CEO',
+            },
+          })
+          await fetchMessages(sessionId)
+          await fetchActiveTaskRuns(sessionId)
+          setSelectedWorkId(existingWork.workId)
+          setLoadState('ready')
+          setWorkStatusMessage(`${existingWork.identifier} 작업으로 실행을 시작했습니다.`)
+          return
+        }
         const response = await createWork(sessionId, {
           ...buildCreateWorkPayload(content),
           startExecution: false,
@@ -714,6 +743,17 @@ function buildCreateWorkPayload(content: string) {
     initialComment: null,
     metadata: { source: 'chat_composer' },
   }
+}
+
+function extractWorkIdentifier(content: string) {
+  const match = content.match(/\btask\s*[-#]?\s*(\d+)\b/i)
+  if (!match) return null
+  return `TASK-${match[1]}`
+}
+
+function normalizeWorkIdentifier(identifier: string) {
+  const match = identifier.match(/\btask\s*[-#]?\s*(\d+)\b/i)
+  return match ? `TASK-${match[1]}` : identifier.trim().toUpperCase()
 }
 
 function toChatConnectionState(

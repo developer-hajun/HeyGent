@@ -42,12 +42,22 @@ class ToolCallingLoopHandler:
     def execute(self, *, task, step, resume_payload=None) -> dict[str, Any]:
         return asyncio.run(self.execute_async(task=task, step=step, resume_payload=resume_payload))
 
-    async def execute_async(self, *, task, step, resume_payload=None, progress_sink=None, delegate_executor=None) -> dict[str, Any]:
+    async def execute_async(
+        self,
+        *,
+        task,
+        step,
+        resume_payload=None,
+        progress_sink=None,
+        delegate_executor=None,
+        session_agent_executor=None,
+    ) -> dict[str, Any]:
         task_input = dict(task.input_payload or {})
         # 요청 payload의 workspace_root는 API 호출자가 선택한 이번 실행 root로 바인딩한다.
         request_tool_runtime = self._bind_request_tool_runtime(
             workspace_root=task_input.get("workspace_root"),
             owner_key=getattr(task, "owner_key", None),
+            runtime_context=task_input,
         )
         requested_toolsets = self._requested_toolsets(task_input)
         available_tools = self.tool_catalog.list_available_tools(requested_toolsets=requested_toolsets)
@@ -66,6 +76,7 @@ class ToolCallingLoopHandler:
             current_todo_state=current_todo_state,
             progress_sink=progress_sink,
             delegate_executor=delegate_executor,
+            session_agent_executor=session_agent_executor,
         )
 
     async def _execute_native(
@@ -82,6 +93,7 @@ class ToolCallingLoopHandler:
         current_todo_state: dict[str, Any],
         progress_sink,
         delegate_executor=None,
+        session_agent_executor=None,
     ) -> dict[str, Any]:
         """모델 응답과 runtime tool 실행을 번갈아 수행한다.
 
@@ -283,6 +295,13 @@ class ToolCallingLoopHandler:
                             accepted_result=result,
                         )
                         delegate_boundary_started = True
+                    if runtime_tool_name == "session_agent_task" and session_agent_executor is not None:
+                        result = await self._execute_session_agent_tool_result(
+                            session_agent_executor=session_agent_executor,
+                            tool_call_id=tool_call.id,
+                            args=tool_call.arguments,
+                            accepted_result=result,
+                        )
                 tool_result = {
                     "tool_call_id": tool_call.id,
                     "name": runtime_tool_name,
@@ -564,6 +583,26 @@ class ToolCallingLoopHandler:
             accepted_result=dict(accepted_result),
         )
 
+    @staticmethod
+    async def _execute_session_agent_tool_result(
+        *,
+        session_agent_executor,
+        tool_call_id: str,
+        args: dict[str, Any],
+        accepted_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not isinstance(accepted_result, dict) or accepted_result.get("ok") is False:
+            return accepted_result
+        child_work = accepted_result.get("child_work")
+        if not isinstance(child_work, dict):
+            return accepted_result
+        return await session_agent_executor(
+            child_work=dict(child_work),
+            tool_call_id=tool_call_id,
+            args=dict(args or {}),
+            accepted_result=dict(accepted_result),
+        )
+
     async def _emit_tool_progress(
         self,
         *,
@@ -768,10 +807,10 @@ class ToolCallingLoopHandler:
             return text[:80]
         return cls._optional_text(args.get("command"))
 
-    def _bind_request_tool_runtime(self, *, workspace_root: Any, owner_key: Any):
+    def _bind_request_tool_runtime(self, *, workspace_root: Any, owner_key: Any, runtime_context: dict[str, Any] | None = None):
         context_binder = getattr(self.tool_runtime, "bind_request_context", None)
         if callable(context_binder):
-            return context_binder(workspace_root=workspace_root, owner_key=owner_key)
+            return context_binder(workspace_root=workspace_root, owner_key=owner_key, runtime_context=runtime_context)
         binder = getattr(self.tool_runtime, "bind_workspace_root", None)
         if callable(binder):
             return binder(workspace_root)

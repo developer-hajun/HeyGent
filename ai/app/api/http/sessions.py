@@ -61,7 +61,7 @@ _PROTECTED_SESSION_METADATA_KEYS = {
 }
 _SESSION_METADATA_PATCH_ALLOWLIST = {"pinned", "color", "tags", "description", "lastViewedAt", "last_viewed_at", "ui"}
 _SESSION_SETTINGS_ALLOWLIST = {"model", "systemPrompt", "system_prompt", "toolsets", "delegationPolicy", "delegation_policy"}
-_PUBLIC_SESSION_TOOLSETS = {"skills", "session", "planning", "web", "safe"}
+_PUBLIC_SESSION_TOOLSETS = {"skills", "session", "planning", "web", "work", "safe"}
 
 
 @router.post(
@@ -532,7 +532,13 @@ def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work
     if profile is None:
         return
     task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
-    bundle = agent_repository.get_instruction_bundle(profile_id=assignee_agent_id, owner_key=str(work.owner_key))
+    profile_id = str(profile.get("profile_id") or assignee_agent_id)
+    if not assignee_agent_id or assignee_agent_id == "CEO":
+        task_input["sessionAgentProfiles"] = [
+            _agent_profile_prompt_payload(item)
+            for item in agent_repository.list_session_agents(session_id=work.session_id, owner_key=str(work.owner_key))
+        ]
+    bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
     if bundle is not None:
         task_input["targetAgentInstructions"] = _instruction_bundle_prompt_payload(bundle)
 

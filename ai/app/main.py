@@ -124,8 +124,10 @@ async def lifespan(app: FastAPI):
         skill_registry=skill_registry,
         session_store=session_store,
         bridge_session_manager=bridge_session_manager,
+        work_repository=work_repository,
+        agent_repository=agent_repository,
     )
-    tool_catalog = ToolCatalog(tool_runtime, default_toolsets=("skills", "session", "planning", "terminal", "file", "web", "browser", "delegation"))
+    tool_catalog = ToolCatalog(tool_runtime, default_toolsets=("skills", "session", "planning", "terminal", "file", "web", "browser", "work", "delegation"))
     child_session_launcher = ChildSessionLauncher()
     planner = Planner()
     tool_registry = ToolRegistry(
@@ -135,7 +137,18 @@ async def lifespan(app: FastAPI):
         tool_catalog=tool_catalog,
         session_store=session_store,
     )
-    task_engine = TaskEngine(repository, broadcaster, approval_service, child_session_launcher, planner, tool_registry, session_store=session_store)
+    task_engine = TaskEngine(
+        repository,
+        broadcaster,
+        approval_service,
+        child_session_launcher,
+        planner,
+        tool_registry,
+        session_store=session_store,
+        work_repository=work_repository,
+        agent_repository=agent_repository,
+        settings=settings,
+    )
     loop_runner = AgentLoopRunner(
         repository=repository,
         planner=planner,
