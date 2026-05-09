@@ -17,6 +17,7 @@ from app.core.utils.ids import new_id
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
+from app.domain.work import WorkService
 logger = logging.getLogger(__name__)
 
 _PUBLIC_SESSION_SOURCE = "api.session"
@@ -353,6 +354,15 @@ class WebSocketCommandRouter:
         task_input["system_prompt_snapshot"] = get_system_prompt_snapshot(session)
         task_input["base_history_version"] = base_history_version
         _apply_session_settings_snapshot(task_input, settings_snapshot, session=session)
+        work_id = _work_id_from_task_input(task_input)
+        if work_id is not None:
+            _attach_work_context_or_ws_error(
+                context,
+                task_input=task_input,
+                work_id=work_id,
+                session_id=session_id,
+                owner_key=context.auth.user_id,
+            )
         # token memory context는 durable payload에 넣지 않는다. backend 호출이 필요해지면
         # context.auth.access_token에서만 꺼내 쓰도록 경계를 고정한다.
         await attach_persistent_memory_context(
@@ -397,6 +407,11 @@ class WebSocketCommandRouter:
         }
         try:
             context.websocket.app.state.repository.create_task(task)
+            if work_id is not None:
+                WorkService(context.websocket.app.state.work_repository).mark_run_started(
+                    work_id=work_id,
+                    task_run_id=task.task_run_id,
+                )
         except Exception:
             session_store.clear_stale_running_task(
                 owner_key=context.auth.user_id,
@@ -1012,6 +1027,7 @@ class WebSocketCommandRouter:
                 )
                 return
             if completed_status != TaskStatus.COMPLETED.value:
+                _apply_ws_linked_work_result(context, task=completed_task)
                 context.websocket.app.state.session_store.clear_stale_running_task(
                     owner_key=completed_task.owner_key,
                     session_id=session_id,
@@ -1035,6 +1051,7 @@ class WebSocketCommandRouter:
                     )
                 )
                 return
+            _apply_ws_linked_work_result(context, task=completed_task)
             content = _assistant_content_from_task(completed_task)
             assistant_append = context.websocket.app.state.session_store.append_assistant_message_and_finish_task(
                 owner_key=completed_task.owner_key,
@@ -1078,6 +1095,7 @@ class WebSocketCommandRouter:
             )
         except Exception:
             logger.exception("session.message.create background 실행에 실패했습니다.")
+            _mark_ws_linked_work_run_failed(context, task=task)
             try:
                 context.websocket.app.state.session_store.clear_stale_running_task(
                     owner_key=task.owner_key,
@@ -1259,6 +1277,52 @@ def _create_public_session(context: WebSocketCommandContext, *, content: str, mo
     if session is None:
         raise WebSocketCommandError("internal_error", "session was not created", retryable=True)
     return session
+
+
+def _work_id_from_task_input(task_input: dict[str, Any]) -> str | None:
+    candidate = task_input.get("workId") or task_input.get("work_id")
+    text = str(candidate or "").strip()
+    return text or None
+
+
+def _attach_work_context_or_ws_error(
+    context: WebSocketCommandContext,
+    *,
+    task_input: dict[str, Any],
+    work_id: str,
+    session_id: str,
+    owner_key: str,
+) -> None:
+    repository = getattr(context.websocket.app.state, "work_repository", None)
+    if repository is None:
+        raise WebSocketCommandError("work_repository_missing", "work repository is not configured")
+    work = repository.get_work(work_id)
+    if work is None:
+        raise WebSocketCommandError("work_not_found", "work not found")
+    if str(work.owner_key) != str(owner_key):
+        raise WebSocketCommandError("forbidden", "work owner mismatch")
+    if work.session_id != session_id:
+        raise WebSocketCommandError("work_session_mismatch", "work belongs to another session")
+    task_input["workId"] = work.work_id
+    task_input["workIdentifier"] = work.identifier
+    task_input["workContext"] = repository.context_preview(work.work_id)
+
+
+def _apply_ws_linked_work_result(context: WebSocketBackgroundContext, *, task: Any) -> None:
+    work_id = _work_id_from_task_input(dict(getattr(task, "input_payload", {}) or {}))
+    if work_id is None:
+        return
+    WorkService(context.websocket.app.state.work_repository).apply_task_result(work_id=work_id, task=task)
+
+
+def _mark_ws_linked_work_run_failed(context: WebSocketBackgroundContext, *, task: Any) -> None:
+    work_id = _work_id_from_task_input(dict(getattr(task, "input_payload", {}) or {}))
+    if work_id is None:
+        return
+    try:
+        context.websocket.app.state.work_repository.update_run_status(work_id, task.task_run_id, "FAILED")
+    except Exception:
+        logger.exception("작업 실행 연결 상태 갱신에 실패했습니다.")
 
 
 def _create_task_transcript_session(session_store: Any, *, session_id: str, owner_key: str, title: str | None, model: str | None) -> str:

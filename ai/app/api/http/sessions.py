@@ -28,6 +28,7 @@ from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
+from app.domain.work import WorkService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"], dependencies=[Depends(document_bearer_auth)])
 
@@ -342,6 +343,19 @@ async def _create_message_in_session(
     task_input["after_user_message_version"] = user_append["after_user_message_version"]
     task_input["completion_expected_version"] = user_append["completion_expected_version"]
     task_input["client_message_id"] = client_message_id
+    work_id = _work_id_from_task_input(task_input)
+    if work_id is not None:
+        _attach_work_context_or_404(
+            request,
+            task_input=task_input,
+            work_id=work_id,
+            session_id=sessionId,
+            owner_key=owner_key,
+        )
+        WorkService(request.app.state.work_repository).mark_run_started(
+            work_id=work_id,
+            task_run_id=task_run_id,
+        )
     await attach_persistent_memory_context(
         app_state=request.app.state,
         task_input=task_input,
@@ -360,14 +374,19 @@ async def _create_message_in_session(
             )
         )
     except KeyError as error:
+        _mark_linked_work_run_failed(request, task_input=task_input, task_run_id=task_run_id)
         session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
         raise HTTPException(status_code=404, detail=f"unknown execution route: {error.args[0]}") from error
     except ValueError as error:
+        _mark_linked_work_run_failed(request, task_input=task_input, task_run_id=task_run_id)
         session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception:
+        _mark_linked_work_run_failed(request, task_input=task_input, task_run_id=task_run_id)
         session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
         raise
+
+    _apply_linked_work_result(request, task_input=task_input, task=task)
 
     assistant_message_id = None
     if task.status == "COMPLETED":
@@ -453,6 +472,52 @@ def _create_task_transcript_session(
         metadata={"source": _TASK_TRANSCRIPT_SOURCE, "public_session_id": session_id},
     )
     return transcript_session_id
+
+
+def _work_id_from_task_input(task_input: dict[str, Any]) -> str | None:
+    candidate = task_input.get("workId") or task_input.get("work_id")
+    text = str(candidate or "").strip()
+    return text or None
+
+
+def _attach_work_context_or_404(
+    request: Request,
+    *,
+    task_input: dict[str, Any],
+    work_id: str,
+    session_id: str,
+    owner_key: str,
+) -> None:
+    repository = getattr(request.app.state, "work_repository", None)
+    if repository is None:
+        raise HTTPException(status_code=500, detail="work repository is not configured")
+    work = repository.get_work(work_id)
+    if work is None:
+        raise HTTPException(status_code=404, detail="work not found")
+    if str(work.owner_key) != str(owner_key):
+        raise HTTPException(status_code=403, detail="forbidden")
+    if work.session_id != session_id:
+        raise HTTPException(status_code=409, detail="work belongs to another session")
+    task_input["workId"] = work.work_id
+    task_input["workIdentifier"] = work.identifier
+    task_input["workContext"] = repository.context_preview(work.work_id)
+
+
+def _apply_linked_work_result(request: Request, *, task_input: dict[str, Any], task) -> None:
+    work_id = _work_id_from_task_input(task_input)
+    if work_id is None:
+        return
+    WorkService(request.app.state.work_repository).apply_task_result(work_id=work_id, task=task)
+
+
+def _mark_linked_work_run_failed(request: Request, *, task_input: dict[str, Any], task_run_id: str) -> None:
+    work_id = _work_id_from_task_input(task_input)
+    if work_id is None:
+        return
+    try:
+        request.app.state.work_repository.update_run_status(work_id, task_run_id, "FAILED")
+    except Exception:
+        return
 
 
 def _create_public_session_for_message(
