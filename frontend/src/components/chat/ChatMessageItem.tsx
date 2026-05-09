@@ -12,6 +12,7 @@ import {
   toUserFacingTaskTitle,
 } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { TaskRunStatusIcon } from '@/components/taskRuns/stepRunActivityPanel/TaskRunStatusIcon'
+import { ChatMarkdown } from '@/components/chat/ChatMarkdown'
 
 type ChatMessageItemProps = {
   message: ChatMessageView
@@ -62,9 +63,15 @@ export function ChatMessageItem({
             {message.content.trim() !== '' ? (
               <div className="space-y-2">
                 {isUser && message.work && <WorkContextBadge work={message.work} />}
-                <p className="[overflow-wrap:anywhere] break-words whitespace-pre-wrap">
-                  {message.content}
-                </p>
+                {isUser ? (
+                  <p className="[overflow-wrap:anywhere] break-words whitespace-pre-wrap">
+                    {message.content}
+                  </p>
+                ) : (
+                  <div className="[overflow-wrap:anywhere] break-words">
+                    <ChatMarkdown content={message.content} />
+                  </div>
+                )}
               </div>
             ) : (
               <div className="text-muted-foreground flex items-center gap-2">

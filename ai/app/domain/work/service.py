@@ -34,7 +34,7 @@ class WorkService:
                 return existing
 
         raw_user_input = str(payload.get("rawUserInput") or payload.get("raw_user_input") or "").strip()
-        title = str(payload.get("title") or raw_user_input[:80] or "새 작업").strip()
+        title = _fallback_title(str(payload.get("title") or "").strip(), raw_user_input)
         description = str(payload.get("description") or raw_user_input or title).strip()
         parent_id = _empty_to_none(payload.get("parentId") or payload.get("parent_id"))
         work = WorkItem(
@@ -92,6 +92,8 @@ class WorkService:
             return self._block_work_after_run_failure(work_id=work_id, task_run_id=task.task_run_id)
         if task_status == TaskStatus.COMPLETED.value and _has_blocking_tool_error(task.result_payload):
             return self._block_work_after_run_failure(work_id=work_id, task_run_id=task.task_run_id)
+        if task_status == TaskStatus.COMPLETED.value:
+            return self.repository.update_status(work_id, "done")
         return self.repository.get_work(work_id)
 
     def _block_work_after_run_failure(self, *, work_id: str, task_run_id: str) -> WorkItem:
@@ -138,30 +140,56 @@ def _extract_work_disposition(payload: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _has_blocking_tool_error(payload: dict[str, Any]) -> bool:
+    last_blocking_outcome: bool | None = None
     for item in _walk_values(payload):
         if not isinstance(item, dict):
             continue
+        outcome = _blocking_tool_outcome(item)
+        if outcome is not None:
+            last_blocking_outcome = outcome
+    return last_blocking_outcome is False
+
+
+def _blocking_tool_outcome(item: dict[str, Any]) -> bool | None:
+    result = item.get("result")
+    error = item.get("error")
+    error_code = str(error.get("code") or "").strip() if isinstance(error, dict) else ""
+    tool_name = _tool_name_from_item(item, result=result, error=error)
+    is_io_tool = "file" in tool_name or "terminal" in tool_name
+
+    if error_code in {"bridge_not_connected", "tool_runtime_unavailable", "tool_not_found"}:
+        return False
+    if not is_io_tool:
+        return None
+
+    if item.get("ok") is False:
+        return False
+    if isinstance(result, dict):
+        if result.get("ok") is False:
+            return False
         result = item.get("result")
-        if isinstance(result, dict):
-            tool_name = str(item.get("name") or result.get("tool_name") or "").strip()
-            if result.get("ok") is False and ("file" in tool_name or "terminal" in tool_name):
-                return True
-            try:
-                returncode = int(result.get("returncode"))
-            except (TypeError, ValueError):
-                returncode = 0
-            if returncode != 0 and ("file" in tool_name or "terminal" in tool_name):
-                return True
-        error = item.get("error")
-        if not isinstance(error, dict):
-            continue
-        code = str(error.get("code") or "").strip()
-        tool_name = str(error.get("tool_name") or item.get("name") or "").strip()
-        if code in {"bridge_not_connected", "tool_runtime_unavailable", "tool_not_found"}:
+        try:
+            returncode = int(result.get("returncode"))
+        except (TypeError, ValueError):
+            returncode = None
+        if returncode is not None:
+            return returncode == 0
+        if result.get("ok") is True:
             return True
-        if item.get("ok") is False and ("file" in tool_name or "terminal" in tool_name):
+        if "file" in tool_name and not result.get("error"):
             return True
-    return False
+    if item.get("ok") is True:
+        return True
+    return None
+
+
+def _tool_name_from_item(item: dict[str, Any], *, result: Any, error: Any) -> str:
+    candidates = [item.get("name")]
+    if isinstance(result, dict):
+        candidates.append(result.get("tool_name"))
+    if isinstance(error, dict):
+        candidates.append(error.get("tool_name"))
+    return str(next((value for value in candidates if value), "")).strip()
 
 
 def _walk_values(value: Any):
@@ -183,3 +211,17 @@ def _string_list(value: Any) -> list[str]:
 def _empty_to_none(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _fallback_title(title: str, raw_user_input: str) -> str:
+    if title:
+        return title[:80].rstrip()
+    text = str(raw_user_input or "").strip().replace("\r\n", "\n")
+    text = text.splitlines()[0] if text else ""
+    text = text.replace("\\", " ")
+    for marker in (" 조사해서", " 정리해서", " 만들어", " 작성해", " 저장"):
+        if marker in text:
+            text = text.split(marker, 1)[0] + marker
+            break
+    compact = " ".join(text.split())
+    return compact[:48].rstrip() or "새 작업"

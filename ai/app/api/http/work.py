@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -23,6 +25,7 @@ from app.contracts.work import (
     WorkRunsResponse,
 )
 from app.contracts.session import CreateSessionMessageRequest
+from app.domain.providers.model.base import AgentMessage
 from app.api.http.sessions import _create_message_in_session
 from app.domain.work import WorkItem, WorkService
 from app.domain.work.policies import normalize_disposition_status
@@ -73,11 +76,13 @@ async def create_session_work(
     ensure_owner(user, session.get("user_id"))
 
     service = WorkService(request.app.state.work_repository)
+    work_payload = payload.model_dump(by_alias=True)
+    work_payload = await _enrich_work_payload_title(request, session=session, payload=work_payload)
     work = service.create_from_payload(
         session_id=sessionId,
         owner_key=str(user.user_id),
         owner_user_id=_int_or_none(user.user_id),
-        payload=payload.model_dump(by_alias=True),
+        payload=work_payload,
         client_request_id=payload.client_request_id,
     )
     if payload.initial_comment:
@@ -113,6 +118,93 @@ async def create_session_work(
     updated = request.app.state.work_repository.get_work(work.work_id) or work
     await _publish_work_event(request, str(user.user_id), "work.created", work=updated)
     return WorkCreateResponse(work=_work_response(updated), taskRunId=task_run_id, taskStatus=task_status)
+
+
+async def _enrich_work_payload_title(request: Request, *, session: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    raw_user_input = str(payload.get("rawUserInput") or payload.get("raw_user_input") or "").strip()
+    current_title = str(payload.get("title") or "").strip()
+    if not raw_user_input or not _should_generate_work_title(current_title=current_title, raw_user_input=raw_user_input):
+        if current_title:
+            return payload
+    generated = await _generate_work_title(request, session=session, raw_user_input=raw_user_input)
+    return {**payload, "title": generated or _fallback_work_title(raw_user_input)}
+
+
+def _should_generate_work_title(*, current_title: str, raw_user_input: str) -> bool:
+    if not current_title:
+        return True
+    normalized_title = _normalize_title_text(current_title)
+    normalized_raw = _normalize_title_text(raw_user_input)
+    first_line = _normalize_title_text(raw_user_input.splitlines()[0] if raw_user_input.splitlines() else raw_user_input)
+    return (
+        len(current_title) > 48
+        or normalized_title == normalized_raw
+        or normalized_title == first_line
+        or _contains_local_path(current_title)
+    )
+
+
+async def _generate_work_title(request: Request, *, session: dict[str, Any], raw_user_input: str) -> str | None:
+    registry = getattr(request.app.state, "provider_registry", None)
+    if registry is None:
+        return None
+    try:
+        provider = registry.preferred_model_provider()
+    except Exception:
+        return None
+    model = _work_title_model(request, session=session)
+    messages = [
+        AgentMessage(
+            role="system",
+            content=(
+                "사용자 입력을 작업 보드 제목으로 요약한다. "
+                "한국어 명사구로 4~12단어만 반환하고, 마크다운/따옴표/문장부호/파일 경로는 쓰지 않는다."
+            ),
+        ),
+        AgentMessage(role="user", content=raw_user_input[:4000]),
+    ]
+    try:
+        response = await asyncio.wait_for(
+            asyncio.to_thread(provider.respond, messages=messages, tools=[], model=model),
+            timeout=8,
+        )
+    except Exception:
+        return None
+    return _sanitize_generated_work_title(response.output_text)
+
+
+def _work_title_model(request: Request, *, session: dict[str, Any]) -> str:
+    settings_snapshot = dict(session.get("settings") or {})
+    return str(settings_snapshot.get("model") or getattr(request.app.state.settings, "openai_response_model", "") or "gpt-5.4")
+
+
+def _sanitize_generated_work_title(value: str) -> str | None:
+    title = value.strip().splitlines()[0].strip()
+    title = re.sub(r"^[`'\"“”‘’\s\-\*\d\.\)]+", "", title)
+    title = re.sub(r"[`'\"“”‘’\s\*]+$", "", title)
+    title = re.sub(r"\s+", " ", title)
+    title = re.sub(r"[.。!?！？]+$", "", title).strip()
+    if not title or _contains_local_path(title):
+        return None
+    return title[:48].rstrip()
+
+
+def _fallback_work_title(raw_user_input: str) -> str:
+    cleaned = _normalize_title_text(raw_user_input)
+    cleaned = re.sub(r"[A-Za-z]:\\[^\s]+", "", cleaned)
+    cleaned = re.sub(r"/[^\s]+", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return "새 작업"
+    return cleaned[:48].rstrip()
+
+
+def _normalize_title_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+def _contains_local_path(value: str) -> bool:
+    return bool(re.search(r"[A-Za-z]:\\|/[A-Za-z0-9_.-]+/", value))
 
 
 @router.get("/work/{workId}", response_model=WorkItemResponse, summary="작업 상세 조회")

@@ -135,6 +135,32 @@ def test_work_creation_is_idempotent_by_client_request_id():
     assert repository.next_number == 1
 
 
+def test_work_creation_without_title_uses_short_fallback_and_preserves_raw_fields():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    raw_input = (
+        "삼성전자와 SK하이닉스 최근 이슈를 조사해서 "
+        "C:\\Users\\Jun\\Desktop\\repo\\tmp\\test_file\\stock-summary.md 에 저장해줘"
+    )
+
+    work = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={
+            "rawUserInput": raw_input,
+            "description": raw_input,
+            "executionInstruction": raw_input,
+        },
+    )
+
+    assert work.title == "삼성전자와 SK하이닉스 최근 이슈를 조사해서"
+    assert work.description == raw_input
+    assert work.raw_user_input == raw_input
+    assert work.execution_instruction == raw_input
+
+
 def test_run_start_failure_keeps_work_and_returns_status_to_todo_with_system_comment():
     repository = FakeWorkRepository()
     service = WorkService(repository)
@@ -179,6 +205,34 @@ def test_work_disposition_from_task_result_updates_work_status():
     assert updated is not None
     assert updated.status == "done"
     assert repository.runs[(work.work_id, "task-1")].status == "COMPLETED"
+
+
+def test_completed_task_without_disposition_marks_work_done():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    work = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "파일 저장"},
+    )
+    service.mark_run_started(work_id=work.work_id, task_run_id="task-1")
+
+    updated = service.apply_task_result(
+        work_id=work.work_id,
+        task=TaskRun(
+            task_run_id="task-1",
+            task_type="agent.loop",
+            owner_key="7",
+            status="COMPLETED",
+            result_payload={"tool_results": [{"name": "terminal.run", "result": {"returncode": 0}}]},
+        ),
+    )
+
+    assert updated is not None
+    assert updated.status == "done"
+    assert repository.items[work.work_id].active_run_id is None
 
 
 def test_failed_task_result_blocks_work_and_releases_active_run():
@@ -290,6 +344,72 @@ def test_completed_task_with_terminal_nonzero_returncode_blocks_work():
 
     assert updated is not None
     assert updated.status == "blocked"
+    assert repository.items[work.work_id].active_run_id is None
+
+
+def test_completed_task_with_later_terminal_success_marks_work_done():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    work = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "명령 실행"},
+    )
+    service.mark_run_started(work_id=work.work_id, task_run_id="task-1")
+
+    updated = service.apply_task_result(
+        work_id=work.work_id,
+        task=TaskRun(
+            task_run_id="task-1",
+            task_type="agent.loop",
+            owner_key="7",
+            status="COMPLETED",
+            result_payload={
+                "tool_results": [
+                    {"name": "terminal.run", "result": {"returncode": 1}},
+                    {"name": "terminal.run", "result": {"returncode": 0}},
+                ]
+            },
+        ),
+    )
+
+    assert updated is not None
+    assert updated.status == "done"
+    assert repository.items[work.work_id].active_run_id is None
+
+
+def test_completed_task_with_later_file_success_marks_work_done():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    work = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "파일 저장"},
+    )
+    service.mark_run_started(work_id=work.work_id, task_run_id="task-1")
+
+    updated = service.apply_task_result(
+        work_id=work.work_id,
+        task=TaskRun(
+            task_run_id="task-1",
+            task_type="agent.loop",
+            owner_key="7",
+            status="COMPLETED",
+            result_payload={
+                "tool_results": [
+                    {"name": "terminal.run", "result": {"returncode": 1}},
+                    {"name": "write_file", "result": {"path": "tmp/out.md", "bytes_written": 32}},
+                ]
+            },
+        ),
+    )
+
+    assert updated is not None
+    assert updated.status == "done"
     assert repository.items[work.work_id].active_run_id is None
 
 

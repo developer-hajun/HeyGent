@@ -40,7 +40,7 @@ export interface WorkListResponse {
 
 export interface CreateWorkRequest {
   clientRequestId: string
-  title: string
+  title?: string | null
   description: string
   assigneeAgentId?: string | null
   rawUserInput: string

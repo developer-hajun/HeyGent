@@ -702,10 +702,8 @@ function workStatusLabel(status: WorkStatus) {
 }
 
 function buildCreateWorkPayload(content: string) {
-  const title = content.split(/\r?\n/)[0]?.trim() || '새 작업'
   return {
     clientRequestId: createClientCommandId(),
-    title: title.length > 80 ? `${title.slice(0, 77)}...` : title,
     description: content,
     rawUserInput: content,
     executionInstruction: content,
