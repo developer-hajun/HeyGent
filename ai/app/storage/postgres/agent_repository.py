@@ -4,7 +4,7 @@ import json
 from typing import Any, Callable
 
 from app.core.utils.ids import new_id
-from app.domain.agents import BUILTIN_AGENT_TEMPLATES, DEFAULT_SESSION_TEMPLATE_KEYS
+from app.domain.agents import BUILTIN_AGENT_TEMPLATES, DEFAULT_SESSION_TEMPLATE_KEYS, MAIN_AGENT_TEMPLATE
 
 
 class PostgresAgentRepository:
@@ -69,6 +69,11 @@ class PostgresAgentRepository:
         owner_key: str,
         owner_user_id: int | None,
     ) -> list[dict[str, Any]]:
+        self.ensure_session_main_agent(
+            session_id=session_id,
+            owner_key=owner_key,
+            owner_user_id=owner_user_id,
+        )
         created: list[dict[str, Any]] = []
         for template_key in DEFAULT_SESSION_TEMPLATE_KEYS:
             existing = self.get_session_agent_by_template(
@@ -157,6 +162,136 @@ class PostgresAgentRepository:
         connection.commit()
         return self.get_session_agent(profile_id=profile_id, owner_key=owner_key) or {"profile_id": profile_id}
 
+    def ensure_session_main_agent(
+        self,
+        *,
+        session_id: str,
+        owner_key: str,
+        owner_user_id: int | None,
+    ) -> dict[str, Any]:
+        existing = self.get_session_main_agent(session_id=session_id, owner_key=owner_key)
+        config_snapshot = _template_config_snapshot(MAIN_AGENT_TEMPLATE)
+        if existing is not None:
+            self._sync_profile_documents(
+                profile=existing,
+                config_snapshot=config_snapshot,
+                delegation_policy={"canDelegate": True},
+            )
+            refreshed = self.get_session_main_agent(session_id=session_id, owner_key=owner_key)
+            if refreshed is not None:
+                return refreshed
+            return existing
+        connection = self.connection_factory()
+        profile_id = new_id("agent_profile")
+        profile_key = f"session.{session_id}.{profile_id}"
+        bundle_id = new_id("instruction_bundle")
+        connection.execute(
+            """
+            INSERT INTO ai_agent_profiles (
+                profile_id, owner_key, owner_user_id, session_id, profile_key,
+                profile_version, agent_type, provider_name, model_name,
+                config_snapshot, delegation_policy, template_key
+            )
+            VALUES (%s, %s, %s, %s, %s, 1, 'main', %s, %s, %s::jsonb, %s::jsonb, %s)
+            """,
+            (
+                profile_id,
+                owner_key,
+                owner_user_id,
+                session_id,
+                profile_key,
+                config_snapshot.get("adapterType"),
+                config_snapshot.get("model"),
+                _json(config_snapshot),
+                _json({"canDelegate": True}),
+                MAIN_AGENT_TEMPLATE.template_key,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO ai_agent_instruction_bundles (
+                bundle_id, profile_id, owner_key, owner_user_id, session_id, mode, entry_document_key
+            )
+            VALUES (%s, %s, %s, %s, %s, 'managed', %s)
+            """,
+            (bundle_id, profile_id, owner_key, owner_user_id, session_id, config_snapshot.get("entryDocumentKey") or "AGENTS.md"),
+        )
+        for document in config_snapshot.get("documents") or []:
+            if not isinstance(document, dict):
+                continue
+            connection.execute(
+                """
+                INSERT INTO ai_agent_instruction_documents (
+                    document_id, bundle_id, document_key, display_name, content_format, content
+                )
+                VALUES (%s, %s, %s, %s, 'markdown', %s)
+                """,
+                (
+                    new_id("instruction_document"),
+                    bundle_id,
+                    str(document.get("documentKey") or "AGENTS.md"),
+                    str(document.get("displayName") or document.get("documentKey") or "지침 문서"),
+                    str(document.get("content") or ""),
+                ),
+            )
+        connection.commit()
+        return self.get_session_main_agent(session_id=session_id, owner_key=owner_key) or {"profile_id": profile_id}
+
+    def _sync_profile_documents(
+        self,
+        *,
+        profile: dict[str, Any],
+        config_snapshot: dict[str, Any],
+        delegation_policy: dict[str, Any],
+    ) -> None:
+        profile_id = str(profile.get("profile_id") or "")
+        bundle_id = str(profile.get("bundle_id") or "")
+        if not profile_id or not bundle_id:
+            return
+        connection = self.connection_factory()
+        connection.execute(
+            """
+            UPDATE ai_agent_profiles
+            SET config_snapshot = %s::jsonb,
+                delegation_policy = %s::jsonb,
+                updated_at = now()
+            WHERE profile_id = %s
+            """,
+            (_json(config_snapshot), _json(delegation_policy), profile_id),
+        )
+        connection.execute(
+            """
+            UPDATE ai_agent_instruction_bundles
+            SET entry_document_key = %s,
+                updated_at = now()
+            WHERE bundle_id = %s
+            """,
+            (config_snapshot.get("entryDocumentKey") or "AGENTS.md", bundle_id),
+        )
+        for document in config_snapshot.get("documents") or []:
+            if not isinstance(document, dict):
+                continue
+            connection.execute(
+                """
+                INSERT INTO ai_agent_instruction_documents (
+                    document_id, bundle_id, document_key, display_name, content_format, content
+                )
+                VALUES (%s, %s, %s, %s, 'markdown', %s)
+                ON CONFLICT (bundle_id, document_key) DO UPDATE
+                SET display_name = EXCLUDED.display_name,
+                    content = EXCLUDED.content,
+                    updated_at = now()
+                """,
+                (
+                    new_id("instruction_document"),
+                    bundle_id,
+                    str(document.get("documentKey") or "AGENTS.md"),
+                    str(document.get("displayName") or document.get("documentKey") or "지침 문서"),
+                    str(document.get("content") or ""),
+                ),
+            )
+        connection.commit()
+
     def create_session_agent(
         self,
         *,
@@ -236,6 +371,22 @@ class PostgresAgentRepository:
             (session_id, owner_key),
         ).fetchall()
         return [_profile_from_row(row) for row in rows]
+
+    def get_session_main_agent(self, *, session_id: str, owner_key: str) -> dict[str, Any] | None:
+        row = self.connection_factory().execute(
+            """
+            SELECT p.*, b.bundle_id, b.entry_document_key, b.mode
+            FROM ai_agent_profiles p
+            LEFT JOIN ai_agent_instruction_bundles b ON b.profile_id = p.profile_id
+            WHERE p.session_id = %s
+              AND p.owner_key = %s
+              AND p.agent_type = 'main'
+            ORDER BY p.created_at ASC
+            LIMIT 1
+            """,
+            (session_id, owner_key),
+        ).fetchone()
+        return _profile_from_row(row) if row is not None else None
 
     def get_session_agent(self, *, profile_id: str, owner_key: str) -> dict[str, Any] | None:
         row = self.connection_factory().execute(

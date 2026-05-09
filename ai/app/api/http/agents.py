@@ -47,6 +47,26 @@ async def list_session_agents(
     return AgentProfileListResponse(items=[_profile_response(item) for item in items])
 
 
+@router.get(
+    "/sessions/{sessionId}/agents/main",
+    response_model=AgentProfileResponse,
+    summary="세션 CEO 에이전트 조회",
+)
+async def get_session_main_agent(
+    request: Request,
+    sessionId: str = Path(..., description="CEO 에이전트를 조회할 AI 세션 ID입니다."),
+) -> AgentProfileResponse:
+    user = await authenticate_http_user(request)
+    session = _session_or_404(request, sessionId)
+    ensure_owner(user, session.get("user_id"))
+    item = request.app.state.agent_repository.ensure_session_main_agent(
+        session_id=sessionId,
+        owner_key=str(user.user_id),
+        owner_user_id=_int_or_none(user.user_id),
+    )
+    return _profile_response(item)
+
+
 @router.post(
     "/sessions/{sessionId}/agents",
     response_model=AgentProfileResponse,

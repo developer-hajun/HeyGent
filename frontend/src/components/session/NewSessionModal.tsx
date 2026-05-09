@@ -3,13 +3,10 @@ import { X, Bot, Sparkles, SlidersHorizontal, ChevronLeft, ChevronRight } from '
 import { motion, AnimatePresence } from 'motion/react'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import {
-  AgentAdapterTypeDropdown,
   AgentInstructionsBundlePanel,
   AgentModelDropdown,
   AgentSectionCard,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
-import { Button } from '@/components/ui/button'
-import { useUIStore } from '@/store/useUIStore'
 
 export interface CustomAgentConfig {
   seedDefaultAgents?: boolean
@@ -39,7 +36,6 @@ type ModalView = 'select' | 'customize'
 type CustomizeStep = 'settings' | 'instructions'
 
 export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionModalProps) {
-  const setSettingsOpen = useUIStore((state) => state.setSettingsOpen)
   const [view, setView] = useState<ModalView>('select')
   const [customizeStep, setCustomizeStep] = useState<CustomizeStep>('settings')
   const [agentName, setAgentName] = useState('')
@@ -261,48 +257,9 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                           </div>
                         </div>
                       </AgentSectionCard>
-
-                      <AgentSectionCard title="실행 환경">
-                        <div className="grid gap-3 sm:grid-cols-3">
-                          <Field label="기본 환경">
-                            <select
-                              className={`${inputClass} cursor-not-allowed opacity-70`}
-                              disabled
-                            >
-                              <option>회사 기본값 (로컬)</option>
-                            </select>
-                          </Field>
-                          <Field label="역할">
-                            <input
-                              className={`${inputClass} opacity-70`}
-                              value="CEO"
-                              disabled
-                              readOnly
-                            />
-                          </Field>
-                          <Field label="상위 에이전트">
-                            <input
-                              className={`${inputClass} opacity-70`}
-                              value="Root"
-                              disabled
-                              readOnly
-                            />
-                          </Field>
-                        </div>
-                      </AgentSectionCard>
                     </div>
 
                     <div className="space-y-3">
-                      <AgentSectionCard title="연결 방식">
-                        <Field label="연결 방식">
-                          <AgentAdapterTypeDropdown
-                            value="gpt"
-                            options={[{ value: 'gpt', label: 'OpenAI API' }]}
-                            onChange={() => undefined}
-                          />
-                        </Field>
-                      </AgentSectionCard>
-
                       <AgentSectionCard title="모델">
                         <Field label="모델">
                           <AgentModelDropdown
@@ -331,19 +288,6 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                             </span>
                           </span>
                         </label>
-                      </AgentSectionCard>
-
-                      <AgentSectionCard title="API 키">
-                        <div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setSettingsOpen(true, 'apiKeys')}
-                          >
-                            API 키 설정 열기
-                          </Button>
-                        </div>
                       </AgentSectionCard>
                     </div>
                   </div>

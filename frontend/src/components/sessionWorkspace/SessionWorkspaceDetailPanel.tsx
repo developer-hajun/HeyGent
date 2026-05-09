@@ -22,7 +22,6 @@ import {
   AgentDashboardPanel,
   AgentInstructionsBundlePanel,
   AgentInstructionsPanel,
-  AgentAdapterTypeDropdown,
   AgentModelDropdown,
   AgentRunsPanel,
   AgentSectionCard,
@@ -33,10 +32,10 @@ import { WorkBoardPanel } from '@/components/sessionWorkspace/work/board'
 import { SubAgentsPanel } from '@/components/sessionWorkspace/subAgents'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
+import { getSessionMainAgent, saveAgentInstructionDocument, type AgentProfile } from '@/apis/agents'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
-import { useUIStore } from '@/store/useUIStore'
 import type { JsonObject, RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
 import type { AiSessionSettingsPatch, ChatMessageView, RawAiSession } from '@/types/aiChat'
 import type { RawTaskRun } from '@/types/taskRuns'
@@ -113,19 +112,43 @@ function PurposePage({ session }: { session: RawAiSession }) {
   const eventsByTaskRunId = useTaskRunStore((state) => state.eventsByTaskRunId)
   const fetchActiveTaskRuns = useTaskRunStore((state) => state.fetchActiveTaskRuns)
   const [searchParams, setSearchParams] = useSearchParams()
+  const [mainAgentProfile, setMainAgentProfile] = useState<AgentProfile | null>(null)
 
   const metadata = useMemo(() => toJsonObject(session.metadata), [session.metadata])
   const uiMetadata = useMemo(() => toJsonObject(metadata.ui), [metadata])
+  const mainAgentConfig = useMemo(
+    () => toJsonObject(mainAgentProfile?.configSnapshot),
+    [mainAgentProfile],
+  )
+  const mainAgentInstructionFiles = useMemo(
+    () => getInstructionFilesFromDocuments(mainAgentConfig.documents),
+    [mainAgentConfig.documents],
+  )
   const settings = useMemo(() => toJsonObject(session.settings), [session.settings])
   const sessionId = session.session_id
-  const currentAgentName = getString(uiMetadata, 'agentName') ?? ''
-  const currentCallName = getString(uiMetadata, 'callName') ?? ''
-  const currentCapabilities = getString(uiMetadata, 'agentCapabilities') ?? ''
-  const currentSkillIds = normalizeMainAgentSkillIds(uiMetadata.agentSkills)
-  const currentPersona =
+  const currentAgentName =
+    getString(uiMetadata, 'agentName') ?? getString(mainAgentConfig, 'name') ?? ''
+  const currentCallName =
+    getString(uiMetadata, 'callName') ?? getString(mainAgentConfig, 'title') ?? ''
+  const currentCapabilities =
+    getString(uiMetadata, 'agentCapabilities') ?? getString(mainAgentConfig, 'description') ?? ''
+  const currentSkillIds = normalizeMainAgentSkillIds(
+    uiMetadata.agentSkills ?? mainAgentConfig.skills,
+  )
+  const currentInstructionsEntryFile =
+    getString(uiMetadata, 'instructionsEntryFile') ??
+    getString(mainAgentConfig, 'entryDocumentKey') ??
+    'AGENTS.md'
+  const currentInstructionsFiles = {
+    ...mainAgentInstructionFiles,
+    ...getInstructionsFiles(uiMetadata.instructionsFiles),
+  }
+  const currentSettingsPrompt =
     getString(settings, 'systemPrompt') ?? getString(settings, 'system_prompt') ?? ''
-  const currentInstructionsEntryFile = getString(uiMetadata, 'instructionsEntryFile') ?? 'AGENTS.md'
-  const currentInstructionsFiles = getInstructionsFiles(uiMetadata.instructionsFiles)
+  const currentPersona =
+    currentSettingsPrompt.trim() !== ''
+      ? currentSettingsPrompt
+      : (currentInstructionsFiles[currentInstructionsEntryFile] ?? '')
   const currentInstructionsMode =
     getString(uiMetadata, 'instructionsMode') === 'external' ? 'external' : 'managed'
   const currentInstructionsRootPath = getString(uiMetadata, 'instructionsRootPath') ?? ''
@@ -157,7 +180,6 @@ function PurposePage({ session }: { session: RawAiSession }) {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
-  const setSettingsOpen = useUIStore((state) => state.setSettingsOpen)
 
   const modelGroups = useMemo(() => groupModels(modelOptions), [modelOptions])
   const modelFamilies = useMemo(() => getModelFamilies(modelGroups), [modelGroups])
@@ -212,6 +234,39 @@ function PurposePage({ session }: { session: RawAiSession }) {
       cancelled = true
     }
   }, [authenticatedReady, commandClient, fetchActiveTaskRuns, fetchMessages, sessionId])
+
+  useEffect(() => {
+    if (!authenticatedReady || sessionId.startsWith('pending_session_')) {
+      return
+    }
+
+    let cancelled = false
+    void getSessionMainAgent(sessionId)
+      .then((profile) => {
+        if (cancelled) return
+        setMainAgentProfile(profile)
+        const config = toJsonObject(profile.configSnapshot)
+        const files = getInstructionFilesFromDocuments(config.documents)
+        setAgentName(getString(config, 'name') ?? 'CEO')
+        setCallName(getString(config, 'title') ?? 'CEO')
+        setCapabilities(getString(config, 'description') ?? '')
+        setSelectedSkillIds(normalizeMainAgentSkillIds(config.skills))
+        const entryDocumentKey = getString(config, 'entryDocumentKey') ?? 'AGENTS.md'
+        setInstructionsEntryFile(entryDocumentKey)
+        setInstructionsFiles(files)
+        setPersona(files[entryDocumentKey] ?? '')
+        setInstructionsMode('managed')
+        setInstructionsRootPath('')
+        setProfileImage(normalizeAgentProfileImage(getString(config, 'profileImage') ?? undefined))
+      })
+      .catch(() => {
+        if (!cancelled) setMainAgentProfile(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [authenticatedReady, sessionId])
 
   useEffect(() => {
     if (!authenticatedReady || commandClient === null) {
@@ -312,7 +367,7 @@ function PurposePage({ session }: { session: RawAiSession }) {
 
     const settingsPatch: AiSessionSettingsPatch = {}
     const nextPersona = persona.trim()
-    if (nextPersona !== currentPersona) {
+    if (mainAgentProfile === null && nextPersona !== currentPersona) {
       settingsPatch.systemPrompt = nextPersona
     }
     if (selectedModel !== '' && selectedModel !== modelBaseline) {
@@ -332,6 +387,21 @@ function PurposePage({ session }: { session: RawAiSession }) {
       }
       if (Object.keys(settingsPatch).length > 0) {
         await updateSessionSettings({ sessionId, settingsPatch })
+      }
+      if (
+        mainAgentProfile !== null &&
+        (persona.trim() !== currentPersona ||
+          !shallowStringRecordEqual(instructionsFiles, currentInstructionsFiles))
+      ) {
+        const documentKey = instructionsEntryFile.trim() || 'AGENTS.md'
+        await saveAgentInstructionDocument(mainAgentProfile.profileId, {
+          documentKey,
+          displayName: instructionDisplayName(documentKey),
+          content:
+            documentKey === instructionsEntryFile.trim()
+              ? persona.trim()
+              : (instructionsFiles[documentKey] ?? ''),
+        })
       }
       if (settingsPatch.model !== undefined) {
         setModelBaseline(selectedModel)
@@ -509,30 +579,6 @@ function PurposePage({ session }: { session: RawAiSession }) {
                     </div>
                   </div>
                 </AgentSectionCard>
-                <AgentSectionCard title="실행 환경">
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <Field label="기본 환경">
-                      <select
-                        className={`${inputClass} cursor-not-allowed opacity-70`}
-                        value=""
-                        disabled
-                      >
-                        <option value="">회사 기본값 (로컬)</option>
-                      </select>
-                    </Field>
-                    <Field label="역할">
-                      <input className={`${inputClass} opacity-70`} value="CEO" disabled readOnly />
-                    </Field>
-                    <Field label="상위 에이전트">
-                      <input
-                        className={`${inputClass} opacity-70`}
-                        value="Root"
-                        disabled
-                        readOnly
-                      />
-                    </Field>
-                  </div>
-                </AgentSectionCard>
                 <AgentSectionCard title="역할과 능력">
                   <Field label="할 수 있는 일">
                     <DraftTextarea
@@ -548,13 +594,6 @@ function PurposePage({ session }: { session: RawAiSession }) {
                 </AgentSectionCard>
               </div>
               <div className="space-y-4">
-                <AgentSectionCard title="연결 방식">
-                  <ModelSelector
-                    effectiveSelectedFamily={effectiveSelectedFamily}
-                    modelFamilies={modelFamilies}
-                    onFamilySelect={setSelectedFamily}
-                  />
-                </AgentSectionCard>
                 <AgentSectionCard title="모델">
                   <Field label="모델">
                     {authenticatedReady && modelOptionsLoading && (
@@ -590,18 +629,6 @@ function PurposePage({ session }: { session: RawAiSession }) {
                       markDirty()
                     }}
                   />
-                </AgentSectionCard>
-                <AgentSectionCard title="API 키">
-                  <div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setSettingsOpen(true, 'apiKeys')}
-                    >
-                      API 키 설정 열기
-                    </Button>
-                  </div>
                 </AgentSectionCard>
               </div>
             </div>
@@ -849,6 +876,27 @@ function getInstructionsFiles(value: unknown): Record<string, string> {
   )
 }
 
+function getInstructionFilesFromDocuments(value: unknown): Record<string, string> {
+  if (!Array.isArray(value)) return {}
+  return Object.fromEntries(
+    value.flatMap((document) => {
+      if (typeof document !== 'object' || document === null || Array.isArray(document)) return []
+      const item = document as Record<string, unknown>
+      const key = typeof item.documentKey === 'string' ? item.documentKey : ''
+      const content = typeof item.content === 'string' ? item.content : ''
+      return key ? [[key, content] as const] : []
+    }),
+  )
+}
+
+function instructionDisplayName(documentKey: string) {
+  if (documentKey === 'AGENTS.md') return '기본 지침'
+  if (documentKey === 'HEARTBEAT.md') return '작업 루프 지침'
+  if (documentKey === 'SOUL.md') return '역할 성향 지침'
+  if (documentKey === 'TOOLS.md') return '도구 사용 지침'
+  return documentKey
+}
+
 function shallowStringRecordEqual(left: Record<string, string>, right: Record<string, string>) {
   const leftEntries = Object.entries(left)
   const rightEntries = Object.entries(right)
@@ -1045,31 +1093,6 @@ function getMainAgentTab(value: string | null): MainAgentTab {
   if (value === 'overview') return 'dashboard'
   if (value === 'activity') return 'runs'
   return MAIN_AGENT_TABS.some((tab) => tab.value === value) ? (value as MainAgentTab) : 'dashboard'
-}
-
-function ModelSelector({
-  effectiveSelectedFamily,
-  modelFamilies,
-  onFamilySelect,
-}: {
-  effectiveSelectedFamily: ModelFamily
-  modelFamilies: Array<{ id: ModelFamily; label: string }>
-  onFamilySelect: (family: ModelFamily) => void
-}) {
-  return (
-    <div className="space-y-3">
-      <Field label="연결 방식">
-        <AgentAdapterTypeDropdown
-          value={effectiveSelectedFamily}
-          options={modelFamilies.map((family) => ({
-            value: family.id,
-            label: family.id === 'gpt' ? 'OpenAI API' : family.label,
-          }))}
-          onChange={(value) => onFamilySelect(value as ModelFamily)}
-        />
-      </Field>
-    </div>
-  )
 }
 
 function AgentImageStepper({

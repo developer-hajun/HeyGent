@@ -97,6 +97,13 @@ export async function listSessionAgents(sessionId: string): Promise<AgentProfile
   return data.items
 }
 
+export async function getSessionMainAgent(sessionId: string): Promise<AgentProfile> {
+  const { data } = await agentsApi.get<AgentProfile>(
+    `/sessions/${encodeURIComponent(sessionId)}/agents/main`,
+  )
+  return data
+}
+
 export async function createSessionAgent(
   sessionId: string,
   input: CreateSessionAgentInput,

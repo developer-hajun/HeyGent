@@ -518,12 +518,17 @@ def _attach_work_context_or_404(
 
 def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work: WorkItem) -> None:
     assignee_agent_id = str(work.assignee_agent_id or "").strip()
-    if not assignee_agent_id or assignee_agent_id == "CEO":
-        return
     agent_repository = getattr(state, "agent_repository", None)
     if agent_repository is None:
         return
-    profile = agent_repository.get_session_agent(profile_id=assignee_agent_id, owner_key=str(work.owner_key))
+    if not assignee_agent_id or assignee_agent_id == "CEO":
+        profile = agent_repository.ensure_session_main_agent(
+            session_id=work.session_id,
+            owner_key=str(work.owner_key),
+            owner_user_id=None,
+        )
+    else:
+        profile = agent_repository.get_session_agent(profile_id=assignee_agent_id, owner_key=str(work.owner_key))
     if profile is None:
         return
     task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)

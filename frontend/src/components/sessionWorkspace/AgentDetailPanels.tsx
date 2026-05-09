@@ -236,13 +236,8 @@ export function AgentInstructionsBundlePanel({
   content,
   entryFile,
   files = {},
-  mode,
-  rootPath,
   onContentChange,
-  onEntryFileChange,
   onFilesChange,
-  onModeChange,
-  onRootPathChange,
 }: {
   compact?: boolean
   content: string
@@ -256,7 +251,6 @@ export function AgentInstructionsBundlePanel({
   onModeChange: (value: 'managed' | 'external') => void
   onRootPathChange: (value: string) => void
 }) {
-  const [advancedOpen, setAdvancedOpen] = useState(mode === 'external')
   const [newFilePath, setNewFilePath] = useState('')
   const [selectedFile, setSelectedFile] = useState('')
   const [showFilesMobile, setShowFilesMobile] = useState(false)
@@ -272,9 +266,6 @@ export function AgentInstructionsBundlePanel({
   const selectedOrEntryFile = visibleFiles.includes(selectedFile)
     ? selectedFile
     : normalizedEntryFile
-  const normalizedRootPath = rootPath.trim()
-  const visibleRootPath =
-    mode === 'managed' ? normalizedRootPath || '(managed)' : normalizedRootPath
   const selectedContent =
     selectedOrEntryFile === normalizedEntryFile ? content : (files[selectedOrEntryFile] ?? '')
 
@@ -304,83 +295,6 @@ export function AgentInstructionsBundlePanel({
 
   return (
     <div className={compact ? 'space-y-4' : 'space-y-6'}>
-      <div>
-        <button
-          type="button"
-          className="text-muted-foreground hover:text-foreground group flex items-center gap-1 text-xs transition-colors"
-          onClick={() => setAdvancedOpen((open) => !open)}
-        >
-          <ChevronRight
-            className={`h-3 w-3 transition-transform ${advancedOpen ? 'rotate-90' : ''}`}
-          />
-          고급 설정
-        </button>
-        {advancedOpen && (
-          <div
-            className={`grid gap-x-6 gap-y-4 md:grid-cols-[auto_minmax(0,1fr)_minmax(12rem,0.65fr)] ${
-              compact ? 'pt-3 pb-4' : 'pt-4 pb-6'
-            }`}
-          >
-            <label className="min-w-0 space-y-1.5">
-              <span className="text-muted-foreground text-xs font-medium">관리 방식</span>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={mode === 'managed' ? 'default' : 'outline'}
-                  onClick={() => onModeChange('managed')}
-                >
-                  직접 관리
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={mode === 'external' ? 'default' : 'outline'}
-                  onClick={() => onModeChange('external')}
-                >
-                  외부 파일
-                </Button>
-              </div>
-            </label>
-            <label className="min-w-0 space-y-1.5">
-              <span className="text-muted-foreground text-xs font-medium">루트 경로</span>
-              {mode === 'managed' ? (
-                <div className="text-muted-foreground flex items-center gap-1.5 pt-1.5 font-mono text-xs">
-                  <span className="min-w-0 truncate" title={visibleRootPath}>
-                    {visibleRootPath}
-                  </span>
-                  {normalizedRootPath ? (
-                    <button
-                      type="button"
-                      className="hover:text-foreground shrink-0"
-                      onClick={() => void navigator.clipboard.writeText(normalizedRootPath)}
-                      aria-label="루트 경로 복사"
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                    </button>
-                  ) : null}
-                </div>
-              ) : (
-                <input
-                  value={rootPath}
-                  onChange={(event) => onRootPathChange(event.target.value)}
-                  className={agentTextInputClass}
-                  placeholder="/absolute/path/to/agent/prompts"
-                />
-              )}
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-muted-foreground text-xs font-medium">대표 파일</span>
-              <input
-                value={entryFile}
-                onChange={(event) => onEntryFileChange(event.target.value || 'AGENTS.md')}
-                className={agentTextInputClass}
-              />
-            </label>
-          </div>
-        )}
-      </div>
-
       <div
         className={`grid min-w-0 gap-3 ${
           compact ? 'lg:grid-cols-[220px_minmax(0,1fr)]' : 'lg:grid-cols-[260px_minmax(0,1fr)]'
@@ -392,7 +306,7 @@ export function AgentInstructionsBundlePanel({
           }`}
         >
           <div className="mb-3 flex items-center justify-between">
-            <h4 className="text-sm font-medium">파일</h4>
+            <h4 className="text-sm font-medium">지침 문서</h4>
             <Button
               type="button"
               size="icon"
@@ -415,7 +329,7 @@ export function AgentInstructionsBundlePanel({
                 }
               }}
               className={`${agentTextInputClass} min-w-0`}
-              placeholder="docs/notes.md"
+              placeholder="NOTES.md"
             />
             <Button
               type="button"
@@ -443,7 +357,7 @@ export function AgentInstructionsBundlePanel({
                 <span className="flex shrink-0 items-center gap-1">
                   {filePath === normalizedEntryFile ? (
                     <span className="border-border text-muted-foreground rounded border px-1.5 py-0.5 text-[10px] tracking-wide uppercase">
-                      entry
+                      대표
                     </span>
                   ) : null}
                   {filePath !== normalizedEntryFile ? (
@@ -492,7 +406,7 @@ export function AgentInstructionsBundlePanel({
               </Button>
               <div className="min-w-0">
                 <h4 className="truncate font-mono text-sm font-medium">{selectedOrEntryFile}</h4>
-                <p className="text-muted-foreground text-xs">마크다운 파일</p>
+                <p className="text-muted-foreground text-xs">지침 문서</p>
               </div>
             </div>
             <button
@@ -510,7 +424,7 @@ export function AgentInstructionsBundlePanel({
             className={`${agentTextInputClass} ${
               compact ? 'min-h-[300px] resize-none' : 'min-h-[420px] resize-y'
             } leading-6 whitespace-pre-wrap`}
-            placeholder="# Agent instructions"
+            placeholder="# 지침"
           />
         </div>
       </div>
