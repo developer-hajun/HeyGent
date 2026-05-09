@@ -131,6 +131,97 @@ class WorkRunsResponse(BaseModel):
     total_count: int = Field(alias="totalCount")
 
 
+class WorkDocumentResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    document_id: str = Field(alias="documentId")
+    work_id: str = Field(alias="workId")
+    document_key: str = Field(alias="documentKey")
+    title: str
+    body: str
+    format: str
+    revision_number: int = Field(alias="revisionNumber")
+    created_by: str | None = Field(default=None, alias="createdBy")
+    updated_by: str | None = Field(default=None, alias="updatedBy")
+    created_at: datetime | None = Field(default=None, alias="createdAt")
+    updated_at: datetime | None = Field(default=None, alias="updatedAt")
+
+
+class WorkDocumentsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[WorkDocumentResponse] = Field(default_factory=list)
+    total_count: int = Field(alias="totalCount")
+
+
+class WorkDocumentRevisionResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    revision_id: str = Field(alias="revisionId")
+    document_id: str = Field(alias="documentId")
+    work_id: str = Field(alias="workId")
+    document_key: str = Field(alias="documentKey")
+    title: str
+    body: str
+    format: str
+    revision_number: int = Field(alias="revisionNumber")
+    created_by: str | None = Field(default=None, alias="createdBy")
+    created_at: datetime | None = Field(default=None, alias="createdAt")
+
+
+class WorkDocumentRevisionsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[WorkDocumentRevisionResponse] = Field(default_factory=list)
+    total_count: int = Field(alias="totalCount")
+
+
+class WorkProductResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    product_id: str = Field(alias="productId")
+    work_id: str = Field(alias="workId")
+    title: str
+    summary: str | None = None
+    product_type: str = Field(alias="productType")
+    status: str
+    review_state: str = Field(alias="reviewState")
+    uri: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = Field(default=None, alias="createdAt")
+    updated_at: datetime | None = Field(default=None, alias="updatedAt")
+
+
+class WorkProductsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[WorkProductResponse] = Field(default_factory=list)
+    total_count: int = Field(alias="totalCount")
+
+
+class WorkInteractionResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    interaction_id: str = Field(alias="interactionId")
+    work_id: str = Field(alias="workId")
+    kind: str
+    status: str
+    title: str | None = None
+    body: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    response: dict[str, Any] = Field(default_factory=dict)
+    continuation_policy: str = Field(alias="continuationPolicy")
+    created_at: datetime | None = Field(default=None, alias="createdAt")
+    updated_at: datetime | None = Field(default=None, alias="updatedAt")
+
+
+class WorkInteractionsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[WorkInteractionResponse] = Field(default_factory=list)
+    total_count: int = Field(alias="totalCount")
+
+
 class WorkContextPreviewResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

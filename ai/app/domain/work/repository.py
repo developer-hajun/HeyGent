@@ -2,7 +2,18 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from app.domain.work.models import WorkComment, WorkItem, WorkLabel, WorkRelation, WorkRunLink, WorkStatus
+from app.domain.work.models import (
+    WorkComment,
+    WorkDocument,
+    WorkDocumentRevision,
+    WorkItem,
+    WorkLabel,
+    WorkProduct,
+    WorkRelation,
+    WorkRunLink,
+    WorkStatus,
+    WorkThreadInteraction,
+)
 
 
 class WorkRepository(Protocol):
@@ -32,6 +43,10 @@ class WorkRepository(Protocol):
     def update_fields(self, work_id: str, *, title: str | None = None, description: str | None = None) -> WorkItem: ...
 
     def update_assignee(self, work_id: str, *, assignee_agent_id: str | None) -> WorkItem: ...
+
+    def update_parent(self, work_id: str, *, parent_id: str | None) -> WorkItem: ...
+
+    def list_children(self, parent_id: str) -> list[WorkItem]: ...
 
     def archive_work(self, work_id: str) -> WorkItem: ...
 
@@ -72,6 +87,81 @@ class WorkRepository(Protocol):
     def remove_relation(self, *, source_work_id: str, target_work_id: str, relation_type: str) -> bool: ...
 
     def list_relations(self, work_id: str) -> list[WorkRelation]: ...
+
+    def list_documents(self, work_id: str) -> list[WorkDocument]: ...
+
+    def upsert_document(
+        self,
+        *,
+        work_id: str,
+        document_key: str,
+        title: str,
+        body: str,
+        format: str = "markdown",
+        actor_id: str | None = None,
+    ) -> WorkDocument: ...
+
+    def delete_document(self, work_id: str, document_key: str) -> bool: ...
+
+    def list_document_revisions(self, work_id: str, document_key: str) -> list[WorkDocumentRevision]: ...
+
+    def list_products(self, work_id: str) -> list[WorkProduct]: ...
+
+    def get_product(self, product_id: str) -> WorkProduct | None: ...
+
+    def create_product(
+        self,
+        *,
+        work_id: str,
+        title: str,
+        summary: str | None = None,
+        product_type: str = "note",
+        status: str = "draft",
+        review_state: str = "none",
+        uri: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> WorkProduct: ...
+
+    def update_product(
+        self,
+        product_id: str,
+        *,
+        title: str | None = None,
+        summary: str | None = None,
+        status: str | None = None,
+        review_state: str | None = None,
+        uri: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> WorkProduct: ...
+
+    def delete_product(self, product_id: str) -> bool: ...
+
+    def list_interactions(self, work_id: str) -> list[WorkThreadInteraction]: ...
+
+    def get_interaction(self, interaction_id: str) -> WorkThreadInteraction | None: ...
+
+    def create_interaction(
+        self,
+        *,
+        work_id: str,
+        kind: str,
+        title: str | None = None,
+        body: str | None = None,
+        payload: dict[str, Any] | None = None,
+        continuation_policy: str = "none",
+    ) -> WorkThreadInteraction: ...
+
+    def update_interaction(
+        self,
+        interaction_id: str,
+        *,
+        status: str,
+        response: dict[str, Any] | None = None,
+    ) -> WorkThreadInteraction: ...
+
+    def mark_read(self, work_id: str, *, owner_user_id: int) -> None: ...
+
+    def mark_unread(self, work_id: str, *, owner_user_id: int) -> None: ...
 
     def get_work_by_task_run_id(self, task_run_id: str) -> WorkItem | None: ...
 

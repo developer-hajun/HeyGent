@@ -21,6 +21,7 @@ export function toIssueBoardIssue(item: WorkItem, allItems: WorkItem[] = []): Is
     description: item.description ?? item.rawUserInput ?? '',
     status: item.status,
     assigneeAgentId: item.assigneeAgentId,
+    parentId: item.parentId,
     labels: item.labelIds ?? [],
     comments: [],
     runs:
@@ -37,6 +38,9 @@ export function toIssueBoardIssue(item: WorkItem, allItems: WorkItem[] = []): Is
             },
           ],
     documents: [],
+    childItems: (item.childWorkIds ?? [])
+      .map((id) => toRelatedIssue(id, allItems))
+      .filter(isRelatedIssue),
     relatedItems: (item.relatedWorkIds ?? [])
       .map((id) => toRelatedIssue(id, allItems))
       .filter(isRelatedIssue),
@@ -324,6 +328,7 @@ function isIssueBoardIssue(value: unknown): value is IssueBoardIssue {
     typeof issue.description === 'string' &&
     isIssueBoardStatus(issue.status) &&
     isKnownAssigneeId(issue.assigneeAgentId) &&
+    (issue.parentId === null || typeof issue.parentId === 'string') &&
     Array.isArray(issue.labels) &&
     issue.labels.every((label) => typeof label === 'string') &&
     Array.isArray(issue.comments) &&
@@ -332,6 +337,8 @@ function isIssueBoardIssue(value: unknown): value is IssueBoardIssue {
     issue.runs.every(isIssueBoardRun) &&
     Array.isArray(issue.documents) &&
     issue.documents.every(isIssueBoardDocument) &&
+    Array.isArray(issue.childItems) &&
+    issue.childItems.every(isIssueBoardRelatedItem) &&
     Array.isArray(issue.relatedItems) &&
     issue.relatedItems.every(isIssueBoardRelatedItem) &&
     Array.isArray(issue.blockedBy) &&

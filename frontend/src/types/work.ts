@@ -114,3 +114,77 @@ export interface WorkContextPreview {
   recentRunsIncluded: number
   promptPreview: string
 }
+
+export interface CreateChildWorkRequest {
+  clientRequestId?: string | null
+  title: string
+  description?: string | null
+  assigneeAgentId?: string | null
+  acceptanceCriteria?: string[]
+  blockParentUntilDone?: boolean
+}
+
+export interface WorkDocument {
+  documentId: string
+  workId: string
+  documentKey: string
+  title: string
+  body: string
+  format: string
+  revisionNumber: number
+  createdBy: string | null
+  updatedBy: string | null
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export interface WorkDocumentRevision {
+  revisionId: string
+  documentId: string
+  workId: string
+  documentKey: string
+  title: string
+  body: string
+  format: string
+  revisionNumber: number
+  createdBy: string | null
+  createdAt: string | null
+}
+
+export interface WorkProduct {
+  productId: string
+  workId: string
+  title: string
+  summary: string | null
+  productType: string
+  status: string
+  reviewState: string
+  uri: string | null
+  metadata: Record<string, unknown>
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export type WorkInteractionKind = 'suggest_tasks' | 'ask_user_questions' | 'request_confirmation'
+export type WorkInteractionStatus =
+  | 'pending'
+  | 'accepted'
+  | 'rejected'
+  | 'answered'
+  | 'cancelled'
+  | 'expired'
+  | 'failed'
+
+export interface WorkInteraction {
+  interactionId: string
+  workId: string
+  kind: WorkInteractionKind
+  status: WorkInteractionStatus
+  title: string | null
+  body: string | null
+  payload: Record<string, unknown>
+  response: Record<string, unknown>
+  continuationPolicy: 'none' | 'wake_assignee' | 'wake_assignee_on_accept'
+  createdAt: string | null
+  updatedAt: string | null
+}

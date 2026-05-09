@@ -78,3 +78,62 @@ class WorkRunLink:
     status: str
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class WorkDocument:
+    document_id: str
+    work_id: str
+    document_key: str
+    title: str
+    body: str
+    format: str = "markdown"
+    revision_number: int = 1
+    created_by: str | None = None
+    updated_by: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class WorkDocumentRevision:
+    revision_id: str
+    document_id: str
+    work_id: str
+    document_key: str
+    title: str
+    body: str
+    format: str = "markdown"
+    revision_number: int = 1
+    created_by: str | None = None
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class WorkProduct:
+    product_id: str
+    work_id: str
+    title: str
+    summary: str | None = None
+    product_type: str = "note"
+    status: str = "draft"
+    review_state: str = "none"
+    uri: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class WorkThreadInteraction:
+    interaction_id: str
+    work_id: str
+    kind: Literal["suggest_tasks", "ask_user_questions", "request_confirmation"]
+    status: str = "pending"
+    title: str | None = None
+    body: str | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
+    response: dict[str, Any] = field(default_factory=dict)
+    continuation_policy: str = "none"
+    created_at: datetime | None = None
+    updated_at: datetime | None = None

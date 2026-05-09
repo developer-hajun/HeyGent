@@ -207,7 +207,7 @@ def test_work_disposition_from_task_result_updates_work_status():
     assert repository.runs[(work.work_id, "task-1")].status == "COMPLETED"
 
 
-def test_completed_task_without_disposition_marks_work_done():
+def test_completed_task_without_disposition_moves_work_to_review():
     repository = FakeWorkRepository()
     service = WorkService(repository)
     work = service.create_from_payload(
@@ -231,8 +231,9 @@ def test_completed_task_without_disposition_marks_work_done():
     )
 
     assert updated is not None
-    assert updated.status == "done"
+    assert updated.status == "in_review"
     assert repository.items[work.work_id].active_run_id is None
+    assert repository.comments[-1].metadata == {"reason": "missing_work_disposition"}
 
 
 def test_failed_task_result_blocks_work_and_releases_active_run():
@@ -347,7 +348,7 @@ def test_completed_task_with_terminal_nonzero_returncode_blocks_work():
     assert repository.items[work.work_id].active_run_id is None
 
 
-def test_completed_task_with_later_terminal_success_marks_work_done():
+def test_completed_task_with_later_terminal_success_still_requires_disposition():
     repository = FakeWorkRepository()
     service = WorkService(repository)
     work = service.create_from_payload(
@@ -376,11 +377,11 @@ def test_completed_task_with_later_terminal_success_marks_work_done():
     )
 
     assert updated is not None
-    assert updated.status == "done"
+    assert updated.status == "in_review"
     assert repository.items[work.work_id].active_run_id is None
 
 
-def test_completed_task_with_later_file_success_marks_work_done():
+def test_completed_task_with_later_file_success_still_requires_disposition():
     repository = FakeWorkRepository()
     service = WorkService(repository)
     work = service.create_from_payload(
@@ -409,7 +410,7 @@ def test_completed_task_with_later_file_success_marks_work_done():
     )
 
     assert updated is not None
-    assert updated.status == "done"
+    assert updated.status == "in_review"
     assert repository.items[work.work_id].active_run_id is None
 
 

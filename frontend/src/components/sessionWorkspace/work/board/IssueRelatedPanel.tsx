@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import {
   AlertTriangle,
   Circle,
@@ -9,6 +9,7 @@ import {
   PauseCircle,
   PlayCircle,
   Plus,
+  X,
   SlidersHorizontal,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -21,17 +22,52 @@ export function IssueRelatedPanel({
   allIssues,
   issue,
   onAddRelation,
+  onChangeParent,
+  onCreateChild,
+  onRemoveRelation,
 }: {
   allIssues: IssueBoardIssue[]
   issue: IssueBoardIssue
   onAddRelation: (sourceId: string, targetId: string, relationType: 'blocks' | 'related') => void
+  onChangeParent: (issueId: string, parentId: string | null) => void
+  onCreateChild: (parentId: string, title: string, description: string) => void
+  onRemoveRelation: (sourceId: string, targetId: string, relationType: 'blocks' | 'related') => void
 }) {
   const candidates = allIssues.filter((item) => item.id !== issue.id)
+  const parent = issue.parentId ? allIssues.find((item) => item.id === issue.parentId) : null
   return (
     <div className="grid gap-3 md:grid-cols-2">
+      <RelatedSection title="부모 작업" icon={<ListTree className="h-4 w-4" />}>
+        {parent ? (
+          <RelatedIssuePill item={parent} onRemove={() => onChangeParent(issue.id, null)} />
+        ) : (
+          <EmptyRelatedText>루트 작업</EmptyRelatedText>
+        )}
+        <RelationPicker
+          candidates={candidates.filter((candidate) => candidate.id !== issue.parentId)}
+          label="부모 선택"
+          onSelect={(targetId) => onChangeParent(issue.id, targetId)}
+        />
+      </RelatedSection>
+      <RelatedSection title="하위 작업" icon={<ListTree className="h-4 w-4" />}>
+        {issue.childItems.length > 0 ? (
+          issue.childItems.map((item) => <RelatedIssuePill key={item.id} item={item} />)
+        ) : (
+          <EmptyRelatedText>하위 작업 없음</EmptyRelatedText>
+        )}
+        <ChildWorkForm
+          onSubmit={(title, description) => onCreateChild(issue.id, title, description)}
+        />
+      </RelatedSection>
       <RelatedSection title="차단 항목" icon={<AlertTriangle className="h-4 w-4" />}>
         {issue.blockedBy.length > 0 ? (
-          issue.blockedBy.map((item) => <RelatedIssuePill key={item.id} item={item} />)
+          issue.blockedBy.map((item) => (
+            <RelatedIssuePill
+              key={item.id}
+              item={item}
+              onRemove={() => onRemoveRelation(item.id, issue.id, 'blocks')}
+            />
+          ))
         ) : (
           <EmptyRelatedText>차단 항목 없음</EmptyRelatedText>
         )}
@@ -43,7 +79,13 @@ export function IssueRelatedPanel({
       </RelatedSection>
       <RelatedSection title="관련 작업" icon={<ListTree className="h-4 w-4" />}>
         {issue.relatedItems.length > 0 ? (
-          issue.relatedItems.map((item) => <RelatedIssuePill key={item.id} item={item} />)
+          issue.relatedItems.map((item) => (
+            <RelatedIssuePill
+              key={item.id}
+              item={item}
+              onRemove={() => onRemoveRelation(issue.id, item.id, 'related')}
+            />
+          ))
         ) : (
           <EmptyRelatedText>관련 작업 없음</EmptyRelatedText>
         )}
@@ -77,6 +119,64 @@ export function IssueRelatedPanel({
           이벤트가 이 영역에 반영됩니다.
         </div>
       </RelatedSection>
+    </div>
+  )
+}
+
+function ChildWorkForm({ onSubmit }: { onSubmit: (title: string, description: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  if (!open) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="mt-2 h-8 gap-1.5"
+        onClick={() => setOpen(true)}
+      >
+        <Plus className="h-3.5 w-3.5" />
+        하위 작업 추가
+      </Button>
+    )
+  }
+  const submit = () => {
+    const nextTitle = title.trim()
+    if (!nextTitle) return
+    onSubmit(nextTitle, description.trim() || nextTitle)
+    setTitle('')
+    setDescription('')
+    setOpen(false)
+  }
+  return (
+    <div className="rounded-md border p-2">
+      <input
+        value={title}
+        onChange={(event) => setTitle(event.target.value)}
+        placeholder="하위 작업 제목"
+        className="bg-background h-8 w-full rounded border px-2 text-xs outline-none focus:ring-1"
+      />
+      <textarea
+        value={description}
+        onChange={(event) => setDescription(event.target.value)}
+        placeholder="설명"
+        className="bg-background mt-2 min-h-16 w-full resize-none rounded border px-2 py-1.5 text-xs outline-none focus:ring-1"
+      />
+      <div className="mt-2 flex justify-end gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8"
+          onClick={() => setOpen(false)}
+        >
+          취소
+        </Button>
+        <Button type="button" size="sm" className="h-8" onClick={submit}>
+          추가
+        </Button>
+      </div>
     </div>
   )
 }
@@ -145,12 +245,28 @@ function RelationPicker({
   )
 }
 
-export function RelatedIssuePill({ item }: { item: IssueBoardIssue['relatedItems'][number] }) {
+export function RelatedIssuePill({
+  item,
+  onRemove,
+}: {
+  item: IssueBoardIssue['relatedItems'][number]
+  onRemove?: () => void
+}) {
   return (
     <div className="flex min-w-0 items-center gap-2 rounded-md border px-3 py-2 text-sm">
       <RelatedStatusIcon status={item.status} />
       <span className="text-muted-foreground shrink-0 font-mono text-xs">{item.identifier}</span>
       <span className="min-w-0 flex-1 truncate">{item.title}</span>
+      {onRemove && (
+        <button
+          type="button"
+          aria-label="관계 제거"
+          className="text-muted-foreground hover:text-foreground shrink-0"
+          onClick={onRemove}
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   )
 }

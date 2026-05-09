@@ -1,12 +1,17 @@
 import aiAxiosInstance from './aiAxiosInstance'
 import type {
+  CreateChildWorkRequest,
   CreateWorkRequest,
   WorkComment,
   WorkContextPreview,
   WorkCreateResponse,
+  WorkDocument,
+  WorkDocumentRevision,
+  WorkInteraction,
   WorkItem,
   WorkLabel,
   WorkListResponse,
+  WorkProduct,
   WorkRelation,
   WorkRun,
   WorkStatus,
@@ -65,6 +70,25 @@ export async function updateWorkAssignee(
     {
       assigneeAgentId,
     },
+  )
+  return data
+}
+
+export async function updateWorkParent(workId: string, parentId: string | null): Promise<WorkItem> {
+  const { data } = await aiAxiosInstance.post<WorkItem>(
+    `/work/${encodeURIComponent(workId)}/update-parent`,
+    { parentId },
+  )
+  return data
+}
+
+export async function createChildWork(
+  workId: string,
+  payload: CreateChildWorkRequest,
+): Promise<WorkItem> {
+  const { data } = await aiAxiosInstance.post<WorkItem>(
+    `/work/${encodeURIComponent(workId)}/children`,
+    payload,
   )
   return data
 }
@@ -174,6 +198,150 @@ export async function addWorkRelation(
   const { data } = await aiAxiosInstance.post<WorkRelation>(
     `/work/${encodeURIComponent(workId)}/relations`,
     { targetWorkId, relationType },
+  )
+  return data
+}
+
+export async function removeWorkRelation(
+  workId: string,
+  targetWorkId: string,
+  relationType: WorkRelation['relationType'],
+): Promise<{ deleted: boolean }> {
+  const { data } = await aiAxiosInstance.delete<{ deleted: boolean }>(
+    `/work/${encodeURIComponent(workId)}/relations/${encodeURIComponent(relationType)}/${encodeURIComponent(targetWorkId)}`,
+  )
+  return data
+}
+
+export async function listWorkDocuments(
+  workId: string,
+): Promise<{ items: WorkDocument[]; totalCount: number }> {
+  const { data } = await aiAxiosInstance.get<{ items: WorkDocument[]; totalCount: number }>(
+    `/work/${encodeURIComponent(workId)}/documents`,
+  )
+  return data
+}
+
+export async function upsertWorkDocument(
+  workId: string,
+  documentKey: string,
+  payload: { title: string; body: string; format?: string },
+): Promise<WorkDocument> {
+  const { data } = await aiAxiosInstance.put<WorkDocument>(
+    `/work/${encodeURIComponent(workId)}/documents/${encodeURIComponent(documentKey)}`,
+    payload,
+  )
+  return data
+}
+
+export async function deleteWorkDocument(
+  workId: string,
+  documentKey: string,
+): Promise<{ deleted: boolean }> {
+  const { data } = await aiAxiosInstance.delete<{ deleted: boolean }>(
+    `/work/${encodeURIComponent(workId)}/documents/${encodeURIComponent(documentKey)}`,
+  )
+  return data
+}
+
+export async function listWorkDocumentRevisions(
+  workId: string,
+  documentKey: string,
+): Promise<{ items: WorkDocumentRevision[]; totalCount: number }> {
+  const { data } = await aiAxiosInstance.get<{
+    items: WorkDocumentRevision[]
+    totalCount: number
+  }>(`/work/${encodeURIComponent(workId)}/documents/${encodeURIComponent(documentKey)}/revisions`)
+  return data
+}
+
+export async function listWorkProducts(
+  workId: string,
+): Promise<{ items: WorkProduct[]; totalCount: number }> {
+  const { data } = await aiAxiosInstance.get<{ items: WorkProduct[]; totalCount: number }>(
+    `/work/${encodeURIComponent(workId)}/work-products`,
+  )
+  return data
+}
+
+export async function createWorkProduct(
+  workId: string,
+  payload: {
+    title: string
+    summary?: string | null
+    productType?: string
+    status?: string
+    reviewState?: string
+    uri?: string | null
+    metadata?: Record<string, unknown>
+  },
+): Promise<WorkProduct> {
+  const { data } = await aiAxiosInstance.post<WorkProduct>(
+    `/work/${encodeURIComponent(workId)}/work-products`,
+    payload,
+  )
+  return data
+}
+
+export async function updateWorkProduct(
+  productId: string,
+  payload: {
+    title?: string
+    summary?: string | null
+    status?: string
+    reviewState?: string
+    uri?: string | null
+    metadata?: Record<string, unknown>
+  },
+): Promise<WorkProduct> {
+  const { data } = await aiAxiosInstance.post<WorkProduct>(
+    `/work-products/${encodeURIComponent(productId)}/update-fields`,
+    payload,
+  )
+  return data
+}
+
+export async function deleteWorkProduct(productId: string): Promise<{ deleted: boolean }> {
+  const { data } = await aiAxiosInstance.delete<{ deleted: boolean }>(
+    `/work-products/${encodeURIComponent(productId)}`,
+  )
+  return data
+}
+
+export async function listWorkInteractions(
+  workId: string,
+): Promise<{ items: WorkInteraction[]; totalCount: number }> {
+  const { data } = await aiAxiosInstance.get<{ items: WorkInteraction[]; totalCount: number }>(
+    `/work/${encodeURIComponent(workId)}/interactions`,
+  )
+  return data
+}
+
+export async function createWorkInteraction(
+  workId: string,
+  payload: {
+    kind: WorkInteraction['kind']
+    title?: string | null
+    body?: string | null
+    payload?: Record<string, unknown>
+    continuationPolicy?: WorkInteraction['continuationPolicy']
+  },
+): Promise<WorkInteraction> {
+  const { data } = await aiAxiosInstance.post<WorkInteraction>(
+    `/work/${encodeURIComponent(workId)}/interactions`,
+    payload,
+  )
+  return data
+}
+
+export async function respondWorkInteraction(
+  interactionId: string,
+  action: 'accept' | 'reject' | 'cancel' | 'respond',
+  response?: Record<string, unknown>,
+): Promise<WorkInteraction> {
+  const { data } = await aiAxiosInstance.post<WorkInteraction>(
+    `/work-interactions/${encodeURIComponent(interactionId)}/${action}`,
+    action === 'respond' ? { response: response ?? {} } : {},
   )
   return data
 }

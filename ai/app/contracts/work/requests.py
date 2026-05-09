@@ -49,6 +49,23 @@ class UpdateWorkAssigneeRequest(BaseModel):
     assignee_agent_id: str | None = Field(default=None, alias="assigneeAgentId", description="작업을 맡을 세션 에이전트 ID입니다.")
 
 
+class UpdateWorkParentRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    parent_id: str | None = Field(default=None, alias="parentId", description="부모 작업 ID입니다. null이면 루트 작업으로 옮깁니다.")
+
+
+class CreateChildWorkRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    client_request_id: str | None = Field(default=None, alias="clientRequestId", description="하위 작업 생성 중복 방지 키입니다.")
+    title: str = Field(min_length=1, max_length=200, description="하위 작업 제목입니다.")
+    description: str | None = Field(default=None, max_length=10_000, description="하위 작업 설명입니다.")
+    assignee_agent_id: str | None = Field(default=None, alias="assigneeAgentId", description="하위 작업 담당 세션 에이전트 ID입니다.")
+    acceptance_criteria: list[str] = Field(default_factory=list, alias="acceptanceCriteria", description="완료 기준입니다.")
+    block_parent_until_done: bool = Field(default=True, alias="blockParentUntilDone", description="하위 작업이 끝날 때까지 부모를 차단할지 여부입니다.")
+
+
 class SetWorkLabelsRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -84,3 +101,50 @@ class CreateWorkRunRequest(BaseModel):
     client_message_id: str | None = Field(default=None, alias="clientMessageId", description="채팅 메시지 중복 방지 키입니다.")
     include_comments: bool = Field(default=True, alias="includeComments", description="MVP에서는 항상 true로 처리합니다.")
     include_recent_runs: bool = Field(default=True, alias="includeRecentRuns", description="최근 실행 컨텍스트 포함 여부입니다.")
+
+
+class UpsertWorkDocumentRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    title: str = Field(min_length=1, max_length=200, description="문서 제목입니다.")
+    body: str = Field(default="", max_length=200_000, description="문서 본문입니다.")
+    format: str = Field(default="markdown", max_length=40, description="문서 형식입니다.")
+
+
+class CreateWorkProductRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    title: str = Field(min_length=1, max_length=200, description="결과물 제목입니다.")
+    summary: str | None = Field(default=None, max_length=10_000, description="결과물 요약입니다.")
+    product_type: str = Field(default="note", alias="productType", max_length=80, description="결과물 유형입니다.")
+    status: str = Field(default="draft", max_length=40, description="결과물 상태입니다.")
+    review_state: str = Field(default="none", alias="reviewState", max_length=40, description="검토 상태입니다.")
+    uri: str | None = Field(default=None, max_length=2048, description="외부 위치 또는 파일 URI입니다.")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="결과물 메타데이터입니다.")
+
+
+class UpdateWorkProductRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=200, description="변경할 결과물 제목입니다.")
+    summary: str | None = Field(default=None, max_length=10_000, description="변경할 결과물 요약입니다.")
+    status: str | None = Field(default=None, max_length=40, description="변경할 결과물 상태입니다.")
+    review_state: str | None = Field(default=None, alias="reviewState", max_length=40, description="변경할 검토 상태입니다.")
+    uri: str | None = Field(default=None, max_length=2048, description="변경할 결과물 위치입니다.")
+    metadata: dict[str, Any] | None = Field(default=None, description="변경할 결과물 메타데이터입니다.")
+
+
+class CreateWorkInteractionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    kind: str = Field(description="suggest_tasks, ask_user_questions, request_confirmation 중 하나입니다.")
+    title: str | None = Field(default=None, max_length=200, description="상호작용 제목입니다.")
+    body: str | None = Field(default=None, max_length=20_000, description="상호작용 본문입니다.")
+    payload: dict[str, Any] = Field(default_factory=dict, description="선택지, 질문, 제안 작업 등 구조화 데이터입니다.")
+    continuation_policy: str = Field(default="none", alias="continuationPolicy", description="응답 뒤 담당자를 깨울지 여부입니다.")
+
+
+class RespondWorkInteractionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    response: dict[str, Any] = Field(default_factory=dict, description="사용자 응답 payload입니다.")

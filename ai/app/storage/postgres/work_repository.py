@@ -4,7 +4,18 @@ import json
 from typing import Any, Callable
 
 from app.core.utils.ids import new_id
-from app.domain.work.models import WorkComment, WorkItem, WorkLabel, WorkRelation, WorkRunLink, WorkStatus
+from app.domain.work.models import (
+    WorkComment,
+    WorkDocument,
+    WorkDocumentRevision,
+    WorkItem,
+    WorkLabel,
+    WorkProduct,
+    WorkRelation,
+    WorkRunLink,
+    WorkStatus,
+    WorkThreadInteraction,
+)
 
 
 class PostgresWorkRepository:
@@ -179,6 +190,31 @@ class PostgresWorkRepository:
         )
         connection.commit()
         return _require_work(self.get_work(work_id), work_id)
+
+    def update_parent(self, work_id: str, *, parent_id: str | None) -> WorkItem:
+        connection = self.connection_factory()
+        connection.execute(
+            """
+            UPDATE work_items
+            SET parent_id = %s,
+                updated_at = now()
+            WHERE work_id = %s
+            """,
+            (parent_id, work_id),
+        )
+        connection.commit()
+        return _require_work(self.get_work(work_id), work_id)
+
+    def list_children(self, parent_id: str) -> list[WorkItem]:
+        rows = self.connection_factory().execute(
+            """
+            SELECT * FROM work_items
+            WHERE parent_id = %s AND deleted_at IS NULL
+            ORDER BY updated_at DESC, created_at DESC
+            """,
+            (parent_id,),
+        ).fetchall()
+        return [work for row in rows if (work := _work_from_row(row)) is not None]
 
     def archive_work(self, work_id: str) -> WorkItem:
         connection = self.connection_factory()
@@ -467,6 +503,275 @@ class PostgresWorkRepository:
         ).fetchall()
         return [relation for row in rows if (relation := _relation_from_row(row)) is not None]
 
+    def list_documents(self, work_id: str) -> list[WorkDocument]:
+        rows = self.connection_factory().execute(
+            """
+            SELECT * FROM work_documents
+            WHERE work_id = %s
+            ORDER BY updated_at DESC
+            """,
+            (work_id,),
+        ).fetchall()
+        return [document for row in rows if (document := _document_from_row(row)) is not None]
+
+    def upsert_document(
+        self,
+        *,
+        work_id: str,
+        document_key: str,
+        title: str,
+        body: str,
+        format: str = "markdown",
+        actor_id: str | None = None,
+    ) -> WorkDocument:
+        connection = self.connection_factory()
+        existing = connection.execute(
+            "SELECT * FROM work_documents WHERE work_id = %s AND document_key = %s",
+            (work_id, document_key),
+        ).fetchone()
+        record = _normalize_row(existing)
+        if record is None:
+            document_id = new_id("work_doc")
+            revision_number = 1
+            row = connection.execute(
+                """
+                INSERT INTO work_documents (
+                    document_id, work_id, document_key, title, body, format,
+                    revision_number, created_by, updated_by
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+                """,
+                (document_id, work_id, document_key, title, body, format, revision_number, actor_id, actor_id),
+            ).fetchone()
+        else:
+            document_id = str(record["document_id"])
+            revision_number = int(record.get("revision_number") or 1) + 1
+            row = connection.execute(
+                """
+                UPDATE work_documents
+                SET title = %s,
+                    body = %s,
+                    format = %s,
+                    revision_number = %s,
+                    updated_by = %s,
+                    updated_at = now()
+                WHERE document_id = %s
+                RETURNING *
+                """,
+                (title, body, format, revision_number, actor_id, document_id),
+            ).fetchone()
+        connection.execute(
+            """
+            INSERT INTO work_document_revisions (
+                revision_id, document_id, work_id, document_key, title, body,
+                format, revision_number, created_by
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (new_id("work_doc_rev"), document_id, work_id, document_key, title, body, format, revision_number, actor_id),
+        )
+        connection.commit()
+        return _require_document(_document_from_row(row), document_key)
+
+    def delete_document(self, work_id: str, document_key: str) -> bool:
+        connection = self.connection_factory()
+        result = connection.execute(
+            "DELETE FROM work_documents WHERE work_id = %s AND document_key = %s",
+            (work_id, document_key),
+        )
+        connection.commit()
+        return int(result.rowcount or 0) > 0
+
+    def list_document_revisions(self, work_id: str, document_key: str) -> list[WorkDocumentRevision]:
+        rows = self.connection_factory().execute(
+            """
+            SELECT * FROM work_document_revisions
+            WHERE work_id = %s AND document_key = %s
+            ORDER BY revision_number DESC
+            """,
+            (work_id, document_key),
+        ).fetchall()
+        return [revision for row in rows if (revision := _document_revision_from_row(row)) is not None]
+
+    def list_products(self, work_id: str) -> list[WorkProduct]:
+        rows = self.connection_factory().execute(
+            """
+            SELECT * FROM work_products
+            WHERE work_id = %s
+            ORDER BY updated_at DESC
+            """,
+            (work_id,),
+        ).fetchall()
+        return [product for row in rows if (product := _product_from_row(row)) is not None]
+
+    def get_product(self, product_id: str) -> WorkProduct | None:
+        row = self.connection_factory().execute(
+            "SELECT * FROM work_products WHERE product_id = %s",
+            (product_id,),
+        ).fetchone()
+        return _product_from_row(row)
+
+    def create_product(
+        self,
+        *,
+        work_id: str,
+        title: str,
+        summary: str | None = None,
+        product_type: str = "note",
+        status: str = "draft",
+        review_state: str = "none",
+        uri: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> WorkProduct:
+        product_id = new_id("work_product")
+        connection = self.connection_factory()
+        row = connection.execute(
+            """
+            INSERT INTO work_products (
+                product_id, work_id, title, summary, product_type, status,
+                review_state, uri, metadata
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            RETURNING *
+            """,
+            (product_id, work_id, title, summary, product_type, status, review_state, uri, _json(metadata or {})),
+        ).fetchone()
+        connection.commit()
+        return _require_product(_product_from_row(row), product_id)
+
+    def update_product(
+        self,
+        product_id: str,
+        *,
+        title: str | None = None,
+        summary: str | None = None,
+        status: str | None = None,
+        review_state: str | None = None,
+        uri: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> WorkProduct:
+        updates = ["updated_at = now()"]
+        params: list[Any] = []
+        if title is not None:
+            updates.append("title = %s")
+            params.append(title)
+        if summary is not None:
+            updates.append("summary = %s")
+            params.append(summary)
+        if status is not None:
+            updates.append("status = %s")
+            params.append(status)
+        if review_state is not None:
+            updates.append("review_state = %s")
+            params.append(review_state)
+        if uri is not None:
+            updates.append("uri = %s")
+            params.append(uri)
+        if metadata is not None:
+            updates.append("metadata = %s::jsonb")
+            params.append(_json(metadata))
+        params.append(product_id)
+        connection = self.connection_factory()
+        row = connection.execute(
+            f"UPDATE work_products SET {', '.join(updates)} WHERE product_id = %s RETURNING *",
+            tuple(params),
+        ).fetchone()
+        connection.commit()
+        return _require_product(_product_from_row(row), product_id)
+
+    def delete_product(self, product_id: str) -> bool:
+        connection = self.connection_factory()
+        result = connection.execute("DELETE FROM work_products WHERE product_id = %s", (product_id,))
+        connection.commit()
+        return int(result.rowcount or 0) > 0
+
+    def list_interactions(self, work_id: str) -> list[WorkThreadInteraction]:
+        rows = self.connection_factory().execute(
+            """
+            SELECT * FROM work_thread_interactions
+            WHERE work_id = %s
+            ORDER BY created_at ASC
+            """,
+            (work_id,),
+        ).fetchall()
+        return [interaction for row in rows if (interaction := _interaction_from_row(row)) is not None]
+
+    def get_interaction(self, interaction_id: str) -> WorkThreadInteraction | None:
+        row = self.connection_factory().execute(
+            "SELECT * FROM work_thread_interactions WHERE interaction_id = %s",
+            (interaction_id,),
+        ).fetchone()
+        return _interaction_from_row(row)
+
+    def create_interaction(
+        self,
+        *,
+        work_id: str,
+        kind: str,
+        title: str | None = None,
+        body: str | None = None,
+        payload: dict[str, Any] | None = None,
+        continuation_policy: str = "none",
+    ) -> WorkThreadInteraction:
+        interaction_id = new_id("work_interaction")
+        connection = self.connection_factory()
+        row = connection.execute(
+            """
+            INSERT INTO work_thread_interactions (
+                interaction_id, work_id, kind, title, body, payload, continuation_policy
+            )
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)
+            RETURNING *
+            """,
+            (interaction_id, work_id, kind, title, body, _json(payload or {}), continuation_policy),
+        ).fetchone()
+        connection.commit()
+        return _require_interaction(_interaction_from_row(row), interaction_id)
+
+    def update_interaction(
+        self,
+        interaction_id: str,
+        *,
+        status: str,
+        response: dict[str, Any] | None = None,
+    ) -> WorkThreadInteraction:
+        connection = self.connection_factory()
+        row = connection.execute(
+            """
+            UPDATE work_thread_interactions
+            SET status = %s,
+                response = COALESCE(%s::jsonb, response),
+                updated_at = now()
+            WHERE interaction_id = %s
+            RETURNING *
+            """,
+            (status, _json(response) if response is not None else None, interaction_id),
+        ).fetchone()
+        connection.commit()
+        return _require_interaction(_interaction_from_row(row), interaction_id)
+
+    def mark_read(self, work_id: str, *, owner_user_id: int) -> None:
+        connection = self.connection_factory()
+        connection.execute(
+            """
+            INSERT INTO work_read_states (work_id, owner_user_id, last_read_at, archived_at)
+            VALUES (%s, %s, now(), NULL)
+            ON CONFLICT (work_id, owner_user_id) DO UPDATE
+            SET last_read_at = now(), archived_at = NULL
+            """,
+            (work_id, owner_user_id),
+        )
+        connection.commit()
+
+    def mark_unread(self, work_id: str, *, owner_user_id: int) -> None:
+        connection = self.connection_factory()
+        connection.execute(
+            "DELETE FROM work_read_states WHERE work_id = %s AND owner_user_id = %s",
+            (work_id, owner_user_id),
+        )
+        connection.commit()
+
     def get_work_by_task_run_id(self, task_run_id: str) -> WorkItem | None:
         row = self.connection_factory().execute(
             """
@@ -487,6 +792,9 @@ class PostgresWorkRepository:
         comments = self.list_comments(work_id)
         runs = self.list_runs(work_id, limit=5)
         relations = self.list_relations(work_id)
+        documents = self.list_documents(work_id)
+        products = self.list_products(work_id)
+        interactions = self.list_interactions(work_id)
         preview_lines = [
             f"작업: {work.identifier} {work.title}",
             f"상태: {work.status}",
@@ -495,7 +803,17 @@ class PostgresWorkRepository:
             f"부모 작업: {work.parent_id or '-'}",
             f"관계 수: {len(relations)}",
             f"댓글 수: {len(comments)}",
+            f"문서 수: {len(documents)}",
+            f"결과물 수: {len(products)}",
+            f"확인 요청 수: {len(interactions)}",
         ]
+        preview_lines.extend(f"댓글: {comment.body}" for comment in comments[-20:])
+        preview_lines.extend(f"문서: {document.title}\n{document.body[:1200]}" for document in documents[:10])
+        preview_lines.extend(f"결과물: {product.title}\n{product.summary or ''}" for product in products[:10])
+        preview_lines.extend(
+            f"확인 요청: {interaction.title or interaction.kind} / {interaction.status}\n{interaction.body or ''}"
+            for interaction in interactions[:10]
+        )
         return {
             "title": work.title,
             "labels": labels,
@@ -620,6 +938,81 @@ def _relation_from_row(row: Any) -> WorkRelation | None:
     )
 
 
+def _document_from_row(row: Any) -> WorkDocument | None:
+    record = _normalize_row(row)
+    if record is None:
+        return None
+    return WorkDocument(
+        document_id=record["document_id"],
+        work_id=record["work_id"],
+        document_key=record["document_key"],
+        title=record["title"],
+        body=record.get("body") or "",
+        format=record.get("format") or "markdown",
+        revision_number=int(record.get("revision_number") or 1),
+        created_by=record.get("created_by"),
+        updated_by=record.get("updated_by"),
+        created_at=record.get("created_at"),
+        updated_at=record.get("updated_at"),
+    )
+
+
+def _document_revision_from_row(row: Any) -> WorkDocumentRevision | None:
+    record = _normalize_row(row)
+    if record is None:
+        return None
+    return WorkDocumentRevision(
+        revision_id=record["revision_id"],
+        document_id=record["document_id"],
+        work_id=record["work_id"],
+        document_key=record["document_key"],
+        title=record["title"],
+        body=record.get("body") or "",
+        format=record.get("format") or "markdown",
+        revision_number=int(record.get("revision_number") or 1),
+        created_by=record.get("created_by"),
+        created_at=record.get("created_at"),
+    )
+
+
+def _product_from_row(row: Any) -> WorkProduct | None:
+    record = _normalize_row(row)
+    if record is None:
+        return None
+    return WorkProduct(
+        product_id=record["product_id"],
+        work_id=record["work_id"],
+        title=record["title"],
+        summary=record.get("summary"),
+        product_type=record.get("product_type") or "note",
+        status=record.get("status") or "draft",
+        review_state=record.get("review_state") or "none",
+        uri=record.get("uri"),
+        metadata=record.get("metadata") or {},
+        created_at=record.get("created_at"),
+        updated_at=record.get("updated_at"),
+    )
+
+
+def _interaction_from_row(row: Any) -> WorkThreadInteraction | None:
+    record = _normalize_row(row)
+    if record is None:
+        return None
+    return WorkThreadInteraction(
+        interaction_id=record["interaction_id"],
+        work_id=record["work_id"],
+        kind=record["kind"],
+        status=record.get("status") or "pending",
+        title=record.get("title"),
+        body=record.get("body"),
+        payload=record.get("payload") or {},
+        response=record.get("response") or {},
+        continuation_policy=record.get("continuation_policy") or "none",
+        created_at=record.get("created_at"),
+        updated_at=record.get("updated_at"),
+    )
+
+
 def _require_work(work: WorkItem | None, work_id: str) -> WorkItem:
     if work is None:
         raise KeyError(work_id)
@@ -638,11 +1031,29 @@ def _require_relation(relation: WorkRelation | None, relation_id: str) -> WorkRe
     return relation
 
 
+def _require_document(document: WorkDocument | None, document_key: str) -> WorkDocument:
+    if document is None:
+        raise KeyError(document_key)
+    return document
+
+
+def _require_product(product: WorkProduct | None, product_id: str) -> WorkProduct:
+    if product is None:
+        raise KeyError(product_id)
+    return product
+
+
+def _require_interaction(interaction: WorkThreadInteraction | None, interaction_id: str) -> WorkThreadInteraction:
+    if interaction is None:
+        raise KeyError(interaction_id)
+    return interaction
+
+
 def _normalize_row(row: Any) -> dict[str, Any] | None:
     if row is None:
         return None
     normalized = dict(row) if not isinstance(row, dict) else dict(row)
-    for key in ("acceptance_criteria", "constraints_payload", "metadata"):
+    for key in ("acceptance_criteria", "constraints_payload", "metadata", "payload", "response"):
         value = normalized.get(key)
         if isinstance(value, str):
             normalized[key] = json.loads(value)

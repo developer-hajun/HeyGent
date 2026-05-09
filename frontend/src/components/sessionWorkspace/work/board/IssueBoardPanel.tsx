@@ -10,6 +10,7 @@ import {
   Clock3,
   Columns3,
   Filter,
+  FileText,
   FolderKanban,
   List,
   ListTree,
@@ -29,7 +30,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
-import { addWorkRelation } from '@/apis/work'
+import { addWorkRelation, createChildWork, removeWorkRelation, updateWorkParent } from '@/apis/work'
 import { cn } from '@/components/ui/utils'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useWorkStore } from '@/store/useWorkStore'
@@ -46,6 +47,11 @@ import {
 } from '../model/issueBoardModel'
 import type { BoardAssignee, DetailTab, SortField, ViewMode } from './issueBoardPanelTypes'
 import { IssueRelatedPanel, RelatedIssuePill } from './IssueRelatedPanel'
+import {
+  WorkDocumentsPanel,
+  WorkInteractionsPanel,
+  WorkProductsPanel,
+} from './WorkCollaborationPanels'
 import {
   arraysEqual,
   assigneeLabel,
@@ -384,6 +390,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         description: '담당 에이전트 한 명에게 맡길 작업입니다.',
         status: 'todo',
         assigneeAgentId: null,
+        parentId: null,
         labels: [],
         comments: [
           {
@@ -396,6 +403,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         ],
         runs: [],
         documents: [],
+        childItems: [],
         relatedItems: [],
         blockedBy: [],
         createdAt: now,
@@ -558,6 +566,32 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         onRunIssue={runIssue}
         onAddRelation={(sourceId, targetId, relationType) => {
           void addWorkRelation(sourceId, targetId, relationType)
+            .then(() => fetchSessionWork(sessionId))
+            .catch((error) => {
+              console.error(error)
+            })
+        }}
+        onChangeParent={(issueId, parentId) => {
+          void updateWorkParent(issueId, parentId)
+            .then(() => fetchSessionWork(sessionId))
+            .catch((error) => {
+              console.error(error)
+            })
+        }}
+        onCreateChild={(parentId, title, description) => {
+          void createChildWork(parentId, {
+            clientRequestId: `child:${parentId}:${Date.now()}`,
+            title,
+            description,
+            blockParentUntilDone: true,
+          })
+            .then(() => fetchSessionWork(sessionId))
+            .catch((error) => {
+              console.error(error)
+            })
+        }}
+        onRemoveRelation={(sourceId, targetId, relationType) => {
+          void removeWorkRelation(sourceId, targetId, relationType)
             .then(() => fetchSessionWork(sessionId))
             .catch((error) => {
               console.error(error)
@@ -1152,10 +1186,13 @@ function TodoDetailPanel({
   onAssignIssue,
   onAddComment,
   onAddRelation,
+  onChangeParent,
+  onCreateChild,
   onCreateLabel,
   onDeleteIssue,
   onMoveStatus,
   onOpenChange,
+  onRemoveRelation,
   onRunIssue,
   onUpdateIssue,
 }: {
@@ -1166,10 +1203,13 @@ function TodoDetailPanel({
   onAssignIssue: (issueId: string, assigneeAgentId: string | null) => void
   onAddComment: (issueId: string, body: string) => void
   onAddRelation: (sourceId: string, targetId: string, relationType: 'blocks' | 'related') => void
+  onChangeParent: (issueId: string, parentId: string | null) => void
+  onCreateChild: (parentId: string, title: string, description: string) => void
   onCreateLabel: (label: IssueBoardLabel) => void
   onDeleteIssue: (issueId: string) => void
   onMoveStatus: (issueId: string, status: IssueBoardStatus) => void
   onOpenChange: (open: boolean) => void
+  onRemoveRelation: (sourceId: string, targetId: string, relationType: 'blocks' | 'related') => void
   onRunIssue: (issueId: string) => void
   onUpdateIssue: (issueId: string, patch: Partial<IssueBoardIssue>) => void
 }) {
@@ -1255,6 +1295,7 @@ function TodoDetailPanel({
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <IssuePropertiesPanel
             assignees={assignees}
+            allIssues={allIssues}
             issue={issue}
             labels={labels}
             onAssignIssue={onAssignIssue}
@@ -1289,6 +1330,24 @@ function TodoDetailPanel({
                 label="관련"
                 onClick={() => setDetailTab('related')}
               />
+              <DetailTabButton
+                active={detailTab === 'documents'}
+                icon={<FileText className="h-3.5 w-3.5" />}
+                label="문서"
+                onClick={() => setDetailTab('documents')}
+              />
+              <DetailTabButton
+                active={detailTab === 'products'}
+                icon={<FolderKanban className="h-3.5 w-3.5" />}
+                label="결과물"
+                onClick={() => setDetailTab('products')}
+              />
+              <DetailTabButton
+                active={detailTab === 'interactions'}
+                icon={<MessageSquare className="h-3.5 w-3.5" />}
+                label="확인"
+                onClick={() => setDetailTab('interactions')}
+              />
             </div>
 
             {detailTab === 'chat' && (
@@ -1306,8 +1365,14 @@ function TodoDetailPanel({
                 allIssues={allIssues}
                 issue={issue}
                 onAddRelation={onAddRelation}
+                onChangeParent={onChangeParent}
+                onCreateChild={onCreateChild}
+                onRemoveRelation={onRemoveRelation}
               />
             )}
+            {detailTab === 'documents' && <WorkDocumentsPanel workId={issue.id} />}
+            {detailTab === 'products' && <WorkProductsPanel workId={issue.id} />}
+            {detailTab === 'interactions' && <WorkInteractionsPanel workId={issue.id} />}
           </div>
         </div>
       </aside>
@@ -1317,6 +1382,7 @@ function TodoDetailPanel({
 
 function IssuePropertiesPanel({
   assignees,
+  allIssues,
   issue,
   labels,
   onAssignIssue,
@@ -1325,6 +1391,7 @@ function IssuePropertiesPanel({
   onUpdateIssue,
 }: {
   assignees: BoardAssignee[]
+  allIssues: IssueBoardIssue[]
   issue: IssueBoardIssue
   labels: IssueBoardLabel[]
   onAssignIssue: (issueId: string, assigneeAgentId: string | null) => void
@@ -1332,6 +1399,7 @@ function IssuePropertiesPanel({
   onMoveStatus: (issueId: string, status: IssueBoardStatus) => void
   onUpdateIssue: (issueId: string, patch: Partial<IssueBoardIssue>) => void
 }) {
+  const parent = issue.parentId ? allIssues.find((item) => item.id === issue.parentId) : null
   return (
     <section className="grid [grid-template-columns:7rem_minmax(0,1fr)] gap-x-5 gap-y-3 text-sm">
       <TodoProperty label="상태">
@@ -1357,6 +1425,11 @@ function IssuePropertiesPanel({
           value={issue.assigneeAgentId}
           onChange={(assigneeAgentId) => onAssignIssue(issue.id, assigneeAgentId)}
         />
+      </TodoProperty>
+      <TodoProperty label="부모">
+        <span className="text-muted-foreground text-sm">
+          {parent ? `${parent.identifier} · ${parent.title}` : '루트 작업'}
+        </span>
       </TodoProperty>
       <TodoProperty label="라벨">
         <LabelPicker

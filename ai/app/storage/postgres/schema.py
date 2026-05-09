@@ -321,6 +321,66 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     );
     """,
     """
+    CREATE TABLE IF NOT EXISTS work_documents (
+        document_id TEXT PRIMARY KEY,
+        work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+        document_key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL DEFAULT '',
+        format TEXT NOT NULL DEFAULT 'markdown',
+        revision_number INTEGER NOT NULL DEFAULT 1,
+        created_by TEXT,
+        updated_by TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (work_id, document_key)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS work_document_revisions (
+        revision_id TEXT PRIMARY KEY,
+        document_id TEXT NOT NULL REFERENCES work_documents(document_id) ON DELETE CASCADE,
+        work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+        document_key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        body TEXT NOT NULL DEFAULT '',
+        format TEXT NOT NULL DEFAULT 'markdown',
+        revision_number INTEGER NOT NULL,
+        created_by TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS work_products (
+        product_id TEXT PRIMARY KEY,
+        work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        summary TEXT,
+        product_type TEXT NOT NULL DEFAULT 'note',
+        status TEXT NOT NULL DEFAULT 'draft',
+        review_state TEXT NOT NULL DEFAULT 'none',
+        uri TEXT,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS work_thread_interactions (
+        interaction_id TEXT PRIMARY KEY,
+        work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK (kind IN ('suggest_tasks', 'ask_user_questions', 'request_confirmation')),
+        status TEXT NOT NULL DEFAULT 'pending',
+        title TEXT,
+        body TEXT,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        response JSONB NOT NULL DEFAULT '{}'::jsonb,
+        continuation_policy TEXT NOT NULL DEFAULT 'none',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    """,
+    """
     CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_requests_one_pending_per_task
     ON approval_requests(task_run_id)
     WHERE status = 'PENDING';
@@ -395,6 +455,22 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_work_runs_work_created
     ON work_runs(work_id, created_at DESC);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_work_documents_work_updated
+    ON work_documents(work_id, updated_at DESC);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_work_document_revisions_document
+    ON work_document_revisions(document_id, revision_number DESC);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_work_products_work_updated
+    ON work_products(work_id, updated_at DESC);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_work_thread_interactions_work_updated
+    ON work_thread_interactions(work_id, updated_at DESC);
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_ai_agent_profiles_session

@@ -65,10 +65,12 @@ export interface IssueBoardIssue {
   description: string
   status: IssueBoardStatus
   assigneeAgentId: string | null
+  parentId: string | null
   labels: string[]
   comments: IssueBoardComment[]
   runs: IssueBoardRun[]
   documents: IssueBoardDocument[]
+  childItems: IssueBoardRelatedItem[]
   relatedItems: IssueBoardRelatedItem[]
   blockedBy: IssueBoardRelatedItem[]
   createdAt: string
@@ -138,6 +140,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
       description: '채팅 실행 전에 담당 에이전트가 묶인 작업을 선택할 수 있게 합니다.',
       status: 'todo',
       assigneeAgentId: 'main-agent',
+      parentId: null,
       labels: ['chat', 'execution'],
       comments: [
         {
@@ -173,6 +176,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
           updatedAt: iso(140),
         },
       ],
+      childItems: [],
       relatedItems: [],
       blockedBy: [],
       createdAt: iso(220),
@@ -188,6 +192,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
       description: '실행 중인 TaskRun을 작업 카드에 연결해 진행 상태를 보여줍니다.',
       status: 'in_progress',
       assigneeAgentId: 'main-agent',
+      parentId: null,
       labels: ['taskrun', 'realtime'],
       comments: [
         {
@@ -209,6 +214,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
         },
       ],
       documents: [],
+      childItems: [],
       relatedItems: [
         {
           id: `${sessionId}:todo:001`,
@@ -231,6 +237,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
       description: '작업마다 하나의 담당 에이전트만 배정되도록 선택 흐름을 단순화합니다.',
       status: 'todo',
       assigneeAgentId: null,
+      parentId: null,
       labels: ['board', 'assignee'],
       comments: [
         {
@@ -250,6 +257,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
           updatedAt: iso(60),
         },
       ],
+      childItems: [],
       relatedItems: [],
       blockedBy: [],
       createdAt: iso(120),
@@ -265,6 +273,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
       description: '작업 저장과 TaskRun 연결 이벤트를 어떤 실시간 계약으로 받을지 정해야 합니다.',
       status: 'blocked',
       assigneeAgentId: 'main-agent',
+      parentId: null,
       labels: ['api', 'realtime'],
       comments: [
         {
@@ -286,6 +295,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
         },
       ],
       documents: [],
+      childItems: [],
       relatedItems: [],
       blockedBy: [
         {
@@ -308,6 +318,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
       description: '사용자가 보는 보드 문구를 한글 기준으로 맞춘 작업입니다.',
       status: 'done',
       assigneeAgentId: 'main-agent',
+      parentId: null,
       labels: ['ui', 'copy'],
       comments: [
         {
@@ -336,6 +347,7 @@ export function createIssueBoardFixtures(sessionId: string): IssueBoardIssue[] {
           updatedAt: iso(20),
         },
       ],
+      childItems: [],
       relatedItems: [],
       blockedBy: [],
       createdAt: iso(80),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from typing import Any
 
@@ -11,22 +12,37 @@ from app.api.deps.openapi_auth import document_bearer_auth
 from app.contracts.work import (
     CreateWorkLabelRequest,
     CreateWorkCommentRequest,
+    CreateChildWorkRequest,
+    CreateWorkInteractionRequest,
+    CreateWorkProductRequest,
     CreateWorkRunRequest,
     CreateWorkRequest,
     MoveWorkStatusRequest,
+    RespondWorkInteractionRequest,
     SetWorkLabelsRequest,
+    UpdateWorkParentRequest,
     UpdateWorkLabelRequest,
     UpdateWorkAssigneeRequest,
     UpdateWorkFieldsRequest,
+    UpdateWorkProductRequest,
+    UpsertWorkDocumentRequest,
     UpsertWorkRelationRequest,
     WorkCommentResponse,
     WorkCommentsResponse,
     WorkContextPreviewResponse,
     WorkCreateResponse,
+    WorkDocumentResponse,
+    WorkDocumentRevisionResponse,
+    WorkDocumentRevisionsResponse,
+    WorkDocumentsResponse,
+    WorkInteractionResponse,
+    WorkInteractionsResponse,
     WorkItemResponse,
     WorkLabelResponse,
     WorkLabelsResponse,
     WorkListResponse,
+    WorkProductResponse,
+    WorkProductsResponse,
     WorkRelationResponse,
     WorkRelationsResponse,
     WorkRunResponse,
@@ -339,6 +355,61 @@ async def update_work_assignee(request: Request, payload: UpdateWorkAssigneeRequ
     return _work_response(updated, repository=request.app.state.work_repository)
 
 
+@router.post("/work/{workId}/update-parent", response_model=WorkItemResponse, summary="작업 부모 변경")
+async def update_work_parent(request: Request, payload: UpdateWorkParentRequest, workId: str = Path(...)) -> WorkItemResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    parent_id = payload.parent_id.strip() if payload.parent_id else None
+    if parent_id:
+        parent = _work_or_404(request, parent_id)
+        _ensure_work_owner(user, parent)
+        if parent.session_id != work.session_id:
+            raise HTTPException(status_code=409, detail="parent work belongs to another session")
+        if parent.work_id == work.work_id or _would_create_parent_cycle(request.app.state.work_repository, work_id=work.work_id, parent_id=parent.work_id):
+            raise HTTPException(status_code=409, detail="parent cycle is not allowed")
+    updated = request.app.state.work_repository.update_parent(workId, parent_id=parent_id)
+    if parent_id:
+        request.app.state.work_repository.inherit_parent_labels(workId, parent_id)
+    await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
+    return _work_response(updated, repository=request.app.state.work_repository)
+
+
+@router.post("/work/{workId}/children", response_model=WorkItemResponse, summary="하위 작업 생성")
+async def create_child_work(request: Request, payload: CreateChildWorkRequest, workId: str = Path(...)) -> WorkItemResponse:
+    user = await authenticate_http_user(request)
+    parent = _work_or_404(request, workId)
+    _ensure_work_owner(user, parent)
+    assignee_agent_id = payload.assignee_agent_id.strip() if payload.assignee_agent_id else None
+    _validate_assignee_or_400(request, session_id=parent.session_id, owner_key=parent.owner_key, assignee_agent_id=assignee_agent_id)
+    child_payload = {
+        "title": payload.title.strip(),
+        "description": (payload.description or payload.title).strip(),
+        "rawUserInput": (payload.description or payload.title).strip(),
+        "executionInstruction": (payload.description or payload.title).strip(),
+        "assigneeAgentId": assignee_agent_id or "CEO",
+        "parentId": parent.work_id,
+        "acceptanceCriteria": payload.acceptance_criteria,
+        "metadata": {"createdFromParent": parent.identifier},
+    }
+    service = WorkService(request.app.state.work_repository)
+    child = service.create_from_payload(
+        session_id=parent.session_id,
+        owner_key=parent.owner_key,
+        owner_user_id=_int_or_none(user.user_id),
+        payload=child_payload,
+        client_request_id=payload.client_request_id,
+    )
+    request.app.state.work_repository.update_status(child.work_id, "todo")
+    if payload.block_parent_until_done:
+        request.app.state.work_repository.add_relation(source_work_id=child.work_id, target_work_id=parent.work_id, relation_type="blocks")
+        request.app.state.work_repository.update_status(parent.work_id, "blocked")
+    updated_child = _work_or_404(request, child.work_id)
+    await _publish_work_event(request, str(user.user_id), "work.created", work=updated_child)
+    await _publish_work_event(request, str(user.user_id), "work.updated", work=_work_or_404(request, parent.work_id))
+    return _work_response(updated_child, repository=request.app.state.work_repository)
+
+
 @router.post("/work/{workId}/archive", response_model=WorkItemResponse, summary="작업 보관")
 async def archive_work(request: Request, workId: str = Path(...)) -> WorkItemResponse:
     user = await authenticate_http_user(request)
@@ -555,6 +626,189 @@ async def remove_work_relation(request: Request, workId: str = Path(...), relati
     return {"deleted": deleted}
 
 
+@router.get("/work/{workId}/documents", response_model=WorkDocumentsResponse, summary="작업 문서 목록")
+async def list_work_documents(request: Request, workId: str = Path(...)) -> WorkDocumentsResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    items = request.app.state.work_repository.list_documents(workId)
+    return WorkDocumentsResponse(items=[_document_response(item) for item in items], totalCount=len(items))
+
+
+@router.put("/work/{workId}/documents/{documentKey}", response_model=WorkDocumentResponse, summary="작업 문서 저장")
+async def upsert_work_document(
+    request: Request,
+    payload: UpsertWorkDocumentRequest,
+    workId: str = Path(...),
+    documentKey: str = Path(...),
+) -> WorkDocumentResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    document = request.app.state.work_repository.upsert_document(
+        work_id=workId,
+        document_key=_safe_document_key(documentKey),
+        title=payload.title.strip(),
+        body=payload.body,
+        format=payload.format.strip() or "markdown",
+        actor_id=str(user.user_id),
+    )
+    await _publish_simple_event(
+        request,
+        str(user.user_id),
+        "work_document.updated",
+        {"document": _document_response(document).model_dump(mode="json", by_alias=True), "workId": workId},
+    )
+    return _document_response(document)
+
+
+@router.delete("/work/{workId}/documents/{documentKey}", response_model=dict, summary="작업 문서 삭제")
+async def delete_work_document(request: Request, workId: str = Path(...), documentKey: str = Path(...)) -> dict[str, bool]:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    deleted = request.app.state.work_repository.delete_document(workId, _safe_document_key(documentKey))
+    await _publish_simple_event(request, str(user.user_id), "work_document.deleted", {"workId": workId, "documentKey": documentKey})
+    return {"deleted": deleted}
+
+
+@router.get("/work/{workId}/documents/{documentKey}/revisions", response_model=WorkDocumentRevisionsResponse, summary="작업 문서 이력")
+async def list_work_document_revisions(request: Request, workId: str = Path(...), documentKey: str = Path(...)) -> WorkDocumentRevisionsResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    items = request.app.state.work_repository.list_document_revisions(workId, _safe_document_key(documentKey))
+    return WorkDocumentRevisionsResponse(items=[_document_revision_response(item) for item in items], totalCount=len(items))
+
+
+@router.get("/work/{workId}/work-products", response_model=WorkProductsResponse, summary="작업 결과물 목록")
+async def list_work_products(request: Request, workId: str = Path(...)) -> WorkProductsResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    items = request.app.state.work_repository.list_products(workId)
+    return WorkProductsResponse(items=[_product_response(item) for item in items], totalCount=len(items))
+
+
+@router.post("/work/{workId}/work-products", response_model=WorkProductResponse, summary="작업 결과물 추가")
+async def create_work_product(request: Request, payload: CreateWorkProductRequest, workId: str = Path(...)) -> WorkProductResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    product = request.app.state.work_repository.create_product(
+        work_id=workId,
+        title=payload.title.strip(),
+        summary=payload.summary,
+        product_type=payload.product_type.strip() or "note",
+        status=payload.status.strip() or "draft",
+        review_state=payload.review_state.strip() or "none",
+        uri=payload.uri,
+        metadata=payload.metadata,
+    )
+    await _publish_simple_event(request, str(user.user_id), "work_product.created", {"product": _product_response(product).model_dump(mode="json", by_alias=True)})
+    return _product_response(product)
+
+
+@router.post("/work-products/{productId}/update-fields", response_model=WorkProductResponse, summary="작업 결과물 수정")
+async def update_work_product(request: Request, payload: UpdateWorkProductRequest, productId: str = Path(...)) -> WorkProductResponse:
+    user = await authenticate_http_user(request)
+    product = _work_product_or_404(request, productId)
+    work = _work_or_404(request, product.work_id)
+    _ensure_work_owner(user, work)
+    updated = request.app.state.work_repository.update_product(
+        productId,
+        title=payload.title.strip() if payload.title is not None else None,
+        summary=payload.summary,
+        status=payload.status.strip() if payload.status is not None else None,
+        review_state=payload.review_state.strip() if payload.review_state is not None else None,
+        uri=payload.uri,
+        metadata=payload.metadata,
+    )
+    await _publish_simple_event(request, str(user.user_id), "work_product.updated", {"product": _product_response(updated).model_dump(mode="json", by_alias=True)})
+    return _product_response(updated)
+
+
+@router.delete("/work-products/{productId}", response_model=dict, summary="작업 결과물 삭제")
+async def delete_work_product(request: Request, productId: str = Path(...)) -> dict[str, bool]:
+    user = await authenticate_http_user(request)
+    product = _work_product_or_404(request, productId)
+    work = _work_or_404(request, product.work_id)
+    _ensure_work_owner(user, work)
+    deleted = request.app.state.work_repository.delete_product(productId)
+    await _publish_simple_event(request, str(user.user_id), "work_product.deleted", {"productId": productId, "workId": work.work_id})
+    return {"deleted": deleted}
+
+
+@router.get("/work/{workId}/interactions", response_model=WorkInteractionsResponse, summary="작업 상호작용 목록")
+async def list_work_interactions(request: Request, workId: str = Path(...)) -> WorkInteractionsResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    items = request.app.state.work_repository.list_interactions(workId)
+    return WorkInteractionsResponse(items=[_interaction_response(item) for item in items], totalCount=len(items))
+
+
+@router.post("/work/{workId}/interactions", response_model=WorkInteractionResponse, summary="작업 상호작용 추가")
+async def create_work_interaction(request: Request, payload: CreateWorkInteractionRequest, workId: str = Path(...)) -> WorkInteractionResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    interaction = request.app.state.work_repository.create_interaction(
+        work_id=workId,
+        kind=_normalize_interaction_kind(payload.kind),
+        title=payload.title.strip() if payload.title else None,
+        body=payload.body,
+        payload=payload.payload,
+        continuation_policy=_normalize_continuation_policy(payload.continuation_policy),
+    )
+    await _publish_simple_event(request, str(user.user_id), "work_interaction.created", {"interaction": _interaction_response(interaction).model_dump(mode="json", by_alias=True)})
+    return _interaction_response(interaction)
+
+
+@router.post("/work-interactions/{interactionId}/accept", response_model=WorkInteractionResponse, summary="작업 상호작용 수락")
+async def accept_work_interaction(request: Request, interactionId: str = Path(...)) -> WorkInteractionResponse:
+    return await _update_interaction_status(request, interactionId=interactionId, status="accepted")
+
+
+@router.post("/work-interactions/{interactionId}/reject", response_model=WorkInteractionResponse, summary="작업 상호작용 거절")
+async def reject_work_interaction(request: Request, interactionId: str = Path(...)) -> WorkInteractionResponse:
+    return await _update_interaction_status(request, interactionId=interactionId, status="rejected")
+
+
+@router.post("/work-interactions/{interactionId}/cancel", response_model=WorkInteractionResponse, summary="작업 상호작용 취소")
+async def cancel_work_interaction(request: Request, interactionId: str = Path(...)) -> WorkInteractionResponse:
+    return await _update_interaction_status(request, interactionId=interactionId, status="cancelled")
+
+
+@router.post("/work-interactions/{interactionId}/respond", response_model=WorkInteractionResponse, summary="작업 상호작용 응답")
+async def respond_work_interaction(request: Request, payload: RespondWorkInteractionRequest, interactionId: str = Path(...)) -> WorkInteractionResponse:
+    return await _update_interaction_status(request, interactionId=interactionId, status="answered", response=payload.response)
+
+
+@router.post("/work/{workId}/read", response_model=dict, summary="작업 읽음 처리")
+async def mark_work_read(request: Request, workId: str = Path(...)) -> dict[str, bool]:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    owner_user_id = _int_or_none(user.user_id)
+    if owner_user_id is None:
+        raise HTTPException(status_code=400, detail="owner user id is required")
+    request.app.state.work_repository.mark_read(workId, owner_user_id=owner_user_id)
+    return {"ok": True}
+
+
+@router.delete("/work/{workId}/read", response_model=dict, summary="작업 읽지 않음 처리")
+async def mark_work_unread(request: Request, workId: str = Path(...)) -> dict[str, bool]:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    owner_user_id = _int_or_none(user.user_id)
+    if owner_user_id is None:
+        raise HTTPException(status_code=400, detail="owner user id is required")
+    request.app.state.work_repository.mark_unread(workId, owner_user_id=owner_user_id)
+    return {"ok": True}
+
+
 @router.get("/work/{workId}/context-preview", response_model=WorkContextPreviewResponse, summary="디버깅용 작업 컨텍스트 조회")
 async def get_work_context_preview(request: Request, workId: str = Path(...)) -> WorkContextPreviewResponse:
     user = await authenticate_http_user(request)
@@ -575,6 +829,13 @@ def _work_or_404(request: Request, work_id: str) -> WorkItem:
     if work is None:
         raise HTTPException(status_code=404, detail="work not found")
     return work
+
+
+def _work_product_or_404(request: Request, product_id: str):
+    product = request.app.state.work_repository.get_product(product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="work product not found")
+    return product
 
 
 def _ensure_work_owner(user, work: WorkItem) -> None:
@@ -627,6 +888,22 @@ def _relation_response(relation) -> WorkRelationResponse:
 
 def _run_response(run) -> WorkRunResponse:
     return WorkRunResponse.model_validate(run, from_attributes=True)
+
+
+def _document_response(document) -> WorkDocumentResponse:
+    return WorkDocumentResponse.model_validate(document, from_attributes=True)
+
+
+def _document_revision_response(revision) -> WorkDocumentRevisionResponse:
+    return WorkDocumentRevisionResponse.model_validate(revision, from_attributes=True)
+
+
+def _product_response(product) -> WorkProductResponse:
+    return WorkProductResponse.model_validate(product, from_attributes=True)
+
+
+def _interaction_response(interaction) -> WorkInteractionResponse:
+    return WorkInteractionResponse.model_validate(interaction, from_attributes=True)
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -730,6 +1007,74 @@ def _normalize_relation_type(value: str) -> str:
     return relation_type
 
 
+def _normalize_interaction_kind(value: str) -> str:
+    kind = str(value or "").strip()
+    if kind not in {"suggest_tasks", "ask_user_questions", "request_confirmation"}:
+        raise HTTPException(status_code=400, detail="invalid work interaction kind")
+    return kind
+
+
+def _normalize_continuation_policy(value: str) -> str:
+    policy = str(value or "none").strip()
+    if policy not in {"none", "wake_assignee", "wake_assignee_on_accept"}:
+        raise HTTPException(status_code=400, detail="invalid continuation policy")
+    return policy
+
+
+def _safe_document_key(value: str) -> str:
+    key = str(value or "").strip()
+    if not key or ".." in key or key.startswith("/") or "\\" in key:
+        raise HTTPException(status_code=400, detail="invalid document key")
+    return key[:160]
+
+
+def _would_create_parent_cycle(repository, *, work_id: str, parent_id: str) -> bool:
+    cursor = repository.get_work(parent_id)
+    seen: set[str] = set()
+    while cursor is not None and cursor.parent_id:
+        if cursor.work_id in seen:
+            return True
+        seen.add(cursor.work_id)
+        if cursor.parent_id == work_id:
+            return True
+        cursor = repository.get_work(cursor.parent_id)
+    return False
+
+
+async def _update_interaction_status(
+    request: Request,
+    *,
+    interactionId: str | None = None,
+    interaction_id: str | None = None,
+    status: str,
+    response: dict[str, Any] | None = None,
+) -> WorkInteractionResponse:
+    user = await authenticate_http_user(request)
+    target_id = interaction_id or interactionId
+    if target_id is None:
+        raise HTTPException(status_code=404, detail="work interaction not found")
+    existing = _find_interaction_or_404(request, target_id)
+    work = _work_or_404(request, existing.work_id)
+    _ensure_work_owner(user, work)
+    updated = request.app.state.work_repository.update_interaction(target_id, status=status, response=response)
+    await _publish_simple_event(
+        request,
+        str(user.user_id),
+        "work_interaction.updated",
+        {"interaction": _interaction_response(updated).model_dump(mode="json", by_alias=True)},
+    )
+    if updated.continuation_policy == "wake_assignee" or (updated.continuation_policy == "wake_assignee_on_accept" and status == "accepted"):
+        await _wake_work_from_interaction(request, user=user, work=work, interaction=updated)
+    return _interaction_response(updated)
+
+
+def _find_interaction_or_404(request: Request, interaction_id: str):
+    interaction = request.app.state.work_repository.get_interaction(interaction_id)
+    if interaction is None:
+        raise HTTPException(status_code=404, detail="work interaction not found")
+    return interaction
+
+
 def _label_color(value: str | None) -> str:
     text = str(value or "#64748b").strip()
     if not re.match(r"^#[0-9a-fA-F]{6}$", text):
@@ -763,5 +1108,31 @@ async def _wake_work_from_comment(request: Request, *, user, work: WorkItem, com
                 work_id=work.work_id,
                 author_type="system",
                 body=f"댓글 실행 시작 실패: {error}",
+            )
+        )
+
+
+async def _wake_work_from_interaction(request: Request, *, user, work: WorkItem, interaction) -> None:
+    if work.active_run_id or work.status in {"backlog", "cancelled"}:
+        return
+    title = getattr(interaction, "title", None) or "사용자 응답 반영"
+    try:
+        await _create_message_in_session(
+            request,
+            CreateSessionMessageRequest(
+                content=f"{title} 내용을 반영해서 이 작업을 이어서 진행해.",
+                clientMessageId=f"work-interaction:{getattr(interaction, 'interaction_id', '')}",
+                inputPayload={"workId": work.work_id},
+            ),
+            session=_session_or_404(request, work.session_id),
+            user=user,
+        )
+    except Exception as error:
+        request.app.state.work_repository.add_comment(
+            WorkComment(
+                comment_id=new_id("comment"),
+                work_id=work.work_id,
+                author_type="system",
+                body=f"응답 반영 실행 시작 실패: {error}",
             )
         )

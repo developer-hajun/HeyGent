@@ -3,7 +3,14 @@ import type { IssueBoardIssue, IssueBoardLabel, IssueBoardStatus } from '../mode
 
 export type ViewMode = 'list' | 'board'
 export type SortField = 'updated' | 'title' | 'status'
-export type DetailTab = 'chat' | 'runs' | 'activity' | 'related'
+export type DetailTab =
+  | 'chat'
+  | 'runs'
+  | 'activity'
+  | 'related'
+  | 'documents'
+  | 'products'
+  | 'interactions'
 
 export type BoardAssignee = {
   id: string
