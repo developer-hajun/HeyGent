@@ -262,9 +262,11 @@ class PostgresWorkRepository:
 
     def set_label_links_by_names(self, work_id: str, *, session_id: str, owner_key: str, label_names: list[str]) -> list[str]:
         names = [name.strip() for name in label_names if name.strip()]
-        if not names:
-            return []
         connection = self.connection_factory()
+        connection.execute("DELETE FROM work_label_links WHERE work_id = %s", (work_id,))
+        if not names:
+            connection.commit()
+            return []
         rows = connection.execute(
             """
             SELECT label_id FROM work_labels

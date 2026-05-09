@@ -319,6 +319,22 @@ async def _create_message_in_session(
     _apply_session_settings_snapshot(task_input, settings_snapshot, session=session)
     task_run_id = new_id("task")
     client_message_id = payload.client_message_id or new_id("client_msg")
+    work_id = _work_id_from_task_input(task_input)
+    work_metadata: dict[str, Any] = {}
+    if work_id is not None:
+        work = _attach_work_context_or_404(
+            request,
+            task_input=task_input,
+            work_id=work_id,
+            session_id=sessionId,
+            owner_key=owner_key,
+        )
+        work_metadata = {
+            "work_id": work.work_id,
+            "work_identifier": work.identifier,
+            "work_title": work.title,
+            "work_assignee_agent_id": work.assignee_agent_id,
+        }
     user_append = session_store.append_user_message_and_start_task(
         owner_key=owner_key,
         session_id=sessionId,
@@ -326,6 +342,7 @@ async def _create_message_in_session(
         client_message_id=client_message_id,
         task_run_id=task_run_id,
         base_history_version=base_history_version,
+        metadata_patch=work_metadata,
     )
     if user_append.get("duplicate"):
         messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
@@ -343,15 +360,7 @@ async def _create_message_in_session(
     task_input["after_user_message_version"] = user_append["after_user_message_version"]
     task_input["completion_expected_version"] = user_append["completion_expected_version"]
     task_input["client_message_id"] = client_message_id
-    work_id = _work_id_from_task_input(task_input)
     if work_id is not None:
-        _attach_work_context_or_404(
-            request,
-            task_input=task_input,
-            work_id=work_id,
-            session_id=sessionId,
-            owner_key=owner_key,
-        )
         WorkService(request.app.state.work_repository).mark_run_started(
             work_id=work_id,
             task_run_id=task_run_id,
@@ -487,7 +496,7 @@ def _attach_work_context_or_404(
     work_id: str,
     session_id: str,
     owner_key: str,
-) -> None:
+) -> WorkItem:
     repository = getattr(request.app.state, "work_repository", None)
     if repository is None:
         raise HTTPException(status_code=500, detail="work repository is not configured")
@@ -501,6 +510,7 @@ def _attach_work_context_or_404(
     task_input["workId"] = work.work_id
     task_input["workIdentifier"] = work.identifier
     task_input["workContext"] = repository.context_preview(work.work_id)
+    return work
 
 
 def _apply_linked_work_result(request: Request, *, task_input: dict[str, Any], task) -> None:

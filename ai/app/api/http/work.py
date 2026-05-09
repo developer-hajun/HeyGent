@@ -20,7 +20,8 @@ from app.contracts.work import (
     WorkRunResponse,
     WorkRunsResponse,
 )
-from app.domain.orchestration.contracts import OrchestrationRequest
+from app.contracts.session import CreateSessionMessageRequest
+from app.api.http.sessions import _create_message_in_session
 from app.domain.work import WorkItem, WorkService
 from app.domain.work.policies import normalize_disposition_status
 
@@ -85,21 +86,26 @@ async def create_session_work(
             author_id=str(user.user_id),
         )
 
-    task_input = _task_input_from_work(work)
+    task_status: str | None = None
+    task_run_id: str | None = None
     try:
-        task = await request.app.state.orchestrator.start(
-            OrchestrationRequest(
-                owner_key=str(user.user_id),
-                session_key=sessionId,
-                input_payload=task_input,
-            )
+        message = await _create_message_in_session(
+            request,
+            CreateSessionMessageRequest(
+                content=work.execution_instruction or work.description or work.title,
+                clientMessageId=payload.client_request_id,
+                inputPayload={"workId": work.work_id},
+            ),
+            session=session,
+            user=user,
         )
-        service.mark_run_started(work_id=work.work_id, task_run_id=task.task_run_id)
-        updated = service.apply_task_result(work_id=work.work_id, task=task) or work
-        return WorkCreateResponse(work=_work_response(updated), taskRunId=task.task_run_id, taskStatus=task.status)
+        task_run_id = message.task_run_id
+        task_status = message.status
     except Exception as error:
         updated = service.mark_run_start_failed(work_id=work.work_id, reason=str(error))
         return WorkCreateResponse(work=_work_response(updated), taskRunId=None, taskStatus="FAILED_TO_START")
+    updated = request.app.state.work_repository.get_work(work.work_id) or work
+    return WorkCreateResponse(work=_work_response(updated), taskRunId=task_run_id, taskStatus=task_status)
 
 
 @router.get("/work/{workId}", response_model=WorkItemResponse, summary="작업 상세 조회")
@@ -218,26 +224,6 @@ def _work_or_404(request: Request, work_id: str) -> WorkItem:
 
 def _ensure_work_owner(user, work: WorkItem) -> None:
     ensure_owner(user, work.owner_key)
-
-
-def _task_input_from_work(work: WorkItem) -> dict[str, Any]:
-    return {
-        "prompt": work.execution_instruction or work.description or work.title,
-        "workId": work.work_id,
-        "workIdentifier": work.identifier,
-        "work": {
-            "id": work.work_id,
-            "identifier": work.identifier,
-            "title": work.title,
-            "description": work.description,
-            "status": work.status,
-            "assigneeAgentId": work.assignee_agent_id,
-            "parentId": work.parent_id,
-            "rawUserInput": work.raw_user_input,
-            "acceptanceCriteria": work.acceptance_criteria,
-            "constraints": work.constraints,
-        },
-    }
 
 
 def _work_response(work: WorkItem) -> WorkItemResponse:

@@ -360,7 +360,10 @@ export function ChatSessionPage() {
           } catch (error) {
             console.error(error)
           }
+          await fetchMessages(sessionId)
           await fetchActiveTaskRuns(sessionId)
+        } else {
+          await fetchMessages(sessionId)
         }
         setLoadState('ready')
         setWorkStatusMessage(
@@ -399,7 +402,14 @@ export function ChatSessionPage() {
       await sendMessage({
         sessionId,
         content,
-        inputPayload: selectedWork ? { workId: selectedWork.workId } : undefined,
+        inputPayload: selectedWork
+          ? {
+              workId: selectedWork.workId,
+              workIdentifier: selectedWork.identifier,
+              workTitle: selectedWork.title,
+              workAssigneeAgentId: selectedWork.assigneeAgentId ?? 'CEO',
+            }
+          : undefined,
       })
       setLoadState('ready')
       if (selectedWork) {

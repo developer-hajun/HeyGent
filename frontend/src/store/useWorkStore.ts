@@ -1,21 +1,38 @@
 import { create } from 'zustand'
-import { createSessionWork, listSessionWork } from '@/apis/work'
+import {
+  createSessionWork,
+  createWorkComment,
+  listSessionWork,
+  listWorkComments,
+  moveWorkStatus,
+} from '@/apis/work'
 import { toWorkCreatedEvent } from '@/realtime/workEvents'
-import type { CreateWorkRequest, WorkCreateResponse, WorkItem } from '@/types/work'
+import type {
+  CreateWorkRequest,
+  WorkComment,
+  WorkCreateResponse,
+  WorkItem,
+  WorkStatus,
+} from '@/types/work'
 
 type WorkState = {
   itemsBySessionId: Record<string, WorkItem[]>
+  commentsByWorkId: Record<string, WorkComment[]>
   loadingBySessionId: Record<string, boolean>
   creatingBySessionId: Record<string, boolean>
   lastCreatedBySessionId: Record<string, WorkCreateResponse | undefined>
   lastError: string | null
   fetchSessionWork: (sessionId: string) => Promise<WorkItem[]>
+  fetchComments: (workId: string) => Promise<WorkComment[]>
   createWork: (sessionId: string, payload: CreateWorkRequest) => Promise<WorkCreateResponse>
+  moveStatus: (workId: string, status: WorkStatus) => Promise<WorkItem>
+  addComment: (workId: string, body: string) => Promise<WorkComment>
   clearWorkState: () => void
 }
 
 export const useWorkStore = create<WorkState>((set) => ({
   itemsBySessionId: {},
+  commentsByWorkId: {},
   loadingBySessionId: {},
   creatingBySessionId: {},
   lastCreatedBySessionId: {},
@@ -72,9 +89,55 @@ export const useWorkStore = create<WorkState>((set) => ({
       throw error
     }
   },
+  fetchComments: async (workId) => {
+    try {
+      const response = await listWorkComments(workId)
+      set((state) => ({
+        commentsByWorkId: { ...state.commentsByWorkId, [workId]: response.items },
+        lastError: null,
+      }))
+      return response.items
+    } catch (error) {
+      set({ lastError: error instanceof Error ? error.message : '작업 댓글 조회에 실패했습니다.' })
+      throw error
+    }
+  },
+  moveStatus: async (workId, status) => {
+    try {
+      const item = await moveWorkStatus(workId, status)
+      set((state) => ({
+        itemsBySessionId: {
+          ...state.itemsBySessionId,
+          [item.sessionId]: upsertWorkItem(state.itemsBySessionId[item.sessionId] ?? [], item),
+        },
+        lastError: null,
+      }))
+      return item
+    } catch (error) {
+      set({ lastError: error instanceof Error ? error.message : '작업 상태 변경에 실패했습니다.' })
+      throw error
+    }
+  },
+  addComment: async (workId, body) => {
+    try {
+      const comment = await createWorkComment(workId, body)
+      set((state) => ({
+        commentsByWorkId: {
+          ...state.commentsByWorkId,
+          [workId]: [...(state.commentsByWorkId[workId] ?? []), comment],
+        },
+        lastError: null,
+      }))
+      return comment
+    } catch (error) {
+      set({ lastError: error instanceof Error ? error.message : '작업 댓글 추가에 실패했습니다.' })
+      throw error
+    }
+  },
   clearWorkState: () =>
     set({
       itemsBySessionId: {},
+      commentsByWorkId: {},
       loadingBySessionId: {},
       creatingBySessionId: {},
       lastCreatedBySessionId: {},

@@ -55,14 +55,14 @@ class WorkService:
             metadata=dict(payload.get("metadata") or {}),
         )
         saved = self.repository.create_work(work, client_request_id=client_request_id)
-        if parent_id:
-            self.repository.inherit_parent_labels(saved.work_id, parent_id)
         self.repository.set_label_links_by_names(
             saved.work_id,
             session_id=session_id,
             owner_key=owner_key,
             label_names=_string_list(payload.get("labelNames") or payload.get("label_names")),
         )
+        if parent_id:
+            self.repository.inherit_parent_labels(saved.work_id, parent_id)
         return saved
 
     def mark_run_started(self, *, work_id: str, task_run_id: str) -> None:

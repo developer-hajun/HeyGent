@@ -33,7 +33,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/components/ui/utils'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useWorkStore } from '@/store/useWorkStore'
-import type { WorkItem } from '@/types/work'
+import type { WorkComment, WorkItem } from '@/types/work'
 import {
   ISSUE_BOARD_LABELS,
   ISSUE_BOARD_STATUSES,
@@ -84,9 +84,13 @@ interface PersistedTodoBoardState {
 export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const storageKey = `heygent-task-board:v4:${sessionId}`
   const workItems = useWorkStore((state) => state.itemsBySessionId[sessionId] ?? EMPTY_WORK_ITEMS)
+  const commentsByWorkId = useWorkStore((state) => state.commentsByWorkId)
   const isWorkLoading = useWorkStore((state) => state.loadingBySessionId[sessionId] === true)
   const workError = useWorkStore((state) => state.lastError)
   const fetchSessionWork = useWorkStore((state) => state.fetchSessionWork)
+  const fetchWorkComments = useWorkStore((state) => state.fetchComments)
+  const moveWorkItemStatus = useWorkStore((state) => state.moveStatus)
+  const addWorkItemComment = useWorkStore((state) => state.addComment)
   const agentPanelsBySessionId = useSessionStore((state) => state.agentPanelsBySessionId)
   const assignees = useMemo<BoardAssignee[]>(() => {
     const agentPanels = agentPanelsBySessionId[sessionId] ?? EMPTY_AGENT_PANELS
@@ -183,16 +187,39 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
     ],
   )
   const grouped = useMemo(() => groupIssuesByStatus(filteredIssues), [filteredIssues])
-  const selectedIssue = selectedIssueId
+  const selectedIssueBase = selectedIssueId
     ? (boardIssues.find((issue) => issue.id === selectedIssueId) ?? null)
     : null
+  const selectedIssue =
+    selectedIssueBase && commentsByWorkId[selectedIssueBase.id]
+      ? {
+          ...selectedIssueBase,
+          comments: commentsByWorkId[selectedIssueBase.id].map(toIssueBoardComment),
+        }
+      : selectedIssueBase
   const activeFilterCount =
     Number(selectedStatuses.length > 0) +
     Number(selectedAssignees.length > 0) +
     Number(selectedLabels.length > 0) +
     Number(liveOnly)
 
+  useEffect(() => {
+    if (!selectedIssueId) return
+    const serverWork = workItems.find((item) => item.workId === selectedIssueId)
+    if (!serverWork) return
+    void fetchWorkComments(selectedIssueId).catch((error) => {
+      console.error(error)
+    })
+  }, [fetchWorkComments, selectedIssueId, workItems])
+
   const moveIssue = (issueId: string, status: IssueBoardStatus) => {
+    const serverWork = workItems.find((item) => item.workId === issueId)
+    if (serverWork) {
+      void moveWorkItemStatus(issueId, status).catch((error) => {
+        console.error(error)
+      })
+      return
+    }
     setIssues((current) => moveIssueToStatus(current, issueId, status))
   }
 
@@ -225,6 +252,15 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const addIssueComment = (issueId: string, body: string) => {
     const trimmed = body.trim()
     if (!trimmed) return
+    const serverWork = workItems.find((item) => item.workId === issueId)
+    if (serverWork) {
+      void addWorkItemComment(issueId, trimmed)
+        .then(() => Promise.all([fetchSessionWork(sessionId), fetchWorkComments(issueId)]))
+        .catch((error) => {
+          console.error(error)
+        })
+      return
+    }
     const now = new Date().toISOString()
     setIssues((current) =>
       current.map((issue) =>
@@ -487,6 +523,16 @@ function toIssueBoardIssue(item: WorkItem): IssueBoardIssue {
     startedAt: item.startedAt,
     completedAt: item.completedAt,
     live: item.activeRunId !== null || item.status === 'in_progress',
+  }
+}
+
+function toIssueBoardComment(comment: WorkComment): IssueBoardIssue['comments'][number] {
+  return {
+    id: comment.commentId,
+    authorType: comment.authorType === 'system' ? 'system' : 'user',
+    authorName: comment.authorType === 'system' ? '시스템' : '사용자',
+    body: comment.body,
+    createdAt: comment.createdAt ?? new Date().toISOString(),
   }
 }
 

@@ -355,14 +355,21 @@ class WebSocketCommandRouter:
         task_input["base_history_version"] = base_history_version
         _apply_session_settings_snapshot(task_input, settings_snapshot, session=session)
         work_id = _work_id_from_task_input(task_input)
+        work_metadata: dict[str, Any] = {}
         if work_id is not None:
-            _attach_work_context_or_ws_error(
+            work = _attach_work_context_or_ws_error(
                 context,
                 task_input=task_input,
                 work_id=work_id,
                 session_id=session_id,
                 owner_key=context.auth.user_id,
             )
+            work_metadata = {
+                "work_id": work.work_id,
+                "work_identifier": work.identifier,
+                "work_title": work.title,
+                "work_assignee_agent_id": work.assignee_agent_id,
+            }
         # token memory context는 durable payload에 넣지 않는다. backend 호출이 필요해지면
         # context.auth.access_token에서만 꺼내 쓰도록 경계를 고정한다.
         await attach_persistent_memory_context(
@@ -387,6 +394,7 @@ class WebSocketCommandRouter:
             client_message_id=client_message_id,
             task_run_id=task.task_run_id,
             base_history_version=base_history_version,
+            metadata_patch=work_metadata,
         )
         if user_append.get("duplicate"):
             accepted = {
@@ -1292,7 +1300,7 @@ def _attach_work_context_or_ws_error(
     work_id: str,
     session_id: str,
     owner_key: str,
-) -> None:
+) -> Any:
     repository = getattr(context.websocket.app.state, "work_repository", None)
     if repository is None:
         raise WebSocketCommandError("work_repository_missing", "work repository is not configured")
@@ -1306,6 +1314,7 @@ def _attach_work_context_or_ws_error(
     task_input["workId"] = work.work_id
     task_input["workIdentifier"] = work.identifier
     task_input["workContext"] = repository.context_preview(work.work_id)
+    return work
 
 
 def _apply_ws_linked_work_result(context: WebSocketBackgroundContext, *, task: Any) -> None:

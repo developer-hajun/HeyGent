@@ -1,4 +1,4 @@
-import { CheckCircle2, Clock3, Loader2, XCircle } from 'lucide-react'
+import { CheckCircle2, Clock3, ListTodo, Loader2, XCircle } from 'lucide-react'
 import type { ChatMessageView } from '@/types/aiChat'
 import type {
   ActivityItemView,
@@ -60,9 +60,12 @@ export function ChatMessageItem({
             }
           >
             {message.content.trim() !== '' ? (
-              <p className="[overflow-wrap:anywhere] break-words whitespace-pre-wrap">
-                {message.content}
-              </p>
+              <div className="space-y-2">
+                {isUser && message.work && <WorkContextBadge work={message.work} />}
+                <p className="[overflow-wrap:anywhere] break-words whitespace-pre-wrap">
+                  {message.content}
+                </p>
+              </div>
             ) : (
               <div className="text-muted-foreground flex items-center gap-2">
                 {message.status === 'waiting' ? (
@@ -114,6 +117,19 @@ export function ChatMessageItem({
         )}
       </div>
     </article>
+  )
+}
+
+function WorkContextBadge({ work }: { work: NonNullable<ChatMessageView['work']> }) {
+  const label = [work.identifier, work.title].filter(Boolean).join(' · ')
+  return (
+    <span className="inline-flex max-w-full items-center gap-1.5 rounded-md bg-white/60 px-2 py-1 text-[11px] font-medium text-zinc-700 dark:bg-zinc-900/40 dark:text-zinc-200">
+      <ListTodo className="h-3 w-3 shrink-0" />
+      <span className="truncate">{label || '연결된 작업'}</span>
+      {work.assigneeAgentId && (
+        <span className="text-muted-foreground shrink-0">· {work.assigneeAgentId}</span>
+      )}
+    </span>
   )
 }
 
