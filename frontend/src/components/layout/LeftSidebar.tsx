@@ -5,7 +5,9 @@ import {
   Loader2,
   LayoutDashboard,
   MessageSquare,
+  Moon,
   Plus,
+  Sun,
   User,
   Settings,
   LogOut,
@@ -49,6 +51,8 @@ export function LeftSidebar() {
     setSidebarCollapsed,
     setSessionWorkspaceCollapsed,
     setSettingsOpen,
+    theme,
+    setTheme,
   } = useUIStore()
   const { setSelectedSessionId, pinnedSessionIds } = useSessionStore()
   const [profileOpen, setProfileOpen] = useState(false)
@@ -212,6 +216,18 @@ export function LeftSidebar() {
 
             <div className="flex-1" />
 
+            {/* Theme toggle (collapsed) */}
+            <CollapsedTooltip label={theme === 'dark' ? '라이트 모드' : '다크 모드'}>
+              <button
+                type="button"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-12 w-12 items-center justify-center rounded-xl transition-colors"
+                aria-label={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+              >
+                {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+              </button>
+            </CollapsedTooltip>
+
             {/* Profile icon (collapsed) */}
             <div className="bg-border my-1 h-px w-10" />
             <Popover open={profileOpen} onOpenChange={setProfileOpen}>
@@ -249,6 +265,14 @@ export function LeftSidebar() {
                   alt="HeyGent"
                   className="h-8 max-w-[150px] shrink-0 object-contain"
                 />
+              </button>
+              <button
+                type="button"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors"
+                aria-label={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+              >
+                {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
               </button>
             </div>
 

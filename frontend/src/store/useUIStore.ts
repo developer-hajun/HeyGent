@@ -17,6 +17,10 @@ interface UIState {
   // 채팅 활동 패널
   taskActivityPanelOpen: boolean
   setTaskActivityPanelOpen: (open: boolean) => void
+
+  // 테마
+  theme: 'dark' | 'light'
+  setTheme: (theme: 'dark' | 'light') => void
 }
 
 export const useUIStore = create<UIState>()(
@@ -32,12 +36,15 @@ export const useUIStore = create<UIState>()(
         set({ settingsOpen: open, ...(initialTab ? { settingsInitialTab: initialTab } : {}) }),
       taskActivityPanelOpen: false,
       setTaskActivityPanelOpen: (open) => set({ taskActivityPanelOpen: open }),
+      theme: 'dark',
+      setTheme: (theme) => set({ theme }),
     }),
     {
       name: 'heygent-ui-state',
       partialize: (state) => ({
         sidebarCollapsed: state.sidebarCollapsed,
         sessionWorkspaceCollapsed: state.sessionWorkspaceCollapsed,
+        theme: state.theme,
       }),
     },
   ),
