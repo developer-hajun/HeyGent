@@ -137,17 +137,28 @@ function SessionWorkspaceRoutePage() {
   )
 }
 
+function ThemeSync() {
+  const theme = useUIStore((s) => s.theme)
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark')
+  }, [theme])
+  return null
+}
+
 function AuthenticatedShell() {
   return (
-    <div className="bg-background flex h-screen w-full overflow-hidden">
-      <div className="hidden md:contents">
-        <LeftSidebar />
+    <>
+      <ThemeSync />
+      <div className="bg-background flex h-screen w-full overflow-hidden">
+        <div className="hidden md:contents">
+          <LeftSidebar />
+        </div>
+        <div className="hidden md:contents">
+          <SessionWorkspaceSidebar />
+        </div>
+        <WorkspaceRoutes />
       </div>
-      <div className="hidden md:contents">
-        <SessionWorkspaceSidebar />
-      </div>
-      <WorkspaceRoutes />
-    </div>
+    </>
   )
 }
 

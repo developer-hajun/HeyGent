@@ -9,7 +9,7 @@ from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.core.utils.ids import new_id
 from app.domain.orchestration.agent.tool_guard import ToolGuard, ToolGuardDecision, ToolGuardResult
-from app.domain.providers.model.base import AgentMessage, ToolResultMessage
+from app.domain.providers.model.base import AgentMessage, AgentModelResponse, ToolResultMessage
 from app.domain.orchestration.prompts.prompt_builder import assemble_agent_loop_messages
 from app.domain.session.sessions.transcript_store import TranscriptStore
 from app.domain.orchestration.runtime_planning.todo_state import (
@@ -42,12 +42,22 @@ class ToolCallingLoopHandler:
     def execute(self, *, task, step, resume_payload=None) -> dict[str, Any]:
         return asyncio.run(self.execute_async(task=task, step=step, resume_payload=resume_payload))
 
-    async def execute_async(self, *, task, step, resume_payload=None, progress_sink=None, delegate_executor=None) -> dict[str, Any]:
+    async def execute_async(
+        self,
+        *,
+        task,
+        step,
+        resume_payload=None,
+        progress_sink=None,
+        delegate_executor=None,
+        session_agent_executor=None,
+    ) -> dict[str, Any]:
         task_input = dict(task.input_payload or {})
         # 요청 payload의 workspace_root는 API 호출자가 선택한 이번 실행 root로 바인딩한다.
         request_tool_runtime = self._bind_request_tool_runtime(
             workspace_root=task_input.get("workspace_root"),
             owner_key=getattr(task, "owner_key", None),
+            runtime_context=task_input,
         )
         requested_toolsets = self._requested_toolsets(task_input)
         available_tools = self.tool_catalog.list_available_tools(requested_toolsets=requested_toolsets)
@@ -66,6 +76,7 @@ class ToolCallingLoopHandler:
             current_todo_state=current_todo_state,
             progress_sink=progress_sink,
             delegate_executor=delegate_executor,
+            session_agent_executor=session_agent_executor,
         )
 
     async def _execute_native(
@@ -82,6 +93,7 @@ class ToolCallingLoopHandler:
         current_todo_state: dict[str, Any],
         progress_sink,
         delegate_executor=None,
+        session_agent_executor=None,
     ) -> dict[str, Any]:
         """모델 응답과 runtime tool 실행을 번갈아 수행한다.
 
@@ -283,6 +295,13 @@ class ToolCallingLoopHandler:
                             accepted_result=result,
                         )
                         delegate_boundary_started = True
+                    if runtime_tool_name == "session_agent_task" and session_agent_executor is not None:
+                        result = await self._execute_session_agent_tool_result(
+                            session_agent_executor=session_agent_executor,
+                            tool_call_id=tool_call.id,
+                            args=tool_call.arguments,
+                            accepted_result=result,
+                        )
                 tool_result = {
                     "tool_call_id": tool_call.id,
                     "name": runtime_tool_name,
@@ -307,17 +326,15 @@ class ToolCallingLoopHandler:
                 )
             current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
 
-        return self._build_completed_outcome(
+        return self._build_failed_outcome(
             task_input=task_input,
-            prompt=prompt,
             generated=generated,
-            final_text=generated.output_text if generated is not None else "작업 반복 한도에 도달했습니다.",
             tool_results=all_tool_results,
             operations=operations,
             llm_call_count=llm_call_count,
-            resume_payload=resume_payload,
             todo_state=current_todo_state,
             operation_counters=operation_counters,
+            max_iterations=max_iterations,
         )
 
     def _new_turn_messages(
@@ -566,6 +583,26 @@ class ToolCallingLoopHandler:
             accepted_result=dict(accepted_result),
         )
 
+    @staticmethod
+    async def _execute_session_agent_tool_result(
+        *,
+        session_agent_executor,
+        tool_call_id: str,
+        args: dict[str, Any],
+        accepted_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not isinstance(accepted_result, dict) or accepted_result.get("ok") is False:
+            return accepted_result
+        child_work = accepted_result.get("child_work")
+        if not isinstance(child_work, dict):
+            return accepted_result
+        return await session_agent_executor(
+            child_work=dict(child_work),
+            tool_call_id=tool_call_id,
+            args=dict(args or {}),
+            accepted_result=dict(accepted_result),
+        )
+
     async def _emit_tool_progress(
         self,
         *,
@@ -770,10 +807,10 @@ class ToolCallingLoopHandler:
             return text[:80]
         return cls._optional_text(args.get("command"))
 
-    def _bind_request_tool_runtime(self, *, workspace_root: Any, owner_key: Any):
+    def _bind_request_tool_runtime(self, *, workspace_root: Any, owner_key: Any, runtime_context: dict[str, Any] | None = None):
         context_binder = getattr(self.tool_runtime, "bind_request_context", None)
         if callable(context_binder):
-            return context_binder(workspace_root=workspace_root, owner_key=owner_key)
+            return context_binder(workspace_root=workspace_root, owner_key=owner_key, runtime_context=runtime_context)
         binder = getattr(self.tool_runtime, "bind_workspace_root", None)
         if callable(binder):
             return binder(workspace_root)
@@ -869,19 +906,21 @@ class ToolCallingLoopHandler:
         messages.append(tool_message)
         self._append_transcript_message(transcript_session_id, tool_message, tool_name=tool_name)
         # tool_call_id는 assistant가 보낸 호출 id와 정확히 맞아야 replay 시 결과를 대응시킬 수 있다.
-        operations.append(
-            {
-                "key": self._next_operation_key(
-                    operation_counters,
-                    namespace="tool",
-                    base_key=tool_name,
-                ),
-                "title": tool_name,
-                "kind": "tool",
-                "status": self._tool_operation_status(result),
-                "summary": self._tool_summary(result),
-            }
-        )
+        operation = {
+            "key": self._next_operation_key(
+                operation_counters,
+                namespace="tool",
+                base_key=tool_name,
+            ),
+            "title": tool_name,
+            "kind": "tool",
+            "status": self._tool_operation_status(result),
+            "summary": self._tool_summary(result),
+        }
+        operation_error = self._tool_operation_error(result)
+        if operation_error is not None:
+            operation["error"] = operation_error
+        operations.append(operation)
 
     @staticmethod
     def _guard_decision(guard_result: ToolGuardResult) -> ToolGuardDecision:
@@ -994,6 +1033,9 @@ class ToolCallingLoopHandler:
             "metadata": metadata,
             "tool_results": tool_results,
         }
+        work_disposition = self._work_disposition_from_tool_results(tool_results)
+        if work_disposition is not None:
+            result_payload["workDisposition"] = work_disposition
         output_payload = {
             "prompt": prompt,
             "text": final_text,
@@ -1097,6 +1139,62 @@ class ToolCallingLoopHandler:
                     "kind": "approval",
                     "status": "waiting",
                     "summary": approval_reason,
+                },
+            ],
+        }
+
+    def _build_failed_outcome(
+        self,
+        *,
+        task_input: dict[str, Any],
+        generated: AgentModelResponse | None,
+        tool_results: list[dict[str, Any]],
+        operations: list[dict[str, Any]],
+        llm_call_count: int,
+        todo_state: dict[str, Any],
+        operation_counters: dict[str, int],
+        max_iterations: int,
+    ) -> dict[str, Any]:
+        tool_names = [str(item["name"]) for item in tool_results]
+        observed_steps = self._observed_semantic_steps(tool_results)
+        step_summary = self._observed_step_summary(observed_steps)
+        message = f"작업 반복 한도({max_iterations})에 도달했습니다."
+        return {
+            "task_status": TaskStatus.FAILED,
+            "step_status": StepStatus.FAILED,
+            "result_payload": {
+                "text": generated.output_text if generated is not None and generated.output_text else message,
+                "tool_results": tool_results,
+                "error": {
+                    "code": "max_iterations_exceeded",
+                    "maxIterations": max_iterations,
+                },
+            },
+            "output_payload": {
+                "tool_results": tool_results,
+            },
+            "detail_json": self._build_detail_json(
+                tool_names=tool_names,
+                llm_call_count=llm_call_count,
+                model_name=self._model_name(generated, task_input) if generated is not None else None,
+                todo_state=todo_state,
+            ),
+            "todo_state": todo_state,
+            "observed_steps": observed_steps,
+            "summary_message": step_summary or message,
+            "error_message": message,
+            "operations": [
+                *operations,
+                {
+                    "key": self._next_operation_key(
+                        operation_counters,
+                        namespace="loop",
+                        base_key="max_iterations",
+                    ),
+                    "title": "반복 한도 도달",
+                    "kind": "system",
+                    "status": "failed",
+                    "summary": message,
                 },
             ],
         }
@@ -1214,6 +1312,16 @@ class ToolCallingLoopHandler:
             child_session = result.get("child_session")
             if isinstance(child_session, dict):
                 return dict(child_session)
+        return None
+
+    @staticmethod
+    def _work_disposition_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for item in reversed(tool_results):
+            if str(item.get("name") or "") != "work_disposition":
+                continue
+            result = item.get("result")
+            if isinstance(result, dict) and isinstance(result.get("workDisposition"), dict):
+                return dict(result["workDisposition"])
         return None
 
     @staticmethod
@@ -1346,6 +1454,29 @@ class ToolCallingLoopHandler:
                     return f"{key}={value}"
             return json.dumps(result, ensure_ascii=False)[:80]
         return str(result)[:80]
+
+    @classmethod
+    def _tool_operation_error(cls, result: Any) -> dict[str, Any] | None:
+        if not isinstance(result, dict) or result.get("ok") is not False:
+            return None
+
+        raw_error = result.get("error")
+        source = raw_error if isinstance(raw_error, dict) else {}
+        message = cls._optional_text(source.get("message") or (raw_error if isinstance(raw_error, str) else None))
+        if message is None:
+            message = cls._tool_summary(result)
+
+        normalized: dict[str, Any] = {"message": message}
+        code = cls._optional_text(source.get("code"))
+        error_type = cls._optional_text(source.get("type"))
+        retryable = source.get("retryable")
+        if code is not None:
+            normalized["code"] = code
+        if error_type is not None:
+            normalized["type"] = error_type
+        if isinstance(retryable, bool):
+            normalized["retryable"] = retryable
+        return normalized
 
     @staticmethod
     def _next_operation_key(operation_counters: dict[str, int], *, namespace: str, base_key: str) -> str:

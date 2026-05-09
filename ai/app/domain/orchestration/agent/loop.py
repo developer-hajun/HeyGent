@@ -6,6 +6,7 @@ import re
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.core.time import utc_now
+from app.core.utils.ids import new_id
 from app.domain.orchestration.agent.step_handler import StepHandler
 from app.domain.orchestration.approval import ApprovalRuntime, ApprovalService
 from app.domain.orchestration.delegation import ChildSessionLauncher, DelegateRuntime
@@ -27,6 +28,7 @@ from app.domain.orchestration.runtime_planning.todo_state import (
 )
 from app.domain.orchestration.result_inspector import OutcomeInspector
 from app.domain.session.sessions.transcript_store import TranscriptStore
+from app.domain.work import WorkService
 from app.domain.tasks.detail import (
     build_model_decision_detail,
     build_planning_detail,
@@ -52,6 +54,9 @@ class TaskEngine:
         planner: Planner,
         tool_registry,
         session_store: TranscriptStore | None = None,
+        work_repository=None,
+        agent_repository=None,
+        settings=None,
     ) -> None:
         self.repository = repository
         self.broadcaster = broadcaster
@@ -59,6 +64,10 @@ class TaskEngine:
         self.child_session_launcher = child_session_launcher
         self.planner = planner
         self.tool_registry = tool_registry
+        self.session_store = session_store
+        self.work_repository = work_repository
+        self.agent_repository = agent_repository
+        self.settings = settings
         self.approval_runtime = ApprovalRuntime()
         self.delegate_runtime = DelegateRuntime(child_session_launcher, session_store=session_store)
         self.outcome_inspector = OutcomeInspector()
@@ -88,6 +97,7 @@ class TaskEngine:
                     resume_payload=resume_payload,
                     progress_sink=progress_sink,
                     delegate_executor=self._build_delegate_executor(task=task, handler=handler, progress_sink=progress_sink),
+                    session_agent_executor=self._build_session_agent_work_executor(task=task, handler=handler, progress_sink=progress_sink),
                 )
             )
         except Exception as error:
@@ -463,6 +473,7 @@ class TaskEngine:
                     resume_payload=resume_payload,
                     progress_sink=progress_sink,
                     delegate_executor=self._build_delegate_executor(task=task, handler=handler, progress_sink=progress_sink),
+                    session_agent_executor=self._build_session_agent_work_executor(task=task, handler=handler, progress_sink=progress_sink),
                 )
             )
         except Exception as error:
@@ -782,6 +793,244 @@ class TaskEngine:
             )
 
         return execute_delegate
+
+    def _build_session_agent_work_executor(self, *, task: TaskRun, handler, progress_sink):
+        async def execute_session_agent_work(*, child_work: dict, tool_call_id: str, args: dict, accepted_result: dict) -> dict:
+            if self.work_repository is None or self.agent_repository is None:
+                return {
+                    **accepted_result,
+                    "ok": False,
+                    "error": {"code": "work_runtime_unavailable", "message": "work runtime is not configured"},
+                }
+
+            step = getattr(progress_sink, "current_step", None)
+            if step is None and task.current_step_run_id:
+                step = self.repository.get_step(task.current_step_run_id)
+            if step is None:
+                return {
+                    **accepted_result,
+                    "ok": False,
+                    "content": "session_agent_task 실행 전에 step 도구로 현재 의미 단계를 먼저 in_progress로 선언해야 합니다.",
+                    "error": {
+                        "code": "step_required_before_session_agent_task",
+                        "message": "session_agent_task requires an active LLM-declared step.",
+                    },
+                }
+            if step.status == StepStatus.PENDING:
+                step.status = StepStatus.RUNNING
+                step.started_at = step.started_at or task.started_at or utc_now()
+                task.current_step_run_id = step.step_run_id
+                self.repository.update_task(task)
+                self.repository.update_step(step)
+                progress_sink.current_step = step
+                await self._emit("step.started", task, step)
+
+            work_id = str(child_work.get("workId") or child_work.get("work_id") or "").strip()
+            work = self.work_repository.get_work(work_id) if work_id else None
+            if work is None:
+                return {
+                    **accepted_result,
+                    "ok": False,
+                    "error": {"code": "child_work_not_found", "message": "child work was not found"},
+                }
+
+            await self._notify_step_updated(
+                self._step_update_notifier(progress_sink=progress_sink, task=task),
+                step=step,
+                event_type="step.updated",
+                payload={
+                    "reason": "session_agent_work.started",
+                    "workId": work.work_id,
+                    "identifier": work.identifier,
+                    "assigneeAgentId": work.assignee_agent_id,
+                    "status": "RUNNING",
+                },
+                summary_message=f"{work.identifier} 세션 에이전트 실행 중",
+            )
+
+            task_run_id = new_id("task")
+            service = WorkService(self.work_repository)
+            service.mark_run_started(work_id=work.work_id, task_run_id=task_run_id)
+            try:
+                child_input = self._build_session_agent_work_input(parent_task=task, work=work)
+                child_task = self.planner.materialize_task(
+                    owner_key=work.owner_key,
+                    session_key=work.session_id,
+                    input_payload=child_input,
+                    handler=handler,
+                    task_run_id=task_run_id,
+                )
+                child_task = await self.run(task=child_task, handler=handler)
+                service.apply_task_result(work_id=work.work_id, task=child_task)
+            except Exception as error:
+                self.work_repository.update_run_status(work.work_id, task_run_id, "FAILED")
+                failed_work = service.mark_run_start_failed(work_id=work.work_id, reason=str(error))
+                await self._notify_step_updated(
+                    self._step_update_notifier(progress_sink=progress_sink, task=task),
+                    step=step,
+                    event_type="step.updated",
+                    payload={
+                        "reason": "session_agent_work.failed",
+                        "workId": failed_work.work_id,
+                        "identifier": failed_work.identifier,
+                        "assigneeAgentId": failed_work.assignee_agent_id,
+                        "taskRunId": task_run_id,
+                        "status": "FAILED",
+                    },
+                    summary_message=f"{work.identifier} 세션 에이전트 실행 실패",
+                )
+                return {
+                    **accepted_result,
+                    "ok": False,
+                    "content": f"{work.identifier} 세션 에이전트 실행 실패: {error}",
+                    "taskRunId": task_run_id,
+                    "childStatus": "FAILED",
+                    "error": {"message": str(error)},
+                }
+
+            child_status = self._task_status_value(child_task.status)
+            ok = child_status == TaskStatus.COMPLETED.value
+            await self._notify_step_updated(
+                self._step_update_notifier(progress_sink=progress_sink, task=task),
+                step=step,
+                event_type="step.updated",
+                payload={
+                    "reason": "session_agent_work.completed",
+                    "workId": work.work_id,
+                    "identifier": work.identifier,
+                    "assigneeAgentId": work.assignee_agent_id,
+                    "taskRunId": child_task.task_run_id,
+                    "status": child_status,
+                },
+                summary_message=f"{work.identifier} 세션 에이전트 실행 완료",
+            )
+            return {
+                **accepted_result,
+                "ok": ok,
+                "content": self._session_agent_work_tool_content(work=work, task=child_task),
+                "taskRunId": child_task.task_run_id,
+                "childStatus": child_status,
+            }
+
+        return execute_session_agent_work
+
+    def _build_session_agent_work_input(self, *, parent_task: TaskRun, work) -> dict:
+        parent_input = dict(parent_task.input_payload or {})
+        payload = {
+            "prompt": work.execution_instruction or work.description or work.title,
+            "workId": work.work_id,
+            "workIdentifier": work.identifier,
+            "workAssigneeAgentId": work.assignee_agent_id,
+            "workContext": self.work_repository.context_preview(work.work_id) if self.work_repository is not None else {},
+            "conversation_history": [],
+            "system_prompt_snapshot": parent_input.get("system_prompt_snapshot") or "",
+            "model": parent_input.get("model"),
+            "enabled_toolsets": ["skills", "session", "planning", "terminal", "file", "web", "browser"],
+            "toolsets": ["skills", "session", "planning", "terminal", "file", "web", "browser"],
+            "max_iterations": self._work_execution_max_iterations(),
+            "parentWorkId": work.parent_id,
+        }
+        self._attach_session_agent_profile(payload, work=work)
+        transcript_session_id = self._create_work_transcript_session(parent_task=parent_task, work=work, model=payload.get("model"))
+        if transcript_session_id:
+            payload["transcript_session_id"] = transcript_session_id
+        return payload
+
+    def _attach_session_agent_profile(self, payload: dict, *, work) -> None:
+        if self.agent_repository is None:
+            return
+        profile_id = str(work.assignee_agent_id or "").strip()
+        if not profile_id:
+            return
+        profile = self.agent_repository.get_session_agent(profile_id=profile_id, owner_key=str(work.owner_key))
+        if profile is None:
+            return
+        payload["targetAgentProfile"] = {
+            "profileId": profile.get("profile_id"),
+            "profileKey": profile.get("profile_key"),
+            "agentType": profile.get("agent_type"),
+            "templateKey": profile.get("template_key"),
+            "configSnapshot": profile.get("config_snapshot") or {},
+        }
+        bundle = self.agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
+        if bundle is not None:
+            payload["targetAgentInstructions"] = {
+                "bundleId": bundle.get("bundle_id"),
+                "entryDocumentKey": bundle.get("entry_document_key") or "AGENTS.md",
+                "documents": [
+                    {
+                        "documentKey": document.get("document_key"),
+                        "displayName": document.get("display_name"),
+                        "content": document.get("content") or "",
+                    }
+                    for document in list(bundle.get("documents") or [])
+                    if isinstance(document, dict)
+                ],
+            }
+
+    def _create_work_transcript_session(self, *, parent_task: TaskRun, work, model: str | None) -> str | None:
+        if self.session_store is None:
+            return None
+        session_id = new_id("agent_session")
+        parent_input = dict(parent_task.input_payload or {})
+        parent_session_id = str(parent_input.get("transcript_session_id") or "").strip() or None
+        self.session_store.create_session(
+            session_id=session_id,
+            session_key=work.session_id,
+            source="agent.loop",
+            user_id=work.owner_key,
+            model=model,
+            parent_session_id=parent_session_id,
+            title=str(work.title or work.identifier)[:120],
+            metadata={
+                "source": "agent.loop",
+                "work_id": work.work_id,
+                "work_identifier": work.identifier,
+                "parent_work_id": work.parent_id,
+                "assignee_agent_id": work.assignee_agent_id,
+            },
+        )
+        return session_id
+
+    def _work_execution_max_iterations(self) -> int:
+        raw_value = getattr(self.settings, "work_execution_max_iterations", 24) if self.settings is not None else 24
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            value = 24
+        return max(1, value)
+
+    @staticmethod
+    def _task_status_value(status) -> str:
+        return str(getattr(status, "value", status))
+
+    @staticmethod
+    def _session_agent_work_tool_content(*, work, task: TaskRun) -> str:
+        status = TaskEngine._task_status_value(task.status)
+        summary = ""
+        if isinstance(task.result_payload, dict):
+            text = task.result_payload.get("text") or task.result_payload.get("summary")
+            if isinstance(text, str):
+                summary = text.strip()
+        if summary:
+            return f"{work.identifier} 세션 에이전트 실행 결과({status}): {summary}"
+        return f"{work.identifier} 세션 에이전트 실행이 {status} 상태로 종료되었습니다."
+
+    @staticmethod
+    def _step_update_notifier(*, progress_sink, task: TaskRun):
+        async def emit_step_update(*, step, event_type: str, payload: dict, summary_message: str | None = None) -> None:
+            if progress_sink is None:
+                return
+            progress_sink.current_step = step
+            await progress_sink(event_type=event_type, summary_message=summary_message, payload=payload)
+
+        return emit_step_update
+
+    @staticmethod
+    async def _notify_step_updated(callback, *, step, event_type: str, payload: dict, summary_message: str | None = None) -> None:
+        if callback is None:
+            return
+        await callback(step=step, event_type=event_type, payload=payload, summary_message=summary_message)
 
     async def _materialize_progress_step(self, *, task: TaskRun, handler, event_type: str, payload: dict) -> StepRun | None:
         """tool_call 관찰값에서 StepRun(LLM이 판단한 자연어 의미 단계)을 즉시 만든다.
