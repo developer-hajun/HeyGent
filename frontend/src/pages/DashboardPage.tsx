@@ -551,7 +551,7 @@ export function DashboardPage() {
         onConfirm={(config) => {
           storePendingSessionConfig(config)
           setNewSessionOpen(false)
-          if (config) {
+          if (config && !config.seedDefaultAgents) {
             setSidebarCollapsed(false)
             navigate('/agent-status')
           } else {

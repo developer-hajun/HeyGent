@@ -377,6 +377,7 @@ class InMemoryTranscriptStore:
         client_message_id: str,
         task_run_id: str,
         base_history_version: int,
+        metadata_patch: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         session = self._require_product_session(owner_key=owner_key, session_id=session_id)
         for message in self.messages.get(session_id, []):
@@ -397,15 +398,18 @@ class InMemoryTranscriptStore:
         current_version = int(session.get("history_version") or 0)
         if current_version != int(base_history_version):
             raise ValueError("history version mismatch")
+        metadata = {
+            "source": "api.session",
+            "client_message_id": client_message_id,
+            "task_run_id": task_run_id,
+        }
+        if metadata_patch:
+            metadata.update(metadata_patch)
         message_id = self.append_message(
             session_id=session_id,
             role="user",
             content=content,
-            metadata={
-                "source": "api.session",
-                "client_message_id": client_message_id,
-                "task_run_id": task_run_id,
-            },
+            metadata=metadata,
         )
         after_version = current_version + 1
         session["history_version"] = after_version

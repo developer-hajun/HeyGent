@@ -147,6 +147,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const clientMessageId = inputClientMessageId ?? createClientMessageId()
     const optimisticSessionId = sessionId ?? `pending_session_${clientMessageId}`
+    const optimisticWork = getWorkContextFromInputPayload(inputPayload)
     // 서버 accepted가 오기 전에도 사용자가 보낸 문장을 즉시 보여 주기 위한 임시 메시지다.
     // accepted를 받으면 서버/DB message id와 실제 session id로 치환한다.
     const optimisticMessage: ChatMessageView = {
@@ -157,6 +158,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       status: 'optimistic',
       clientMessageId,
       createdAt: new Date().toISOString(),
+      work: optimisticWork,
     }
     // accepted 왕복을 기다리면 첫 입력에서 DB append/TaskRun 생성 시간이 그대로 비어 보인다.
     // 텍스트는 서버 이벤트가 올 때 채우고, 즉시 보이는 상태는 스피너 전용 placeholder로만 둔다.
@@ -410,6 +412,7 @@ const toChatMessageView = (message: RawAiMessage): ChatMessageView => ({
   clientMessageId:
     typeof message.client_message_id === 'string' ? message.client_message_id : undefined,
   createdAt: typeof message.created_at === 'string' ? message.created_at : undefined,
+  work: getWorkContextFromMetadata(message.metadata),
   raw: message,
 })
 
@@ -1210,5 +1213,39 @@ const normalizeRawAiMessage = (value: unknown): RawAiMessage | null => {
     client_message_id:
       getStringField(value, 'client_message_id', 'clientMessageId') ??
       (typeof value.client_message_id === 'string' ? value.client_message_id : undefined),
+  }
+}
+
+const getWorkContextFromInputPayload = (payload?: JsonObject) => {
+  if (!isJsonObject(payload)) {
+    return undefined
+  }
+  const id = getStringField(payload, 'workId', 'work_id')
+  if (id === undefined) {
+    return undefined
+  }
+  return {
+    id,
+    identifier: getStringField(payload, 'workIdentifier', 'work_identifier'),
+    title: getStringField(payload, 'workTitle', 'work_title'),
+    assigneeAgentId:
+      getStringField(payload, 'workAssigneeAgentId', 'work_assignee_agent_id') ?? null,
+  }
+}
+
+const getWorkContextFromMetadata = (metadata?: JsonObject | null) => {
+  if (!isJsonObject(metadata)) {
+    return undefined
+  }
+  const id = getStringField(metadata, 'work_id', 'workId')
+  if (id === undefined) {
+    return undefined
+  }
+  return {
+    id,
+    identifier: getStringField(metadata, 'work_identifier', 'workIdentifier'),
+    title: getStringField(metadata, 'work_title', 'workTitle'),
+    assigneeAgentId:
+      getStringField(metadata, 'work_assignee_agent_id', 'workAssigneeAgentId') ?? null,
   }
 }
