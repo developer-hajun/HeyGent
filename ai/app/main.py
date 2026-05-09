@@ -32,7 +32,13 @@ from app.domain.orchestration.orchestrator import Orchestrator
 from app.domain.orchestration.runtime_planning import Planner
 from app.domain.providers.model import OpenAIAPIProvider, OpenAIOAuthProvider
 from app.domain.providers.registry import ProviderRegistry
-from app.storage.postgres import PostgresSessionStore, PostgresTaskRepository, apply_configured_postgres_migrations, connect_postgres
+from app.storage.postgres import (
+    PostgresSessionStore,
+    PostgresTaskRepository,
+    PostgresWorkRepository,
+    apply_configured_postgres_migrations,
+    connect_postgres,
+)
 from app.storage.redis import ProjectingTaskRepository, build_task_projection_store
 
 
@@ -101,6 +107,7 @@ async def lifespan(app: FastAPI):
     memory_extraction_provider = ProviderMemoryExtractionClient(provider_registry=provider_registry)
     memory_extractor = LlmMemoryExtractor(provider=memory_extraction_provider)
     session_store = PostgresSessionStore(postgres_connection_factory)
+    work_repository = PostgresWorkRepository(postgres_connection_factory)
     # recall_service = RecallService(session_store)
     # memory_store = MemoryStore()
     skill_registry = SkillRegistry()
@@ -149,6 +156,7 @@ async def lifespan(app: FastAPI):
     app.state.memory_extractor = memory_extractor
     app.state.provider_registry = provider_registry
     app.state.session_store = session_store
+    app.state.work_repository = work_repository
     # app.state.recall_service = recall_service
     # app.state.memory_store = memory_store
     app.state.skill_registry = skill_registry

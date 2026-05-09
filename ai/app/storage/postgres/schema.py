@@ -191,6 +191,106 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     );
     """,
     """
+    CREATE TABLE IF NOT EXISTS work_counters (
+        session_id TEXT PRIMARY KEY REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+        next_number BIGINT NOT NULL DEFAULT 1
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS work_items (
+        work_id TEXT PRIMARY KEY,
+        identifier TEXT NOT NULL,
+        session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+        owner_key TEXT NOT NULL,
+        owner_user_id BIGINT REFERENCES users(id),
+        title TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL CHECK (status IN ('backlog', 'todo', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled')),
+        assignee_agent_id TEXT,
+        parent_id TEXT REFERENCES work_items(work_id) ON DELETE SET NULL,
+        source TEXT NOT NULL DEFAULT 'work_mode',
+        raw_user_input TEXT,
+        execution_instruction TEXT,
+        expected_deliverable TEXT,
+        acceptance_criteria JSONB NOT NULL DEFAULT '[]'::jsonb,
+        constraints_payload JSONB NOT NULL DEFAULT '[]'::jsonb,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        client_request_id TEXT,
+        active_run_id TEXT,
+        latest_run_id TEXT,
+        archived_at TIMESTAMPTZ,
+        deleted_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        started_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ,
+        UNIQUE (session_id, identifier)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS work_labels (
+        label_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+        owner_key TEXT NOT NULL,
+        name TEXT NOT NULL,
+        color TEXT NOT NULL DEFAULT '#64748b',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (session_id, owner_key, name)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS work_label_links (
+        work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+        label_id TEXT NOT NULL REFERENCES work_labels(label_id) ON DELETE CASCADE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (work_id, label_id)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS work_comments (
+        comment_id TEXT PRIMARY KEY,
+        work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+        author_type TEXT NOT NULL CHECK (author_type IN ('user', 'agent', 'system')),
+        author_id TEXT,
+        task_run_id TEXT,
+        body TEXT NOT NULL,
+        resume_requested BOOLEAN NOT NULL DEFAULT false,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS work_relations (
+        source_work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+        target_work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+        relation_type TEXT NOT NULL CHECK (relation_type IN ('blocks', 'related')),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (source_work_id, target_work_id, relation_type)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS work_runs (
+        work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+        task_run_id TEXT NOT NULL,
+        run_kind TEXT NOT NULL DEFAULT 'initial',
+        status TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (work_id, task_run_id)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS work_read_states (
+        work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+        owner_user_id BIGINT NOT NULL REFERENCES users(id),
+        last_read_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        archived_at TIMESTAMPTZ,
+        PRIMARY KEY (work_id, owner_user_id)
+    );
+    """,
+    """
     CREATE UNIQUE INDEX IF NOT EXISTS idx_approval_requests_one_pending_per_task
     ON approval_requests(task_run_id)
     WHERE status = 'PENDING';
@@ -242,6 +342,29 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_worker_handoffs_parent_step
     ON worker_handoffs(parent_step_run_id, created_at);
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_session_client_request
+    ON work_items(session_id, client_request_id)
+    WHERE client_request_id IS NOT NULL;
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_work_items_session_status_updated
+    ON work_items(session_id, status, updated_at DESC)
+    WHERE deleted_at IS NULL;
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_work_items_parent
+    ON work_items(parent_id, updated_at DESC)
+    WHERE deleted_at IS NULL;
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_work_comments_work_created
+    ON work_comments(work_id, created_at);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_work_runs_work_created
+    ON work_runs(work_id, created_at DESC);
     """,
     """
     INSERT INTO ai_agent_profiles (
