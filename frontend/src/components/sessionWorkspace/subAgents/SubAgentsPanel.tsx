@@ -5,6 +5,7 @@ import {
   createDefaultSessionAgents,
   createSessionAgent,
   createSessionAgentFromTemplate,
+  deleteSessionAgent,
   listAgentTemplates,
   listSessionAgents,
   saveAgentInstructionDocument,
@@ -22,8 +23,12 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [templates, setTemplates] = useState<AgentTemplate[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
-  const { getAgentPanelsForSession, setAgentPanelsForSession, updateAgentPanelInSession } =
-    useSessionStore()
+  const {
+    getAgentPanelsForSession,
+    removeAgentPanelFromSession,
+    setAgentPanelsForSession,
+    updateAgentPanelInSession,
+  } = useSessionStore()
   const agentPanels = getAgentPanelsForSession(sessionId)
   const detailId = searchParams.get('agent')
   const createDialogOpen = searchParams.get('create') === '1'
@@ -122,6 +127,11 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
         <SubAgentDetailView
           key={detailItem.id}
           item={detailItem}
+          onDelete={async () => {
+            await deleteSessionAgent(sessionId, detailItem.id)
+            removeAgentPanelFromSession(sessionId, detailItem.id)
+            resetDraft()
+          }}
           onSave={(agent) => {
             updateAgentPanelInSession(sessionId, detailItem.id, agent)
             if (agent.profileId) {

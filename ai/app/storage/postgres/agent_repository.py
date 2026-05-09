@@ -417,6 +417,21 @@ class PostgresAgentRepository:
         ).fetchone()
         return _profile_from_row(row) if row is not None else None
 
+    def delete_session_agent(self, *, session_id: str, owner_key: str, profile_id: str) -> bool:
+        connection = self.connection_factory()
+        result = connection.execute(
+            """
+            DELETE FROM ai_agent_profiles
+            WHERE profile_id = %s
+              AND session_id = %s
+              AND owner_key = %s
+              AND agent_type = 'user_subagent'
+            """,
+            (profile_id, session_id, owner_key),
+        )
+        connection.commit()
+        return int(result.rowcount or 0) > 0
+
     def get_instruction_bundle(self, *, profile_id: str, owner_key: str) -> dict[str, Any] | None:
         profile = self.get_session_agent(profile_id=profile_id, owner_key=owner_key)
         if profile is None or not profile.get("bundle_id"):

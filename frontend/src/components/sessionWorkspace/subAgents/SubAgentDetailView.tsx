@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Activity, BarChart3, Clock, FileText } from 'lucide-react'
+import { Activity, BarChart3, Clock, FileText, Loader2, MoreHorizontal, Trash2 } from 'lucide-react'
 import { PageTabBar } from '@/components/PageTabBar'
 import {
   AgentBudgetPanel,
@@ -13,6 +13,21 @@ import {
   AgentSkillsPanel,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Tabs } from '@/components/ui/tabs'
 import type { AgentPanelItem } from '@/store/useSessionStore'
 import type { Agent } from '@/types/agent'
@@ -39,12 +54,14 @@ const DETAIL_TABS: Array<{ value: SubAgentDetailTab; label: string }> = [
 
 export function SubAgentDetailView({
   item,
+  onDelete,
   onSave,
   onTabChange,
   reservedNames,
   requestedTab,
 }: {
   item: AgentPanelItem
+  onDelete: () => Promise<void>
   onSave: (agent: Agent) => void
   onTabChange?: (tab: SubAgentDetailTab) => void
   requestedTab?: string | null
@@ -64,6 +81,9 @@ export function SubAgentDetailView({
   )
   const [skillSaving, setSkillSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const selectedSkills = SUB_AGENT_SKILLS.filter((skill) => item.agent.skills?.includes(skill.id))
   const instructionsDirty =
     instructionsDraft.trim() !== (item.agent.instructions ?? '') ||
@@ -111,9 +131,43 @@ export function SubAgentDetailView({
     window.setTimeout(() => setSkillSaving(false), 500)
   }
 
+  const handleDelete = async () => {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await onDelete()
+      setDeleteDialogOpen(false)
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : '에이전트를 삭제하지 못했습니다.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <div className={`space-y-6 ${instructionsDirty ? 'pb-24 sm:pb-0' : ''}`}>
       <AgentDetailHeader
+        actionsMenu={
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-xs" aria-label="에이전트 메뉴">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={(event) => {
+                  event.preventDefault()
+                  setDeleteDialogOpen(true)
+                }}
+              >
+                <Trash2 className="h-4 w-4" />
+                삭제
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        }
         name={item.agent.name}
         status="초안"
         subtitle={
@@ -297,6 +351,36 @@ export function SubAgentDetailView({
           </div>
         </div>
       )}
+      <AlertDialog
+        open={deleteDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeleteError(null)
+          setDeleteDialogOpen(open)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>에이전트를 삭제할까요?</AlertDialogTitle>
+            <AlertDialogDescription>
+              `{item.agent.name}` 에이전트와 저장된 지침 문서가 삭제됩니다. CEO는 삭제되지 않습니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {deleteError ? <p className="text-destructive text-sm">{deleteError}</p> : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>취소</AlertDialogCancel>
+            <Button variant="destructive" onClick={() => void handleDelete()} disabled={deleting}>
+              {deleting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  삭제 중
+                </>
+              ) : (
+                '삭제'
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

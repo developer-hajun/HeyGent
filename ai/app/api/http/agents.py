@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
 from app.api.deps.openapi_auth import document_bearer_auth
@@ -134,6 +134,29 @@ async def create_default_session_agents(
         owner_user_id=_int_or_none(user.user_id),
     )
     return AgentProfileListResponse(items=[_profile_response(item) for item in items])
+
+
+@router.delete(
+    "/sessions/{sessionId}/agents/{profileId}",
+    status_code=204,
+    summary="세션 에이전트 삭제",
+)
+async def delete_session_agent(
+    request: Request,
+    sessionId: str = Path(..., description="에이전트를 삭제할 AI 세션 ID입니다."),
+    profileId: str = Path(..., description="삭제할 세션 에이전트 프로필 ID입니다."),
+) -> Response:
+    user = await authenticate_http_user(request)
+    session = _session_or_404(request, sessionId)
+    ensure_owner(user, session.get("user_id"))
+    deleted = request.app.state.agent_repository.delete_session_agent(
+        session_id=sessionId,
+        owner_key=str(user.user_id),
+        profile_id=profileId,
+    )
+    if not deleted:
+        raise HTTPException(status_code=404, detail="agent profile not found")
+    return Response(status_code=204)
 
 
 @router.get(

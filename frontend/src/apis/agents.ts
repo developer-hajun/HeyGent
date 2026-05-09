@@ -1,22 +1,7 @@
-import axios from 'axios'
 import { Bot } from 'lucide-react'
-import { useAuthStore } from '@/store/useAuthStore'
+import aiAxiosInstance from './aiAxiosInstance'
 import type { Agent } from '@/types/agent'
 import type { AgentPanelItem } from '@/store/useSessionStore'
-
-const agentsApi = axios.create({
-  baseURL: import.meta.env.VITE_AI_API_BASE_URL,
-  timeout: 30_000,
-  headers: { 'Content-Type': 'application/json' },
-})
-
-agentsApi.interceptors.request.use((config) => {
-  const token = useAuthStore.getState().accessToken
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
 
 export type AgentInstructionDocument = {
   documentId?: string | null
@@ -86,19 +71,19 @@ type CreateSessionAgentInput = {
 }
 
 export async function listAgentTemplates(): Promise<AgentTemplate[]> {
-  const { data } = await agentsApi.get<{ items: AgentTemplate[] }>('/agent-templates')
+  const { data } = await aiAxiosInstance.get<{ items: AgentTemplate[] }>('/agent-templates')
   return data.items
 }
 
 export async function listSessionAgents(sessionId: string): Promise<AgentProfile[]> {
-  const { data } = await agentsApi.get<{ items: AgentProfile[] }>(
+  const { data } = await aiAxiosInstance.get<{ items: AgentProfile[] }>(
     `/sessions/${encodeURIComponent(sessionId)}/agents`,
   )
   return data.items
 }
 
 export async function getSessionMainAgent(sessionId: string): Promise<AgentProfile> {
-  const { data } = await agentsApi.get<AgentProfile>(
+  const { data } = await aiAxiosInstance.get<AgentProfile>(
     `/sessions/${encodeURIComponent(sessionId)}/agents/main`,
   )
   return data
@@ -108,7 +93,7 @@ export async function createSessionAgent(
   sessionId: string,
   input: CreateSessionAgentInput,
 ): Promise<AgentProfile> {
-  const { data } = await agentsApi.post<AgentProfile>(
+  const { data } = await aiAxiosInstance.post<AgentProfile>(
     `/sessions/${encodeURIComponent(sessionId)}/agents`,
     input,
   )
@@ -116,7 +101,7 @@ export async function createSessionAgent(
 }
 
 export async function createDefaultSessionAgents(sessionId: string): Promise<AgentProfile[]> {
-  const { data } = await agentsApi.post<{ items: AgentProfile[] }>(
+  const { data } = await aiAxiosInstance.post<{ items: AgentProfile[] }>(
     `/sessions/${encodeURIComponent(sessionId)}/agents/defaults`,
   )
   return data.items
@@ -126,17 +111,23 @@ export async function createSessionAgentFromTemplate(
   sessionId: string,
   templateKey: string,
 ): Promise<AgentProfile> {
-  const { data } = await agentsApi.post<AgentProfile>(
+  const { data } = await aiAxiosInstance.post<AgentProfile>(
     `/sessions/${encodeURIComponent(sessionId)}/agents/from-template`,
     { templateKey },
   )
   return data
 }
 
+export async function deleteSessionAgent(sessionId: string, profileId: string): Promise<void> {
+  await aiAxiosInstance.delete(
+    `/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(profileId)}`,
+  )
+}
+
 export async function getAgentInstructionBundle(
   profileId: string,
 ): Promise<AgentInstructionBundle> {
-  const { data } = await agentsApi.get<AgentInstructionBundle>(
+  const { data } = await aiAxiosInstance.get<AgentInstructionBundle>(
     `/agent-profiles/${encodeURIComponent(profileId)}/instructions`,
   )
   return data
@@ -146,7 +137,7 @@ export async function saveAgentInstructionDocument(
   profileId: string,
   input: { documentKey: string; displayName: string; content: string },
 ): Promise<AgentInstructionDocument> {
-  const { data } = await agentsApi.post<AgentInstructionDocument>(
+  const { data } = await aiAxiosInstance.post<AgentInstructionDocument>(
     `/agent-profiles/${encodeURIComponent(profileId)}/instructions/documents`,
     input,
   )

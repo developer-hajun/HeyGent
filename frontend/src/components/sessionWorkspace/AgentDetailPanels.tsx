@@ -79,12 +79,14 @@ export interface AgentSelectOption {
 }
 
 export function AgentDetailHeader({
+  actionsMenu,
   name,
   profile,
   savedIndicator,
   status,
   subtitle,
 }: {
+  actionsMenu?: ReactNode
   name: string
   profile: ReactNode
   savedIndicator?: ReactNode
@@ -119,9 +121,11 @@ export function AgentDetailHeader({
         <span className="border-border bg-muted/40 hidden rounded-full border px-2 py-0.5 text-xs sm:inline">
           {status}
         </span>
-        <Button variant="ghost" size="icon-xs" disabled title="추가 작업은 준비 중입니다.">
-          <MoreHorizontal className="h-4 w-4" />
-        </Button>
+        {actionsMenu ?? (
+          <Button variant="ghost" size="icon-xs" disabled title="추가 작업은 준비 중입니다.">
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        )}
       </div>
     </div>
   )
