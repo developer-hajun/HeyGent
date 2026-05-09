@@ -5,6 +5,68 @@ import { FloorAgentSprite } from '@/components/office/FloorAgentSprite'
 const IMG_W = 1586
 const IMG_H = 992
 
+const VEHICLE_CSS = `
+  @keyframes heygent-bike-move {
+    0%     { transform: translateX(-600px); }
+    35%    { transform: translateX(2000px); }
+    35.01% { transform: translateX(-600px); }
+    100%   { transform: translateX(-600px); }
+  }
+  @keyframes heygent-car-move {
+    0%,    50%    { transform: translateX(-600px); }
+    85%           { transform: translateX(2000px); }
+    85.01%, 100%  { transform: translateX(-600px); }
+  }
+`
+
+function VehicleLayer() {
+  const [bikeFrame, setBikeFrame] = useState(1)
+  useEffect(() => {
+    const id = setInterval(() => setBikeFrame((f) => (f === 1 ? 2 : 1)), 250)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <>
+      {/* 자전거: 스프라이트 프레임 전환하며 왼쪽→오른쪽 이동 (20s 주기 0~35%) */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 893,
+          left: 0,
+          pointerEvents: 'none',
+          zIndex: 20,
+          animation: 'heygent-bike-move 30s linear infinite',
+        }}
+      >
+        <img
+          src={`/assets/maps/overview_bike_${bikeFrame}.png`}
+          alt=""
+          draggable={false}
+          style={{ width: 135, height: 'auto', display: 'block' }}
+        />
+      </div>
+      {/* 자동차: 자전거 이후 왼쪽→오른쪽 이동 (20s 주기 50~85%) */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 873,
+          left: 0,
+          pointerEvents: 'none',
+          zIndex: 20,
+          animation: 'heygent-car-move 30s linear infinite',
+        }}
+      >
+        <img
+          src="/assets/maps/overview_car.png"
+          alt=""
+          draggable={false}
+          style={{ width: 170, height: 'auto', display: 'block' }}
+        />
+      </div>
+    </>
+  )
+}
+
 function getBuildingBgSrc(): string {
   const hour = new Date().getHours()
   if (hour >= 8 && hour < 16) return '/assets/maps/building_bg_day.png'
@@ -19,12 +81,12 @@ const FLOORS = [
     sessionId: '3',
     label: '3F',
     // agent container bounds
-    top: '13.5%',
+    top: '13.7%',
     left: '20%',
     width: '61%',
     height: '24%',
     // SVG polygon matching the actual glass panel (within 1586×992 canvas)
-    svgPoints: '326,178 1252,142 1290,157 1290,363 1252,354 326,375',
+    svgPoints: '326,178 1252,142 1290,157 1290,363 1252,358 326,375',
     labelTop: 165,
     labelRight: 304,
     agentSize: 85,
@@ -86,18 +148,6 @@ export function BuildingOverviewPage() {
   const [bgSrc, setBgSrc] = useState(getBuildingBgSrc)
   const containerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
-  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null)
-
-  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
-    const rect = containerRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const mx = e.clientX - rect.left
-    const my = e.clientY - rect.top
-    const canvasX = Math.round(IMG_W / 2 + (mx - rect.width / 2) / scale)
-    const canvasY = Math.round(IMG_H / 2 + (my - rect.height / 2) / scale)
-    setMousePos({ x: canvasX, y: canvasY })
-  }
-
   useEffect(() => {
     function scheduleNext() {
       const now = new Date()
@@ -129,20 +179,7 @@ export function BuildingOverviewPage() {
   }, [])
 
   return (
-    <div
-      ref={containerRef}
-      className="relative flex-1 overflow-hidden"
-      onMouseMove={handleMouseMove}
-      onMouseLeave={() => setMousePos(null)}
-    >
-      {mousePos && (
-        <div
-          style={{ position: 'fixed', top: 8, left: 8, zIndex: 9999 }}
-          className="pointer-events-none rounded bg-black/80 px-2 py-1 font-mono text-xs text-white"
-        >
-          x: {mousePos.x}, y: {mousePos.y}
-        </div>
-      )}
+    <div ref={containerRef} className="relative flex-1 overflow-hidden">
       {/* 배경: 시간대별 이미지로 화면 전체 채움 */}
       <img
         src={bgSrc}
@@ -263,6 +300,10 @@ export function BuildingOverviewPage() {
             </div>
           ) : null,
         )}
+
+        {/* 차량 애니메이션: 건물 하단 도로 위를 오른쪽으로 이동 */}
+        <style>{VEHICLE_CSS}</style>
+        <VehicleLayer />
       </div>
     </div>
   )

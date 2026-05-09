@@ -73,9 +73,12 @@ export const refreshAccessToken = async (refreshToken: string): Promise<RefreshT
 
 /**
  * POST /api/v1/auth/dev-login
- * 개발 환경 전용 테스트 로그인입니다. 요청 바디 없이 호출합니다.
+ * 개발 환경 전용 테스트 로그인입니다. local 프로필에서만 활성화됩니다.
+ * @param userKey 개발용 테스트 사용자를 구분하기 위한 선택값 (미입력 시 기본 테스트 사용자 사용)
  */
-export const devLogin = async (): Promise<KakaoLoginResponse> => {
-  const { data } = await axiosInstance.post<KakaoLoginResponse>('/api/v1/auth/dev-login')
+export const devLogin = async (userKey?: string): Promise<KakaoLoginResponse> => {
+  const { data } = await axiosInstance.post<KakaoLoginResponse>('/api/v1/auth/dev-login', null, {
+    params: userKey ? { userKey } : undefined,
+  })
   return data
 }
