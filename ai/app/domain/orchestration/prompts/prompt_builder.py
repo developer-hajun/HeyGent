@@ -190,6 +190,8 @@ class PromptBuilder:
 
 def build_work_context_prompt(*, input_payload: dict) -> str:
     work_context = input_payload.get("workContext")
+    target_agent_profile = input_payload.get("targetAgentProfile")
+    target_agent_instructions = input_payload.get("targetAgentInstructions")
     work_id = str(input_payload.get("workId") or "").strip()
     work_identifier = str(input_payload.get("workIdentifier") or "").strip()
     assignee_agent_id = str(input_payload.get("workAssigneeAgentId") or "").strip()
@@ -202,7 +204,18 @@ def build_work_context_prompt(*, input_payload: dict) -> str:
     if assignee_agent_id:
         lines.append(f"- 담당 에이전트: {assignee_agent_id}")
         if assignee_agent_id != "CEO":
-            lines.append("- 담당 에이전트가 CEO가 아니면 delegate_task로 해당 담당 작업을 맡기고 결과를 종합하세요.")
+            lines.append("- 담당자가 CEO가 아니면 현재 실행은 해당 세션 에이전트가 맡은 작업 실행입니다.")
+            lines.append("- 담당 작업 실행 자체를 worker delegate로 다시 위임하지 마세요.")
+    if isinstance(target_agent_profile, dict):
+        profile_lines = _build_target_agent_profile_lines(target_agent_profile)
+        if profile_lines:
+            lines.append("- 실행 에이전트 설정:")
+            lines.extend(f"  - {line}" for line in profile_lines)
+    if isinstance(target_agent_instructions, dict):
+        instruction_lines = _build_target_agent_instruction_lines(target_agent_instructions)
+        if instruction_lines:
+            lines.append("- 실행 에이전트 지침:")
+            lines.extend(instruction_lines)
     if isinstance(work_context, dict):
         title = str(work_context.get("title") or "").strip()
         if title:
@@ -215,6 +228,50 @@ def build_work_context_prompt(*, input_payload: dict) -> str:
             lines.append("- 요약:")
             lines.append(prompt_preview)
     return "\n".join(lines)
+
+
+def _build_target_agent_profile_lines(profile: dict) -> list[str]:
+    config = profile.get("configSnapshot") or profile.get("config_snapshot") or {}
+    if not isinstance(config, dict):
+        config = {}
+    fields = [
+        ("name", "이름"),
+        ("role", "역할"),
+        ("title", "타이틀"),
+        ("description", "설명"),
+        ("adapterType", "연결 방식"),
+        ("model", "모델"),
+    ]
+    lines: list[str] = []
+    for key, label in fields:
+        value = str(config.get(key) or profile.get(key) or "").strip()
+        if value:
+            lines.append(f"{label}: {value}")
+    skills = config.get("skills") or profile.get("skills")
+    if isinstance(skills, list):
+        skill_names = [str(skill).strip() for skill in skills if str(skill).strip()]
+        if skill_names:
+            lines.append("스킬: " + ", ".join(skill_names))
+    return lines
+
+
+def _build_target_agent_instruction_lines(bundle: dict) -> list[str]:
+    entry_key = str(bundle.get("entryDocumentKey") or bundle.get("entry_document_key") or "AGENTS.md").strip()
+    documents = bundle.get("documents")
+    if not isinstance(documents, list):
+        return []
+    lines: list[str] = []
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+        key = str(document.get("documentKey") or document.get("document_key") or "").strip()
+        content = str(document.get("content") or "").strip()
+        if not key or not content:
+            continue
+        prefix = "기본 지침 문서" if key == entry_key else "참고 지침 문서"
+        lines.append(f"  - {prefix}: {key}")
+        lines.append(content[:6000])
+    return lines
 
 
 class PromptManager(PromptBuilder):

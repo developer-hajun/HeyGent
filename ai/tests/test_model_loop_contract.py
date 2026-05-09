@@ -91,7 +91,7 @@ def test_prompt_builder_includes_work_assignment_context_before_current_prompt()
     assert "연결된 작업 컨텍스트" in prompt
     assert "TASK-7" in prompt
     assert "agent-researcher" in prompt
-    assert "delegate_task로 해당 담당 작업을 맡기고 결과를 종합하세요." in prompt
+    assert "담당 작업 실행 자체를 worker delegate로 다시 위임하지 마세요." in prompt
     assert prompt.index("연결된 작업 컨텍스트") < prompt.index("결과를 파일로 저장해줘")
 
 

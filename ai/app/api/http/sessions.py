@@ -28,7 +28,7 @@ from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
-from app.domain.work import WorkService
+from app.domain.work import WorkItem, WorkService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"], dependencies=[Depends(document_bearer_auth)])
 
@@ -511,8 +511,51 @@ def _attach_work_context_or_404(
     task_input["workIdentifier"] = work.identifier
     task_input["workAssigneeAgentId"] = work.assignee_agent_id
     task_input["workContext"] = repository.context_preview(work.work_id)
+    _attach_target_agent_context(request.app.state, task_input=task_input, work=work)
     _apply_work_execution_defaults(task_input, settings=request.app.state.settings)
     return work
+
+
+def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work: WorkItem) -> None:
+    assignee_agent_id = str(work.assignee_agent_id or "").strip()
+    if not assignee_agent_id or assignee_agent_id == "CEO":
+        return
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return
+    profile = agent_repository.get_session_agent(profile_id=assignee_agent_id, owner_key=str(work.owner_key))
+    if profile is None:
+        return
+    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
+    bundle = agent_repository.get_instruction_bundle(profile_id=assignee_agent_id, owner_key=str(work.owner_key))
+    if bundle is not None:
+        task_input["targetAgentInstructions"] = _instruction_bundle_prompt_payload(bundle)
+
+
+def _agent_profile_prompt_payload(profile: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "profileId": profile.get("profile_id"),
+        "profileKey": profile.get("profile_key"),
+        "agentType": profile.get("agent_type"),
+        "templateKey": profile.get("template_key"),
+        "configSnapshot": profile.get("config_snapshot") or {},
+    }
+
+
+def _instruction_bundle_prompt_payload(bundle: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "bundleId": bundle.get("bundle_id"),
+        "entryDocumentKey": bundle.get("entry_document_key") or "AGENTS.md",
+        "documents": [
+            {
+                "documentKey": document.get("document_key"),
+                "displayName": document.get("display_name"),
+                "content": document.get("content") or "",
+            }
+            for document in list(bundle.get("documents") or [])
+            if isinstance(document, dict)
+        ],
+    }
 
 
 def _apply_work_execution_defaults(task_input: dict[str, Any], *, settings: Any) -> None:

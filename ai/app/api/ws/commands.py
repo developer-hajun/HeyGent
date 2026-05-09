@@ -1315,8 +1315,44 @@ def _attach_work_context_or_ws_error(
     task_input["workIdentifier"] = work.identifier
     task_input["workAssigneeAgentId"] = work.assignee_agent_id
     task_input["workContext"] = repository.context_preview(work.work_id)
+    _attach_target_agent_context(context.websocket.app.state, task_input=task_input, work=work)
     _apply_work_execution_defaults(task_input, settings=context.websocket.app.state.settings)
     return work
+
+
+def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work: Any) -> None:
+    assignee_agent_id = str(work.assignee_agent_id or "").strip()
+    if not assignee_agent_id or assignee_agent_id == "CEO":
+        return
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return
+    profile = agent_repository.get_session_agent(profile_id=assignee_agent_id, owner_key=str(work.owner_key))
+    if profile is None:
+        return
+    task_input["targetAgentProfile"] = {
+        "profileId": profile.get("profile_id"),
+        "profileKey": profile.get("profile_key"),
+        "agentType": profile.get("agent_type"),
+        "templateKey": profile.get("template_key"),
+        "configSnapshot": profile.get("config_snapshot") or {},
+    }
+    bundle = agent_repository.get_instruction_bundle(profile_id=assignee_agent_id, owner_key=str(work.owner_key))
+    if bundle is None:
+        return
+    task_input["targetAgentInstructions"] = {
+        "bundleId": bundle.get("bundle_id"),
+        "entryDocumentKey": bundle.get("entry_document_key") or "AGENTS.md",
+        "documents": [
+            {
+                "documentKey": document.get("document_key"),
+                "displayName": document.get("display_name"),
+                "content": document.get("content") or "",
+            }
+            for document in list(bundle.get("documents") or [])
+            if isinstance(document, dict)
+        ],
+    }
 
 
 def _apply_work_execution_defaults(task_input: dict[str, Any], *, settings: Any) -> None:

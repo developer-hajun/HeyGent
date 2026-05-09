@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { useUIStore } from '@/store/useUIStore'
 
 export interface CustomAgentConfig {
+  seedDefaultAgents?: boolean
   agentName: string
   persona: string
   callName: string
@@ -146,7 +147,7 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
               <div className="space-y-3 p-6">
                 {/* 기본 제공 에이전트 */}
                 <button
-                  onClick={() => onConfirm()}
+                  onClick={() => onConfirm(defaultAgentSessionConfig())}
                   className="border-border hover:border-primary/40 hover:bg-primary/3 group flex w-full items-start gap-4 rounded-xl border p-4 text-left transition-all duration-150"
                 >
                   <div className="bg-primary/10 group-hover:bg-primary/15 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl transition-colors">
@@ -405,6 +406,23 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
       </DialogContent>
     </Dialog>
   )
+}
+
+function defaultAgentSessionConfig(): CustomAgentConfig {
+  return {
+    seedDefaultAgents: true,
+    agentName: 'CEO',
+    persona: '',
+    callName: 'CEO',
+    capabilities: '',
+    profileImage: CEO_IMAGE_OPTIONS[0].src,
+    model: 'gpt-5.4',
+    delegationPolicy: { canDelegate: true },
+    instructionsEntryFile: 'AGENTS.md',
+    instructionsMode: 'managed',
+    instructionsRootPath: '',
+    instructionsFiles: {},
+  }
 }
 
 const inputClass =

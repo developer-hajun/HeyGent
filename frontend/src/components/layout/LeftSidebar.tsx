@@ -119,7 +119,7 @@ export function LeftSidebar() {
         onConfirm={(config) => {
           storePendingSessionConfig(config)
           setNewSessionModalOpen(false)
-          if (config) {
+          if (config && !config.seedDefaultAgents) {
             setSidebarCollapsed(false)
             navigate('/agent-status')
           } else {

@@ -319,6 +319,55 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """,
         ),
     ),
+    PostgresMigration(
+        migration_id="0009_agent_instruction_documents",
+        statements=(
+            """
+            ALTER TABLE ai_agent_profiles
+            ADD COLUMN IF NOT EXISTS session_id TEXT REFERENCES agent_sessions(session_id) ON DELETE CASCADE;
+            """,
+            """
+            ALTER TABLE ai_agent_profiles
+            ADD COLUMN IF NOT EXISTS template_key TEXT;
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS ai_agent_instruction_bundles (
+                bundle_id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL REFERENCES ai_agent_profiles(profile_id) ON DELETE CASCADE,
+                owner_key TEXT NOT NULL,
+                owner_user_id BIGINT REFERENCES users(id),
+                session_id TEXT REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+                mode TEXT NOT NULL DEFAULT 'managed' CHECK (mode IN ('managed', 'external')),
+                entry_document_key TEXT NOT NULL DEFAULT 'AGENTS.md',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE (profile_id)
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS ai_agent_instruction_documents (
+                document_id TEXT PRIMARY KEY,
+                bundle_id TEXT NOT NULL REFERENCES ai_agent_instruction_bundles(bundle_id) ON DELETE CASCADE,
+                document_key TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                content_format TEXT NOT NULL DEFAULT 'markdown',
+                content TEXT NOT NULL DEFAULT '',
+                version INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE (bundle_id, document_key)
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_ai_agent_profiles_session
+            ON ai_agent_profiles(session_id, agent_type, updated_at DESC);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_ai_agent_instruction_documents_bundle
+            ON ai_agent_instruction_documents(bundle_id, document_key);
+            """,
+        ),
+    ),
 )
 
 

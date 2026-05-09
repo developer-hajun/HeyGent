@@ -3,8 +3,8 @@ import { ArrowLeft, Bot, Terminal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/components/ui/utils'
+import type { AgentTemplate } from '@/apis/agents'
 import { SUB_AGENT_ADAPTER_OPTIONS, type SubAgentAdapterType } from './subAgentConfigOptions'
-import { SUB_AGENT_TEMPLATES, type SubAgentTemplateId } from './subAgentTemplates'
 
 const ADAPTER_ICONS: Record<SubAgentAdapterType, typeof Bot> = {
   claude_local: Bot,
@@ -17,12 +17,14 @@ export function SubAgentCreateDialog({
   onPickAdapter,
   onPickTemplate,
   open,
+  templates,
 }: {
   onAskCeo: () => void
   onOpenChange: (open: boolean) => void
   onPickAdapter: (adapterType: SubAgentAdapterType) => void
-  onPickTemplate: (templateId: SubAgentTemplateId) => void
+  onPickTemplate: (templateKey: string) => void
   open: boolean
+  templates: AgentTemplate[]
 }) {
   const [showAdvancedCards, setShowAdvancedCards] = useState(false)
 
@@ -80,21 +82,21 @@ export function SubAgentCreateDialog({
                   기본 제공 에이전트
                 </div>
                 <div className="grid gap-2">
-                  {SUB_AGENT_TEMPLATES.map((template) => {
-                    const Icon = template.icon
+                  {templates.map((template) => {
+                    const Icon = Bot
                     return (
                       <button
-                        key={template.id}
+                        key={template.templateKey}
                         type="button"
                         className="border-border hover:bg-accent/50 flex items-start gap-3 rounded-md border p-3 text-left transition-colors"
-                        onClick={() => onPickTemplate(template.id)}
+                        onClick={() => onPickTemplate(template.templateKey)}
                       >
                         <span className="bg-muted/70 mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md">
                           <Icon className="h-4 w-4" />
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-medium">
-                            {template.name}
+                            {template.displayName}
                           </span>
                           <span className="text-muted-foreground mt-0.5 line-clamp-2 block text-xs leading-5">
                             {template.description}

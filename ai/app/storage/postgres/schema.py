@@ -138,6 +138,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
         profile_id TEXT PRIMARY KEY,
         owner_key TEXT NOT NULL,
         owner_user_id BIGINT REFERENCES users(id),
+        session_id TEXT REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
         profile_key TEXT NOT NULL,
         profile_version INTEGER NOT NULL DEFAULT 1,
         agent_type TEXT NOT NULL CHECK (agent_type IN ('main', 'user_subagent', 'worker', 'domain')),
@@ -145,6 +146,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
         model_name TEXT,
         config_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
         delegation_policy JSONB NOT NULL DEFAULT '{}'::jsonb,
+        template_key TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         UNIQUE (owner_key, profile_key, profile_version)
@@ -162,6 +164,34 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
         UNIQUE (owner_key, template_key, template_version)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS ai_agent_instruction_bundles (
+        bundle_id TEXT PRIMARY KEY,
+        profile_id TEXT NOT NULL REFERENCES ai_agent_profiles(profile_id) ON DELETE CASCADE,
+        owner_key TEXT NOT NULL,
+        owner_user_id BIGINT REFERENCES users(id),
+        session_id TEXT REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+        mode TEXT NOT NULL DEFAULT 'managed' CHECK (mode IN ('managed', 'external')),
+        entry_document_key TEXT NOT NULL DEFAULT 'AGENTS.md',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (profile_id)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS ai_agent_instruction_documents (
+        document_id TEXT PRIMARY KEY,
+        bundle_id TEXT NOT NULL REFERENCES ai_agent_instruction_bundles(bundle_id) ON DELETE CASCADE,
+        document_key TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        content_format TEXT NOT NULL DEFAULT 'markdown',
+        content TEXT NOT NULL DEFAULT '',
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (bundle_id, document_key)
     );
     """,
     """
@@ -365,6 +395,14 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_work_runs_work_created
     ON work_runs(work_id, created_at DESC);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_ai_agent_profiles_session
+    ON ai_agent_profiles(session_id, agent_type, updated_at DESC);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_ai_agent_instruction_documents_bundle
+    ON ai_agent_instruction_documents(bundle_id, document_key);
     """,
     """
     INSERT INTO ai_agent_profiles (
