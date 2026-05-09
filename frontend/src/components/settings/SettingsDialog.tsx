@@ -12,19 +12,15 @@ import {
   EyeOff,
   Search,
   Globe,
-  Link,
   Loader2,
   CheckCircle2,
-  AlertCircle,
 } from 'lucide-react'
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog'
-import { Switch } from './ui/switch'
-import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { Switch } from '@/components/ui/switch'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { motion, AnimatePresence } from 'motion/react'
 import { useChatStore } from '@/store/useChatStore'
-import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import type { AiModelOption } from '@/types/aiChat'
-import { startOpenAiOAuth } from '@/apis/openaiOAuth'
 import { saveOpenAiApiKey } from '@/apis/openaiApiKey'
 
 interface SettingsDialogProps {
@@ -127,6 +123,7 @@ export function SettingsDialog({ open, onOpenChange, sessionId, initialTab }: Se
 function GeneralContent() {
   const [settings, setSettings] = useState({
     language: '한국어',
+    theme: '시스템 설정',
     notifications: true,
     soundEffects: true,
   })
@@ -165,6 +162,39 @@ function GeneralContent() {
                   >
                     <span className="text-foreground text-sm font-medium">{lang}</span>
                     {settings.language === lang && <Check className="text-primary h-4 w-4" />}
+                  </button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+
+        {/* Theme */}
+        <div className="border-border rounded-xl border p-4">
+          <div className="mb-1 flex items-start justify-between">
+            <div className="flex-1">
+              <h4 className="text-foreground mb-1 text-sm font-medium">테마</h4>
+              <p className="text-muted-foreground text-xs">화면 테마를 선택합니다</p>
+            </div>
+          </div>
+
+          <Popover>
+            <PopoverTrigger asChild>
+              <button className="border-border hover:bg-muted/30 mt-3 flex w-full items-center justify-between rounded-lg border px-3 py-2 transition-colors">
+                <span className="text-foreground text-sm">{settings.theme}</span>
+                <ChevronDown className="text-muted-foreground h-4 w-4" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 p-2" align="start">
+              <div className="space-y-1">
+                {['시스템 설정', '라이트 모드', '다크 모드'].map((theme) => (
+                  <button
+                    key={theme}
+                    onClick={() => setSettings({ ...settings, theme })}
+                    className="hover:bg-muted flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left transition-colors"
+                  >
+                    <span className="text-foreground text-sm font-medium">{theme}</span>
+                    {settings.theme === theme && <Check className="text-primary h-4 w-4" />}
                   </button>
                 ))}
               </div>
@@ -293,7 +323,6 @@ function ModelsContent({ sessionId }: { sessionId?: string }) {
   const modelOptionsError = useChatStore((state) => state.modelOptionsError)
   const fetchModelOptions = useChatStore((state) => state.fetchModelOptions)
   const updateSessionSettings = useChatStore((state) => state.updateSessionSettings)
-  const authenticatedReady = useAiRealtimeStore((state) => state.authenticatedReady)
   const [optimisticModel, setOptimisticModel] = useState<{
     sessionId?: string
     modelId: string
@@ -301,11 +330,8 @@ function ModelsContent({ sessionId }: { sessionId?: string }) {
   const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!authenticatedReady) {
-      return
-    }
     void fetchModelOptions(sessionId).catch(() => undefined)
-  }, [authenticatedReady, fetchModelOptions, sessionId])
+  }, [fetchModelOptions, sessionId])
 
   const models = modelOptions?.models ?? []
   const selectedModel =
@@ -346,20 +372,20 @@ function ModelsContent({ sessionId }: { sessionId?: string }) {
         </p>
       </div>
 
-      {authenticatedReady && modelOptionsLoading && (
+      {modelOptionsLoading && (
         <div className="text-muted-foreground flex items-center gap-2 text-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
           모델 목록을 불러오는 중입니다.
         </div>
       )}
 
-      {authenticatedReady && modelOptionsError && (
+      {modelOptionsError && (
         <div className="border-border bg-muted/30 text-muted-foreground rounded-xl border p-4 text-sm">
           {modelOptionsError}
         </div>
       )}
 
-      {authenticatedReady && !modelOptionsLoading && !modelOptionsError && models.length === 0 && (
+      {!modelOptionsLoading && !modelOptionsError && models.length === 0 && (
         <div className="border-border bg-muted/30 text-muted-foreground rounded-xl border p-4 text-sm">
           사용할 수 있는 모델 목록이 아직 제공되지 않았습니다.
         </div>
@@ -583,7 +609,6 @@ const API_KEY_GUIDES = {
   },
 } as const
 
-type OAuthStatus = 'idle' | 'loading' | 'success' | 'error'
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
 function ApiKeysContent() {
@@ -593,26 +618,11 @@ function ApiKeysContent() {
     { id: 'github' as const, name: 'GitHub Token', value: '', visible: false },
   ])
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [oauthStatus, setOauthStatus] = useState<OAuthStatus>('idle')
-  const [oauthError, setOauthError] = useState<string | null>(null)
   const [saveStatuses, setSaveStatuses] = useState<Record<string, SaveStatus>>({})
   const [saveErrors, setSaveErrors] = useState<Record<string, string | null>>({})
 
   const toggleVisibility = (id: string) => {
     setApiKeys((prev) => prev.map((k) => (k.id === id ? { ...k, visible: !k.visible } : k)))
-  }
-
-  const handleOpenAiOAuth = async () => {
-    setOauthStatus('loading')
-    setOauthError(null)
-    try {
-      const redirectUri = `${import.meta.env.VITE_API_BASE_URL}/api/v1/ai/openai/oauth/callback`
-      const result = await startOpenAiOAuth({ redirectUri, force: false })
-      window.location.href = result.authorizationUrl
-    } catch (e) {
-      setOauthStatus('error')
-      setOauthError(e instanceof Error ? e.message : 'OpenAI 연결을 시작하지 못했습니다.')
-    }
   }
 
   const handleSave = async (id: 'openai' | 'anthropic' | 'github') => {
@@ -654,32 +664,6 @@ function ApiKeysContent() {
               <div className="flex items-center justify-between gap-4">
                 <label className="text-foreground shrink-0 text-sm font-medium">{key.name}</label>
                 <div className="flex shrink-0 items-center gap-2">
-                  {/* OpenAI 전용 OAuth 연결 버튼 */}
-                  {key.id === 'openai' && (
-                    <button
-                      type="button"
-                      onClick={() => void handleOpenAiOAuth()}
-                      disabled={oauthStatus === 'loading'}
-                      className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs whitespace-nowrap transition-colors disabled:opacity-50"
-                    >
-                      {oauthStatus === 'loading' ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : oauthStatus === 'success' ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                      ) : oauthStatus === 'error' ? (
-                        <AlertCircle className="text-destructive h-3.5 w-3.5" />
-                      ) : (
-                        <Link className="h-3.5 w-3.5" />
-                      )}
-                      <span>
-                        {oauthStatus === 'loading'
-                          ? '연결 중...'
-                          : oauthStatus === 'success'
-                            ? '연결됨'
-                            : 'OAuth 연결'}
-                      </span>
-                    </button>
-                  )}
                   <button
                     type="button"
                     onClick={() => setExpandedId(expandedId === key.id ? null : key.id)}
@@ -692,11 +676,6 @@ function ApiKeysContent() {
                   </button>
                 </div>
               </div>
-
-              {/* OAuth 오류 메시지 */}
-              {key.id === 'openai' && oauthStatus === 'error' && oauthError && (
-                <p className="text-destructive text-xs">{oauthError}</p>
-              )}
 
               {/* 입력창 */}
               <div className="relative">
