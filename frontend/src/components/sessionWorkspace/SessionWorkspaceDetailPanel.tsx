@@ -29,7 +29,7 @@ import {
   AgentSkillsLibraryPanel,
   AgentSkillsPanel,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
-import { IssueBoardPanel } from '@/components/sessionWorkspace/issueBoard'
+import { WorkBoardPanel } from '@/components/sessionWorkspace/work/board'
 import { SubAgentsPanel } from '@/components/sessionWorkspace/subAgents'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
@@ -80,7 +80,7 @@ export function SessionWorkspaceDetailPanel({
   }
 
   if (activePanel === 'issueBoard') {
-    return <IssueBoardPanel sessionId={sessionId} />
+    return <WorkBoardPanel sessionId={sessionId} />
   }
 
   if (session === null) {

@@ -1,4 +1,4 @@
-import { AlertCircle, Loader2, RefreshCw } from 'lucide-react'
+import { AlertCircle, ListTodo, Loader2, RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router'
 import { ChatComposer } from '@/components/chat/ChatComposer'
@@ -6,12 +6,18 @@ import { ChatEmptyState } from '@/components/chat/ChatEmptyState'
 import { ChatMessageList } from '@/components/chat/ChatMessageList'
 import type { ChatConnectionState } from '@/components/chat/chatTypes'
 import { StepRunActivityPanel } from '@/components/taskRuns/StepRunActivityPanel'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { issueBoardStatusLabel } from '@/components/sessionWorkspace/work/model'
 import type { AiRealtimeAuthStatus, AiRealtimeConnectionStatus } from '@/realtime/aiRealtimeTypes'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import { useUIStore } from '@/store/useUIStore'
+import { useWorkStore } from '@/store/useWorkStore'
+import type { WorkItem, WorkStatus } from '@/types/work'
+import { createClientCommandId } from '@/utils/requestId'
 import {
   isInternalStepAnchorEvent,
   isInternalStepAnchorStepRun,
@@ -30,6 +36,11 @@ export function ChatSessionPage() {
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isSending, setIsSending] = useState(false)
+  const [workMode, setWorkMode] = useState(false)
+  const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
+  const [workPickerOpen, setWorkPickerOpen] = useState(false)
+  const [workSearch, setWorkSearch] = useState('')
+  const [workStatusMessage, setWorkStatusMessage] = useState<string | null>(null)
   const [focusedTaskRunTarget, setFocusedTaskRunTarget] = useState<
     { taskRunId: string; requestId: number } | undefined
   >()
@@ -62,6 +73,14 @@ export function ChatSessionPage() {
   )
   const fetchMessages = useChatStore((state) => state.fetchMessages)
   const sendMessage = useChatStore((state) => state.sendMessage)
+  const createWork = useWorkStore((state) => state.createWork)
+  const fetchSessionWork = useWorkStore((state) => state.fetchSessionWork)
+  const workItems = useWorkStore((state) =>
+    sessionId === '' ? EMPTY_WORK_ITEMS : (state.itemsBySessionId[sessionId] ?? EMPTY_WORK_ITEMS),
+  )
+  const workLoading = useWorkStore((state) =>
+    sessionId === '' ? false : state.loadingBySessionId[sessionId] === true,
+  )
 
   const taskRunsById = useTaskRunStore((state) => state.taskRunsById)
   const stepRunsById = useTaskRunStore((state) => state.stepRunsById)
@@ -329,6 +348,36 @@ export function ChatSessionPage() {
   const handleSend = async (content: string) => {
     if (!sessionId || isSending) return
 
+    if (workMode) {
+      setIsSending(true)
+      setErrorMessage(null)
+      setWorkStatusMessage('작업을 생성하는 중입니다.')
+      try {
+        const response = await createWork(sessionId, buildCreateWorkPayload(content))
+        if (response.taskRunId !== null) {
+          try {
+            subscribeTask(response.taskRunId)
+          } catch (error) {
+            console.error(error)
+          }
+          await fetchActiveTaskRuns(sessionId)
+        }
+        setLoadState('ready')
+        setWorkStatusMessage(
+          response.taskRunId === null
+            ? '작업이 생성되었습니다.'
+            : '작업이 생성되고 실행을 시작했습니다.',
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '작업 생성에 실패했습니다.'
+        setErrorMessage(message)
+        setWorkStatusMessage(message)
+      } finally {
+        setIsSending(false)
+      }
+      return
+    }
+
     if (!authenticatedReady || commandClient === null) {
       setLoadState(
         shouldWaitForRealtime(connectionStatus, authStatus, realtimeError, accessToken)
@@ -344,14 +393,41 @@ export function ChatSessionPage() {
     setIsSending(true)
     setErrorMessage(null)
     try {
-      await sendMessage({ sessionId, content })
+      const selectedWork = selectedWorkId
+        ? workItems.find((work) => work.workId === selectedWorkId)
+        : undefined
+      await sendMessage({
+        sessionId,
+        content,
+        inputPayload: selectedWork ? { workId: selectedWork.workId } : undefined,
+      })
       setLoadState('ready')
+      if (selectedWork) {
+        setWorkStatusMessage(`${selectedWork.identifier} 작업으로 실행을 시작했습니다.`)
+      }
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '메시지 전송에 실패했습니다.')
     } finally {
       setIsSending(false)
     }
   }
+
+  const openWorkPicker = () => {
+    if (!sessionId) return
+    setWorkPickerOpen(true)
+    void fetchSessionWork(sessionId).catch((error) => {
+      setWorkStatusMessage(
+        error instanceof Error ? error.message : '작업 목록을 불러오지 못했습니다.',
+      )
+    })
+  }
+
+  const selectedWork = selectedWorkId
+    ? workItems.find((work) => work.workId === selectedWorkId)
+    : undefined
+  const selectedWorkLabel = selectedWork
+    ? `${selectedWork.identifier} · ${selectedWork.title}`
+    : null
 
   const handleOpenTaskRun = (taskRunId: string) => {
     setSelectedTaskRunId(taskRunId)
@@ -441,8 +517,38 @@ export function ChatSessionPage() {
           disabled={isComposerDisabled}
           isSending={isSending || isStreaming}
           onSend={handleSend}
+          onClearSelectedWork={() => {
+            setSelectedWorkId(null)
+            setWorkStatusMessage(null)
+          }}
+          onSelectWorkClick={openWorkPicker}
+          onWorkModeChange={(enabled) => {
+            setWorkMode(enabled)
+            if (enabled) {
+              setSelectedWorkId(null)
+            }
+          }}
+          selectedWorkLabel={selectedWorkLabel}
+          statusMessage={workStatusMessage}
+          workMode={workMode}
         />
       </section>
+      {workPickerOpen && (
+        <WorkPickerDialog
+          items={workItems}
+          loading={workLoading}
+          query={workSearch}
+          selectedWorkId={selectedWorkId}
+          onClose={() => setWorkPickerOpen(false)}
+          onQueryChange={setWorkSearch}
+          onSelect={(work) => {
+            setSelectedWorkId(work.workId)
+            setWorkMode(false)
+            setWorkStatusMessage(`${work.identifier} 작업을 이번 메시지에 연결합니다.`)
+            setWorkPickerOpen(false)
+          }}
+        />
+      )}
       <StepRunActivityPanel
         open={activityOpen}
         onOpenChange={setActivityOpen}
@@ -453,6 +559,141 @@ export function ChatSessionPage() {
       />
     </main>
   )
+}
+
+const EMPTY_WORK_ITEMS: WorkItem[] = []
+
+function WorkPickerDialog({
+  items,
+  loading,
+  onClose,
+  onQueryChange,
+  onSelect,
+  query,
+  selectedWorkId,
+}: {
+  items: WorkItem[]
+  loading: boolean
+  onClose: () => void
+  onQueryChange: (value: string) => void
+  onSelect: (work: WorkItem) => void
+  query: string
+  selectedWorkId: string | null
+}) {
+  const normalizedQuery = query.trim().toLowerCase()
+  const visibleItems = items
+    .filter((work) => {
+      if (!normalizedQuery) return true
+      return [work.identifier, work.title, work.description ?? '', work.assigneeAgentId ?? '']
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedQuery)
+    })
+    .sort(compareWorkForPicker)
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/20 px-4 py-6 sm:items-center">
+      <div className="bg-background flex max-h-[min(680px,90vh)] w-full max-w-2xl flex-col overflow-hidden rounded-lg border shadow-2xl">
+        <header className="border-border flex items-center gap-3 border-b px-4 py-3">
+          <ListTodo className="text-muted-foreground h-4 w-4" />
+          <div className="min-w-0 flex-1">
+            <h2 className="text-sm font-semibold">기존 작업 선택</h2>
+            <p className="text-muted-foreground text-xs">이번 메시지에 연결할 작업을 고릅니다.</p>
+          </div>
+          <Button type="button" variant="ghost" size="icon-sm" aria-label="닫기" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </header>
+        <div className="border-border border-b p-3">
+          <Input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="작업 번호, 제목, 담당자 검색"
+            aria-label="작업 검색"
+          />
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-2">
+          {loading && (
+            <div className="text-muted-foreground flex items-center gap-2 px-3 py-4 text-sm">
+              <ListTodo className="h-4 w-4 animate-pulse" />
+              작업 목록을 불러오는 중입니다.
+            </div>
+          )}
+          {!loading && visibleItems.length === 0 && (
+            <div className="text-muted-foreground flex items-center gap-2 px-3 py-4 text-sm">
+              <AlertCircle className="h-4 w-4" />
+              선택할 작업이 없습니다.
+            </div>
+          )}
+          {visibleItems.map((work) => (
+            <button
+              key={work.workId}
+              type="button"
+              onClick={() => onSelect(work)}
+              className={`hover:bg-accent/40 grid w-full grid-cols-[6rem_minmax(0,1fr)_7rem_7rem] items-center gap-3 rounded-md px-3 py-2 text-left text-sm ${
+                selectedWorkId === work.workId ? 'bg-accent text-accent-foreground' : ''
+              }`}
+            >
+              <span className="text-muted-foreground font-mono text-xs">{work.identifier}</span>
+              <span className="min-w-0">
+                <span className="block truncate font-medium">{work.title}</span>
+                <span className="text-muted-foreground block truncate text-xs">
+                  {work.description ?? work.rawUserInput ?? ''}
+                </span>
+              </span>
+              <span className="text-muted-foreground truncate text-xs">
+                {work.assigneeAgentId ?? 'CEO'}
+              </span>
+              <span className="text-muted-foreground text-right text-xs">
+                {workStatusLabel(work.status)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function compareWorkForPicker(left: WorkItem, right: WorkItem) {
+  const rank = (status: WorkStatus) =>
+    status === 'in_progress'
+      ? 0
+      : status === 'blocked'
+        ? 1
+        : status === 'todo'
+          ? 2
+          : status === 'in_review'
+            ? 3
+            : status === 'backlog'
+              ? 4
+              : 5
+  return (
+    rank(left.status) - rank(right.status) ||
+    new Date(right.updatedAt ?? right.createdAt ?? '').getTime() -
+      new Date(left.updatedAt ?? left.createdAt ?? '').getTime()
+  )
+}
+
+function workStatusLabel(status: WorkStatus) {
+  return issueBoardStatusLabel(status)
+}
+
+function buildCreateWorkPayload(content: string) {
+  const title = content.split(/\r?\n/)[0]?.trim() || '새 작업'
+  return {
+    clientRequestId: createClientCommandId(),
+    title: title.length > 80 ? `${title.slice(0, 77)}...` : title,
+    description: content,
+    rawUserInput: content,
+    executionInstruction: content,
+    expectedDeliverable: null,
+    acceptanceCriteria: [],
+    constraints: [],
+    labelNames: [],
+    initialComment: null,
+    metadata: { source: 'chat_composer' },
+  }
 }
 
 function toChatConnectionState(
