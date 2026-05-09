@@ -49,6 +49,14 @@ class WorkLabel:
 
 
 @dataclass(slots=True)
+class WorkRelation:
+    source_work_id: str
+    target_work_id: str
+    relation_type: Literal["blocks", "related"]
+    created_at: datetime | None = None
+
+
+@dataclass(slots=True)
 class WorkComment:
     comment_id: str
     work_id: str

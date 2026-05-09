@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from app.domain.work.models import WorkComment, WorkItem, WorkLabel, WorkRunLink, WorkStatus
+from app.core.utils.ids import new_id
+from app.domain.work.models import WorkComment, WorkItem, WorkLabel, WorkRelation, WorkRunLink, WorkStatus
 
 
 class PostgresWorkRepository:
@@ -194,6 +195,14 @@ class PostgresWorkRepository:
         connection.commit()
         return _require_work(self.get_work(work_id), work_id)
 
+    def delete_work(self, work_id: str) -> WorkItem:
+        work = _require_work(self.get_work(work_id), work_id)
+        connection = self.connection_factory()
+        connection.execute("UPDATE work_items SET deleted_at = now(), updated_at = now() WHERE work_id = %s", (work_id,))
+        connection.commit()
+        work.deleted_at = self.connection_factory().execute("SELECT deleted_at FROM work_items WHERE work_id = %s", (work_id,)).fetchone()["deleted_at"]
+        return work
+
     def add_comment(self, comment: WorkComment) -> WorkComment:
         connection = self.connection_factory()
         connection.execute(
@@ -230,6 +239,15 @@ class PostgresWorkRepository:
             (work_id, limit, offset),
         ).fetchall()
         return [comment for row in rows if (comment := _comment_from_row(row)) is not None]
+
+    def delete_comment(self, work_id: str, comment_id: str) -> bool:
+        connection = self.connection_factory()
+        result = connection.execute(
+            "DELETE FROM work_comments WHERE work_id = %s AND comment_id = %s",
+            (work_id, comment_id),
+        )
+        connection.commit()
+        return int(result.rowcount or 0) > 0
 
     def link_run(self, work_id: str, task_run_id: str, *, run_kind: str, status: str) -> WorkRunLink:
         connection = self.connection_factory()
@@ -294,6 +312,53 @@ class PostgresWorkRepository:
         ).fetchall()
         return [label for row in rows if (label := _label_from_row(row)) is not None]
 
+    def get_label(self, label_id: str) -> WorkLabel | None:
+        row = self.connection_factory().execute(
+            "SELECT * FROM work_labels WHERE label_id = %s",
+            (label_id,),
+        ).fetchone()
+        return _label_from_row(row)
+
+    def create_label(self, *, session_id: str, owner_key: str, name: str, color: str) -> WorkLabel:
+        connection = self.connection_factory()
+        row = connection.execute(
+            """
+            INSERT INTO work_labels (label_id, session_id, owner_key, name, color)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (session_id, owner_key, name) DO UPDATE
+            SET color = EXCLUDED.color,
+                updated_at = now()
+            RETURNING *
+            """,
+            (new_id("work_label"), session_id, owner_key, name, color),
+        ).fetchone()
+        connection.commit()
+        return _require_label(_label_from_row(row), name)
+
+    def update_label(self, label_id: str, *, name: str | None = None, color: str | None = None) -> WorkLabel:
+        updates = ["updated_at = now()"]
+        params: list[Any] = []
+        if name is not None:
+            updates.append("name = %s")
+            params.append(name)
+        if color is not None:
+            updates.append("color = %s")
+            params.append(color)
+        params.append(label_id)
+        connection = self.connection_factory()
+        row = connection.execute(
+            f"UPDATE work_labels SET {', '.join(updates)} WHERE label_id = %s RETURNING *",
+            tuple(params),
+        ).fetchone()
+        connection.commit()
+        return _require_label(_label_from_row(row), label_id)
+
+    def delete_label(self, label_id: str) -> bool:
+        connection = self.connection_factory()
+        result = connection.execute("DELETE FROM work_labels WHERE label_id = %s", (label_id,))
+        connection.commit()
+        return int(result.rowcount or 0) > 0
+
     def set_label_links_by_names(self, work_id: str, *, session_id: str, owner_key: str, label_names: list[str]) -> list[str]:
         names = [name.strip() for name in label_names if name.strip()]
         connection = self.connection_factory()
@@ -321,6 +386,33 @@ class PostgresWorkRepository:
         connection.commit()
         return label_ids
 
+    def set_label_links_by_ids(self, work_id: str, *, session_id: str, owner_key: str, label_ids: list[str]) -> list[str]:
+        ids = [label_id.strip() for label_id in label_ids if label_id.strip()]
+        connection = self.connection_factory()
+        connection.execute("DELETE FROM work_label_links WHERE work_id = %s", (work_id,))
+        if not ids:
+            connection.commit()
+            return []
+        rows = connection.execute(
+            """
+            SELECT label_id FROM work_labels
+            WHERE session_id = %s AND owner_key = %s AND label_id = ANY(%s)
+            """,
+            (session_id, owner_key, ids),
+        ).fetchall()
+        valid_ids = [str(_normalize_row(row)["label_id"]) for row in rows]
+        for label_id in valid_ids:
+            connection.execute(
+                """
+                INSERT INTO work_label_links (work_id, label_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (work_id, label_id),
+            )
+        connection.commit()
+        return valid_ids
+
     def inherit_parent_labels(self, work_id: str, parent_id: str) -> list[str]:
         connection = self.connection_factory()
         rows = connection.execute("SELECT label_id FROM work_label_links WHERE work_id = %s", (parent_id,)).fetchall()
@@ -337,15 +429,71 @@ class PostgresWorkRepository:
         connection.commit()
         return label_ids
 
+    def add_relation(self, *, source_work_id: str, target_work_id: str, relation_type: str) -> WorkRelation:
+        connection = self.connection_factory()
+        row = connection.execute(
+            """
+            INSERT INTO work_relations (source_work_id, target_work_id, relation_type)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (source_work_id, target_work_id, relation_type) DO UPDATE
+            SET created_at = work_relations.created_at
+            RETURNING *
+            """,
+            (source_work_id, target_work_id, relation_type),
+        ).fetchone()
+        connection.commit()
+        return _require_relation(_relation_from_row(row), source_work_id)
+
+    def remove_relation(self, *, source_work_id: str, target_work_id: str, relation_type: str) -> bool:
+        connection = self.connection_factory()
+        result = connection.execute(
+            """
+            DELETE FROM work_relations
+            WHERE source_work_id = %s AND target_work_id = %s AND relation_type = %s
+            """,
+            (source_work_id, target_work_id, relation_type),
+        )
+        connection.commit()
+        return int(result.rowcount or 0) > 0
+
+    def list_relations(self, work_id: str) -> list[WorkRelation]:
+        rows = self.connection_factory().execute(
+            """
+            SELECT * FROM work_relations
+            WHERE source_work_id = %s OR target_work_id = %s
+            ORDER BY created_at ASC
+            """,
+            (work_id, work_id),
+        ).fetchall()
+        return [relation for row in rows if (relation := _relation_from_row(row)) is not None]
+
+    def get_work_by_task_run_id(self, task_run_id: str) -> WorkItem | None:
+        row = self.connection_factory().execute(
+            """
+            SELECT w.*
+            FROM work_runs r
+            JOIN work_items w ON w.work_id = r.work_id
+            WHERE r.task_run_id = %s AND w.deleted_at IS NULL
+            ORDER BY r.created_at DESC
+            LIMIT 1
+            """,
+            (task_run_id,),
+        ).fetchone()
+        return _work_from_row(row)
+
     def context_preview(self, work_id: str) -> dict[str, Any]:
         work = _require_work(self.get_work(work_id), work_id)
         labels = self._label_names_for_work(work_id)
         comments = self.list_comments(work_id)
         runs = self.list_runs(work_id, limit=5)
+        relations = self.list_relations(work_id)
         preview_lines = [
             f"작업: {work.identifier} {work.title}",
             f"상태: {work.status}",
             f"설명: {work.description or ''}",
+            f"담당자: {work.assignee_agent_id or 'CEO'}",
+            f"부모 작업: {work.parent_id or '-'}",
+            f"관계 수: {len(relations)}",
             f"댓글 수: {len(comments)}",
         ]
         return {
@@ -460,10 +608,34 @@ def _run_from_row(row: Any) -> WorkRunLink | None:
     )
 
 
+def _relation_from_row(row: Any) -> WorkRelation | None:
+    record = _normalize_row(row)
+    if record is None:
+        return None
+    return WorkRelation(
+        source_work_id=record["source_work_id"],
+        target_work_id=record["target_work_id"],
+        relation_type=record["relation_type"],
+        created_at=record.get("created_at"),
+    )
+
+
 def _require_work(work: WorkItem | None, work_id: str) -> WorkItem:
     if work is None:
         raise KeyError(work_id)
     return work
+
+
+def _require_label(label: WorkLabel | None, label_id: str) -> WorkLabel:
+    if label is None:
+        raise KeyError(label_id)
+    return label
+
+
+def _require_relation(relation: WorkRelation | None, relation_id: str) -> WorkRelation:
+    if relation is None:
+        raise KeyError(relation_id)
+    return relation
 
 
 def _normalize_row(row: Any) -> dict[str, Any] | None:

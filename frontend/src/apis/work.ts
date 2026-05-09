@@ -5,7 +5,9 @@ import type {
   WorkContextPreview,
   WorkCreateResponse,
   WorkItem,
+  WorkLabel,
   WorkListResponse,
+  WorkRelation,
   WorkRun,
   WorkStatus,
 } from '@/types/work'
@@ -67,12 +69,37 @@ export async function updateWorkAssignee(
   return data
 }
 
-export async function createWorkComment(workId: string, body: string): Promise<WorkComment> {
+export async function deleteWork(workId: string): Promise<WorkItem> {
+  const { data } = await aiAxiosInstance.delete<WorkItem>(`/work/${encodeURIComponent(workId)}`)
+  return data
+}
+
+export async function createWorkComment(
+  workId: string,
+  body: string,
+  resume = false,
+): Promise<WorkComment> {
   const { data } = await aiAxiosInstance.post<WorkComment>(
     `/work/${encodeURIComponent(workId)}/comments`,
     {
       body,
+      resume,
     },
+  )
+  return data
+}
+
+export async function createWorkRun(workId: string, message: string): Promise<WorkCreateResponse> {
+  const { data } = await aiAxiosInstance.post<WorkCreateResponse>(
+    `/work/${encodeURIComponent(workId)}/runs`,
+    { message },
+  )
+  return data
+}
+
+export async function cancelWorkRun(runId: string): Promise<WorkRun> {
+  const { data } = await aiAxiosInstance.post<WorkRun>(
+    `/work-runs/${encodeURIComponent(runId)}/cancel`,
   )
   return data
 }
@@ -98,6 +125,55 @@ export async function listWorkRuns(
 export async function getWorkContextPreview(workId: string): Promise<WorkContextPreview> {
   const { data } = await aiAxiosInstance.get<WorkContextPreview>(
     `/work/${encodeURIComponent(workId)}/context-preview`,
+  )
+  return data
+}
+
+export async function listWorkLabels(
+  sessionId: string,
+): Promise<{ items: WorkLabel[]; totalCount: number }> {
+  const { data } = await aiAxiosInstance.get<{ items: WorkLabel[]; totalCount: number }>(
+    `/sessions/${encodeURIComponent(sessionId)}/work-labels`,
+  )
+  return data
+}
+
+export async function createWorkLabel(
+  sessionId: string,
+  payload: { name: string; color: string },
+): Promise<WorkLabel> {
+  const { data } = await aiAxiosInstance.post<WorkLabel>(
+    `/sessions/${encodeURIComponent(sessionId)}/work-labels`,
+    payload,
+  )
+  return data
+}
+
+export async function setWorkLabels(workId: string, labelIds: string[]): Promise<WorkItem> {
+  const { data } = await aiAxiosInstance.post<WorkItem>(
+    `/work/${encodeURIComponent(workId)}/set-labels`,
+    { labelIds },
+  )
+  return data
+}
+
+export async function listWorkRelations(
+  workId: string,
+): Promise<{ items: WorkRelation[]; totalCount: number }> {
+  const { data } = await aiAxiosInstance.get<{ items: WorkRelation[]; totalCount: number }>(
+    `/work/${encodeURIComponent(workId)}/relations`,
+  )
+  return data
+}
+
+export async function addWorkRelation(
+  workId: string,
+  targetWorkId: string,
+  relationType: WorkRelation['relationType'],
+): Promise<WorkRelation> {
+  const { data } = await aiAxiosInstance.post<WorkRelation>(
+    `/work/${encodeURIComponent(workId)}/relations`,
+    { targetWorkId, relationType },
   )
   return data
 }

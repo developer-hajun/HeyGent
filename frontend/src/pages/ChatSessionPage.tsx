@@ -1,6 +1,6 @@
 import { AlertCircle, ListTodo, Loader2, RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router'
+import { useLocation, useParams } from 'react-router'
 import { ChatComposer } from '@/components/chat/ChatComposer'
 import { ChatEmptyState } from '@/components/chat/ChatEmptyState'
 import { ChatMessageList } from '@/components/chat/ChatMessageList'
@@ -32,12 +32,14 @@ const EMPTY_MESSAGES: never[] = []
 
 export function ChatSessionPage() {
   const { sessionId = '' } = useParams()
+  const location = useLocation()
   const [selectedTaskRunId, setSelectedTaskRunId] = useState<string | undefined>()
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isSending, setIsSending] = useState(false)
   const [workMode, setWorkMode] = useState(false)
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
+  const [composerDraft, setComposerDraft] = useState<string | null>(null)
   const [workPickerOpen, setWorkPickerOpen] = useState(false)
   const [workSearch, setWorkSearch] = useState('')
   const [workStatusMessage, setWorkStatusMessage] = useState<string | null>(null)
@@ -45,6 +47,7 @@ export function ChatSessionPage() {
     { taskRunId: string; requestId: number } | undefined
   >()
   const focusRequestIdRef = useRef(0)
+  const consumedWorkRouteRef = useRef<string | null>(null)
   const hydratedTaskRunIdsRef = useRef<Set<string>>(new Set())
   const hydratingTaskRunIdsRef = useRef<Set<string>>(new Set())
   const hydrationGenerationRef = useRef(0)
@@ -347,6 +350,7 @@ export function ChatSessionPage() {
 
   const handleSend = async (content: string) => {
     if (!sessionId || isSending) return
+    setComposerDraft(null)
 
     if (workMode) {
       if (!authenticatedReady || commandClient === null) {
@@ -480,6 +484,26 @@ export function ChatSessionPage() {
     ? `${selectedWork.identifier} · ${selectedWork.title}`
     : null
 
+  useEffect(() => {
+    if (!sessionId) return
+    const params = new URLSearchParams(location.search)
+    const workId = params.get('workId')
+    if (!workId) return
+    const draft = params.get('draft') || '이 작업을 이어서 진행해.'
+    const routeKey = `${sessionId}:${workId}:${draft}`
+    if (consumedWorkRouteRef.current === routeKey) return
+    consumedWorkRouteRef.current = routeKey
+    const work = workItems.find((item) => item.workId === workId)
+    setSelectedWorkId(workId)
+    setWorkMode(false)
+    setComposerDraft(draft)
+    setWorkStatusMessage(
+      work
+        ? `${work.identifier} 작업을 이번 메시지에 연결합니다.`
+        : '작업을 이번 메시지에 연결합니다.',
+    )
+  }, [location.search, sessionId, workItems])
+
   const handleOpenTaskRun = (taskRunId: string) => {
     setSelectedTaskRunId(taskRunId)
     setActivityOpen(true)
@@ -565,6 +589,8 @@ export function ChatSessionPage() {
           />
         )}
         <ChatComposer
+          key={composerDraft ? `${selectedWorkId ?? 'work'}:${composerDraft}` : 'chat-composer'}
+          draftValue={composerDraft}
           disabled={isComposerDisabled}
           isSending={isSending || isStreaming}
           onSend={handleSend}

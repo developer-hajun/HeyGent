@@ -93,7 +93,18 @@ class WorkService:
         if task_status == TaskStatus.COMPLETED.value and _has_blocking_tool_error(task.result_payload):
             return self._block_work_after_run_failure(work_id=work_id, task_run_id=task.task_run_id)
         if task_status == TaskStatus.COMPLETED.value:
-            return self.repository.update_status(work_id, "done")
+            updated = self.repository.update_status(work_id, "in_review")
+            self.repository.add_comment(
+                WorkComment(
+                    comment_id=new_id("comment"),
+                    work_id=work_id,
+                    author_type="system",
+                    task_run_id=task.task_run_id,
+                    body="실행은 완료됐지만 작업 종료 상태가 명시되지 않았습니다. 결과를 확인한 뒤 상태를 정리하세요.",
+                    metadata={"reason": "missing_work_disposition"},
+                )
+            )
+            return updated
         return self.repository.get_work(work_id)
 
     def _block_work_after_run_failure(self, *, work_id: str, task_run_id: str) -> WorkItem:

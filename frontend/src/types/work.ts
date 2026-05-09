@@ -25,6 +25,15 @@ export interface WorkItem {
   metadata: Record<string, unknown>
   activeRunId: string | null
   latestRunId: string | null
+  labelIds: string[]
+  childCount: number
+  completedChildCount: number
+  blockedByCount: number
+  recentRunIds: string[]
+  commentCount: number
+  blockedByWorkIds: string[]
+  relatedWorkIds: string[]
+  childWorkIds: string[]
   archivedAt: string | null
   createdAt: string | null
   updatedAt: string | null
@@ -80,6 +89,22 @@ export interface WorkRun {
   status: string
   createdAt: string | null
   updatedAt: string | null
+}
+
+export interface WorkLabel {
+  labelId: string
+  sessionId: string
+  name: string
+  color: string
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+export interface WorkRelation {
+  sourceWorkId: string
+  targetWorkId: string
+  relationType: 'blocks' | 'related'
+  createdAt: string | null
 }
 
 export interface WorkContextPreview {

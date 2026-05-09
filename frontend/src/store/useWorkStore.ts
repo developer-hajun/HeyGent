@@ -1,10 +1,15 @@
 import { create } from 'zustand'
 import {
+  createWorkLabel,
   createSessionWork,
+  createWorkRun,
   createWorkComment,
+  deleteWork,
+  listWorkLabels,
   listSessionWork,
   listWorkComments,
   moveWorkStatus,
+  setWorkLabels,
   updateWorkAssignee,
   updateWorkFields,
 } from '@/apis/work'
@@ -15,26 +20,33 @@ import type {
   WorkComment,
   WorkCreateResponse,
   WorkItem,
+  WorkLabel,
   WorkStatus,
 } from '@/types/work'
 
 type WorkState = {
   itemsBySessionId: Record<string, WorkItem[]>
   commentsByWorkId: Record<string, WorkComment[]>
+  labelsBySessionId: Record<string, WorkLabel[]>
   loadingBySessionId: Record<string, boolean>
   creatingBySessionId: Record<string, boolean>
   lastCreatedBySessionId: Record<string, WorkCreateResponse | undefined>
   lastError: string | null
   fetchSessionWork: (sessionId: string) => Promise<WorkItem[]>
   fetchComments: (workId: string) => Promise<WorkComment[]>
+  fetchLabels: (sessionId: string) => Promise<WorkLabel[]>
   createWork: (sessionId: string, payload: CreateWorkRequest) => Promise<WorkCreateResponse>
+  createRun: (workId: string, message: string) => Promise<WorkCreateResponse>
   moveStatus: (workId: string, status: WorkStatus) => Promise<WorkItem>
   updateFields: (
     workId: string,
     fields: { title?: string; description?: string },
   ) => Promise<WorkItem>
   updateAssignee: (workId: string, assigneeAgentId: string | null) => Promise<WorkItem>
-  addComment: (workId: string, body: string) => Promise<WorkComment>
+  addComment: (workId: string, body: string, resume?: boolean) => Promise<WorkComment>
+  createLabel: (sessionId: string, payload: { name: string; color: string }) => Promise<WorkLabel>
+  setLabels: (workId: string, labelIds: string[]) => Promise<WorkItem>
+  deleteWorkItem: (workId: string) => Promise<WorkItem>
   handleRealtimeFrame: (frame: AiRealtimeRawFrame) => void
   clearWorkState: () => void
 }
@@ -42,6 +54,7 @@ type WorkState = {
 export const useWorkStore = create<WorkState>((set) => ({
   itemsBySessionId: {},
   commentsByWorkId: {},
+  labelsBySessionId: {},
   loadingBySessionId: {},
   creatingBySessionId: {},
   lastCreatedBySessionId: {},
@@ -111,6 +124,38 @@ export const useWorkStore = create<WorkState>((set) => ({
       throw error
     }
   },
+  fetchLabels: async (sessionId) => {
+    try {
+      const response = await listWorkLabels(sessionId)
+      set((state) => ({
+        labelsBySessionId: { ...state.labelsBySessionId, [sessionId]: response.items },
+        lastError: null,
+      }))
+      return response.items
+    } catch (error) {
+      set({ lastError: error instanceof Error ? error.message : '작업 라벨 조회에 실패했습니다.' })
+      throw error
+    }
+  },
+  createRun: async (workId, message) => {
+    try {
+      const response = await createWorkRun(workId, message)
+      set((state) => ({
+        itemsBySessionId: {
+          ...state.itemsBySessionId,
+          [response.work.sessionId]: upsertWorkItem(
+            state.itemsBySessionId[response.work.sessionId] ?? [],
+            response.work,
+          ),
+        },
+        lastError: null,
+      }))
+      return response
+    } catch (error) {
+      set({ lastError: error instanceof Error ? error.message : '작업 실행에 실패했습니다.' })
+      throw error
+    }
+  },
   moveStatus: async (workId, status) => {
     try {
       const item = await moveWorkStatus(workId, status)
@@ -161,9 +206,9 @@ export const useWorkStore = create<WorkState>((set) => ({
       throw error
     }
   },
-  addComment: async (workId, body) => {
+  addComment: async (workId, body, resume = false) => {
     try {
-      const comment = await createWorkComment(workId, body)
+      const comment = await createWorkComment(workId, body, resume)
       set((state) => ({
         commentsByWorkId: {
           ...state.commentsByWorkId,
@@ -177,12 +222,76 @@ export const useWorkStore = create<WorkState>((set) => ({
       throw error
     }
   },
+  createLabel: async (sessionId, payload) => {
+    try {
+      const label = await createWorkLabel(sessionId, payload)
+      set((state) => ({
+        labelsBySessionId: {
+          ...state.labelsBySessionId,
+          [sessionId]: upsertWorkLabel(state.labelsBySessionId[sessionId] ?? [], label),
+        },
+        lastError: null,
+      }))
+      return label
+    } catch (error) {
+      set({ lastError: error instanceof Error ? error.message : '작업 라벨 생성에 실패했습니다.' })
+      throw error
+    }
+  },
+  setLabels: async (workId, labelIds) => {
+    try {
+      const item = await setWorkLabels(workId, labelIds)
+      set((state) => ({
+        itemsBySessionId: {
+          ...state.itemsBySessionId,
+          [item.sessionId]: upsertWorkItem(state.itemsBySessionId[item.sessionId] ?? [], item),
+        },
+        lastError: null,
+      }))
+      return item
+    } catch (error) {
+      set({ lastError: error instanceof Error ? error.message : '작업 라벨 변경에 실패했습니다.' })
+      throw error
+    }
+  },
+  deleteWorkItem: async (workId) => {
+    try {
+      const item = await deleteWork(workId)
+      set((state) => ({
+        itemsBySessionId: {
+          ...state.itemsBySessionId,
+          [item.sessionId]: (state.itemsBySessionId[item.sessionId] ?? []).filter(
+            (current) => current.workId !== workId,
+          ),
+        },
+        lastError: null,
+      }))
+      return item
+    } catch (error) {
+      set({ lastError: error instanceof Error ? error.message : '작업 삭제에 실패했습니다.' })
+      throw error
+    }
+  },
   handleRealtimeFrame: (frame) => {
-    if (
-      frame.type !== 'work.created' &&
-      frame.type !== 'work.updated' &&
-      frame.type !== 'work_comment.created'
-    ) {
+    if (frame.type.startsWith('work_label.')) {
+      const payload = getFramePayload(frame)
+      if (!isJsonObject(payload)) return
+      const label = isWorkLabel(payload.label) ? payload.label : undefined
+      if (label !== undefined) {
+        set((state) => ({
+          labelsBySessionId: {
+            ...state.labelsBySessionId,
+            [label.sessionId]: upsertWorkLabel(
+              state.labelsBySessionId[label.sessionId] ?? [],
+              label,
+            ),
+          },
+          lastError: null,
+        }))
+      }
+      return
+    }
+    if (!frame.type.startsWith('work.') && !frame.type.startsWith('work_')) {
       return
     }
     const payload = getFramePayload(frame)
@@ -190,6 +299,18 @@ export const useWorkStore = create<WorkState>((set) => ({
       return
     }
     const work = payload.work
+    if (frame.type === 'work.deleted') {
+      set((state) => ({
+        itemsBySessionId: {
+          ...state.itemsBySessionId,
+          [work.sessionId]: (state.itemsBySessionId[work.sessionId] ?? []).filter(
+            (item) => item.workId !== work.workId,
+          ),
+        },
+        lastError: null,
+      }))
+      return
+    }
     const comment = isWorkComment(payload.comment) ? payload.comment : undefined
     set((state) => ({
       itemsBySessionId: {
@@ -210,6 +331,7 @@ export const useWorkStore = create<WorkState>((set) => ({
     set({
       itemsBySessionId: {},
       commentsByWorkId: {},
+      labelsBySessionId: {},
       loadingBySessionId: {},
       creatingBySessionId: {},
       lastCreatedBySessionId: {},
@@ -233,6 +355,14 @@ function upsertWorkComment(items: WorkComment[], item: WorkComment) {
   return items.map((current, itemIndex) => (itemIndex === index ? item : current))
 }
 
+function upsertWorkLabel(items: WorkLabel[], item: WorkLabel) {
+  const index = items.findIndex((current) => current.labelId === item.labelId)
+  if (index === -1) {
+    return [...items, item]
+  }
+  return items.map((current, itemIndex) => (itemIndex === index ? item : current))
+}
+
 function isWorkItem(value: unknown): value is WorkItem {
   return (
     isJsonObject(value) && typeof value.workId === 'string' && typeof value.sessionId === 'string'
@@ -242,5 +372,11 @@ function isWorkItem(value: unknown): value is WorkItem {
 function isWorkComment(value: unknown): value is WorkComment {
   return (
     isJsonObject(value) && typeof value.commentId === 'string' && typeof value.workId === 'string'
+  )
+}
+
+function isWorkLabel(value: unknown): value is WorkLabel {
+  return (
+    isJsonObject(value) && typeof value.labelId === 'string' && typeof value.sessionId === 'string'
   )
 }

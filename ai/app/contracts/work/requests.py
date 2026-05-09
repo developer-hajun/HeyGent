@@ -52,4 +52,35 @@ class UpdateWorkAssigneeRequest(BaseModel):
 class SetWorkLabelsRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
+    label_ids: list[str] = Field(default_factory=list, alias="labelIds", description="연결할 라벨 ID 목록입니다.")
     label_names: list[str] = Field(default_factory=list, alias="labelNames", description="연결할 기존 라벨 이름 목록입니다.")
+
+
+class CreateWorkLabelRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    name: str = Field(min_length=1, max_length=80, description="라벨 이름입니다.")
+    color: str = Field(default="#64748b", max_length=32, description="라벨 색상입니다.")
+
+
+class UpdateWorkLabelRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=80, description="변경할 라벨 이름입니다.")
+    color: str | None = Field(default=None, max_length=32, description="변경할 라벨 색상입니다.")
+
+
+class UpsertWorkRelationRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    target_work_id: str = Field(alias="targetWorkId", description="관계를 연결할 대상 작업 ID입니다.")
+    relation_type: str = Field(alias="relationType", description="blocks 또는 related 입니다.")
+
+
+class CreateWorkRunRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    message: str = Field(default="이 작업을 이어서 진행해.", description="작업 실행 시 채팅에 남길 메시지입니다.")
+    client_message_id: str | None = Field(default=None, alias="clientMessageId", description="채팅 메시지 중복 방지 키입니다.")
+    include_comments: bool = Field(default=True, alias="includeComments", description="MVP에서는 항상 true로 처리합니다.")
+    include_recent_runs: bool = Field(default=True, alias="includeRecentRuns", description="최근 실행 컨텍스트 포함 여부입니다.")

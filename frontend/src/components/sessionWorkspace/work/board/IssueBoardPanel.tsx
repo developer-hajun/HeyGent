@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   Activity,
-  AlertTriangle,
   ArrowUpDown,
   Bot,
   Check,
@@ -10,7 +9,6 @@ import {
   CircleCheck,
   Clock3,
   Columns3,
-  FileText,
   Filter,
   FolderKanban,
   List,
@@ -21,24 +19,24 @@ import {
   Plus,
   Search,
   Send,
-  SlidersHorizontal,
   Tag,
+  Trash2,
   UserRound,
   X,
 } from 'lucide-react'
+import { useNavigate } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
+import { addWorkRelation } from '@/apis/work'
 import { cn } from '@/components/ui/utils'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useWorkStore } from '@/store/useWorkStore'
-import type { WorkComment, WorkItem } from '@/types/work'
+import type { WorkItem, WorkLabel } from '@/types/work'
 import {
-  ISSUE_BOARD_LABELS,
   ISSUE_BOARD_STATUSES,
   createIssueBoardIdentifier,
-  createIssueBoardFixtures,
   groupIssuesByStatus,
   issueBoardStatusLabel,
   moveIssueToStatus,
@@ -46,9 +44,32 @@ import {
   type IssueBoardLabel,
   type IssueBoardStatus,
 } from '../model/issueBoardModel'
+import type { BoardAssignee, DetailTab, SortField, ViewMode } from './issueBoardPanelTypes'
+import { IssueRelatedPanel, RelatedIssuePill } from './IssueRelatedPanel'
+import {
+  arraysEqual,
+  assigneeLabel,
+  commentAuthorLabel,
+  createLabelIdentifier,
+  filterTodos,
+  formatRelativeTime,
+  isHexColor,
+  loadTodoBoardState,
+  nextSortField,
+  resolveIssueLabels,
+  runStatusLabel,
+  saveTodoBoardState,
+  sortFieldLabel,
+  sortTodos,
+  toIssueBoardComment,
+  toIssueBoardIssue,
+  toIssueBoardLabel,
+  toggleValue,
+} from './issueBoardPanelUtils'
 
 const MAIN_AGENT_ASSIGNEE = { id: 'CEO', name: 'CEO', icon: UserRound } as const
 const EMPTY_WORK_ITEMS: WorkItem[] = []
+const EMPTY_WORK_LABELS: WorkLabel[] = []
 const EMPTY_AGENT_PANELS: ReturnType<
   typeof useSessionStore.getState
 >['agentPanelsBySessionId'][string] = []
@@ -60,28 +81,8 @@ const QUICK_FILTERS = [
   { id: 'done', label: '완료', statuses: ['done'] },
 ] as const
 
-type ViewMode = 'list' | 'board'
-type SortField = 'updated' | 'title' | 'status'
-type DetailTab = 'chat' | 'runs' | 'activity' | 'related'
-type BoardAssignee = {
-  id: string
-  name: string
-  icon: typeof UserRound
-}
-
-interface PersistedTodoBoardState {
-  issues: IssueBoardIssue[]
-  labels: IssueBoardLabel[]
-  query: string
-  viewMode: ViewMode
-  sortField: SortField
-  selectedStatuses: IssueBoardStatus[]
-  selectedAssignees: string[]
-  selectedLabels: string[]
-  liveOnly: boolean
-}
-
 export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
+  const navigate = useNavigate()
   const storageKey = `heygent-task-board:v4:${sessionId}`
   const workItems = useWorkStore((state) => state.itemsBySessionId[sessionId] ?? EMPTY_WORK_ITEMS)
   const commentsByWorkId = useWorkStore((state) => state.commentsByWorkId)
@@ -89,10 +90,17 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const workError = useWorkStore((state) => state.lastError)
   const fetchSessionWork = useWorkStore((state) => state.fetchSessionWork)
   const fetchWorkComments = useWorkStore((state) => state.fetchComments)
+  const fetchWorkLabels = useWorkStore((state) => state.fetchLabels)
+  const serverLabels = useWorkStore(
+    (state) => state.labelsBySessionId[sessionId] ?? EMPTY_WORK_LABELS,
+  )
   const moveWorkItemStatus = useWorkStore((state) => state.moveStatus)
   const updateWorkItemFields = useWorkStore((state) => state.updateFields)
   const updateWorkItemAssignee = useWorkStore((state) => state.updateAssignee)
   const addWorkItemComment = useWorkStore((state) => state.addComment)
+  const createWorkItemLabel = useWorkStore((state) => state.createLabel)
+  const setWorkItemLabels = useWorkStore((state) => state.setLabels)
+  const deleteWorkItem = useWorkStore((state) => state.deleteWorkItem)
   const agentPanelsBySessionId = useSessionStore((state) => state.agentPanelsBySessionId)
   const assignees = useMemo<BoardAssignee[]>(() => {
     const agentPanels = agentPanelsBySessionId[sessionId] ?? EMPTY_AGENT_PANELS
@@ -125,10 +133,10 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     if (sessionId.startsWith('pending_session_')) return
-    void fetchSessionWork(sessionId).catch((error) => {
+    void Promise.all([fetchSessionWork(sessionId), fetchWorkLabels(sessionId)]).catch((error) => {
       console.error(error)
     })
-  }, [fetchSessionWork, sessionId])
+  }, [fetchSessionWork, fetchWorkLabels, sessionId])
 
   useEffect(() => {
     saveTodoBoardState(storageKey, {
@@ -156,8 +164,13 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   ])
 
   const boardIssues = useMemo(
-    () => (workItems.length > 0 ? workItems.map((item) => toIssueBoardIssue(item)) : issues),
+    () =>
+      workItems.length > 0 ? workItems.map((item) => toIssueBoardIssue(item, workItems)) : issues,
     [issues, workItems],
+  )
+  const boardLabels = useMemo(
+    () => (serverLabels.length > 0 ? serverLabels.map(toIssueBoardLabel) : labels),
+    [labels, serverLabels],
   )
   const filteredIssues = useMemo(
     () =>
@@ -172,14 +185,14 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
             liveOnly,
           },
           assignees,
-          labels,
+          boardLabels,
         ),
         sortField,
       ),
     [
       assignees,
       boardIssues,
-      labels,
+      boardLabels,
       liveOnly,
       query,
       selectedAssignees,
@@ -243,6 +256,12 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
 
   const updateIssue = (issueId: string, patch: Partial<IssueBoardIssue>) => {
     const serverWork = workItems.find((item) => item.workId === issueId)
+    if (serverWork && patch.labels !== undefined) {
+      void setWorkItemLabels(issueId, patch.labels).catch((error) => {
+        console.error(error)
+      })
+      return
+    }
     const fieldPatch: { title?: string; description?: string } = {}
     if (patch.title !== undefined) fieldPatch.title = patch.title
     if (patch.description !== undefined) fieldPatch.description = patch.description
@@ -304,10 +323,45 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   }
 
   const createLabel = (label: IssueBoardLabel) => {
+    if (!sessionId.startsWith('pending_session_')) {
+      void createWorkItemLabel(sessionId, { name: label.name, color: label.color }).catch(
+        (error) => {
+          console.error(error)
+        },
+      )
+      return
+    }
     setLabels((current) => {
       if (current.some((item) => item.id === label.id)) return current
       return [...current, label]
     })
+  }
+
+  const runIssue = (issueId: string) => {
+    const issue = boardIssues.find((item) => item.id === issueId)
+    if (!issue) return
+    const message =
+      issue.status === 'blocked'
+        ? '차단 해제 정보를 반영해서 이 작업을 이어서 진행해.'
+        : issue.status === 'done'
+          ? '이 작업을 다시 검토하고 필요한 후속 실행을 진행해.'
+          : '이 작업을 이어서 진행해.'
+    const params = new URLSearchParams({ workId: issue.id, draft: message })
+    navigate(`/session/${sessionId}?${params.toString()}`)
+  }
+
+  const deleteIssue = (issueId: string) => {
+    const serverWork = workItems.find((item) => item.workId === issueId)
+    if (serverWork) {
+      void deleteWorkItem(issueId)
+        .then(() => setSelectedIssueId(null))
+        .catch((error) => {
+          console.error(error)
+        })
+      return
+    }
+    setIssues((current) => current.filter((issue) => issue.id !== issueId))
+    setSelectedIssueId(null)
   }
 
   const resetFilters = () => {
@@ -434,7 +488,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
             <FilterPopover
               activeFilterCount={activeFilterCount}
               assignees={assignees}
-              labels={labels}
+              labels={boardLabels}
               liveOnly={liveOnly}
               selectedAssignees={selectedAssignees}
               selectedLabels={selectedLabels}
@@ -479,26 +533,36 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
           onDragStart={setDraggedIssueId}
           onOpenIssue={setSelectedIssueId}
           assignees={assignees}
-          labels={labels}
+          labels={boardLabels}
         />
       ) : (
         <TodoListView
           issues={filteredIssues}
           onOpenIssue={setSelectedIssueId}
           assignees={assignees}
-          labels={labels}
+          labels={boardLabels}
         />
       )}
 
       <TodoDetailPanel
         assignees={assignees}
+        allIssues={boardIssues}
         issue={selectedIssue}
-        labels={labels}
+        labels={boardLabels}
         onAssignIssue={assignIssue}
         onAddComment={addIssueComment}
         onCreateLabel={createLabel}
+        onDeleteIssue={deleteIssue}
         onMoveStatus={(issueId, status) => moveIssue(issueId, status)}
         onOpenChange={(open) => !open && setSelectedIssueId(null)}
+        onRunIssue={runIssue}
+        onAddRelation={(sourceId, targetId, relationType) => {
+          void addWorkRelation(sourceId, targetId, relationType)
+            .then(() => fetchSessionWork(sessionId))
+            .catch((error) => {
+              console.error(error)
+            })
+        }}
         onUpdateIssue={updateIssue}
       />
     </section>
@@ -506,62 +570,6 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
 }
 
 export const WorkBoardPanel = IssueBoardPanel
-
-function toIssueBoardIssue(item: WorkItem): IssueBoardIssue {
-  const now = new Date().toISOString()
-  const createdAt = item.createdAt ?? now
-  const updatedAt = item.updatedAt ?? createdAt
-
-  return {
-    id: item.workId,
-    identifier: item.identifier,
-    title: item.title,
-    description: item.description ?? item.rawUserInput ?? '',
-    status: item.status,
-    assigneeAgentId: item.assigneeAgentId,
-    labels: [],
-    comments: [],
-    runs:
-      item.latestRunId === null && item.activeRunId === null
-        ? []
-        : [
-            {
-              id: item.latestRunId ?? item.activeRunId ?? `${item.workId}:run`,
-              status: toIssueBoardRunStatus(item),
-              title: '실행',
-              summary: item.taskStatus ?? item.status,
-              startedAt: item.startedAt ?? createdAt,
-              finishedAt: item.completedAt,
-            },
-          ],
-    documents: [],
-    relatedItems: [],
-    blockedBy: [],
-    createdAt,
-    updatedAt,
-    startedAt: item.startedAt,
-    completedAt: item.completedAt,
-    live: item.activeRunId !== null || item.status === 'in_progress',
-  }
-}
-
-function toIssueBoardComment(comment: WorkComment): IssueBoardIssue['comments'][number] {
-  return {
-    id: comment.commentId,
-    authorType: comment.authorType === 'system' ? 'system' : 'user',
-    authorName: comment.authorType === 'system' ? '시스템' : '사용자',
-    body: comment.body,
-    createdAt: comment.createdAt ?? new Date().toISOString(),
-  }
-}
-
-function toIssueBoardRunStatus(item: WorkItem): IssueBoardIssue['runs'][number]['status'] {
-  if (item.activeRunId !== null) return 'running'
-  if (item.status === 'done') return 'completed'
-  if (item.status === 'blocked') return 'waiting'
-  if (item.status === 'cancelled') return 'failed'
-  return 'queued'
-}
 
 function TodoKanbanBoard({
   draggedIssueId,
@@ -1138,23 +1146,31 @@ function InlineEditableText({
 
 function TodoDetailPanel({
   assignees,
+  allIssues,
   issue,
   labels,
   onAssignIssue,
   onAddComment,
+  onAddRelation,
   onCreateLabel,
+  onDeleteIssue,
   onMoveStatus,
   onOpenChange,
+  onRunIssue,
   onUpdateIssue,
 }: {
   assignees: BoardAssignee[]
+  allIssues: IssueBoardIssue[]
   issue: IssueBoardIssue | null
   labels: IssueBoardLabel[]
   onAssignIssue: (issueId: string, assigneeAgentId: string | null) => void
   onAddComment: (issueId: string, body: string) => void
+  onAddRelation: (sourceId: string, targetId: string, relationType: 'blocks' | 'related') => void
   onCreateLabel: (label: IssueBoardLabel) => void
+  onDeleteIssue: (issueId: string) => void
   onMoveStatus: (issueId: string, status: IssueBoardStatus) => void
   onOpenChange: (open: boolean) => void
+  onRunIssue: (issueId: string) => void
   onUpdateIssue: (issueId: string, patch: Partial<IssueBoardIssue>) => void
 }) {
   const [detailTab, setDetailTab] = useState<DetailTab>('chat')
@@ -1190,6 +1206,27 @@ function TodoDetailPanel({
                 {issueBoardStatusLabel(issue.status)}
               </span>
             </div>
+            <Button
+              type="button"
+              aria-label="작업 실행"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5"
+              disabled={issue.live || issue.status === 'backlog' || issue.status === 'cancelled'}
+              onClick={() => onRunIssue(issue.id)}
+            >
+              <PlayCircle className="h-3.5 w-3.5" />
+              실행
+            </Button>
+            <Button
+              type="button"
+              aria-label="작업 삭제"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => onDeleteIssue(issue.id)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
             <Button
               type="button"
               aria-label="작업 상세 닫기"
@@ -1264,7 +1301,13 @@ function TodoDetailPanel({
             )}
             {detailTab === 'runs' && <IssueRunLedger issue={issue} />}
             {detailTab === 'activity' && <IssueActivityTimeline issue={issue} />}
-            {detailTab === 'related' && <IssueRelatedPanel issue={issue} />}
+            {detailTab === 'related' && (
+              <IssueRelatedPanel
+                allIssues={allIssues}
+                issue={issue}
+                onAddRelation={onAddRelation}
+              />
+            )}
           </div>
         </div>
       </aside>
@@ -1509,85 +1552,6 @@ function IssueActivityTimeline({ issue }: { issue: IssueBoardIssue }) {
   )
 }
 
-function IssueRelatedPanel({ issue }: { issue: IssueBoardIssue }) {
-  return (
-    <div className="grid gap-3 md:grid-cols-2">
-      <RelatedSection title="차단 항목" icon={<AlertTriangle className="h-4 w-4" />}>
-        {issue.blockedBy.length > 0 ? (
-          issue.blockedBy.map((item) => <RelatedIssuePill key={item.id} item={item} />)
-        ) : (
-          <EmptyRelatedText>차단 항목 없음</EmptyRelatedText>
-        )}
-      </RelatedSection>
-      <RelatedSection title="관련 작업" icon={<ListTree className="h-4 w-4" />}>
-        {issue.relatedItems.length > 0 ? (
-          issue.relatedItems.map((item) => <RelatedIssuePill key={item.id} item={item} />)
-        ) : (
-          <EmptyRelatedText>관련 작업 없음</EmptyRelatedText>
-        )}
-      </RelatedSection>
-      <RelatedSection title="산출물" icon={<FileText className="h-4 w-4" />}>
-        {issue.documents.length > 0 ? (
-          issue.documents.map((document) => (
-            <div key={document.id} className="rounded-md border p-3">
-              <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
-                <FileText className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{document.title}</span>
-              </div>
-              <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">{document.summary}</p>
-              <p className="text-muted-foreground mt-2 text-[11px]">
-                수정 {formatRelativeTime(document.updatedAt)}
-              </p>
-            </div>
-          ))
-        ) : (
-          <EmptyRelatedText>산출물 없음</EmptyRelatedText>
-        )}
-      </RelatedSection>
-      <RelatedSection title="실행 정책" icon={<SlidersHorizontal className="h-4 w-4" />}>
-        <div className="text-muted-foreground rounded-md border p-3 text-xs">
-          담당 에이전트 1명이 이 작업 컨텍스트로 실행합니다. 서버 연결 후 작업 실행, 재개, 중단
-          이벤트가 이 영역에 반영됩니다.
-        </div>
-      </RelatedSection>
-    </div>
-  )
-}
-
-function RelatedSection({
-  children,
-  icon,
-  title,
-}: {
-  children: ReactNode
-  icon: ReactNode
-  title: string
-}) {
-  return (
-    <section className="space-y-2">
-      <h3 className="text-muted-foreground flex items-center gap-1.5 text-xs font-semibold tracking-widest uppercase">
-        {icon}
-        {title}
-      </h3>
-      <div className="space-y-2">{children}</div>
-    </section>
-  )
-}
-
-function EmptyRelatedText({ children }: { children: ReactNode }) {
-  return <div className="text-muted-foreground rounded-md border p-3 text-xs">{children}</div>
-}
-
-function RelatedIssuePill({ item }: { item: IssueBoardIssue['relatedItems'][number] }) {
-  return (
-    <div className="flex min-w-0 items-center gap-2 rounded-md border px-3 py-2 text-sm">
-      <StatusIcon status={item.status} />
-      <span className="text-muted-foreground shrink-0 font-mono text-xs">{item.identifier}</span>
-      <span className="min-w-0 flex-1 truncate">{item.title}</span>
-    </div>
-  )
-}
-
 function TodoProperty({ children, label }: { children: ReactNode; label: string }) {
   return (
     <>
@@ -1808,26 +1772,6 @@ function AssigneePicker({
   )
 }
 
-function commentAuthorLabel(authorType: IssueBoardIssue['comments'][number]['authorType']) {
-  const labels: Record<IssueBoardIssue['comments'][number]['authorType'], string> = {
-    user: '사용자',
-    agent: '에이전트',
-    system: '시스템',
-  }
-  return labels[authorType]
-}
-
-function runStatusLabel(status: IssueBoardIssue['runs'][number]['status']) {
-  const labels: Record<IssueBoardIssue['runs'][number]['status'], string> = {
-    queued: '대기',
-    running: '실행 중',
-    waiting: '대기 요청',
-    completed: '완료',
-    failed: '실패',
-  }
-  return labels[status]
-}
-
 function RunStatusDot({ status }: { status: IssueBoardIssue['runs'][number]['status'] }) {
   const color =
     status === 'completed'
@@ -1841,313 +1785,4 @@ function RunStatusDot({ status }: { status: IssueBoardIssue['runs'][number]['sta
             : 'bg-muted-foreground'
 
   return <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', color)} />
-}
-
-function resolveIssueLabels(labelIds: string[], labels: IssueBoardLabel[]) {
-  const labelById = new Map(labels.map((label) => [label.id, label]))
-  return labelIds
-    .map((labelId) => labelById.get(labelId) ?? createFallbackLabel(labelId))
-    .filter((label): label is IssueBoardLabel => Boolean(label))
-}
-
-function createFallbackLabel(labelId: string): IssueBoardLabel {
-  return {
-    id: labelId,
-    name: labelId,
-    color: '#64748b',
-  }
-}
-
-function createLabelIdentifier(name: string, labels: IssueBoardLabel[]) {
-  const base =
-    name
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9가-힣]+/g, '-')
-      .replace(/^-+|-+$/g, '') || 'label'
-  const existingIds = new Set(labels.map((label) => label.id))
-  if (!existingIds.has(base)) return base
-  let suffix = 2
-  while (existingIds.has(`${base}-${suffix}`)) suffix += 1
-  return `${base}-${suffix}`
-}
-
-function isHexColor(value: string) {
-  return /^#[0-9a-fA-F]{6}$/.test(value)
-}
-
-function filterTodos(
-  issues: IssueBoardIssue[],
-  filters: {
-    query: string
-    statuses: IssueBoardStatus[]
-    assignees: string[]
-    labels: string[]
-    liveOnly: boolean
-  },
-  assignees: BoardAssignee[],
-  labels: IssueBoardLabel[],
-) {
-  const normalizedQuery = filters.query.trim().toLowerCase()
-  return issues.filter((issue) => {
-    if (filters.liveOnly && !issue.live) return false
-    if (filters.statuses.length > 0 && !filters.statuses.includes(issue.status)) return false
-    if (filters.assignees.length > 0) {
-      if (!issue.assigneeAgentId) return filters.assignees.includes('__unassigned')
-      if (!filters.assignees.includes(issue.assigneeAgentId)) return false
-    }
-    if (
-      filters.labels.length > 0 &&
-      !filters.labels.some((labelId) => issue.labels.includes(labelId))
-    ) {
-      return false
-    }
-    if (!normalizedQuery) return true
-    const issueLabels = resolveIssueLabels(issue.labels, labels)
-    return [
-      issue.identifier,
-      issue.title,
-      issue.description,
-      assigneeLabel(issue.assigneeAgentId, assignees),
-      ...issueLabels.map((label) => label.name),
-      ...issue.comments.map((comment) => comment.body),
-      ...issue.runs.map((run) => `${run.title} ${run.summary}`),
-    ].some((value) => value.toLowerCase().includes(normalizedQuery))
-  })
-}
-
-function sortTodos(issues: IssueBoardIssue[], sortField: SortField) {
-  return [...issues].sort((left, right) => {
-    if (sortField === 'title') return left.title.localeCompare(right.title)
-    if (sortField === 'status') {
-      return (
-        ISSUE_BOARD_STATUSES.indexOf(left.status) - ISSUE_BOARD_STATUSES.indexOf(right.status) ||
-        new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
-      )
-    }
-    return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
-  })
-}
-
-function nextSortField(sortField: SortField): SortField {
-  if (sortField === 'updated') return 'status'
-  if (sortField === 'status') return 'title'
-  return 'updated'
-}
-
-function sortFieldLabel(sortField: SortField) {
-  const labels: Record<SortField, string> = {
-    updated: '최근 수정',
-    status: '상태순',
-    title: '제목순',
-  }
-  return labels[sortField]
-}
-
-function toggleValue<T>(values: T[], value: T) {
-  return values.includes(value) ? values.filter((item) => item !== value) : [...values, value]
-}
-
-function arraysEqual(left: readonly string[], right: readonly string[]) {
-  if (left.length !== right.length) return false
-  const leftSorted = [...left].sort()
-  const rightSorted = [...right].sort()
-  return leftSorted.every((value, index) => value === rightSorted[index])
-}
-
-function loadTodoBoardState(storageKey: string, sessionId: string): PersistedTodoBoardState {
-  const fallback: PersistedTodoBoardState = {
-    issues: createIssueBoardFixtures(sessionId),
-    labels: [...ISSUE_BOARD_LABELS],
-    query: '',
-    viewMode: 'list',
-    sortField: 'updated',
-    selectedStatuses: [],
-    selectedAssignees: [],
-    selectedLabels: [],
-    liveOnly: false,
-  }
-
-  if (typeof window === 'undefined') return fallback
-  try {
-    const raw = window.localStorage.getItem(storageKey)
-    if (raw === null) return fallback
-    const parsed = JSON.parse(raw) as Partial<PersistedTodoBoardState>
-    return {
-      issues: normalizeIssues(parsed.issues, fallback.issues),
-      labels: normalizeLabels(parsed.labels, fallback.labels),
-      query: typeof parsed.query === 'string' ? parsed.query : fallback.query,
-      viewMode:
-        parsed.viewMode === 'list' || parsed.viewMode === 'board'
-          ? parsed.viewMode
-          : fallback.viewMode,
-      sortField: normalizeSortField(parsed.sortField, fallback.sortField),
-      selectedStatuses: normalizeStatuses(parsed.selectedStatuses),
-      selectedAssignees: normalizeAssignees(parsed.selectedAssignees),
-      selectedLabels: normalizeStringArray(parsed.selectedLabels),
-      liveOnly: parsed.liveOnly === true,
-    }
-  } catch {
-    return fallback
-  }
-}
-
-function saveTodoBoardState(storageKey: string, state: PersistedTodoBoardState) {
-  if (typeof window === 'undefined') return
-  try {
-    window.localStorage.setItem(storageKey, JSON.stringify(state))
-  } catch {
-    return
-  }
-}
-
-function normalizeIssues(value: unknown, fallback: IssueBoardIssue[]) {
-  if (!Array.isArray(value)) return fallback
-  const issues = value.filter((item): item is IssueBoardIssue => isIssueBoardIssue(item))
-  return issues.length > 0 ? issues : fallback
-}
-
-function normalizeLabels(value: unknown, fallback: IssueBoardLabel[]) {
-  if (!Array.isArray(value)) return fallback
-  const labels = value.filter((item): item is IssueBoardLabel => isIssueBoardLabel(item))
-  return labels.length > 0 ? labels : fallback
-}
-
-function isIssueBoardLabel(value: unknown): value is IssueBoardLabel {
-  if (typeof value !== 'object' || value === null) return false
-  const label = value as Record<string, unknown>
-  return (
-    typeof label.id === 'string' &&
-    typeof label.name === 'string' &&
-    typeof label.color === 'string' &&
-    isHexColor(label.color)
-  )
-}
-
-function isIssueBoardIssue(value: unknown): value is IssueBoardIssue {
-  if (typeof value !== 'object' || value === null) return false
-  const issue = value as Record<string, unknown>
-  return (
-    typeof issue.id === 'string' &&
-    typeof issue.identifier === 'string' &&
-    typeof issue.title === 'string' &&
-    typeof issue.description === 'string' &&
-    isIssueBoardStatus(issue.status) &&
-    isKnownAssigneeId(issue.assigneeAgentId) &&
-    Array.isArray(issue.labels) &&
-    issue.labels.every((label) => typeof label === 'string') &&
-    Array.isArray(issue.comments) &&
-    issue.comments.every(isIssueBoardComment) &&
-    Array.isArray(issue.runs) &&
-    issue.runs.every(isIssueBoardRun) &&
-    Array.isArray(issue.documents) &&
-    issue.documents.every(isIssueBoardDocument) &&
-    Array.isArray(issue.relatedItems) &&
-    issue.relatedItems.every(isIssueBoardRelatedItem) &&
-    Array.isArray(issue.blockedBy) &&
-    issue.blockedBy.every(isIssueBoardRelatedItem) &&
-    typeof issue.createdAt === 'string' &&
-    typeof issue.updatedAt === 'string' &&
-    (issue.startedAt === null || typeof issue.startedAt === 'string') &&
-    (issue.completedAt === null || typeof issue.completedAt === 'string') &&
-    typeof issue.live === 'boolean'
-  )
-}
-
-function isIssueBoardComment(value: unknown): value is IssueBoardIssue['comments'][number] {
-  if (typeof value !== 'object' || value === null) return false
-  const comment = value as Record<string, unknown>
-  return (
-    typeof comment.id === 'string' &&
-    (comment.authorType === 'user' ||
-      comment.authorType === 'agent' ||
-      comment.authorType === 'system') &&
-    typeof comment.authorName === 'string' &&
-    typeof comment.body === 'string' &&
-    typeof comment.createdAt === 'string'
-  )
-}
-
-function isIssueBoardRun(value: unknown): value is IssueBoardIssue['runs'][number] {
-  if (typeof value !== 'object' || value === null) return false
-  const run = value as Record<string, unknown>
-  return (
-    typeof run.id === 'string' &&
-    (run.status === 'queued' ||
-      run.status === 'running' ||
-      run.status === 'waiting' ||
-      run.status === 'completed' ||
-      run.status === 'failed') &&
-    typeof run.title === 'string' &&
-    typeof run.summary === 'string' &&
-    typeof run.startedAt === 'string' &&
-    (run.finishedAt === null || typeof run.finishedAt === 'string')
-  )
-}
-
-function isIssueBoardDocument(value: unknown): value is IssueBoardIssue['documents'][number] {
-  if (typeof value !== 'object' || value === null) return false
-  const document = value as Record<string, unknown>
-  return (
-    typeof document.id === 'string' &&
-    typeof document.title === 'string' &&
-    typeof document.summary === 'string' &&
-    typeof document.updatedAt === 'string'
-  )
-}
-
-function isIssueBoardRelatedItem(value: unknown): value is IssueBoardIssue['relatedItems'][number] {
-  if (typeof value !== 'object' || value === null) return false
-  const item = value as Record<string, unknown>
-  return (
-    typeof item.id === 'string' &&
-    typeof item.identifier === 'string' &&
-    typeof item.title === 'string' &&
-    isIssueBoardStatus(item.status)
-  )
-}
-
-function normalizeAssignees(value: unknown): string[] {
-  return normalizeStringArray(value)
-}
-
-function normalizeSortField(value: unknown, fallback: SortField): SortField {
-  return value === 'updated' || value === 'status' || value === 'title' ? value : fallback
-}
-
-function normalizeStatuses(value: unknown): IssueBoardStatus[] {
-  return normalizeStringArray(value).filter((item): item is IssueBoardStatus =>
-    isIssueBoardStatus(item),
-  )
-}
-
-function normalizeStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
-    : []
-}
-
-function assigneeLabel(value: string | null, assignees: BoardAssignee[]) {
-  if (value === null) return '담당자 없음'
-  return assignees.find((assignee) => assignee.id === value)?.name ?? value
-}
-
-function formatRelativeTime(value: string) {
-  const timestamp = new Date(value).getTime()
-  if (Number.isNaN(timestamp)) return '알 수 없음'
-  const diffMinutes = Math.max(0, Math.round((Date.now() - timestamp) / 60_000))
-  if (diffMinutes < 1) return '방금 전'
-  if (diffMinutes < 60) return `${diffMinutes}분 전`
-  const diffHours = Math.round(diffMinutes / 60)
-  if (diffHours < 24) return `${diffHours}시간 전`
-  return `${Math.round(diffHours / 24)}일 전`
-}
-
-function isIssueBoardStatus(value: unknown): value is IssueBoardStatus {
-  return typeof value === 'string' && ISSUE_BOARD_STATUSES.includes(value as IssueBoardStatus)
-}
-
-function isKnownAssigneeId(value: unknown): value is IssueBoardIssue['assigneeAgentId'] {
-  if (value === null) return true
-  return typeof value === 'string'
 }

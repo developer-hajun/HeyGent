@@ -66,6 +66,7 @@ class LocalToolRuntime:
                 "todo": self._todo,
                 "delegate_task": self._delegate_task,
                 "session_agent_task": self._session_agent_task,
+                "work_disposition": self._work_disposition,
                 "terminal.run": self._run_terminal_command,
                 "web_search": self._run_web_search,
                 "web_extract": self._run_web_extract,
@@ -632,6 +633,35 @@ class LocalToolRuntime:
                 "role": str(config.get("role") or profile.get("agent_type") or "user_subagent"),
             },
             "startExecution": True,
+        }
+
+    def _work_disposition(self, args: dict[str, Any]) -> dict[str, Any]:
+        context = dict(self.runtime_context or {})
+        work_id = self._optional_text(context.get("workId") or context.get("work_id"))
+        if not work_id:
+            return self._tool_error(
+                code="work_context_required",
+                message="work_disposition requires a connected work item",
+                tool_name="work_disposition",
+            )
+        status = self._optional_text(args.get("status"))
+        if status not in {"todo", "in_progress", "in_review", "blocked", "done", "cancelled"}:
+            return self._tool_error(
+                code="invalid_work_status",
+                message="work_disposition status is invalid",
+                tool_name="work_disposition",
+            )
+        summary = str(args.get("summary") or "").strip()
+        next_action = self._optional_text(args.get("nextAction") or args.get("next_action"))
+        return {
+            "ok": True,
+            "content": f"work disposition accepted: {status}",
+            "workDisposition": {
+                "workId": work_id,
+                "status": status,
+                "summary": summary,
+                "nextAction": next_action,
+            },
         }
 
     def _run_terminal_command(self, args: dict[str, Any]) -> dict[str, Any]:

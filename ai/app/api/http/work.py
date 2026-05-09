@@ -9,25 +9,34 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
 from app.api.deps.openapi_auth import document_bearer_auth
 from app.contracts.work import (
+    CreateWorkLabelRequest,
     CreateWorkCommentRequest,
+    CreateWorkRunRequest,
     CreateWorkRequest,
     MoveWorkStatusRequest,
     SetWorkLabelsRequest,
+    UpdateWorkLabelRequest,
     UpdateWorkAssigneeRequest,
     UpdateWorkFieldsRequest,
+    UpsertWorkRelationRequest,
     WorkCommentResponse,
     WorkCommentsResponse,
     WorkContextPreviewResponse,
     WorkCreateResponse,
     WorkItemResponse,
+    WorkLabelResponse,
+    WorkLabelsResponse,
     WorkListResponse,
+    WorkRelationResponse,
+    WorkRelationsResponse,
     WorkRunResponse,
     WorkRunsResponse,
 )
 from app.contracts.session import CreateSessionMessageRequest
+from app.core.utils.ids import new_id
 from app.domain.providers.model.base import AgentMessage
 from app.api.http.sessions import _create_message_in_session
-from app.domain.work import WorkItem, WorkService
+from app.domain.work import WorkComment, WorkItem, WorkService
 from app.domain.work.policies import normalize_disposition_status
 
 router = APIRouter(tags=["work"], dependencies=[Depends(document_bearer_auth)])
@@ -58,7 +67,7 @@ async def list_session_work(
         limit=limit,
         offset=offset,
     )
-    return WorkListResponse(items=[_work_response(item) for item in items], totalCount=len(items))
+    return WorkListResponse(items=[_work_response(item, repository=repository) for item in items], totalCount=len(items))
 
 
 @router.post(
@@ -77,7 +86,8 @@ async def create_session_work(
 
     service = WorkService(request.app.state.work_repository)
     work_payload = payload.model_dump(by_alias=True)
-    work_payload = await _enrich_work_payload_title(request, session=session, payload=work_payload)
+    work_payload = await _enrich_work_payload(request, session=session, payload=work_payload)
+    _validate_assignee_or_400(request, session_id=sessionId, owner_key=str(user.user_id), assignee_agent_id=work_payload.get("assigneeAgentId"))
     work = service.create_from_payload(
         session_id=sessionId,
         owner_key=str(user.user_id),
@@ -85,6 +95,8 @@ async def create_session_work(
         payload=work_payload,
         client_request_id=payload.client_request_id,
     )
+    if not payload.start_execution:
+        work = request.app.state.work_repository.update_status(work.work_id, "todo")
     if payload.initial_comment:
         service.add_comment(
             work=work,
@@ -94,7 +106,7 @@ async def create_session_work(
         )
     if not payload.start_execution:
         await _publish_work_event(request, str(user.user_id), "work.created", work=work)
-        return WorkCreateResponse(work=_work_response(work), taskRunId=None, taskStatus=None)
+        return WorkCreateResponse(work=_work_response(work, repository=request.app.state.work_repository), taskRunId=None, taskStatus=None)
 
     task_status: str | None = None
     task_run_id: str | None = None
@@ -114,20 +126,59 @@ async def create_session_work(
     except Exception as error:
         updated = service.mark_run_start_failed(work_id=work.work_id, reason=str(error))
         await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
-        return WorkCreateResponse(work=_work_response(updated), taskRunId=None, taskStatus="FAILED_TO_START")
+        return WorkCreateResponse(work=_work_response(updated, repository=request.app.state.work_repository), taskRunId=None, taskStatus="FAILED_TO_START")
     updated = request.app.state.work_repository.get_work(work.work_id) or work
     await _publish_work_event(request, str(user.user_id), "work.created", work=updated)
-    return WorkCreateResponse(work=_work_response(updated), taskRunId=task_run_id, taskStatus=task_status)
+    return WorkCreateResponse(work=_work_response(updated, repository=request.app.state.work_repository), taskRunId=task_run_id, taskStatus=task_status)
 
 
-async def _enrich_work_payload_title(request: Request, *, session: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+async def _enrich_work_payload(request: Request, *, session: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     raw_user_input = str(payload.get("rawUserInput") or payload.get("raw_user_input") or "").strip()
     current_title = str(payload.get("title") or "").strip()
-    if not raw_user_input or not _should_generate_work_title(current_title=current_title, raw_user_input=raw_user_input):
-        if current_title:
-            return payload
-    generated = await _generate_work_title(request, session=session, raw_user_input=raw_user_input)
-    return {**payload, "title": generated or _fallback_work_title(raw_user_input)}
+    if not raw_user_input:
+        return payload
+    generated_payload = await _generate_work_payload(request, session=session, raw_user_input=raw_user_input)
+    enriched = {**payload, **generated_payload}
+    if current_title and not _should_generate_work_title(current_title=current_title, raw_user_input=raw_user_input):
+        enriched["title"] = current_title
+    else:
+        enriched["title"] = str(generated_payload.get("title") or "").strip() or await _generate_work_title(request, session=session, raw_user_input=raw_user_input) or _fallback_work_title(raw_user_input)
+    enriched["rawUserInput"] = raw_user_input
+    enriched.setdefault("description", raw_user_input)
+    enriched.setdefault("executionInstruction", raw_user_input)
+    return enriched
+
+
+async def _generate_work_payload(request: Request, *, session: dict[str, Any], raw_user_input: str) -> dict[str, Any]:
+    registry = getattr(request.app.state, "provider_registry", None)
+    if registry is None:
+        return {}
+    try:
+        provider = registry.preferred_model_provider()
+    except Exception:
+        return {}
+    model = _work_title_model(request, session=session)
+    messages = [
+        AgentMessage(
+            role="system",
+            content=(
+                "사용자 입력을 작업 생성 payload로 구조화한다. JSON 객체만 반환한다. "
+                "필드: title, description, executionInstruction, expectedDeliverable, "
+                "acceptanceCriteria, constraints, labelNames, initialComment, metadata. "
+                "title은 한국어 명사구 4~12단어, description과 executionInstruction은 원문 의미를 보존한다. "
+                "확실하지 않은 배열 필드는 빈 배열로 둔다."
+            ),
+        ),
+        AgentMessage(role="user", content=raw_user_input[:4000]),
+    ]
+    try:
+        response = await asyncio.wait_for(
+            asyncio.to_thread(provider.respond, messages=messages, tools=[], model=model),
+            timeout=10,
+        )
+    except Exception:
+        return {}
+    return _sanitize_generated_work_payload(response.output_text)
 
 
 def _should_generate_work_title(*, current_title: str, raw_user_input: str) -> bool:
@@ -189,6 +240,42 @@ def _sanitize_generated_work_title(value: str) -> str | None:
     return title[:48].rstrip()
 
 
+def _sanitize_generated_work_payload(value: str) -> dict[str, Any]:
+    try:
+        parsed = json.loads(_extract_json_object(value))
+    except Exception:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    result: dict[str, Any] = {}
+    for key in ("title", "description", "executionInstruction", "expectedDeliverable", "initialComment"):
+        text = str(parsed.get(key) or "").strip()
+        if text:
+            result[key] = text
+    for key in ("acceptanceCriteria", "constraints", "labelNames"):
+        raw_items = parsed.get(key)
+        if isinstance(raw_items, list):
+            result[key] = [str(item).strip() for item in raw_items if str(item).strip()]
+    metadata = parsed.get("metadata")
+    if isinstance(metadata, dict):
+        result["metadata"] = metadata
+    if "title" in result:
+        result["title"] = _sanitize_generated_work_title(str(result["title"])) or str(result["title"])[:48].rstrip()
+    return result
+
+
+def _extract_json_object(value: str) -> str:
+    text = str(value or "").strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
+    if fenced:
+        return fenced.group(1)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        return text[start : end + 1]
+    return text
+
+
 def _fallback_work_title(raw_user_input: str) -> str:
     cleaned = _normalize_title_text(raw_user_input)
     cleaned = re.sub(r"[A-Za-z]:\\[^\s]+", "", cleaned)
@@ -212,7 +299,7 @@ async def get_work(request: Request, workId: str = Path(...)) -> WorkItemRespons
     user = await authenticate_http_user(request)
     work = _work_or_404(request, workId)
     _ensure_work_owner(user, work)
-    return _work_response(work)
+    return _work_response(work, repository=request.app.state.work_repository)
 
 
 @router.post("/work/{workId}/move-status", response_model=WorkItemResponse, summary="작업 상태 변경")
@@ -225,7 +312,7 @@ async def move_work_status(request: Request, payload: MoveWorkStatusRequest, wor
         raise HTTPException(status_code=400, detail="invalid work status")
     updated = request.app.state.work_repository.update_status(workId, status)
     await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
-    return _work_response(updated)
+    return _work_response(updated, repository=request.app.state.work_repository)
 
 
 @router.post("/work/{workId}/update-fields", response_model=WorkItemResponse, summary="작업 제목과 설명 변경")
@@ -237,7 +324,7 @@ async def update_work_fields(request: Request, payload: UpdateWorkFieldsRequest,
     description = payload.description.strip() if payload.description is not None else None
     updated = request.app.state.work_repository.update_fields(workId, title=title, description=description)
     await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
-    return _work_response(updated)
+    return _work_response(updated, repository=request.app.state.work_repository)
 
 
 @router.post("/work/{workId}/assign", response_model=WorkItemResponse, summary="작업 담당 에이전트 변경")
@@ -246,9 +333,10 @@ async def update_work_assignee(request: Request, payload: UpdateWorkAssigneeRequ
     work = _work_or_404(request, workId)
     _ensure_work_owner(user, work)
     assignee_agent_id = payload.assignee_agent_id.strip() if payload.assignee_agent_id else None
+    _validate_assignee_or_400(request, session_id=work.session_id, owner_key=work.owner_key, assignee_agent_id=assignee_agent_id)
     updated = request.app.state.work_repository.update_assignee(workId, assignee_agent_id=assignee_agent_id)
     await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
-    return _work_response(updated)
+    return _work_response(updated, repository=request.app.state.work_repository)
 
 
 @router.post("/work/{workId}/archive", response_model=WorkItemResponse, summary="작업 보관")
@@ -258,7 +346,7 @@ async def archive_work(request: Request, workId: str = Path(...)) -> WorkItemRes
     _ensure_work_owner(user, work)
     updated = request.app.state.work_repository.archive_work(workId)
     await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
-    return _work_response(updated)
+    return _work_response(updated, repository=request.app.state.work_repository)
 
 
 @router.post("/work/{workId}/restore", response_model=WorkItemResponse, summary="작업 복구")
@@ -268,7 +356,17 @@ async def restore_work(request: Request, workId: str = Path(...)) -> WorkItemRes
     _ensure_work_owner(user, work)
     updated = request.app.state.work_repository.restore_work(workId)
     await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
-    return _work_response(updated)
+    return _work_response(updated, repository=request.app.state.work_repository)
+
+
+@router.delete("/work/{workId}", response_model=WorkItemResponse, summary="작업 삭제")
+async def delete_work(request: Request, workId: str = Path(...)) -> WorkItemResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    deleted = request.app.state.work_repository.delete_work(workId)
+    await _publish_work_event(request, str(user.user_id), "work.deleted", work=deleted)
+    return _work_response(deleted, repository=request.app.state.work_repository)
 
 
 @router.post("/work/{workId}/set-labels", response_model=WorkItemResponse, summary="작업 라벨 교체")
@@ -276,15 +374,54 @@ async def set_work_labels(request: Request, payload: SetWorkLabelsRequest, workI
     user = await authenticate_http_user(request)
     work = _work_or_404(request, workId)
     _ensure_work_owner(user, work)
-    request.app.state.work_repository.set_label_links_by_names(
-        workId,
-        session_id=work.session_id,
-        owner_key=work.owner_key,
-        label_names=payload.label_names,
-    )
+    if payload.label_ids:
+        request.app.state.work_repository.set_label_links_by_ids(workId, session_id=work.session_id, owner_key=work.owner_key, label_ids=payload.label_ids)
+    else:
+        request.app.state.work_repository.set_label_links_by_names(workId, session_id=work.session_id, owner_key=work.owner_key, label_names=payload.label_names)
     updated = _work_or_404(request, workId)
     await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
-    return _work_response(updated)
+    return _work_response(updated, repository=request.app.state.work_repository)
+
+
+@router.get("/sessions/{sessionId}/work-labels", response_model=WorkLabelsResponse, summary="세션 작업 라벨 목록")
+async def list_work_labels(request: Request, sessionId: str = Path(...)) -> WorkLabelsResponse:
+    user = await authenticate_http_user(request)
+    session = _session_or_404(request, sessionId)
+    ensure_owner(user, session.get("user_id"))
+    labels = request.app.state.work_repository.list_labels(sessionId, owner_key=str(user.user_id))
+    return WorkLabelsResponse(items=[_label_response(label) for label in labels], totalCount=len(labels))
+
+
+@router.post("/sessions/{sessionId}/work-labels", response_model=WorkLabelResponse, summary="작업 라벨 생성")
+async def create_work_label(request: Request, payload: CreateWorkLabelRequest, sessionId: str = Path(...)) -> WorkLabelResponse:
+    user = await authenticate_http_user(request)
+    session = _session_or_404(request, sessionId)
+    ensure_owner(user, session.get("user_id"))
+    label = request.app.state.work_repository.create_label(session_id=sessionId, owner_key=str(user.user_id), name=payload.name.strip(), color=_label_color(payload.color))
+    await _publish_label_event(request, str(user.user_id), "work_label.created", label=label)
+    return _label_response(label)
+
+
+@router.post("/work-labels/{labelId}/update-fields", response_model=WorkLabelResponse, summary="작업 라벨 수정")
+async def update_work_label(request: Request, payload: UpdateWorkLabelRequest, labelId: str = Path(...)) -> WorkLabelResponse:
+    user = await authenticate_http_user(request)
+    existing = request.app.state.work_repository.get_label(labelId)
+    if existing is None or str(existing.owner_key) != str(user.user_id):
+        raise HTTPException(status_code=404, detail="work label not found")
+    label = request.app.state.work_repository.update_label(labelId, name=payload.name.strip() if payload.name is not None else None, color=_label_color(payload.color) if payload.color is not None else None)
+    await _publish_label_event(request, str(user.user_id), "work_label.updated", label=label)
+    return _label_response(label)
+
+
+@router.delete("/work-labels/{labelId}", response_model=dict, summary="작업 라벨 삭제")
+async def delete_work_label(request: Request, labelId: str = Path(...)) -> dict[str, bool]:
+    user = await authenticate_http_user(request)
+    existing = request.app.state.work_repository.get_label(labelId)
+    if existing is None or str(existing.owner_key) != str(user.user_id):
+        raise HTTPException(status_code=404, detail="work label not found")
+    deleted = request.app.state.work_repository.delete_label(labelId)
+    await _publish_simple_event(request, str(user.user_id), "work_label.deleted", {"labelId": labelId})
+    return {"deleted": deleted}
 
 
 @router.get("/work/{workId}/comments", response_model=WorkCommentsResponse, summary="작업 댓글 목록")
@@ -315,7 +452,20 @@ async def add_work_comment(request: Request, payload: CreateWorkCommentRequest, 
     )
     updated = _work_or_404(request, workId)
     await _publish_work_event(request, str(user.user_id), "work_comment.created", work=updated, comment=comment)
+    await _wake_work_from_comment(request, user=user, work=updated, comment=comment)
     return _comment_response(comment)
+
+
+@router.delete("/work/{workId}/comments/{commentId}", response_model=dict, summary="작업 댓글 삭제")
+async def delete_work_comment(request: Request, workId: str = Path(...), commentId: str = Path(...)) -> dict[str, bool]:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    deleted = request.app.state.work_repository.delete_comment(workId, commentId)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="work comment not found")
+    await _publish_work_event(request, str(user.user_id), "work_comment.deleted", work=work)
+    return {"deleted": True}
 
 
 @router.get("/work/{workId}/runs", response_model=WorkRunsResponse, summary="작업 실행 이력")
@@ -330,6 +480,79 @@ async def list_work_runs(
     _ensure_work_owner(user, work)
     items = request.app.state.work_repository.list_runs(workId, limit=limit, offset=offset)
     return WorkRunsResponse(items=[_run_response(item) for item in items], totalCount=len(items))
+
+
+@router.post("/work/{workId}/runs", response_model=WorkCreateResponse, summary="작업 실행 시작")
+async def create_work_run(request: Request, payload: CreateWorkRunRequest, workId: str = Path(...)) -> WorkCreateResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    if work.active_run_id:
+        raise HTTPException(status_code=409, detail="work already has an active run")
+    message = await _create_message_in_session(
+        request,
+        CreateSessionMessageRequest(
+            content=payload.message.strip() or "이 작업을 이어서 진행해.",
+            clientMessageId=payload.client_message_id,
+            inputPayload={"workId": work.work_id},
+        ),
+        session=_session_or_404(request, work.session_id),
+        user=user,
+    )
+    updated = request.app.state.work_repository.get_work(work.work_id) or work
+    await _publish_work_event(request, str(user.user_id), "work_run.created", work=updated)
+    return WorkCreateResponse(work=_work_response(updated, repository=request.app.state.work_repository), taskRunId=message.task_run_id, taskStatus=message.status)
+
+
+@router.post("/work-runs/{runId}/cancel", response_model=WorkRunResponse, summary="작업 실행 취소")
+async def cancel_work_run(request: Request, runId: str = Path(...)) -> WorkRunResponse:
+    user = await authenticate_http_user(request)
+    work = request.app.state.work_repository.get_work_by_task_run_id(runId)
+    if work is None:
+        raise HTTPException(status_code=404, detail="work run not found")
+    _ensure_work_owner(user, work)
+    task = await request.app.state.orchestrator.cancel(task_run_id=runId)
+    link = request.app.state.work_repository.update_run_status(work.work_id, runId, str(task.status))
+    updated = request.app.state.work_repository.get_work(work.work_id) or work
+    await _publish_work_event(request, str(user.user_id), "work_run.cancelled", work=updated)
+    return _run_response(link)
+
+
+@router.get("/work/{workId}/relations", response_model=WorkRelationsResponse, summary="작업 관계 목록")
+async def list_work_relations(request: Request, workId: str = Path(...)) -> WorkRelationsResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    items = request.app.state.work_repository.list_relations(workId)
+    return WorkRelationsResponse(items=[_relation_response(item) for item in items], totalCount=len(items))
+
+
+@router.post("/work/{workId}/relations", response_model=WorkRelationResponse, summary="작업 관계 추가")
+async def add_work_relation(request: Request, payload: UpsertWorkRelationRequest, workId: str = Path(...)) -> WorkRelationResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    target = _work_or_404(request, payload.target_work_id)
+    _ensure_work_owner(user, work)
+    _ensure_work_owner(user, target)
+    if work.session_id != target.session_id:
+        raise HTTPException(status_code=409, detail="target work belongs to another session")
+    relation_type = _normalize_relation_type(payload.relation_type)
+    relation = request.app.state.work_repository.add_relation(source_work_id=workId, target_work_id=target.work_id, relation_type=relation_type)
+    updated = request.app.state.work_repository.get_work(workId) or work
+    await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
+    return _relation_response(relation)
+
+
+@router.delete("/work/{workId}/relations/{relationType}/{targetWorkId}", response_model=dict, summary="작업 관계 삭제")
+async def remove_work_relation(request: Request, workId: str = Path(...), relationType: str = Path(...), targetWorkId: str = Path(...)) -> dict[str, bool]:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    target = _work_or_404(request, targetWorkId)
+    _ensure_work_owner(user, work)
+    _ensure_work_owner(user, target)
+    deleted = request.app.state.work_repository.remove_relation(source_work_id=workId, target_work_id=targetWorkId, relation_type=_normalize_relation_type(relationType))
+    await _publish_work_event(request, str(user.user_id), "work.updated", work=work)
+    return {"deleted": deleted}
 
 
 @router.get("/work/{workId}/context-preview", response_model=WorkContextPreviewResponse, summary="디버깅용 작업 컨텍스트 조회")
@@ -358,12 +581,48 @@ def _ensure_work_owner(user, work: WorkItem) -> None:
     ensure_owner(user, work.owner_key)
 
 
-def _work_response(work: WorkItem) -> WorkItemResponse:
-    return WorkItemResponse.model_validate(work, from_attributes=True)
+def _work_response(work: WorkItem, *, repository=None) -> WorkItemResponse:
+    data = WorkItemResponse.model_validate(work, from_attributes=True).model_dump(by_alias=True)
+    if repository is not None:
+        labels = _safe_label_ids(repository, work.work_id)
+        children = _safe_children(repository, work)
+        relations = _safe_relations(repository, work.work_id)
+        runs = _safe_runs(repository, work.work_id)
+        comments = _safe_comments(repository, work.work_id)
+        data.update(
+            {
+                "labelIds": labels,
+                "childCount": len(children),
+                "completedChildCount": len([child for child in children if child.status in {"done", "cancelled"}]),
+                "blockedByCount": len([relation for relation in relations if relation.relation_type == "blocks" and relation.source_work_id != work.work_id]),
+                "recentRunIds": [run.task_run_id for run in runs[:5]],
+                "commentCount": len(comments),
+                "blockedByWorkIds": [
+                    relation.source_work_id
+                    for relation in relations
+                    if relation.relation_type == "blocks" and relation.target_work_id == work.work_id
+                ],
+                "relatedWorkIds": [
+                    relation.target_work_id if relation.source_work_id == work.work_id else relation.source_work_id
+                    for relation in relations
+                    if relation.relation_type == "related"
+                ],
+                "childWorkIds": [child.work_id for child in children],
+            }
+        )
+    return WorkItemResponse.model_validate(data)
 
 
 def _comment_response(comment) -> WorkCommentResponse:
     return WorkCommentResponse.model_validate(comment, from_attributes=True)
+
+
+def _label_response(label) -> WorkLabelResponse:
+    return WorkLabelResponse.model_validate(label, from_attributes=True)
+
+
+def _relation_response(relation) -> WorkRelationResponse:
+    return WorkRelationResponse.model_validate(relation, from_attributes=True)
 
 
 def _run_response(run) -> WorkRunResponse:
@@ -389,7 +648,7 @@ async def _publish_work_event(
     if manager is None:
         return
     payload: dict[str, Any] = {
-        "work": _work_response(work).model_dump(mode="json", by_alias=True),
+        "work": _work_response(work, repository=getattr(request.app.state, "work_repository", None)).model_dump(mode="json", by_alias=True),
     }
     if comment is not None:
         payload["comment"] = _comment_response(comment).model_dump(mode="json", by_alias=True)
@@ -397,3 +656,112 @@ async def _publish_work_event(
         {"protocolVersion": 1, "type": event_type, "payload": payload},
         f"work:{owner_key}",
     )
+
+
+async def _publish_label_event(request: Request, owner_key: str, event_type: str, *, label) -> None:
+    await _publish_simple_event(
+        request,
+        owner_key,
+        event_type,
+        {"label": _label_response(label).model_dump(mode="json", by_alias=True)},
+    )
+
+
+async def _publish_simple_event(request: Request, owner_key: str, event_type: str, payload: dict[str, Any]) -> None:
+    manager = getattr(request.app.state, "ws_manager", None)
+    if manager is None:
+        return
+    await manager.broadcast({"protocolVersion": 1, "type": event_type, "payload": payload}, f"work:{owner_key}")
+
+
+def _safe_label_ids(repository, work_id: str) -> list[str]:
+    try:
+        rows = repository.connection_factory().execute("SELECT label_id FROM work_label_links WHERE work_id = %s", (work_id,)).fetchall()
+        return [str(dict(row)["label_id"]) for row in rows]
+    except Exception:
+        return []
+
+
+def _safe_children(repository, work: WorkItem) -> list[WorkItem]:
+    try:
+        return [
+            child
+            for child in repository.list_work(session_id=work.session_id, owner_key=work.owner_key, include_archived=True, limit=500, offset=0)
+            if child.parent_id == work.work_id
+        ]
+    except Exception:
+        return []
+
+
+def _safe_relations(repository, work_id: str):
+    try:
+        return repository.list_relations(work_id)
+    except Exception:
+        return []
+
+
+def _safe_runs(repository, work_id: str):
+    try:
+        return repository.list_runs(work_id, limit=5)
+    except Exception:
+        return []
+
+
+def _safe_comments(repository, work_id: str):
+    try:
+        return repository.list_comments(work_id, limit=500)
+    except Exception:
+        return []
+
+
+def _validate_assignee_or_400(request: Request, *, session_id: str, owner_key: str, assignee_agent_id: Any) -> None:
+    assignee = str(assignee_agent_id or "").strip()
+    if not assignee or assignee == "CEO":
+        return
+    profile = request.app.state.agent_repository.get_session_agent(profile_id=assignee, owner_key=owner_key)
+    if profile is None or profile.get("session_id") != session_id or profile.get("agent_type") != "user_subagent":
+        raise HTTPException(status_code=400, detail="invalid work assignee")
+
+
+def _normalize_relation_type(value: str) -> str:
+    relation_type = str(value or "").strip().lower()
+    if relation_type not in {"blocks", "related"}:
+        raise HTTPException(status_code=400, detail="invalid work relation type")
+    return relation_type
+
+
+def _label_color(value: str | None) -> str:
+    text = str(value or "#64748b").strip()
+    if not re.match(r"^#[0-9a-fA-F]{6}$", text):
+        return "#64748b"
+    return text
+
+
+async def _wake_work_from_comment(request: Request, *, user, work: WorkItem, comment) -> None:
+    if work.active_run_id:
+        return
+    if work.status == "backlog" or work.status == "cancelled":
+        return
+    if work.status == "done" and not bool(getattr(comment, "resume_requested", False)):
+        return
+    message = str(getattr(comment, "body", "") or "").strip() or "댓글을 반영해서 이 작업을 이어서 진행해."
+    try:
+        await _create_message_in_session(
+            request,
+            CreateSessionMessageRequest(
+                content=message,
+                clientMessageId=f"work-comment:{getattr(comment, 'comment_id', '')}",
+                inputPayload={"workId": work.work_id},
+            ),
+            session=_session_or_404(request, work.session_id),
+            user=user,
+        )
+    except Exception as error:
+        request.app.state.work_repository.add_comment(
+            WorkComment(
+                comment_id=new_id("comment"),
+                work_id=work.work_id,
+                author_type="system",
+                body=f"댓글 실행 시작 실패: {error}",
+            )
+        )

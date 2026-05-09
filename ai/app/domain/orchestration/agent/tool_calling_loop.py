@@ -1033,6 +1033,9 @@ class ToolCallingLoopHandler:
             "metadata": metadata,
             "tool_results": tool_results,
         }
+        work_disposition = self._work_disposition_from_tool_results(tool_results)
+        if work_disposition is not None:
+            result_payload["workDisposition"] = work_disposition
         output_payload = {
             "prompt": prompt,
             "text": final_text,
@@ -1309,6 +1312,16 @@ class ToolCallingLoopHandler:
             child_session = result.get("child_session")
             if isinstance(child_session, dict):
                 return dict(child_session)
+        return None
+
+    @staticmethod
+    def _work_disposition_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for item in reversed(tool_results):
+            if str(item.get("name") or "") != "work_disposition":
+                continue
+            result = item.get("result")
+            if isinstance(result, dict) and isinstance(result.get("workDisposition"), dict):
+                return dict(result["workDisposition"])
         return None
 
     @staticmethod

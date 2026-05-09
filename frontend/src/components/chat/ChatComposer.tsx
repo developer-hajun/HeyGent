@@ -27,6 +27,7 @@ type ChatComposerProps = {
   onWorkModeChange?: (enabled: boolean) => void
   onStop?: () => void
   onVoiceMode?: () => void
+  draftValue?: string | null
   statusMessage?: string | null
   selectedWorkLabel?: string | null
   workMode?: boolean
@@ -54,12 +55,13 @@ export function ChatComposer({
   onWorkModeChange,
   onStop,
   onVoiceMode,
+  draftValue = null,
   statusMessage = null,
   selectedWorkLabel = null,
   workMode = false,
   workModeDisabled = false,
 }: ChatComposerProps) {
-  const [value, setValue] = useState('')
+  const [value, setValue] = useState(draftValue ?? '')
   const [isRecording, setIsRecording] = useState(false)
   const [attachOpen, setAttachOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)

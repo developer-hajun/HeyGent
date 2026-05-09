@@ -64,7 +64,14 @@ export type AiRealtimeServerFrameType =
   | 'taskRun.cancel.accepted'
   | 'work.created'
   | 'work.updated'
+  | 'work.deleted'
+  | 'work_run.created'
+  | 'work_run.cancelled'
   | 'work_comment.created'
+  | 'work_comment.deleted'
+  | 'work_label.created'
+  | 'work_label.updated'
+  | 'work_label.deleted'
   | 'task.event'
 
 export type AiRealtimeFrameType = AiRealtimeCommandType | AiRealtimeServerFrameType | string
