@@ -45,6 +45,7 @@ export interface CreateWorkRequest {
   assigneeAgentId?: string | null
   rawUserInput: string
   executionInstruction: string
+  startExecution?: boolean
   expectedDeliverable?: string | null
   acceptanceCriteria?: string[]
   constraints?: string[]

@@ -87,6 +87,9 @@ async def create_session_work(
             author_type="user",
             author_id=str(user.user_id),
         )
+    if not payload.start_execution:
+        await _publish_work_event(request, str(user.user_id), "work.created", work=work)
+        return WorkCreateResponse(work=_work_response(work), taskRunId=None, taskStatus=None)
 
     task_status: str | None = None
     task_run_id: str | None = None

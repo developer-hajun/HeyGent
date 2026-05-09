@@ -14,6 +14,7 @@ class CreateWorkRequest(BaseModel):
     assignee_agent_id: str | None = Field(default=None, alias="assigneeAgentId", description="작업을 맡을 세션 에이전트 ID입니다.")
     raw_user_input: str = Field(alias="rawUserInput", description="사용자 입력 원문입니다. 요약/정리와 별도로 반드시 보존합니다.")
     execution_instruction: str = Field(alias="executionInstruction", description="최초 TaskRun에 넘길 실행 지시입니다.")
+    start_execution: bool = Field(default=True, alias="startExecution", description="생성 직후 실행까지 시작할지 여부입니다.")
     expected_deliverable: str | None = Field(default=None, alias="expectedDeliverable", description="기대 산출물입니다.")
     acceptance_criteria: list[str] = Field(default_factory=list, alias="acceptanceCriteria", description="완료 판단을 돕는 기준입니다.")
     constraints: list[str] = Field(default_factory=list, description="마감, 형식, 범위 같은 제약입니다.")

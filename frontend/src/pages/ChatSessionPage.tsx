@@ -349,28 +349,40 @@ export function ChatSessionPage() {
     if (!sessionId || isSending) return
 
     if (workMode) {
+      if (!authenticatedReady || commandClient === null) {
+        setLoadState(
+          shouldWaitForRealtime(connectionStatus, authStatus, realtimeError, accessToken)
+            ? 'loading'
+            : 'error',
+        )
+        setErrorMessage(
+          getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError, accessToken),
+        )
+        return
+      }
+
       setIsSending(true)
       setErrorMessage(null)
       setWorkStatusMessage('작업을 생성하는 중입니다.')
       try {
-        const response = await createWork(sessionId, buildCreateWorkPayload(content))
-        if (response.taskRunId !== null) {
-          try {
-            subscribeTask(response.taskRunId)
-          } catch (error) {
-            console.error(error)
-          }
-          await fetchMessages(sessionId)
-          await fetchActiveTaskRuns(sessionId)
-        } else {
-          await fetchMessages(sessionId)
-        }
+        const response = await createWork(sessionId, {
+          ...buildCreateWorkPayload(content),
+          startExecution: false,
+        })
+        await sendMessage({
+          sessionId,
+          content,
+          inputPayload: {
+            workId: response.work.workId,
+            workIdentifier: response.work.identifier,
+            workTitle: response.work.title,
+            workAssigneeAgentId: response.work.assigneeAgentId ?? 'CEO',
+          },
+        })
+        await fetchMessages(sessionId)
+        await fetchActiveTaskRuns(sessionId)
         setLoadState('ready')
-        setWorkStatusMessage(
-          response.taskRunId === null
-            ? '작업이 생성되었습니다.'
-            : '작업이 생성되고 실행을 시작했습니다.',
-        )
+        setWorkStatusMessage(`${response.work.identifier} 작업이 생성되고 실행을 시작했습니다.`)
       } catch (error) {
         const message = error instanceof Error ? error.message : '작업 생성에 실패했습니다.'
         setErrorMessage(message)
