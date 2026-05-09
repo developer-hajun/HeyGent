@@ -62,6 +62,9 @@ export type AiRealtimeServerFrameType =
   | 'taskRun.events.replay.result'
   | 'taskRun.resume.accepted'
   | 'taskRun.cancel.accepted'
+  | 'work.created'
+  | 'work.updated'
+  | 'work_comment.created'
   | 'task.event'
 
 export type AiRealtimeFrameType = AiRealtimeCommandType | AiRealtimeServerFrameType | string

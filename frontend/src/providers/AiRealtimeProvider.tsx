@@ -8,6 +8,7 @@ import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
+import { useWorkStore } from '@/store/useWorkStore'
 
 type AiRealtimeProviderProps = {
   children: ReactNode
@@ -126,6 +127,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         recordRawFrame(frame)
         useChatStore.getState().handleRealtimeFrame(frame)
         useTaskRunStore.getState().handleRealtimeFrame(frame)
+        useWorkStore.getState().handleRealtimeFrame(frame)
         recoverTaskRunAfterGap(frame)
       })
 

@@ -6,6 +6,7 @@ import {
   listWorkComments,
   moveWorkStatus,
 } from '@/apis/work'
+import { getFramePayload, isJsonObject, type AiRealtimeRawFrame } from '@/realtime/aiRealtimeTypes'
 import { toWorkCreatedEvent } from '@/realtime/workEvents'
 import type {
   CreateWorkRequest,
@@ -27,6 +28,7 @@ type WorkState = {
   createWork: (sessionId: string, payload: CreateWorkRequest) => Promise<WorkCreateResponse>
   moveStatus: (workId: string, status: WorkStatus) => Promise<WorkItem>
   addComment: (workId: string, body: string) => Promise<WorkComment>
+  handleRealtimeFrame: (frame: AiRealtimeRawFrame) => void
   clearWorkState: () => void
 }
 
@@ -134,6 +136,35 @@ export const useWorkStore = create<WorkState>((set) => ({
       throw error
     }
   },
+  handleRealtimeFrame: (frame) => {
+    if (
+      frame.type !== 'work.created' &&
+      frame.type !== 'work.updated' &&
+      frame.type !== 'work_comment.created'
+    ) {
+      return
+    }
+    const payload = getFramePayload(frame)
+    if (!isJsonObject(payload) || !isWorkItem(payload.work)) {
+      return
+    }
+    const work = payload.work
+    const comment = isWorkComment(payload.comment) ? payload.comment : undefined
+    set((state) => ({
+      itemsBySessionId: {
+        ...state.itemsBySessionId,
+        [work.sessionId]: upsertWorkItem(state.itemsBySessionId[work.sessionId] ?? [], work),
+      },
+      commentsByWorkId:
+        comment === undefined
+          ? state.commentsByWorkId
+          : {
+              ...state.commentsByWorkId,
+              [work.workId]: upsertWorkComment(state.commentsByWorkId[work.workId] ?? [], comment),
+            },
+      lastError: null,
+    }))
+  },
   clearWorkState: () =>
     set({
       itemsBySessionId: {},
@@ -151,4 +182,24 @@ function upsertWorkItem(items: WorkItem[], item: WorkItem) {
     return [item, ...items]
   }
   return items.map((current, itemIndex) => (itemIndex === index ? item : current))
+}
+
+function upsertWorkComment(items: WorkComment[], item: WorkComment) {
+  const index = items.findIndex((current) => current.commentId === item.commentId)
+  if (index === -1) {
+    return [...items, item]
+  }
+  return items.map((current, itemIndex) => (itemIndex === index ? item : current))
+}
+
+function isWorkItem(value: unknown): value is WorkItem {
+  return (
+    isJsonObject(value) && typeof value.workId === 'string' && typeof value.sessionId === 'string'
+  )
+}
+
+function isWorkComment(value: unknown): value is WorkComment {
+  return (
+    isJsonObject(value) && typeof value.commentId === 'string' && typeof value.workId === 'string'
+  )
 }

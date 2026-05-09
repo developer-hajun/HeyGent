@@ -103,8 +103,10 @@ async def create_session_work(
         task_status = message.status
     except Exception as error:
         updated = service.mark_run_start_failed(work_id=work.work_id, reason=str(error))
+        await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
         return WorkCreateResponse(work=_work_response(updated), taskRunId=None, taskStatus="FAILED_TO_START")
     updated = request.app.state.work_repository.get_work(work.work_id) or work
+    await _publish_work_event(request, str(user.user_id), "work.created", work=updated)
     return WorkCreateResponse(work=_work_response(updated), taskRunId=task_run_id, taskStatus=task_status)
 
 
@@ -124,7 +126,9 @@ async def move_work_status(request: Request, payload: MoveWorkStatusRequest, wor
     status = normalize_disposition_status(payload.status)
     if status is None:
         raise HTTPException(status_code=400, detail="invalid work status")
-    return _work_response(request.app.state.work_repository.update_status(workId, status))
+    updated = request.app.state.work_repository.update_status(workId, status)
+    await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
+    return _work_response(updated)
 
 
 @router.post("/work/{workId}/archive", response_model=WorkItemResponse, summary="작업 보관")
@@ -132,7 +136,9 @@ async def archive_work(request: Request, workId: str = Path(...)) -> WorkItemRes
     user = await authenticate_http_user(request)
     work = _work_or_404(request, workId)
     _ensure_work_owner(user, work)
-    return _work_response(request.app.state.work_repository.archive_work(workId))
+    updated = request.app.state.work_repository.archive_work(workId)
+    await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
+    return _work_response(updated)
 
 
 @router.post("/work/{workId}/restore", response_model=WorkItemResponse, summary="작업 복구")
@@ -140,7 +146,9 @@ async def restore_work(request: Request, workId: str = Path(...)) -> WorkItemRes
     user = await authenticate_http_user(request)
     work = _work_or_404(request, workId)
     _ensure_work_owner(user, work)
-    return _work_response(request.app.state.work_repository.restore_work(workId))
+    updated = request.app.state.work_repository.restore_work(workId)
+    await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
+    return _work_response(updated)
 
 
 @router.post("/work/{workId}/set-labels", response_model=WorkItemResponse, summary="작업 라벨 교체")
@@ -154,7 +162,9 @@ async def set_work_labels(request: Request, payload: SetWorkLabelsRequest, workI
         owner_key=work.owner_key,
         label_names=payload.label_names,
     )
-    return _work_response(_work_or_404(request, workId))
+    updated = _work_or_404(request, workId)
+    await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
+    return _work_response(updated)
 
 
 @router.get("/work/{workId}/comments", response_model=WorkCommentsResponse, summary="작업 댓글 목록")
@@ -183,6 +193,8 @@ async def add_work_comment(request: Request, payload: CreateWorkCommentRequest, 
         author_id=str(user.user_id),
         resume_requested=payload.resume,
     )
+    updated = _work_or_404(request, workId)
+    await _publish_work_event(request, str(user.user_id), "work_comment.created", work=updated, comment=comment)
     return _comment_response(comment)
 
 
@@ -243,3 +255,25 @@ def _int_or_none(value: Any) -> int | None:
         return int(str(value))
     except (TypeError, ValueError):
         return None
+
+
+async def _publish_work_event(
+    request: Request,
+    owner_key: str,
+    event_type: str,
+    *,
+    work: WorkItem,
+    comment=None,
+) -> None:
+    manager = getattr(request.app.state, "ws_manager", None)
+    if manager is None:
+        return
+    payload: dict[str, Any] = {
+        "work": _work_response(work).model_dump(mode="json", by_alias=True),
+    }
+    if comment is not None:
+        payload["comment"] = _comment_response(comment).model_dump(mode="json", by_alias=True)
+    await manager.broadcast(
+        {"protocolVersion": 1, "type": event_type, "payload": payload},
+        f"work:{owner_key}",
+    )
