@@ -145,6 +145,26 @@ class PostgresWorkRepository:
         connection.commit()
         return _require_work(self.get_work(work_id), work_id)
 
+    def update_fields(self, work_id: str, *, title: str | None = None, description: str | None = None) -> WorkItem:
+        updates: list[str] = ["updated_at = now()"]
+        params: list[Any] = []
+        if title is not None:
+            updates.append("title = %s")
+            params.append(title)
+        if description is not None:
+            updates.append("description = %s")
+            params.append(description)
+        if not params:
+            return _require_work(self.get_work(work_id), work_id)
+        params.append(work_id)
+        connection = self.connection_factory()
+        connection.execute(
+            f"UPDATE work_items SET {', '.join(updates)} WHERE work_id = %s",
+            tuple(params),
+        )
+        connection.commit()
+        return _require_work(self.get_work(work_id), work_id)
+
     def archive_work(self, work_id: str) -> WorkItem:
         connection = self.connection_factory()
         connection.execute("UPDATE work_items SET archived_at = now(), updated_at = now() WHERE work_id = %s", (work_id,))

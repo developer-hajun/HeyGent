@@ -11,6 +11,7 @@ from app.contracts.work import (
     CreateWorkRequest,
     MoveWorkStatusRequest,
     SetWorkLabelsRequest,
+    UpdateWorkFieldsRequest,
     WorkCommentResponse,
     WorkCommentsResponse,
     WorkContextPreviewResponse,
@@ -127,6 +128,18 @@ async def move_work_status(request: Request, payload: MoveWorkStatusRequest, wor
     if status is None:
         raise HTTPException(status_code=400, detail="invalid work status")
     updated = request.app.state.work_repository.update_status(workId, status)
+    await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
+    return _work_response(updated)
+
+
+@router.post("/work/{workId}/update-fields", response_model=WorkItemResponse, summary="작업 제목과 설명 변경")
+async def update_work_fields(request: Request, payload: UpdateWorkFieldsRequest, workId: str = Path(...)) -> WorkItemResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    title = payload.title.strip() if payload.title is not None else None
+    description = payload.description.strip() if payload.description is not None else None
+    updated = request.app.state.work_repository.update_fields(workId, title=title, description=description)
     await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
     return _work_response(updated)
 

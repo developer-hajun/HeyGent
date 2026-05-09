@@ -34,6 +34,13 @@ class MoveWorkStatusRequest(BaseModel):
     status: str = Field(description="변경할 작업 상태입니다.")
 
 
+class UpdateWorkFieldsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=200, description="변경할 작업 제목입니다.")
+    description: str | None = Field(default=None, max_length=10_000, description="변경할 작업 설명입니다.")
+
+
 class SetWorkLabelsRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 

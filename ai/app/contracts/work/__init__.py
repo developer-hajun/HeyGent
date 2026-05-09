@@ -3,6 +3,7 @@ from app.contracts.work.requests import (
     CreateWorkRequest,
     MoveWorkStatusRequest,
     SetWorkLabelsRequest,
+    UpdateWorkFieldsRequest,
 )
 from app.contracts.work.responses import (
     WorkCommentResponse,
@@ -20,6 +21,7 @@ __all__ = [
     "CreateWorkRequest",
     "MoveWorkStatusRequest",
     "SetWorkLabelsRequest",
+    "UpdateWorkFieldsRequest",
     "WorkCommentResponse",
     "WorkCommentsResponse",
     "WorkContextPreviewResponse",

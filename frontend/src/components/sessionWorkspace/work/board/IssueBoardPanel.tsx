@@ -90,6 +90,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const fetchSessionWork = useWorkStore((state) => state.fetchSessionWork)
   const fetchWorkComments = useWorkStore((state) => state.fetchComments)
   const moveWorkItemStatus = useWorkStore((state) => state.moveStatus)
+  const updateWorkItemFields = useWorkStore((state) => state.updateFields)
   const addWorkItemComment = useWorkStore((state) => state.addComment)
   const agentPanelsBySessionId = useSessionStore((state) => state.agentPanelsBySessionId)
   const assignees = useMemo<BoardAssignee[]>(() => {
@@ -233,6 +234,16 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   }
 
   const updateIssue = (issueId: string, patch: Partial<IssueBoardIssue>) => {
+    const serverWork = workItems.find((item) => item.workId === issueId)
+    const fieldPatch: { title?: string; description?: string } = {}
+    if (patch.title !== undefined) fieldPatch.title = patch.title
+    if (patch.description !== undefined) fieldPatch.description = patch.description
+    if (serverWork && Object.keys(fieldPatch).length > 0) {
+      void updateWorkItemFields(issueId, fieldPatch).catch((error) => {
+        console.error(error)
+      })
+      return
+    }
     const now = new Date().toISOString()
     setIssues((current) =>
       current.map((issue) =>
@@ -1027,6 +1038,96 @@ function StatusIcon({ status }: { status: IssueBoardStatus }) {
   return <Icon className={cn('h-4 w-4 shrink-0', color)} />
 }
 
+function InlineEditableText({
+  ariaLabel,
+  emptyLabel,
+  onCommit,
+  value,
+  variant,
+}: {
+  ariaLabel: string
+  emptyLabel?: string
+  onCommit: (value: string) => void
+  value: string
+  variant: 'title' | 'description'
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(value)
+
+  const commit = () => {
+    const nextValue = draft.trim()
+    setEditing(false)
+    if ((variant === 'description' || nextValue) && nextValue !== value) {
+      onCommit(nextValue)
+    }
+  }
+
+  if (editing) {
+    if (variant === 'title') {
+      return (
+        <input
+          autoFocus
+          value={draft}
+          onBlur={commit}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.currentTarget.blur()
+            }
+            if (event.key === 'Escape') {
+              setDraft(value)
+              setEditing(false)
+            }
+          }}
+          className="border-border bg-background text-foreground focus-visible:ring-ring/40 w-full rounded-md border px-2 py-1.5 text-xl leading-tight font-semibold outline-none focus-visible:ring-2"
+          aria-label={ariaLabel}
+        />
+      )
+    }
+    return (
+      <Textarea
+        autoFocus
+        value={draft}
+        onBlur={commit}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+            event.currentTarget.blur()
+          }
+          if (event.key === 'Escape') {
+            setDraft(value)
+            setEditing(false)
+          }
+        }}
+        className="border-border bg-background text-foreground focus-visible:ring-ring/40 mt-2 min-h-24 resize-y rounded-md border px-2 py-2 text-sm leading-relaxed outline-none focus-visible:ring-2"
+        aria-label={ariaLabel}
+        placeholder={emptyLabel}
+      />
+    )
+  }
+
+  const isEmpty = value.trim() === ''
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        setDraft(value)
+        setEditing(true)
+      }}
+      className={cn(
+        'hover:bg-muted/60 focus-visible:ring-ring/40 block w-full rounded-md px-2 py-1.5 text-left transition-colors outline-none focus-visible:ring-2',
+        variant === 'title'
+          ? 'text-foreground text-xl leading-tight font-semibold'
+          : 'text-muted-foreground mt-2 min-h-16 text-sm leading-relaxed',
+        isEmpty && 'text-muted-foreground/70',
+      )}
+      aria-label={ariaLabel}
+    >
+      {isEmpty ? emptyLabel : value}
+    </button>
+  )
+}
+
 function TodoDetailPanel({
   assignees,
   issue,
@@ -1091,18 +1192,18 @@ function TodoDetailPanel({
               <X className="h-4 w-4" />
             </Button>
           </div>
-          <input
+          <InlineEditableText
+            ariaLabel="작업 제목"
             value={issue.title}
-            onChange={(event) => onUpdateIssue(issue.id, { title: event.target.value })}
-            className="text-foreground focus-visible:ring-ring/40 w-full rounded-sm bg-transparent text-xl leading-tight font-semibold outline-none focus-visible:ring-2"
-            aria-label="작업 제목"
+            variant="title"
+            onCommit={(title) => onUpdateIssue(issue.id, { title })}
           />
-          <Textarea
+          <InlineEditableText
+            ariaLabel="작업 설명"
+            emptyLabel="작업 설명 추가..."
             value={issue.description}
-            onChange={(event) => onUpdateIssue(issue.id, { description: event.target.value })}
-            className="text-muted-foreground mt-2 min-h-20 resize-none border-0 bg-transparent p-0 text-sm leading-relaxed shadow-none focus-visible:ring-0"
-            aria-label="작업 설명"
-            placeholder="작업 설명 추가..."
+            variant="description"
+            onCommit={(description) => onUpdateIssue(issue.id, { description })}
           />
         </header>
 

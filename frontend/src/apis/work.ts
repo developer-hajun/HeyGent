@@ -55,6 +55,17 @@ export async function moveWorkStatus(workId: string, status: WorkStatus): Promis
   return data
 }
 
+export async function updateWorkFields(
+  workId: string,
+  fields: { title?: string; description?: string },
+): Promise<WorkItem> {
+  const { data } = await workApi.post<WorkItem>(
+    `/work/${encodeURIComponent(workId)}/update-fields`,
+    fields,
+  )
+  return data
+}
+
 export async function createWorkComment(workId: string, body: string): Promise<WorkComment> {
   const { data } = await workApi.post<WorkComment>(`/work/${encodeURIComponent(workId)}/comments`, {
     body,

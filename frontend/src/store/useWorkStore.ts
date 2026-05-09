@@ -5,6 +5,7 @@ import {
   listSessionWork,
   listWorkComments,
   moveWorkStatus,
+  updateWorkFields,
 } from '@/apis/work'
 import { getFramePayload, isJsonObject, type AiRealtimeRawFrame } from '@/realtime/aiRealtimeTypes'
 import { toWorkCreatedEvent } from '@/realtime/workEvents'
@@ -27,6 +28,10 @@ type WorkState = {
   fetchComments: (workId: string) => Promise<WorkComment[]>
   createWork: (sessionId: string, payload: CreateWorkRequest) => Promise<WorkCreateResponse>
   moveStatus: (workId: string, status: WorkStatus) => Promise<WorkItem>
+  updateFields: (
+    workId: string,
+    fields: { title?: string; description?: string },
+  ) => Promise<WorkItem>
   addComment: (workId: string, body: string) => Promise<WorkComment>
   handleRealtimeFrame: (frame: AiRealtimeRawFrame) => void
   clearWorkState: () => void
@@ -117,6 +122,22 @@ export const useWorkStore = create<WorkState>((set) => ({
       return item
     } catch (error) {
       set({ lastError: error instanceof Error ? error.message : '작업 상태 변경에 실패했습니다.' })
+      throw error
+    }
+  },
+  updateFields: async (workId, fields) => {
+    try {
+      const item = await updateWorkFields(workId, fields)
+      set((state) => ({
+        itemsBySessionId: {
+          ...state.itemsBySessionId,
+          [item.sessionId]: upsertWorkItem(state.itemsBySessionId[item.sessionId] ?? [], item),
+        },
+        lastError: null,
+      }))
+      return item
+    } catch (error) {
+      set({ lastError: error instanceof Error ? error.message : '작업 내용 변경에 실패했습니다.' })
       throw error
     }
   },
