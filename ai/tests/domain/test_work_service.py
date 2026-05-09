@@ -69,6 +69,9 @@ class FakeWorkRepository:
     def update_run_status(self, work_id: str, task_run_id: str, status: str) -> WorkRunLink:
         link = self.runs[(work_id, task_run_id)]
         self.runs[(work_id, task_run_id)] = WorkRunLink(work_id=work_id, task_run_id=task_run_id, run_kind=link.run_kind, status=status)
+        work = self.items[work_id]
+        active_run_id = None if status in {"COMPLETED", "FAILED", "CANCELED"} else task_run_id
+        self.items[work_id] = WorkItem(**{**_work_dict(work), "active_run_id": active_run_id, "latest_run_id": task_run_id})
         return self.runs[(work_id, task_run_id)]
 
 
@@ -176,6 +179,118 @@ def test_work_disposition_from_task_result_updates_work_status():
     assert updated is not None
     assert updated.status == "done"
     assert repository.runs[(work.work_id, "task-1")].status == "COMPLETED"
+
+
+def test_failed_task_result_blocks_work_and_releases_active_run():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    work = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "작업해줘"},
+    )
+    service.mark_run_started(work_id=work.work_id, task_run_id="task-1")
+
+    updated = service.apply_task_result(
+        work_id=work.work_id,
+        task=TaskRun(
+            task_run_id="task-1",
+            task_type="agent.loop",
+            owner_key="7",
+            status="FAILED",
+            result_payload={},
+        ),
+    )
+
+    assert updated is not None
+    assert updated.status == "blocked"
+    assert repository.items[work.work_id].active_run_id is None
+    assert repository.items[work.work_id].latest_run_id == "task-1"
+    assert repository.runs[(work.work_id, "task-1")].status == "FAILED"
+    assert repository.comments[-1].task_run_id == "task-1"
+
+
+def test_completed_task_with_blocking_tool_error_blocks_work():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    work = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "파일 저장"},
+    )
+    service.mark_run_started(work_id=work.work_id, task_run_id="task-1")
+
+    updated = service.apply_task_result(
+        work_id=work.work_id,
+        task=TaskRun(
+            task_run_id="task-1",
+            task_type="agent.loop",
+            owner_key="7",
+            status="COMPLETED",
+            result_payload={
+                "tool_results": [
+                    {
+                        "name": "terminal.run",
+                        "result": {
+                            "ok": False,
+                            "error": {
+                                "code": "bridge_not_connected",
+                                "tool_name": "terminal.run",
+                            },
+                        },
+                    }
+                ]
+            },
+        ),
+    )
+
+    assert updated is not None
+    assert updated.status == "blocked"
+    assert repository.items[work.work_id].active_run_id is None
+    assert repository.runs[(work.work_id, "task-1")].status == "COMPLETED"
+    assert repository.comments[-1].task_run_id == "task-1"
+
+
+def test_completed_task_with_terminal_nonzero_returncode_blocks_work():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    work = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "명령 실행"},
+    )
+    service.mark_run_started(work_id=work.work_id, task_run_id="task-1")
+
+    updated = service.apply_task_result(
+        work_id=work.work_id,
+        task=TaskRun(
+            task_run_id="task-1",
+            task_type="agent.loop",
+            owner_key="7",
+            status="COMPLETED",
+            result_payload={
+                "tool_results": [
+                    {
+                        "name": "terminal.run",
+                        "result": {
+                            "returncode": 1,
+                            "stderr": "failed",
+                        },
+                    }
+                ]
+            },
+        ),
+    )
+
+    assert updated is not None
+    assert updated.status == "blocked"
+    assert repository.items[work.work_id].active_run_id is None
 
 
 def test_resume_comment_moves_done_or_blocked_work_to_todo_but_not_cancelled():

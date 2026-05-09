@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.utils.ids import new_id
+from app.contracts.task.task_status import TaskStatus
 from app.domain.work.models import WorkComment, WorkItem
 from app.domain.work.policies import (
     initial_status_for_work_mode,
@@ -86,7 +87,25 @@ class WorkService:
         status = normalize_disposition_status(disposition.get("status") if disposition else None)
         if status is not None:
             return self.repository.update_status(work_id, status)
+        task_status = getattr(task.status, "value", str(task.status))
+        if task_status == TaskStatus.FAILED.value:
+            return self._block_work_after_run_failure(work_id=work_id, task_run_id=task.task_run_id)
+        if task_status == TaskStatus.COMPLETED.value and _has_blocking_tool_error(task.result_payload):
+            return self._block_work_after_run_failure(work_id=work_id, task_run_id=task.task_run_id)
         return self.repository.get_work(work_id)
+
+    def _block_work_after_run_failure(self, *, work_id: str, task_run_id: str) -> WorkItem:
+        updated = self.repository.update_status(work_id, "blocked")
+        self.repository.add_comment(
+            WorkComment(
+                comment_id=new_id("comment"),
+                work_id=work_id,
+                author_type="system",
+                task_run_id=task_run_id,
+                body="실행이 완료되지 않았습니다. 진행 내용을 확인한 뒤 다시 실행하세요.",
+            )
+        )
+        return updated
 
     def add_comment(
         self,
@@ -116,6 +135,43 @@ class WorkService:
 def _extract_work_disposition(payload: dict[str, Any]) -> dict[str, Any] | None:
     candidate = payload.get("workDisposition") or payload.get("work_disposition")
     return candidate if isinstance(candidate, dict) else None
+
+
+def _has_blocking_tool_error(payload: dict[str, Any]) -> bool:
+    for item in _walk_values(payload):
+        if not isinstance(item, dict):
+            continue
+        result = item.get("result")
+        if isinstance(result, dict):
+            tool_name = str(item.get("name") or result.get("tool_name") or "").strip()
+            if result.get("ok") is False and ("file" in tool_name or "terminal" in tool_name):
+                return True
+            try:
+                returncode = int(result.get("returncode"))
+            except (TypeError, ValueError):
+                returncode = 0
+            if returncode != 0 and ("file" in tool_name or "terminal" in tool_name):
+                return True
+        error = item.get("error")
+        if not isinstance(error, dict):
+            continue
+        code = str(error.get("code") or "").strip()
+        tool_name = str(error.get("tool_name") or item.get("name") or "").strip()
+        if code in {"bridge_not_connected", "tool_runtime_unavailable", "tool_not_found"}:
+            return True
+        if item.get("ok") is False and ("file" in tool_name or "terminal" in tool_name):
+            return True
+    return False
+
+
+def _walk_values(value: Any):
+    yield value
+    if isinstance(value, dict):
+        for child in value.values():
+            yield from _walk_values(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_values(child)
 
 
 def _string_list(value: Any) -> list[str]:

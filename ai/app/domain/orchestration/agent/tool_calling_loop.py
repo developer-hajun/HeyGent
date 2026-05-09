@@ -9,7 +9,7 @@ from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.core.utils.ids import new_id
 from app.domain.orchestration.agent.tool_guard import ToolGuard, ToolGuardDecision, ToolGuardResult
-from app.domain.providers.model.base import AgentMessage, ToolResultMessage
+from app.domain.providers.model.base import AgentMessage, AgentModelResponse, ToolResultMessage
 from app.domain.orchestration.prompts.prompt_builder import assemble_agent_loop_messages
 from app.domain.session.sessions.transcript_store import TranscriptStore
 from app.domain.orchestration.runtime_planning.todo_state import (
@@ -307,17 +307,15 @@ class ToolCallingLoopHandler:
                 )
             current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
 
-        return self._build_completed_outcome(
+        return self._build_failed_outcome(
             task_input=task_input,
-            prompt=prompt,
             generated=generated,
-            final_text=generated.output_text if generated is not None else "작업 반복 한도에 도달했습니다.",
             tool_results=all_tool_results,
             operations=operations,
             llm_call_count=llm_call_count,
-            resume_payload=resume_payload,
             todo_state=current_todo_state,
             operation_counters=operation_counters,
+            max_iterations=max_iterations,
         )
 
     def _new_turn_messages(
@@ -1099,6 +1097,62 @@ class ToolCallingLoopHandler:
                     "kind": "approval",
                     "status": "waiting",
                     "summary": approval_reason,
+                },
+            ],
+        }
+
+    def _build_failed_outcome(
+        self,
+        *,
+        task_input: dict[str, Any],
+        generated: AgentModelResponse | None,
+        tool_results: list[dict[str, Any]],
+        operations: list[dict[str, Any]],
+        llm_call_count: int,
+        todo_state: dict[str, Any],
+        operation_counters: dict[str, int],
+        max_iterations: int,
+    ) -> dict[str, Any]:
+        tool_names = [str(item["name"]) for item in tool_results]
+        observed_steps = self._observed_semantic_steps(tool_results)
+        step_summary = self._observed_step_summary(observed_steps)
+        message = f"작업 반복 한도({max_iterations})에 도달했습니다."
+        return {
+            "task_status": TaskStatus.FAILED,
+            "step_status": StepStatus.FAILED,
+            "result_payload": {
+                "text": generated.output_text if generated is not None and generated.output_text else message,
+                "tool_results": tool_results,
+                "error": {
+                    "code": "max_iterations_exceeded",
+                    "maxIterations": max_iterations,
+                },
+            },
+            "output_payload": {
+                "tool_results": tool_results,
+            },
+            "detail_json": self._build_detail_json(
+                tool_names=tool_names,
+                llm_call_count=llm_call_count,
+                model_name=self._model_name(generated, task_input) if generated is not None else None,
+                todo_state=todo_state,
+            ),
+            "todo_state": todo_state,
+            "observed_steps": observed_steps,
+            "summary_message": step_summary or message,
+            "error_message": message,
+            "operations": [
+                *operations,
+                {
+                    "key": self._next_operation_key(
+                        operation_counters,
+                        namespace="loop",
+                        base_key="max_iterations",
+                    ),
+                    "title": "반복 한도 도달",
+                    "kind": "system",
+                    "status": "failed",
+                    "summary": message,
                 },
             ],
         }

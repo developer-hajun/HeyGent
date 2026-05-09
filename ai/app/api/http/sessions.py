@@ -511,7 +511,24 @@ def _attach_work_context_or_404(
     task_input["workIdentifier"] = work.identifier
     task_input["workAssigneeAgentId"] = work.assignee_agent_id
     task_input["workContext"] = repository.context_preview(work.work_id)
+    _apply_work_execution_defaults(task_input, settings=request.app.state.settings)
     return work
+
+
+def _apply_work_execution_defaults(task_input: dict[str, Any], *, settings: Any) -> None:
+    if task_input.get("max_iterations") not in (None, ""):
+        return
+    raw_value = getattr(settings, "work_execution_max_iterations", 24)
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        value = 24
+    raw_upper = getattr(settings, "agent_loop_max_iterations", 120)
+    try:
+        upper_bound = int(raw_upper)
+    except (TypeError, ValueError):
+        upper_bound = 120
+    task_input["max_iterations"] = max(1, min(value, max(1, upper_bound)))
 
 
 def _apply_linked_work_result(request: Request, *, task_input: dict[str, Any], task) -> None:

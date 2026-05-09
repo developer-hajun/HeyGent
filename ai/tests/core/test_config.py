@@ -87,6 +87,7 @@ def test_agent_loop_timeout_defaults_are_tolerant(monkeypatch, tmp_path):
     monkeypatch.delenv("HEYGENT_AGENT_LOOP_DEFAULT_MAX_ITERATIONS", raising=False)
     monkeypatch.delenv("HEYGENT_AGENT_LOOP_WORKER_DEFAULT_MAX_ITERATIONS", raising=False)
     monkeypatch.delenv("HEYGENT_AGENT_LOOP_MAX_ITERATIONS", raising=False)
+    monkeypatch.delenv("HEYGENT_WORK_EXECUTION_MAX_ITERATIONS", raising=False)
 
     settings = get_settings()
 
@@ -95,6 +96,7 @@ def test_agent_loop_timeout_defaults_are_tolerant(monkeypatch, tmp_path):
     assert settings.agent_loop_default_max_iterations == 90
     assert settings.agent_loop_worker_default_max_iterations == 80
     assert settings.agent_loop_max_iterations == 120
+    assert settings.work_execution_max_iterations == 24
 
 
 def test_agent_loop_timeout_settings_read_environment(monkeypatch, tmp_path):
@@ -104,6 +106,7 @@ def test_agent_loop_timeout_settings_read_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("HEYGENT_AGENT_LOOP_DEFAULT_MAX_ITERATIONS", "70")
     monkeypatch.setenv("HEYGENT_AGENT_LOOP_WORKER_DEFAULT_MAX_ITERATIONS", "75")
     monkeypatch.setenv("HEYGENT_AGENT_LOOP_MAX_ITERATIONS", "140")
+    monkeypatch.setenv("HEYGENT_WORK_EXECUTION_MAX_ITERATIONS", "18")
 
     settings = get_settings()
 
@@ -112,3 +115,4 @@ def test_agent_loop_timeout_settings_read_environment(monkeypatch, tmp_path):
     assert settings.agent_loop_default_max_iterations == 70
     assert settings.agent_loop_worker_default_max_iterations == 75
     assert settings.agent_loop_max_iterations == 140
+    assert settings.work_execution_max_iterations == 18
