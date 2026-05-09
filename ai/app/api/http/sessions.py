@@ -509,6 +509,7 @@ def _attach_work_context_or_404(
         raise HTTPException(status_code=409, detail="work belongs to another session")
     task_input["workId"] = work.work_id
     task_input["workIdentifier"] = work.identifier
+    task_input["workAssigneeAgentId"] = work.assignee_agent_id
     task_input["workContext"] = repository.context_preview(work.work_id)
     return work
 

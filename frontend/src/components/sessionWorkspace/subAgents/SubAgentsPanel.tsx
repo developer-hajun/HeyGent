@@ -15,6 +15,7 @@ import {
   getSubAgentImageBySpriteId,
   SUB_AGENT_PROFILE_IMAGE_OPTIONS,
 } from './subAgentOptions'
+import { createSubAgentFromTemplate } from './subAgentTemplates'
 
 export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -110,6 +111,16 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
         }}
         onPickAdapter={(adapterType) => {
           setSearchParams({ new: '1', adapterType })
+        }}
+        onPickTemplate={(templateId) => {
+          addAgentPanelToSession(
+            sessionId,
+            createSubAgentFromTemplate(
+              templateId,
+              agentPanels.map((item) => item.agent.name),
+            ),
+          )
+          resetDraft()
         }}
       />
     </SubAgentsPanelShell>

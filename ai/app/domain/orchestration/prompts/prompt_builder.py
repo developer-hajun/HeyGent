@@ -72,6 +72,7 @@ class PromptBuilder:
                 build_project_context_prompt(input_payload=input_payload),
                 build_gateway_context_prompt(input_payload=input_payload),
                 str(input_payload.get("persistent_memory_context", "")).strip(),
+                build_work_context_prompt(input_payload=input_payload),
                 base_prompt,
             ]
         )
@@ -185,6 +186,35 @@ class PromptBuilder:
             if key and title:
                 lines.append(f"{marker} {key}: {title} ({status})")
         return "\n".join(lines)
+
+
+def build_work_context_prompt(*, input_payload: dict) -> str:
+    work_context = input_payload.get("workContext")
+    work_id = str(input_payload.get("workId") or "").strip()
+    work_identifier = str(input_payload.get("workIdentifier") or "").strip()
+    assignee_agent_id = str(input_payload.get("workAssigneeAgentId") or "").strip()
+    if not work_id and not work_identifier and not isinstance(work_context, dict):
+        return ""
+
+    lines = ["연결된 작업 컨텍스트:"]
+    if work_identifier:
+        lines.append(f"- 작업 번호: {work_identifier}")
+    if assignee_agent_id:
+        lines.append(f"- 담당 에이전트: {assignee_agent_id}")
+        if assignee_agent_id != "CEO":
+            lines.append("- 담당 에이전트가 CEO가 아니면 delegate_task로 해당 담당 작업을 맡기고 결과를 종합하세요.")
+    if isinstance(work_context, dict):
+        title = str(work_context.get("title") or "").strip()
+        if title:
+            lines.append(f"- 제목: {title}")
+        labels = work_context.get("labels")
+        if isinstance(labels, list) and labels:
+            lines.append("- 라벨: " + ", ".join(str(label) for label in labels if str(label).strip()))
+        prompt_preview = str(work_context.get("promptPreview") or "").strip()
+        if prompt_preview:
+            lines.append("- 요약:")
+            lines.append(prompt_preview)
+    return "\n".join(lines)
 
 
 class PromptManager(PromptBuilder):

@@ -47,7 +47,7 @@ import {
   type IssueBoardStatus,
 } from '../model/issueBoardModel'
 
-const MAIN_AGENT_ASSIGNEE = { id: 'main-agent', name: '메인 에이전트', icon: UserRound } as const
+const MAIN_AGENT_ASSIGNEE = { id: 'CEO', name: 'CEO', icon: UserRound } as const
 const EMPTY_WORK_ITEMS: WorkItem[] = []
 const EMPTY_AGENT_PANELS: ReturnType<
   typeof useSessionStore.getState
@@ -91,6 +91,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const fetchWorkComments = useWorkStore((state) => state.fetchComments)
   const moveWorkItemStatus = useWorkStore((state) => state.moveStatus)
   const updateWorkItemFields = useWorkStore((state) => state.updateFields)
+  const updateWorkItemAssignee = useWorkStore((state) => state.updateAssignee)
   const addWorkItemComment = useWorkStore((state) => state.addComment)
   const agentPanelsBySessionId = useSessionStore((state) => state.agentPanelsBySessionId)
   const assignees = useMemo<BoardAssignee[]>(() => {
@@ -225,6 +226,13 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   }
 
   const assignIssue = (issueId: string, assigneeAgentId: string | null) => {
+    const serverWork = workItems.find((item) => item.workId === issueId)
+    if (serverWork) {
+      void updateWorkItemAssignee(issueId, assigneeAgentId).catch((error) => {
+        console.error(error)
+      })
+      return
+    }
     const now = new Date().toISOString()
     setIssues((current) =>
       current.map((issue) =>

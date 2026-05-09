@@ -11,6 +11,7 @@ from app.contracts.work import (
     CreateWorkRequest,
     MoveWorkStatusRequest,
     SetWorkLabelsRequest,
+    UpdateWorkAssigneeRequest,
     UpdateWorkFieldsRequest,
     WorkCommentResponse,
     WorkCommentsResponse,
@@ -140,6 +141,17 @@ async def update_work_fields(request: Request, payload: UpdateWorkFieldsRequest,
     title = payload.title.strip() if payload.title is not None else None
     description = payload.description.strip() if payload.description is not None else None
     updated = request.app.state.work_repository.update_fields(workId, title=title, description=description)
+    await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
+    return _work_response(updated)
+
+
+@router.post("/work/{workId}/assign", response_model=WorkItemResponse, summary="작업 담당 에이전트 변경")
+async def update_work_assignee(request: Request, payload: UpdateWorkAssigneeRequest, workId: str = Path(...)) -> WorkItemResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    assignee_agent_id = payload.assignee_agent_id.strip() if payload.assignee_agent_id else None
+    updated = request.app.state.work_repository.update_assignee(workId, assignee_agent_id=assignee_agent_id)
     await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
     return _work_response(updated)
 

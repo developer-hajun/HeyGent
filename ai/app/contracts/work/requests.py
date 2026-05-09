@@ -11,6 +11,7 @@ class CreateWorkRequest(BaseModel):
     client_request_id: str = Field(alias="clientRequestId", description="작업 생성과 최초 실행을 묶는 중복 방지 키입니다.")
     title: str = Field(description="LLM이 작성한 작업 제목입니다.")
     description: str = Field(description="LLM이 작성한 작업 설명입니다.")
+    assignee_agent_id: str | None = Field(default=None, alias="assigneeAgentId", description="작업을 맡을 세션 에이전트 ID입니다.")
     raw_user_input: str = Field(alias="rawUserInput", description="사용자 입력 원문입니다. 요약/정리와 별도로 반드시 보존합니다.")
     execution_instruction: str = Field(alias="executionInstruction", description="최초 TaskRun에 넘길 실행 지시입니다.")
     expected_deliverable: str | None = Field(default=None, alias="expectedDeliverable", description="기대 산출물입니다.")
@@ -39,6 +40,12 @@ class UpdateWorkFieldsRequest(BaseModel):
 
     title: str | None = Field(default=None, min_length=1, max_length=200, description="변경할 작업 제목입니다.")
     description: str | None = Field(default=None, max_length=10_000, description="변경할 작업 설명입니다.")
+
+
+class UpdateWorkAssigneeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    assignee_agent_id: str | None = Field(default=None, alias="assigneeAgentId", description="작업을 맡을 세션 에이전트 ID입니다.")
 
 
 class SetWorkLabelsRequest(BaseModel):

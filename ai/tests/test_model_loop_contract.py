@@ -71,6 +71,30 @@ def test_prompt_builder_places_persistent_memory_before_current_prompt():
     assert prompt.index("<memory-context>") < prompt.index("오늘 회의 정리해줘")
 
 
+def test_prompt_builder_includes_work_assignment_context_before_current_prompt():
+    prompt_builder = PromptBuilder(SkillPromptBuilder(SkillRegistry()))
+
+    prompt = prompt_builder.build_model_prompt(
+        input_payload={
+            "prompt": "결과를 파일로 저장해줘",
+            "workId": "work-1",
+            "workIdentifier": "TASK-7",
+            "workAssigneeAgentId": "agent-researcher",
+            "workContext": {
+                "title": "삼성전자와 SK하이닉스 조사",
+                "labels": ["research"],
+                "promptPreview": "최근 이슈를 요약한다.",
+            },
+        }
+    )
+
+    assert "연결된 작업 컨텍스트" in prompt
+    assert "TASK-7" in prompt
+    assert "agent-researcher" in prompt
+    assert "delegate_task로 해당 담당 작업을 맡기고 결과를 종합하세요." in prompt
+    assert prompt.index("연결된 작업 컨텍스트") < prompt.index("결과를 파일로 저장해줘")
+
+
 def test_persistent_memory_prompt_sanitizes_metadata():
     prompt = build_persistent_memory_prompt(
         [

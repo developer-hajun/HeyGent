@@ -50,6 +50,11 @@ class FakeWorkRepository:
         self.items[work_id] = WorkItem(**{**_work_dict(work), "status": status})
         return self.items[work_id]
 
+    def update_assignee(self, work_id: str, *, assignee_agent_id: str | None) -> WorkItem:
+        work = self.items[work_id]
+        self.items[work_id] = WorkItem(**{**_work_dict(work), "assignee_agent_id": assignee_agent_id})
+        return self.items[work_id]
+
     def add_comment(self, comment: WorkComment) -> WorkComment:
         self.comments.append(comment)
         return comment

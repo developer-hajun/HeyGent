@@ -42,6 +42,7 @@ export interface CreateWorkRequest {
   clientRequestId: string
   title: string
   description: string
+  assigneeAgentId?: string | null
   rawUserInput: string
   executionInstruction: string
   expectedDeliverable?: string | null

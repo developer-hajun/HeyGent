@@ -66,6 +66,16 @@ export async function updateWorkFields(
   return data
 }
 
+export async function updateWorkAssignee(
+  workId: string,
+  assigneeAgentId: string | null,
+): Promise<WorkItem> {
+  const { data } = await workApi.post<WorkItem>(`/work/${encodeURIComponent(workId)}/assign`, {
+    assigneeAgentId,
+  })
+  return data
+}
+
 export async function createWorkComment(workId: string, body: string): Promise<WorkComment> {
   const { data } = await workApi.post<WorkComment>(`/work/${encodeURIComponent(workId)}/comments`, {
     body,

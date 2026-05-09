@@ -165,6 +165,20 @@ class PostgresWorkRepository:
         connection.commit()
         return _require_work(self.get_work(work_id), work_id)
 
+    def update_assignee(self, work_id: str, *, assignee_agent_id: str | None) -> WorkItem:
+        connection = self.connection_factory()
+        connection.execute(
+            """
+            UPDATE work_items
+            SET assignee_agent_id = %s,
+                updated_at = now()
+            WHERE work_id = %s
+            """,
+            (assignee_agent_id, work_id),
+        )
+        connection.commit()
+        return _require_work(self.get_work(work_id), work_id)
+
     def archive_work(self, work_id: str) -> WorkItem:
         connection = self.connection_factory()
         connection.execute("UPDATE work_items SET archived_at = now(), updated_at = now() WHERE work_id = %s", (work_id,))
