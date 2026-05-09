@@ -80,11 +80,11 @@ export function OfficeMap({
 
     const observer = new ResizeObserver(([entry]) => {
       const { width, height } = entry.contentRect
-      const s = Math.max(width / MAP_WIDTH, height / MAP_HEIGHT)
+      const s = Math.min(width / MAP_WIDTH, height / MAP_HEIGHT)
       setScale(s)
       setOffset({
-        x: Math.max(0, (width - MAP_WIDTH * s) / 2),
-        y: Math.max(0, (height - MAP_HEIGHT * s) / 2),
+        x: (width - MAP_WIDTH * s) / 2,
+        y: (height - MAP_HEIGHT * s) / 2,
       })
     })
 
