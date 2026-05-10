@@ -20,8 +20,8 @@ import { Switch } from '@/components/ui/switch'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { motion, AnimatePresence } from 'motion/react'
 import { useChatStore } from '@/store/useChatStore'
-import type { AiModelOption } from '@/types/aiChat'
-import { saveOpenAiApiKey } from '@/apis/openaiApiKey'
+import { getOpenAiModels, type OpenAiModelsResponse } from '@/apis/openaiModels'
+import { saveOpenAiApiKey, deleteOpenAiApiKey, type ProviderName } from '@/apis/openaiApiKey'
 
 interface SettingsDialogProps {
   open: boolean
@@ -40,7 +40,15 @@ type SettingsTab =
   | 'external'
 
 export function SettingsDialog({ open, onOpenChange, sessionId, initialTab }: SettingsDialogProps) {
+  const [prevOpen, setPrevOpen] = useState(open)
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'general')
+
+  if (prevOpen !== open) {
+    setPrevOpen(open)
+    if (open && initialTab) {
+      setActiveTab(initialTab)
+    }
+  }
 
   const handleOpenChange = (nextOpen: boolean) => {
     onOpenChange(nextOpen)
@@ -318,48 +326,34 @@ function SkillsContent() {
 // Models Content
 // ────────────────────────────────────────────────────────────────────────────
 function ModelsContent({ sessionId }: { sessionId?: string }) {
-  const modelOptions = useChatStore((state) => state.modelOptions)
-  const modelOptionsLoading = useChatStore((state) => state.modelOptionsLoading)
-  const modelOptionsError = useChatStore((state) => state.modelOptionsError)
-  const fetchModelOptions = useChatStore((state) => state.fetchModelOptions)
   const updateSessionSettings = useChatStore((state) => state.updateSessionSettings)
-  const [optimisticModel, setOptimisticModel] = useState<{
-    sessionId?: string
-    modelId: string
-  } | null>(null)
+  const [modelData, setModelData] = useState<OpenAiModelsResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [selectedModel, setSelectedModel] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
-    void fetchModelOptions(sessionId).catch(() => undefined)
-  }, [fetchModelOptions, sessionId])
+    getOpenAiModels()
+      .then((data) => {
+        setModelData(data)
+        setSelectedModel(data.defaultModel)
+      })
+      .catch(() => setError('모델 목록을 불러오는데 실패했습니다.'))
+      .finally(() => setLoading(false))
+  }, [])
 
-  const models = modelOptions?.models ?? []
-  const selectedModel =
-    optimisticModel !== null && optimisticModel.sessionId === sessionId
-      ? optimisticModel.modelId
-      : typeof modelOptions?.model === 'string'
-        ? modelOptions.model
-        : null
-
-  const handleSelectModel = async (model: AiModelOption) => {
+  const handleSelectModel = async (modelId: string) => {
     if (sessionId === undefined) {
-      setOptimisticModel(null)
       setSaveError('세션을 연 뒤 모델을 저장할 수 있습니다.')
       return
     }
-
-    setOptimisticModel({ sessionId, modelId: model.id })
+    setSelectedModel(modelId)
     setSaveError(null)
-
     try {
-      await updateSessionSettings({
-        sessionId,
-        settingsPatch: { model: model.id },
-      })
-    } catch (error) {
-      // 저장 실패 시 임시 선택 표시를 서버가 확인한 값으로 되돌린다.
-      setOptimisticModel(null)
-      setSaveError(error instanceof Error ? error.message : '모델 설정 저장에 실패했습니다.')
+      await updateSessionSettings({ sessionId, settingsPatch: { model: modelId } })
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : '모델 설정 저장에 실패했습니다.')
     }
   }
 
@@ -368,50 +362,52 @@ function ModelsContent({ sessionId }: { sessionId?: string }) {
       <div>
         <h3 className="text-foreground mb-2 text-xl font-semibold">모델</h3>
         <p className="text-muted-foreground text-sm">
-          서버에서 제공하는 모델 목록을 확인하고 현재 대화의 모델을 선택합니다
+          사용 가능한 AI 모델 목록을 확인하고 현재 대화의 모델을 선택합니다
         </p>
       </div>
 
-      {modelOptionsLoading && (
+      {loading && (
         <div className="text-muted-foreground flex items-center gap-2 text-sm">
           <Loader2 className="h-4 w-4 animate-spin" />
           모델 목록을 불러오는 중입니다.
         </div>
       )}
 
-      {modelOptionsError && (
+      {error && (
         <div className="border-border bg-muted/30 text-muted-foreground rounded-xl border p-4 text-sm">
-          {modelOptionsError}
+          {error}
         </div>
       )}
 
-      {!modelOptionsLoading && !modelOptionsError && models.length === 0 && (
-        <div className="border-border bg-muted/30 text-muted-foreground rounded-xl border p-4 text-sm">
-          사용할 수 있는 모델 목록이 아직 제공되지 않았습니다.
-        </div>
-      )}
-
-      <div className="space-y-3">
-        {models.map((model) => (
-          <button
-            key={`${model.provider ?? 'default'}:${model.id}`}
-            type="button"
-            onClick={() => void handleSelectModel(model)}
-            className={`border-border flex w-full items-start justify-between rounded-xl border p-4 text-left transition-colors ${
-              selectedModel === model.id ? 'bg-primary/5 border-primary/30' : 'bg-muted/30'
-            }`}
-          >
-            <div className="min-w-0 flex-1">
-              <h4 className="text-foreground truncate text-sm font-medium">{model.label}</h4>
-              <p className="text-muted-foreground mt-1 text-xs">
-                {model.provider ?? '기본 provider'}
-              </p>
-              {model.warning && <p className="mt-2 text-xs text-amber-600">{model.warning}</p>}
+      {!loading && !error && modelData && (
+        <div className="space-y-5">
+          {modelData.providers.map((provider) => (
+            <div key={provider.providerName}>
+              <h4 className="text-foreground mb-2 text-sm font-semibold">{provider.displayName}</h4>
+              <div className="space-y-2">
+                {provider.models.map((modelId) => (
+                  <button
+                    key={modelId}
+                    type="button"
+                    onClick={() => void handleSelectModel(modelId)}
+                    className={`border-border flex w-full items-start justify-between rounded-xl border p-4 text-left transition-colors ${
+                      selectedModel === modelId ? 'bg-primary/5 border-primary/30' : 'bg-muted/30'
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <h5 className="text-foreground truncate text-sm font-medium">{modelId}</h5>
+                      <p className="text-muted-foreground mt-1 text-xs">{provider.displayName}</p>
+                    </div>
+                    {selectedModel === modelId && (
+                      <Check className="text-primary h-4 w-4 shrink-0" />
+                    )}
+                  </button>
+                ))}
+              </div>
             </div>
-            {selectedModel === model.id && <Check className="text-primary h-4 w-4 shrink-0" />}
-          </button>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {saveError && <p className="text-destructive text-sm">{saveError}</p>}
       {sessionId === undefined && (
@@ -565,7 +561,7 @@ function PersonalizationContent() {
 // API Keys Content
 // ────────────────────────────────────────────────────────────────────────────
 const API_KEY_GUIDES = {
-  openai: {
+  openai_api_key: {
     placeholder: 'sk-proj-...',
     steps: [
       {
@@ -579,7 +575,21 @@ const API_KEY_GUIDES = {
       { text: '생성된 키는 한 번만 표시됩니다. 바로 복사해 안전한 곳에 저장하세요.' },
     ],
   },
-  anthropic: {
+  gemini_api_key: {
+    placeholder: 'AIza...',
+    steps: [
+      {
+        before: '',
+        linkLabel: 'Google AI Studio',
+        href: 'https://aistudio.google.com/apikey',
+        after: '에 접속합니다.',
+      },
+      { text: 'Google 계정으로 로그인합니다.' },
+      { text: 'Create API key 버튼을 눌러 키를 생성합니다.' },
+      { text: '생성된 키를 복사해 안전한 곳에 저장하세요.' },
+    ],
+  },
+  claude_api_key: {
     placeholder: 'sk-ant-...',
     steps: [
       {
@@ -593,48 +603,44 @@ const API_KEY_GUIDES = {
       { text: '생성된 키는 한 번만 표시됩니다. 바로 복사해 안전한 곳에 저장하세요.' },
     ],
   },
-  github: {
-    placeholder: 'ghp_...',
-    steps: [
-      {
-        before: '',
-        linkLabel: 'GitHub 토큰 설정 페이지',
-        href: 'https://github.com/settings/tokens',
-        after: '에 접속합니다.',
-      },
-      { text: 'Generate new token (classic) 버튼을 클릭합니다.' },
-      { text: '만료 기간과 필요한 권한(repo, workflow 등)을 선택합니다.' },
-      { text: '생성된 토큰은 다시 볼 수 없습니다. 바로 복사해 안전한 곳에 저장하세요.' },
-    ],
-  },
 } as const
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
 function ApiKeysContent() {
   const [apiKeys, setApiKeys] = useState([
-    { id: 'openai' as const, name: 'OpenAI API', value: '', visible: false },
-    { id: 'anthropic' as const, name: 'Anthropic API', value: '', visible: false },
-    { id: 'github' as const, name: 'GitHub Token', value: '', visible: false },
+    { id: 'openai_api_key' as const, name: 'OpenAI API', value: '', visible: false },
+    { id: 'gemini_api_key' as const, name: 'Gemini API', value: '', visible: false },
+    { id: 'claude_api_key' as const, name: 'Claude API', value: '', visible: false },
   ])
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [saveStatuses, setSaveStatuses] = useState<Record<string, SaveStatus>>({})
   const [saveErrors, setSaveErrors] = useState<Record<string, string | null>>({})
+  const [deleteStatuses, setDeleteStatuses] = useState<Record<string, SaveStatus>>({})
 
   const toggleVisibility = (id: string) => {
     setApiKeys((prev) => prev.map((k) => (k.id === id ? { ...k, visible: !k.visible } : k)))
   }
 
-  const handleSave = async (id: 'openai' | 'anthropic' | 'github') => {
+  const handleDelete = async (id: ProviderName) => {
+    setDeleteStatuses((prev) => ({ ...prev, [id]: 'saving' }))
+    try {
+      await deleteOpenAiApiKey(id)
+      setApiKeys((prev) => prev.map((k) => (k.id === id ? { ...k, value: '' } : k)))
+      setDeleteStatuses((prev) => ({ ...prev, [id]: 'saved' }))
+      setTimeout(() => setDeleteStatuses((prev) => ({ ...prev, [id]: 'idle' })), 2000)
+    } catch {
+      setDeleteStatuses((prev) => ({ ...prev, [id]: 'error' }))
+    }
+  }
+
+  const handleSave = async (id: ProviderName) => {
     const key = apiKeys.find((k) => k.id === id)
     if (!key || !key.value.trim()) return
     setSaveStatuses((prev) => ({ ...prev, [id]: 'saving' }))
     setSaveErrors((prev) => ({ ...prev, [id]: null }))
     try {
-      if (id === 'openai') {
-        await saveOpenAiApiKey({ apiKey: key.value.trim() })
-      }
-      // anthropic / github: API 미구현 — 추후 연결
+      await saveOpenAiApiKey(id, { apiKey: key.value.trim() })
       setSaveStatuses((prev) => ({ ...prev, [id]: 'saved' }))
       setTimeout(() => setSaveStatuses((prev) => ({ ...prev, [id]: 'idle' })), 2000)
     } catch (e) {
@@ -699,7 +705,7 @@ function ApiKeysContent() {
                 </button>
               </div>
 
-              {/* 저장 버튼 행 */}
+              {/* 저장/삭제 버튼 행 */}
               <div className="flex items-center justify-between gap-2">
                 {saveStatuses[key.id] === 'error' && saveErrors[key.id] ? (
                   <p className="text-destructive text-xs">{saveErrors[key.id]}</p>
@@ -708,20 +714,40 @@ function ApiKeysContent() {
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     저장됐습니다
                   </p>
+                ) : deleteStatuses[key.id] === 'saved' ? (
+                  <p className="flex items-center gap-1 text-xs text-emerald-500">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    삭제됐습니다
+                  </p>
+                ) : deleteStatuses[key.id] === 'error' ? (
+                  <p className="text-destructive text-xs">삭제에 실패했습니다.</p>
                 ) : (
                   <span />
                 )}
-                <button
-                  type="button"
-                  disabled={!key.value.trim() || saveStatuses[key.id] === 'saving'}
-                  onClick={() => void handleSave(key.id)}
-                  className="bg-foreground text-background hover:bg-foreground/85 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40"
-                >
-                  {saveStatuses[key.id] === 'saving' ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : null}
-                  {saveStatuses[key.id] === 'saving' ? '저장 중...' : '저장'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={deleteStatuses[key.id] === 'saving'}
+                    onClick={() => void handleDelete(key.id)}
+                    className="flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-500 transition-colors hover:bg-red-50 disabled:opacity-40 dark:border-red-800 dark:hover:bg-red-950"
+                  >
+                    {deleteStatuses[key.id] === 'saving' ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : null}
+                    {deleteStatuses[key.id] === 'saving' ? '삭제 중...' : '삭제'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!key.value.trim() || saveStatuses[key.id] === 'saving'}
+                    onClick={() => void handleSave(key.id)}
+                    className="bg-foreground text-background hover:bg-foreground/85 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40"
+                  >
+                    {saveStatuses[key.id] === 'saving' ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : null}
+                    {saveStatuses[key.id] === 'saving' ? '저장 중...' : '저장'}
+                  </button>
+                </div>
               </div>
 
               {/* 아코디언 발급 안내 */}
