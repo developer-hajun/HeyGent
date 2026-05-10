@@ -4,23 +4,34 @@ import {
   FileImage,
   Globe,
   ImagePlus,
+  ListTodo,
   Mic,
   MoreHorizontal,
   Plus,
   Search,
   Send,
   Square,
+  X,
 } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Switch } from '@/components/ui/switch'
 
 type ChatComposerProps = {
   disabled?: boolean
   isSending?: boolean
   placeholder?: string
   onSend: (content: string) => void
+  onClearSelectedWork?: () => void
+  onSelectWorkClick?: () => void
+  onWorkModeChange?: (enabled: boolean) => void
   onStop?: () => void
   onVoiceMode?: () => void
+  draftValue?: string | null
+  statusMessage?: string | null
+  selectedWorkLabel?: string | null
+  workMode?: boolean
+  workModeDisabled?: boolean
 }
 
 const attachMenuItems = [
@@ -39,10 +50,18 @@ export function ChatComposer({
   isSending = false,
   placeholder = '무엇이든 물어보세요...',
   onSend,
+  onClearSelectedWork,
+  onSelectWorkClick,
+  onWorkModeChange,
   onStop,
   onVoiceMode,
+  draftValue = null,
+  statusMessage = null,
+  selectedWorkLabel = null,
+  workMode = false,
+  workModeDisabled = false,
 }: ChatComposerProps) {
-  const [value, setValue] = useState('')
+  const [value, setValue] = useState(draftValue ?? '')
   const [isRecording, setIsRecording] = useState(false)
   const [attachOpen, setAttachOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -62,6 +81,10 @@ export function ChatComposer({
     setValue('')
   }
 
+  const toggleWorkMode = (enabled: boolean) => {
+    onWorkModeChange?.(enabled)
+  }
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
@@ -74,6 +97,27 @@ export function ChatComposer({
       <div className="mx-auto max-w-3xl">
         <div className="border-border bg-card overflow-hidden rounded-2xl border shadow-sm transition-shadow duration-200 hover:shadow-md">
           {/* Input row */}
+          {(workMode || selectedWorkLabel) && (
+            <div className="border-border/60 bg-muted/20 flex items-center gap-2 border-b px-5 py-2 text-xs">
+              <ListTodo className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+              <span className="text-muted-foreground">
+                {selectedWorkLabel ? '연결된 작업' : '작업 모드'}
+              </span>
+              <span className="text-foreground min-w-0 flex-1 truncate font-medium">
+                {selectedWorkLabel ?? '새 작업으로 생성'}
+              </span>
+              {selectedWorkLabel && (
+                <button
+                  type="button"
+                  onClick={onClearSelectedWork}
+                  aria-label="연결된 작업 해제"
+                  className="text-muted-foreground hover:text-foreground rounded-sm p-1"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          )}
           <div className="flex items-center gap-3 px-5 py-2">
             <Popover open={attachOpen} onOpenChange={setAttachOpen}>
               <PopoverTrigger asChild>
@@ -109,6 +153,28 @@ export function ChatComposer({
                     </button>
                   ),
                 )}
+                <div className="border-border/60 my-1 border-t" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAttachOpen(false)
+                    onSelectWorkClick?.()
+                  }}
+                  className="hover:bg-muted flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors"
+                >
+                  <ListTodo className="text-muted-foreground h-4 w-4 shrink-0" />
+                  <span className="text-foreground flex-1 text-sm">기존 작업 선택</span>
+                </button>
+                <label className="hover:bg-muted flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2 transition-colors">
+                  <ListTodo className="text-muted-foreground h-4 w-4 shrink-0" />
+                  <span className="text-foreground flex-1 text-sm">작업 모드</span>
+                  <Switch
+                    checked={workMode}
+                    disabled={workModeDisabled}
+                    aria-label="작업 모드"
+                    onCheckedChange={toggleWorkMode}
+                  />
+                </label>
               </PopoverContent>
             </Popover>
             <textarea
@@ -165,6 +231,11 @@ export function ChatComposer({
               </button>
             )}
           </div>
+          {statusMessage && (
+            <p className="text-muted-foreground border-border/60 border-t px-5 py-2 text-xs">
+              {statusMessage}
+            </p>
+          )}
         </div>
       </div>
     </div>

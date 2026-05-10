@@ -20,6 +20,7 @@ interface SessionState {
   setSelectedSessionId: (id: string | null) => void
   addAgentPanel: (agent: Agent) => void
   addAgentPanelToSession: (sessionId: string, agent: Agent) => void
+  setAgentPanelsForSession: (sessionId: string, panels: AgentPanelItem[]) => void
   updateAgentPanel: (id: string, agent: Agent) => void
   updateAgentPanelInSession: (sessionId: string, id: string, agent: Agent) => void
   removeAgentPanel: (id: string) => void
@@ -62,6 +63,9 @@ type PersistedAgentPanelItem = {
     | 'heartbeatEnabled'
     | 'intervalSec'
     | 'profileImage'
+    | 'profileId'
+    | 'templateKey'
+    | 'instructionBundleId'
     | 'spriteId'
     | 'reportsToAgentId'
     | 'skills'
@@ -102,6 +106,14 @@ export const useSessionStore = create<SessionState>()(
             },
           }
         }),
+
+      setAgentPanelsForSession: (sessionId, panels) =>
+        set((s) => ({
+          agentPanelsBySessionId: {
+            ...s.agentPanelsBySessionId,
+            [sessionId]: panels,
+          },
+        })),
 
       updateAgentPanel: (id, agent) =>
         set((s) => ({
@@ -241,6 +253,9 @@ function serializeAgentPanelsBySessionId(
           heartbeatEnabled: panel.agent.heartbeatEnabled,
           intervalSec: panel.agent.intervalSec,
           profileImage: panel.agent.profileImage,
+          profileId: panel.agent.profileId,
+          templateKey: panel.agent.templateKey,
+          instructionBundleId: panel.agent.instructionBundleId,
           spriteId: panel.agent.spriteId,
           reportsToAgentId: panel.agent.reportsToAgentId,
           skills: panel.agent.skills,

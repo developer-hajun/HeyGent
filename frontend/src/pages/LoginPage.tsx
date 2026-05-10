@@ -4,6 +4,21 @@ import { getMyInfo } from '@/apis/users'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useEffect, useRef, useCallback, useState } from 'react'
 
+// 로그인 페이지는 항상 라이트 모드로 표시
+function useLightModeForLogin() {
+  useEffect(() => {
+    document.documentElement.classList.remove('dark')
+    return () => {
+      try {
+        const saved = JSON.parse(localStorage.getItem('heygent-ui-state') ?? '{}')
+        document.documentElement.classList.toggle('dark', (saved?.theme ?? 'dark') === 'dark')
+      } catch {
+        document.documentElement.classList.add('dark')
+      }
+    }
+  }, [])
+}
+
 const KAKAO_AUTH_URL =
   `https://kauth.kakao.com/oauth/authorize` +
   `?client_id=${import.meta.env.VITE_KAKAO_CLIENT_ID}` +
@@ -922,17 +937,23 @@ function KakaoIcon() {
 // ─── 페이지 ──────────────────────────────────────────────────
 
 export function LoginPage() {
+  useLightModeForLogin()
   const navigate = useNavigate()
   const { setTokens, setUserInfo } = useAuthStore()
   const [hoveredCluster, setHoveredCluster] = useState<number | null>(null)
   const [scrollProgress, setScrollProgress] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [devLoginLoading, setDevLoginLoading] = useState(false)
+  const [devLoginError, setDevLoginError] = useState<string | null>(null)
 
   const handleKakaoLogin = () => {
     window.location.href = KAKAO_AUTH_URL
   }
 
   const handleDevLogin = async () => {
+    if (devLoginLoading) return
+    setDevLoginLoading(true)
+    setDevLoginError(null)
     try {
       const res = await devLogin()
       setTokens(res.data.accessToken, res.data.refreshToken)
@@ -943,8 +964,14 @@ export function LoginPage() {
         /* ignore */
       }
       navigate('/', { replace: true })
-    } catch {
-      /* ignore */
+    } catch (err) {
+      setDevLoginError(
+        err instanceof Error
+          ? err.message
+          : '서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인하세요.',
+      )
+    } finally {
+      setDevLoginLoading(false)
     }
   }
 
@@ -1215,34 +1242,56 @@ export function LoginPage() {
           </button>
 
           {import.meta.env.DEV && (
-            <button
-              onClick={handleDevLogin}
-              style={{
-                width: '100%',
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(210,210,214,0.16)',
-                color: 'rgba(190,190,194,0.66)',
-                borderRadius: 10,
-                padding: '10px 24px',
-                fontSize: 12,
-                fontWeight: 500,
-                cursor: 'pointer',
-                fontFamily: '-apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif',
-                transition: 'border-color 0.15s, color 0.15s, background 0.15s',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = 'rgba(210,210,214,0.34)'
-                e.currentTarget.style.color = 'rgba(220,220,224,0.90)'
-                e.currentTarget.style.background = 'rgba(255,255,255,0.06)'
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = 'rgba(210,210,214,0.16)'
-                e.currentTarget.style.color = 'rgba(190,190,194,0.66)'
-                e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
-              }}
-            >
-              개발용 테스트 로그인
-            </button>
+            <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <button
+                onClick={handleDevLogin}
+                disabled={devLoginLoading}
+                style={{
+                  width: '100%',
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(210,210,214,0.16)',
+                  color: devLoginLoading ? 'rgba(190,190,194,0.40)' : 'rgba(190,190,194,0.66)',
+                  borderRadius: 10,
+                  padding: '10px 24px',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  cursor: devLoginLoading ? 'not-allowed' : 'pointer',
+                  fontFamily:
+                    '-apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif',
+                  transition: 'border-color 0.15s, color 0.15s, background 0.15s',
+                }}
+                onMouseEnter={(e) => {
+                  if (devLoginLoading) return
+                  e.currentTarget.style.borderColor = 'rgba(210,210,214,0.34)'
+                  e.currentTarget.style.color = 'rgba(220,220,224,0.90)'
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.06)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = 'rgba(210,210,214,0.16)'
+                  e.currentTarget.style.color = devLoginLoading
+                    ? 'rgba(190,190,194,0.40)'
+                    : 'rgba(190,190,194,0.66)'
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
+                }}
+              >
+                {devLoginLoading ? '로그인 중...' : '개발용 테스트 로그인'}
+              </button>
+              {devLoginError && (
+                <p
+                  style={{
+                    margin: 0,
+                    fontSize: 11,
+                    color: 'rgba(255,100,100,0.85)',
+                    textAlign: 'center',
+                    fontFamily:
+                      '-apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {devLoginError}
+                </p>
+              )}
+            </div>
           )}
         </div>
 

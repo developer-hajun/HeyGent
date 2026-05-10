@@ -7,7 +7,6 @@ import {
   AgentModelDropdown,
   AgentSectionCard,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
-import { useUIStore } from '@/store/useUIStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import type { Agent } from '@/types/agent'
@@ -18,7 +17,7 @@ import {
   inferModelFamily,
   type ModelFamily,
 } from '../sessionWorkspaceUtils'
-import { AdapterSection, RunPolicySection } from './SubAgentConfigSections'
+import { AdapterSection } from './SubAgentConfigSections'
 import {
   getDefaultCommand,
   getDefaultModel,
@@ -70,13 +69,12 @@ export function SubAgentDraftForm({
   const [modelOptionsLoading, setModelOptionsLoading] = useState(false)
   const [modelOptionsError, setModelOptionsError] = useState<string | null>(null)
   const [modelOptions, setModelOptions] = useState(getModelOptions(undefined))
-  const [heartbeatEnabled, setHeartbeatEnabled] = useState(initialAgent?.heartbeatEnabled ?? false)
+  const heartbeatEnabled = initialAgent?.heartbeatEnabled ?? false
   const [intervalSec] = useState(initialAgent?.intervalSec ?? 300)
   const [spriteId, setSpriteId] = useState<SubAgentSpriteId>(
     normalizeSubAgentSpriteId(initialAgent?.spriteId),
   )
   const [roleOpen, setRoleOpen] = useState(false)
-  const setSettingsOpen = useUIStore((state) => state.setSettingsOpen)
   const fetchModelOptions = useChatStore((state) => state.fetchModelOptions)
   const authenticatedReady = useAiRealtimeStore((state) => state.authenticatedReady)
   const profileImage = getSubAgentImageBySpriteId(spriteId).src
@@ -200,13 +198,8 @@ export function SubAgentDraftForm({
             </div>
           </AgentSectionCard>
 
-          <AgentSectionCard title="실행 환경">
-            <div className="grid gap-3 sm:grid-cols-3">
-              <Field label="기본 환경">
-                <select className={`${inputClass} cursor-not-allowed opacity-70`} value="" disabled>
-                  <option value="">회사 기본값 (로컬)</option>
-                </select>
-              </Field>
+          <AgentSectionCard title="역할과 능력">
+            <div className="grid gap-3 sm:grid-cols-2">
               <Field label="역할">
                 <Popover open={roleOpen} onOpenChange={setRoleOpen}>
                   <PopoverTrigger asChild>
@@ -241,9 +234,6 @@ export function SubAgentDraftForm({
                 <input className={`${inputClass} opacity-70`} value="CEO" disabled readOnly />
               </Field>
             </div>
-          </AgentSectionCard>
-
-          <AgentSectionCard title="역할과 능력">
             <Field label="할 수 있는 일">
               <textarea
                 value={descriptionDraft}
@@ -290,24 +280,6 @@ export function SubAgentDraftForm({
                 />
               )}
             </Field>
-          </AgentSectionCard>
-
-          <RunPolicySection
-            heartbeatEnabled={heartbeatEnabled}
-            onHeartbeatEnabledChange={setHeartbeatEnabled}
-          />
-
-          <AgentSectionCard title="API 키">
-            <div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setSettingsOpen(true, 'apiKeys')}
-              >
-                API 키 설정 열기
-              </Button>
-            </div>
           </AgentSectionCard>
         </div>
       </div>
