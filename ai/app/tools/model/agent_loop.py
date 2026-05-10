@@ -37,11 +37,21 @@ class AgentLoopHandler:
     def execute(self, *, task, step=None, resume_payload=None):
         return self.loop_handler.execute(task=task, step=step, resume_payload=resume_payload)
 
-    async def execute_async(self, *, task, step=None, resume_payload=None, progress_sink=None, delegate_executor=None):
+    async def execute_async(
+        self,
+        *,
+        task,
+        step=None,
+        resume_payload=None,
+        progress_sink=None,
+        delegate_executor=None,
+        session_agent_executor=None,
+    ):
         return await self.loop_handler.execute_async(
             task=task,
             step=step,
             resume_payload=resume_payload,
             progress_sink=progress_sink,
             delegate_executor=delegate_executor,
+            session_agent_executor=session_agent_executor,
         )

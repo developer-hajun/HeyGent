@@ -68,8 +68,8 @@ function ApiKeyOverlay() {
         <div className="space-y-1.5 text-center">
           <h2 className="text-foreground text-lg font-semibold">API 키를 등록해 주세요</h2>
           <p className="text-muted-foreground text-sm leading-6">
-            서비스를 이용하려면 OpenAI, Anthropic 등의 API 키가 필요합니다. 지금 등록하면 바로
-            사용할 수 있어요.
+            서비스를 이용하려면 OpenAI, Gemini 등의 API 키가 필요합니다. 지금 등록하면 바로 사용할
+            수 있어요.
           </p>
         </div>
 
@@ -137,17 +137,28 @@ function SessionWorkspaceRoutePage() {
   )
 }
 
+function ThemeSync() {
+  const theme = useUIStore((s) => s.theme)
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', theme === 'dark')
+  }, [theme])
+  return null
+}
+
 function AuthenticatedShell() {
   return (
-    <div className="bg-background flex h-screen w-full overflow-hidden">
-      <div className="hidden md:contents">
-        <LeftSidebar />
+    <>
+      <ThemeSync />
+      <div className="bg-background flex h-screen w-full overflow-hidden">
+        <div className="hidden md:contents">
+          <LeftSidebar />
+        </div>
+        <div className="hidden md:contents">
+          <SessionWorkspaceSidebar />
+        </div>
+        <WorkspaceRoutes />
       </div>
-      <div className="hidden md:contents">
-        <SessionWorkspaceSidebar />
-      </div>
-      <WorkspaceRoutes />
-    </div>
+    </>
   )
 }
 

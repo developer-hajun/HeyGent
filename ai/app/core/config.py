@@ -63,6 +63,7 @@ class Settings:
     agent_loop_default_max_iterations: int = 90
     agent_loop_worker_default_max_iterations: int = 80
     agent_loop_max_iterations: int = 120
+    work_execution_max_iterations: int = 24
     bridge_token: str | None = None
 
     def resolved_api_base_url(self) -> str:
@@ -255,6 +256,10 @@ def get_settings() -> Settings:
         agent_loop_max_iterations=_parse_int(
             _read_env("HEYGENT_AGENT_LOOP_MAX_ITERATIONS", 120, dotenv_values),
             default=120,
+        ),
+        work_execution_max_iterations=_parse_int(
+            _read_env("HEYGENT_WORK_EXECUTION_MAX_ITERATIONS", 24, dotenv_values),
+            default=24,
         ),
         bridge_token=_read_env("HEYGENT_BRIDGE_TOKEN", None, dotenv_values),
     )

@@ -380,6 +380,28 @@ def test_agent_loop_explicit_max_iterations_can_exceed_legacy_hard_clamp():
     assert len(runtime.calls) == 13
 
 
+def test_agent_loop_fails_when_max_iterations_are_exhausted_without_final_answer():
+    responses = [
+        _response(tool_calls=[_tool_call(f"call_{index}", "terminal_run", {"argv": ["echo", str(index)]})])
+        for index in range(2)
+    ]
+    provider = FakeProvider(responses)
+    runtime = RecordingRuntime()
+    guard = StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW))
+
+    outcome = _handler(provider, runtime, guard).execute(
+        task=_task({"prompt": "run", "max_iterations": 2}),
+        step=_step(),
+    )
+
+    assert outcome["task_status"] == TaskStatus.FAILED
+    assert outcome["step_status"] == StepStatus.FAILED
+    assert outcome["result_payload"]["error"]["code"] == "max_iterations_exceeded"
+    assert outcome["error_message"] == "작업 반복 한도(2)에 도달했습니다."
+    assert len(provider.calls) == 2
+    assert len(runtime.calls) == 2
+
+
 def test_agent_loop_worker_payload_uses_worker_default_when_max_iterations_is_absent():
     responses = [
         _response(tool_calls=[_tool_call(f"call_worker_{index}", "terminal_run", {"argv": ["echo", str(index)]})])

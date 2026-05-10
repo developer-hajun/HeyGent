@@ -224,6 +224,7 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
         if auth_context.workspace_key is not None:
             auth_response["workspaceKey"] = auth_context.workspace_key
         await send_json(auth_response)
+        manager.subscribe(websocket, f"work:{user_id}")
         command_context = WebSocketCommandContext(
             websocket=websocket,
             auth=auth_context,

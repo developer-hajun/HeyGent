@@ -18,6 +18,7 @@ from app.core.utils.ids import new_id
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
+from app.domain.work import WorkService
 logger = logging.getLogger(__name__)
 
 _PUBLIC_SESSION_SOURCE = "api.session"
@@ -52,7 +53,7 @@ _PROTECTED_SESSION_METADATA_KEYS = {
 }
 _SESSION_METADATA_PATCH_ALLOWLIST = {"pinned", "color", "tags", "description", "lastViewedAt", "last_viewed_at", "ui"}
 _SESSION_SETTINGS_ALLOWLIST = {"model", "systemPrompt", "system_prompt", "toolsets", "delegationPolicy", "delegation_policy"}
-_PUBLIC_SESSION_TOOLSETS = {"skills", "session", "planning", "web", "safe"}
+_PUBLIC_SESSION_TOOLSETS = {"skills", "session", "planning", "web", "work", "safe"}
 
 
 class WebSocketCommandError(Exception):
@@ -354,6 +355,22 @@ class WebSocketCommandRouter:
         task_input["system_prompt_snapshot"] = get_system_prompt_snapshot(session)
         task_input["base_history_version"] = base_history_version
         _apply_session_settings_snapshot(task_input, settings_snapshot, session=session)
+        work_id = _work_id_from_task_input(task_input)
+        work_metadata: dict[str, Any] = {}
+        if work_id is not None:
+            work = _attach_work_context_or_ws_error(
+                context,
+                task_input=task_input,
+                work_id=work_id,
+                session_id=session_id,
+                owner_key=context.auth.user_id,
+            )
+            work_metadata = {
+                "work_id": work.work_id,
+                "work_identifier": work.identifier,
+                "work_title": work.title,
+                "work_assignee_agent_id": work.assignee_agent_id,
+            }
         # token memory context는 durable payload에 넣지 않는다. backend 호출이 필요해지면
         # context.auth.access_token에서만 꺼내 쓰도록 경계를 고정한다.
         await attach_persistent_memory_context(
@@ -378,6 +395,7 @@ class WebSocketCommandRouter:
             client_message_id=client_message_id,
             task_run_id=task.task_run_id,
             base_history_version=base_history_version,
+            metadata_patch=work_metadata,
         )
         if user_append.get("duplicate"):
             accepted = {
@@ -398,6 +416,11 @@ class WebSocketCommandRouter:
         }
         try:
             context.websocket.app.state.repository.create_task(task)
+            if work_id is not None:
+                WorkService(context.websocket.app.state.work_repository).mark_run_started(
+                    work_id=work_id,
+                    task_run_id=task.task_run_id,
+                )
         except Exception:
             session_store.clear_stale_running_task(
                 owner_key=context.auth.user_id,
@@ -1013,6 +1036,7 @@ class WebSocketCommandRouter:
                 )
                 return
             if completed_status != TaskStatus.COMPLETED.value:
+                _apply_ws_linked_work_result(context, task=completed_task)
                 context.websocket.app.state.session_store.clear_stale_running_task(
                     owner_key=completed_task.owner_key,
                     session_id=session_id,
@@ -1036,6 +1060,7 @@ class WebSocketCommandRouter:
                     )
                 )
                 return
+            _apply_ws_linked_work_result(context, task=completed_task)
             content = _assistant_content_from_task(completed_task)
             assistant_append = context.websocket.app.state.session_store.append_assistant_message_and_finish_task(
                 owner_key=completed_task.owner_key,
@@ -1084,6 +1109,7 @@ class WebSocketCommandRouter:
             )
         except Exception:
             logger.exception("session.message.create background 실행에 실패했습니다.")
+            _mark_ws_linked_work_run_failed(context, task=task)
             try:
                 context.websocket.app.state.session_store.clear_stale_running_task(
                     owner_key=task.owner_key,
@@ -1265,6 +1291,124 @@ def _create_public_session(context: WebSocketCommandContext, *, content: str, mo
     if session is None:
         raise WebSocketCommandError("internal_error", "session was not created", retryable=True)
     return session
+
+
+def _work_id_from_task_input(task_input: dict[str, Any]) -> str | None:
+    candidate = task_input.get("workId") or task_input.get("work_id")
+    text = str(candidate or "").strip()
+    return text or None
+
+
+def _attach_work_context_or_ws_error(
+    context: WebSocketCommandContext,
+    *,
+    task_input: dict[str, Any],
+    work_id: str,
+    session_id: str,
+    owner_key: str,
+) -> Any:
+    repository = getattr(context.websocket.app.state, "work_repository", None)
+    if repository is None:
+        raise WebSocketCommandError("work_repository_missing", "work repository is not configured")
+    work = repository.get_work(work_id)
+    if work is None:
+        raise WebSocketCommandError("work_not_found", "work not found")
+    if str(work.owner_key) != str(owner_key):
+        raise WebSocketCommandError("forbidden", "work owner mismatch")
+    if work.session_id != session_id:
+        raise WebSocketCommandError("work_session_mismatch", "work belongs to another session")
+    task_input["workId"] = work.work_id
+    task_input["workIdentifier"] = work.identifier
+    task_input["workAssigneeAgentId"] = work.assignee_agent_id
+    task_input["workContext"] = repository.context_preview(work.work_id)
+    _attach_target_agent_context(context.websocket.app.state, task_input=task_input, work=work)
+    _apply_work_execution_defaults(task_input, settings=context.websocket.app.state.settings)
+    return work
+
+
+def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work: Any) -> None:
+    assignee_agent_id = str(work.assignee_agent_id or "").strip()
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return
+    if not assignee_agent_id or assignee_agent_id == "CEO":
+        profile = agent_repository.ensure_session_main_agent(
+            session_id=work.session_id,
+            owner_key=str(work.owner_key),
+            owner_user_id=None,
+        )
+    else:
+        profile = agent_repository.get_session_agent(profile_id=assignee_agent_id, owner_key=str(work.owner_key))
+    if profile is None:
+        return
+    task_input["targetAgentProfile"] = {
+        "profileId": profile.get("profile_id"),
+        "profileKey": profile.get("profile_key"),
+        "agentType": profile.get("agent_type"),
+        "templateKey": profile.get("template_key"),
+        "configSnapshot": profile.get("config_snapshot") or {},
+    }
+    profile_id = str(profile.get("profile_id") or assignee_agent_id)
+    if not assignee_agent_id or assignee_agent_id == "CEO":
+        task_input["sessionAgentProfiles"] = [
+            {
+                "profileId": item.get("profile_id"),
+                "profileKey": item.get("profile_key"),
+                "agentType": item.get("agent_type"),
+                "templateKey": item.get("template_key"),
+                "configSnapshot": item.get("config_snapshot") or {},
+            }
+            for item in agent_repository.list_session_agents(session_id=work.session_id, owner_key=str(work.owner_key))
+        ]
+    bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
+    if bundle is None:
+        return
+    task_input["targetAgentInstructions"] = {
+        "bundleId": bundle.get("bundle_id"),
+        "entryDocumentKey": bundle.get("entry_document_key") or "AGENTS.md",
+        "documents": [
+            {
+                "documentKey": document.get("document_key"),
+                "displayName": document.get("display_name"),
+                "content": document.get("content") or "",
+            }
+            for document in list(bundle.get("documents") or [])
+            if isinstance(document, dict)
+        ],
+    }
+
+
+def _apply_work_execution_defaults(task_input: dict[str, Any], *, settings: Any) -> None:
+    if task_input.get("max_iterations") not in (None, ""):
+        return
+    raw_value = getattr(settings, "work_execution_max_iterations", 24)
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        value = 24
+    raw_upper = getattr(settings, "agent_loop_max_iterations", 120)
+    try:
+        upper_bound = int(raw_upper)
+    except (TypeError, ValueError):
+        upper_bound = 120
+    task_input["max_iterations"] = max(1, min(value, max(1, upper_bound)))
+
+
+def _apply_ws_linked_work_result(context: WebSocketBackgroundContext, *, task: Any) -> None:
+    work_id = _work_id_from_task_input(dict(getattr(task, "input_payload", {}) or {}))
+    if work_id is None:
+        return
+    WorkService(context.websocket.app.state.work_repository).apply_task_result(work_id=work_id, task=task)
+
+
+def _mark_ws_linked_work_run_failed(context: WebSocketBackgroundContext, *, task: Any) -> None:
+    work_id = _work_id_from_task_input(dict(getattr(task, "input_payload", {}) or {}))
+    if work_id is None:
+        return
+    try:
+        context.websocket.app.state.work_repository.update_run_status(work_id, task.task_run_id, "FAILED")
+    except Exception:
+        logger.exception("작업 실행 연결 상태 갱신에 실패했습니다.")
 
 
 def _create_task_transcript_session(session_store: Any, *, session_id: str, owner_key: str, title: str | None, model: str | None) -> str:

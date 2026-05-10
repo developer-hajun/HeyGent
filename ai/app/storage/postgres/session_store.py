@@ -222,6 +222,7 @@ class PostgresSessionStore:
         client_message_id: str,
         task_run_id: str,
         base_history_version: int,
+        metadata_patch: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         connection = self.connection_factory()
         session_row = connection.execute(
@@ -275,6 +276,8 @@ class PostgresSessionStore:
             "client_message_id": client_message_id,
             "task_run_id": task_run_id,
         }
+        if metadata_patch:
+            metadata_payload.update(metadata_patch)
         # product session row lock은 Redis projection보다 영속 기준에 가깝다.
         # 프로세스가 죽어도 running_task_run_id가 남아 중복 append를 막고,
         # 다음 명령은 TaskRun 상태를 확인한 뒤 stale guard만 정리한다.
@@ -714,7 +717,17 @@ def _message_from_row(row: Any) -> dict[str, Any]:
 
 
 def _json(value: Any) -> str:
-    return json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
+    return json.dumps(_sanitize_json_value(value or {}), ensure_ascii=False, sort_keys=True)
+
+
+def _sanitize_json_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, list):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _sanitize_json_value(item) for key, item in value.items()}
+    return value
 
 
 def _json_load(value: Any, default: Any) -> Any:

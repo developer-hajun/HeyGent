@@ -1,6 +1,9 @@
 import type { ComponentType, CSSProperties } from 'react'
 
 export interface Agent {
+  profileId?: string
+  templateKey?: string
+  instructionBundleId?: string
   name: string
   icon: ComponentType<{ className?: string; style?: CSSProperties }>
   accent: string

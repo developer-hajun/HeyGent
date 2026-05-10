@@ -6,7 +6,17 @@ import inspect
 class StepHandler:
     """Delegate the concrete step body to the selected handler."""
 
-    async def execute(self, *, handler, task, step, resume_payload=None, progress_sink=None, delegate_executor=None) -> dict:
+    async def execute(
+        self,
+        *,
+        handler,
+        task,
+        step,
+        resume_payload=None,
+        progress_sink=None,
+        delegate_executor=None,
+        session_agent_executor=None,
+    ) -> dict:
         async_execute = getattr(handler, "execute_async", None)
         if async_execute is not None:
             kwargs = {
@@ -18,6 +28,8 @@ class StepHandler:
             if _supports_keyword(async_execute, "delegate_executor"):
                 # delegate_executor 는 agent.loop 처럼 worker 위임을 직접 처리하는 handler 에만 전달한다.
                 kwargs["delegate_executor"] = delegate_executor
+            if _supports_keyword(async_execute, "session_agent_executor"):
+                kwargs["session_agent_executor"] = session_agent_executor
             return await async_execute(**kwargs)
 
         result = handler.execute(task=task, step=step, resume_payload=resume_payload)
