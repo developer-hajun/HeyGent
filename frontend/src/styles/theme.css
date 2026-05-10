@@ -14,7 +14,7 @@
   --card-foreground: #111111;
   --popover: #ffffff;
   --popover-foreground: #111111;
-  --primary: #4f46e5;
+  --primary: #1f1f1f;
   --primary-foreground: #ffffff;
   --secondary: #f0f0f0;
   --secondary-foreground: #333333;
@@ -28,6 +28,8 @@
   --input: #f0f0f0;
   --input-background: #f7f7f7;
   --switch-background: #d1d5db;
+  --switch-on: #059669;
+  --switch-on-hover: #047857;
   --font-weight-medium: 500;
   --font-weight-normal: 400;
   --ring: #6b7280;
@@ -77,6 +79,8 @@
   --color-input: var(--input);
   --color-input-background: var(--input-background);
   --color-switch-background: var(--switch-background);
+  --color-switch-on: var(--switch-on);
+  --color-switch-on-hover: var(--switch-on-hover);
   --color-ring: var(--ring);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);

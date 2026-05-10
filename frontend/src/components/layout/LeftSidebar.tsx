@@ -226,25 +226,26 @@ export function LeftSidebar() {
               </button>
             </CollapsedTooltip>
 
-            {/* Profile icon (collapsed) */}
-            <div className="bg-border my-1 h-px w-10" />
-            <Popover open={profileOpen} onOpenChange={setProfileOpen}>
-              <CollapsedTooltip label="프로필">
-                <PopoverTrigger asChild>
-                  <button className="hover:bg-accent/50 flex h-12 w-12 items-center justify-center rounded-xl transition-colors">
-                    <ProfileAvatar size={34} />
-                  </button>
-                </PopoverTrigger>
-              </CollapsedTooltip>
-              <PopoverContent side="right" align="end" className="w-52 rounded-2xl p-1.5">
-                <ProfileMenu
-                  onSettingsClick={() => {
-                    setProfileOpen(false)
-                    setSettingsOpen(true)
-                  }}
-                />
-              </PopoverContent>
-            </Popover>
+            {/* Profile (collapsed) — 우측 SessionWorkspaceMenu의 border-t 위치와 정렬 */}
+            <div className="border-border -mx-2 mt-1.5 -mb-4 flex shrink-0 justify-center self-stretch border-t py-3">
+              <Popover open={profileOpen} onOpenChange={setProfileOpen}>
+                <CollapsedTooltip label="프로필">
+                  <PopoverTrigger asChild>
+                    <button className="hover:bg-accent/50 flex h-9 w-9 items-center justify-center rounded-xl transition-colors">
+                      <ProfileAvatar size={28} />
+                    </button>
+                  </PopoverTrigger>
+                </CollapsedTooltip>
+                <PopoverContent side="right" align="end" className="w-52 rounded-2xl p-1.5">
+                  <ProfileMenu
+                    onSettingsClick={() => {
+                      setProfileOpen(false)
+                      setSettingsOpen(true)
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
           </div>
         )}
 

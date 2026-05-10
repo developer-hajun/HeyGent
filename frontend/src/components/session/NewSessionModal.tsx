@@ -144,7 +144,7 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                 {/* 기본 제공 에이전트 */}
                 <button
                   onClick={() => onConfirm(defaultAgentSessionConfig())}
-                  className="border-border hover:border-primary/40 hover:bg-primary/3 group flex w-full items-start gap-4 rounded-xl border p-4 text-left transition-all duration-150"
+                  className="hover:bg-muted/60 group flex w-full items-start gap-4 rounded-xl p-4 text-left transition-colors duration-150"
                 >
                   <div className="bg-muted group-hover:bg-muted/80 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors">
                     <Bot className="text-foreground/70 h-5 w-5" />
@@ -163,7 +163,7 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                     setCustomizeStep('settings')
                     setView('customize')
                   }}
-                  className="border-border hover:bg-accent/40 group flex w-full items-start gap-4 rounded-xl border p-4 text-left transition-all duration-150"
+                  className="hover:bg-muted/60 group flex w-full items-start gap-4 rounded-xl p-4 text-left transition-colors duration-150"
                 >
                   <div className="bg-muted group-hover:bg-muted/80 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors">
                     <SlidersHorizontal className="text-foreground/70 h-5 w-5" />

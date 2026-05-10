@@ -21,6 +21,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
+import { VoiceWaveform } from '@/components/chat/VoiceWaveform'
 import {
   type AiRealtimeAuthStatus,
   type AiRealtimeConnectionStatus,
@@ -279,23 +280,28 @@ export function NewChatPage() {
                   </label>
                 </PopoverContent>
               </Popover>
-              <textarea
-                ref={textareaRef}
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="무엇이든 물어보세요..."
-                rows={1}
-                autoFocus
-                className="text-foreground placeholder:text-muted-foreground max-h-36 min-h-6 flex-1 resize-none bg-transparent py-0 text-[15px] outline-none"
-              />
+              {isRecording ? (
+                <VoiceWaveform active={isRecording} onError={() => setIsRecording(false)} />
+              ) : (
+                <textarea
+                  ref={textareaRef}
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="무엇이든 물어보세요..."
+                  rows={1}
+                  autoFocus
+                  className="text-foreground placeholder:text-muted-foreground max-h-36 min-h-6 flex-1 resize-none bg-transparent py-0 text-[15px] outline-none"
+                />
+              )}
               <button
                 type="button"
                 onClick={handleVoiceInput}
                 aria-label={isRecording ? '음성 입력 중지' : '음성 입력 시작'}
+                aria-pressed={isRecording}
                 className={`shrink-0 rounded-2xl p-2.5 transition-colors ${
                   isRecording
-                    ? 'animate-pulse bg-red-500 text-white'
+                    ? 'bg-red-500 text-white hover:bg-red-500/90'
                     : 'bg-muted text-muted-foreground hover:bg-muted/80'
                 }`}
               >

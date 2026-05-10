@@ -16,6 +16,7 @@ import {
 import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
+import { VoiceWaveform } from './VoiceWaveform'
 
 type ChatComposerProps = {
   disabled?: boolean
@@ -177,23 +178,28 @@ export function ChatComposer({
                 </label>
               </PopoverContent>
             </Popover>
-            <textarea
-              ref={textareaRef}
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder}
-              disabled={disabled}
-              rows={1}
-              className="text-foreground placeholder:text-muted-foreground max-h-36 min-h-6 flex-1 resize-none bg-transparent py-0 text-[15px] outline-none disabled:opacity-60"
-            />
+            {isRecording ? (
+              <VoiceWaveform active={isRecording} onError={() => setIsRecording(false)} />
+            ) : (
+              <textarea
+                ref={textareaRef}
+                value={value}
+                onChange={(event) => setValue(event.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={placeholder}
+                disabled={disabled}
+                rows={1}
+                className="text-foreground placeholder:text-muted-foreground max-h-36 min-h-6 flex-1 resize-none bg-transparent py-0 text-[15px] outline-none disabled:opacity-60"
+              />
+            )}
             <button
               type="button"
               onClick={() => setIsRecording((r) => !r)}
               aria-label={isRecording ? '음성 입력 중지' : '음성 입력 시작'}
+              aria-pressed={isRecording}
               className={`shrink-0 rounded-2xl p-2.5 transition-colors ${
                 isRecording
-                  ? 'animate-pulse bg-red-500 text-white'
+                  ? 'bg-red-500 text-white hover:bg-red-500/90'
                   : 'bg-muted text-muted-foreground hover:bg-muted/80'
               }`}
             >
