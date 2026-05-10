@@ -120,7 +120,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       desk: { x: 465, y: 595 },
       sofa: { x: 1185, y: 205 },
       floorLean: { x: 1340, y: 280 },
-      meeting: { x: 850, y: 65 },
+      meeting: { x: 850, y: 75 },
       calling: { x: 1430, y: 840 },
     },
   },

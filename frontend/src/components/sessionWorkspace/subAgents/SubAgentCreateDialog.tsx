@@ -3,6 +3,7 @@ import { ArrowLeft, Bot, Terminal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/components/ui/utils'
+import type { AgentTemplate } from '@/apis/agents'
 import { SUB_AGENT_ADAPTER_OPTIONS, type SubAgentAdapterType } from './subAgentConfigOptions'
 
 const ADAPTER_ICONS: Record<SubAgentAdapterType, typeof Bot> = {
@@ -14,12 +15,16 @@ export function SubAgentCreateDialog({
   onAskCeo,
   onOpenChange,
   onPickAdapter,
+  onPickTemplate,
   open,
+  templates,
 }: {
   onAskCeo: () => void
   onOpenChange: (open: boolean) => void
   onPickAdapter: (adapterType: SubAgentAdapterType) => void
+  onPickTemplate: (templateKey: string) => void
   open: boolean
+  templates: AgentTemplate[]
 }) {
   const [showAdvancedCards, setShowAdvancedCards] = useState(false)
 
@@ -71,6 +76,37 @@ export function SubAgentCreateDialog({
                 <Bot className="mr-2 h-4 w-4" />
                 CEO에게 새 에이전트 생성 요청
               </Button>
+
+              <div className="space-y-2">
+                <div className="text-muted-foreground text-left text-xs font-medium">
+                  기본 제공 에이전트
+                </div>
+                <div className="grid gap-2">
+                  {templates.map((template) => {
+                    const Icon = Bot
+                    return (
+                      <button
+                        key={template.templateKey}
+                        type="button"
+                        className="border-border hover:bg-accent/50 flex items-start gap-3 rounded-md border p-3 text-left transition-colors"
+                        onClick={() => onPickTemplate(template.templateKey)}
+                      >
+                        <span className="bg-muted/70 mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md">
+                          <Icon className="h-4 w-4" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">
+                            {template.displayName}
+                          </span>
+                          <span className="text-muted-foreground mt-0.5 line-clamp-2 block text-xs leading-5">
+                            {template.description}
+                          </span>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
 
               <div className="text-center">
                 <button

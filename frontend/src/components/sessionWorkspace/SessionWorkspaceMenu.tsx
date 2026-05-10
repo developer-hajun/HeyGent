@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Edit3,
+  FolderKanban,
   Loader2,
   Map,
   MessageSquare,
@@ -55,6 +56,7 @@ const MENU_ITEMS: Array<{
 }> = [
   { id: 'chat', label: '채팅', icon: MessageSquare },
   { id: 'visualization', label: '시각화', icon: Map },
+  { id: 'issueBoard', label: '작업', icon: FolderKanban },
 ]
 
 export function SessionWorkspaceMenu({
