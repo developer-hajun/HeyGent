@@ -54,6 +54,10 @@ SESSION_AGENT_TASK_SCHEMA = {
                 "items": {"type": "string"},
                 "description": "Existing label names to attach. Parent labels are inherited automatically.",
             },
+            "blockParentUntilDone": {
+                "type": "boolean",
+                "description": "Whether the child work blocks the parent until the child reaches a terminal status. Defaults to false.",
+            },
         },
         "required": ["title", "instruction"],
     },

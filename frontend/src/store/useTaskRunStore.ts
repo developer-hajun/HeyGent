@@ -12,6 +12,7 @@ import type {
   RawStepRun,
   RawTaskRun,
   RawTaskRunSnapshot,
+  TaskRunDisplayContext,
   TaskRunDetailSummaryView,
   TaskRunEventsReplayResultPayload,
   TaskRunsActiveListResultPayload,
@@ -563,6 +564,7 @@ const buildRealtimeStepRunPlaceholder = (
     completed_at:
       existingStepRun?.completed_at ??
       (isStepRunCompletionEvent(event.event_type) ? occurredAt : undefined),
+    displayContext: existingStepRun?.displayContext ?? pickTaskEventDisplayContext(event.payload),
     updated_at: occurredAt ?? existingStepRun?.updated_at,
     realtime_placeholder: existingStepRun?.realtime_placeholder ?? true,
   }
@@ -696,6 +698,13 @@ const pickTaskEventNumber = (value: unknown, keys: string[]) => {
   }
 
   return undefined
+}
+
+const pickTaskEventDisplayContext = (value: unknown): TaskRunDisplayContext | undefined => {
+  if (!isJsonObject(value) || !isJsonObject(value.displayContext)) {
+    return undefined
+  }
+  return value.displayContext as TaskRunDisplayContext
 }
 
 const getRealtimeStepRunFallbackTitle = (eventType: string) => {

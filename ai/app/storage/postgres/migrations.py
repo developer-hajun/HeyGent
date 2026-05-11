@@ -449,6 +449,20 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """,
         ),
     ),
+    PostgresMigration(
+        migration_id="0011_work_flow_order",
+        statements=(
+            """
+            ALTER TABLE work_items
+            ADD COLUMN IF NOT EXISTS flow_order INTEGER;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_work_items_parent_flow_order
+            ON work_items(parent_id, flow_order ASC, created_at ASC)
+            WHERE deleted_at IS NULL;
+            """,
+        ),
+    ),
 )
 
 

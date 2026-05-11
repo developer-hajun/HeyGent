@@ -16,6 +16,7 @@ export interface WorkItem {
   status: WorkStatus
   assigneeAgentId: string | null
   parentId: string | null
+  flowOrder: number | null
   source: string
   rawUserInput: string | null
   executionInstruction: string | null
@@ -61,6 +62,7 @@ export interface CreateWorkRequest {
   labelNames?: string[]
   initialComment?: string | null
   metadata?: Record<string, unknown>
+  flowOrder?: number | null
 }
 
 export interface WorkCreateResponse {
@@ -107,6 +109,12 @@ export interface WorkRelation {
   createdAt: string | null
 }
 
+export interface WorkFlowResponse {
+  root: WorkItem
+  items: WorkItem[]
+  relations: WorkRelation[]
+}
+
 export interface WorkContextPreview {
   title: string
   labels: string[]
@@ -122,6 +130,11 @@ export interface CreateChildWorkRequest {
   assigneeAgentId?: string | null
   acceptanceCriteria?: string[]
   blockParentUntilDone?: boolean
+  flowOrder?: number | null
+}
+
+export interface UpdateWorkFlowOrderRequest {
+  workIds: string[]
 }
 
 export interface WorkDocument {

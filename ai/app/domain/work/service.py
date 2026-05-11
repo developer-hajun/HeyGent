@@ -15,6 +15,12 @@ from app.domain.work.repository import WorkRepository
 from app.domain.tasks.models import TaskRun
 
 
+class WorkRunClaimConflict(RuntimeError):
+    def __init__(self, work_id: str) -> None:
+        super().__init__(f"work already has an active run: {work_id}")
+        self.work_id = work_id
+
+
 class WorkService:
     def __init__(self, repository: WorkRepository) -> None:
         self.repository = repository
@@ -37,6 +43,15 @@ class WorkService:
         title = _fallback_title(str(payload.get("title") or "").strip(), raw_user_input)
         description = str(payload.get("description") or raw_user_input or title).strip()
         parent_id = _empty_to_none(payload.get("parentId") or payload.get("parent_id"))
+        flow_order = _flow_order_or_none(payload.get("flowOrder") or payload.get("flow_order"))
+        if parent_id and flow_order is None:
+            next_child_flow_order = getattr(self.repository, "next_child_flow_order", None)
+            if callable(next_child_flow_order):
+                flow_order = next_child_flow_order(parent_id)
+        if parent_id is None and flow_order is None:
+            next_root_flow_order = getattr(self.repository, "next_root_flow_order", None)
+            if callable(next_root_flow_order):
+                flow_order = next_root_flow_order(session_id=session_id, owner_key=owner_key)
         work = WorkItem(
             work_id=new_id("work"),
             identifier=self.repository.next_identifier(session_id),
@@ -48,6 +63,8 @@ class WorkService:
             status=initial_status_for_work_mode(),
             assignee_agent_id=_empty_to_none(payload.get("assigneeAgentId") or payload.get("assignee_agent_id")) or "CEO",
             parent_id=parent_id,
+            flow_order=flow_order,
+            source=str(payload.get("source") or "work_mode").strip() or "work_mode",
             raw_user_input=raw_user_input,
             execution_instruction=str(payload.get("executionInstruction") or payload.get("execution_instruction") or description).strip(),
             expected_deliverable=_empty_to_none(payload.get("expectedDeliverable") or payload.get("expected_deliverable")),
@@ -67,7 +84,18 @@ class WorkService:
         return saved
 
     def mark_run_started(self, *, work_id: str, task_run_id: str) -> None:
-        self.repository.link_run(work_id, task_run_id, run_kind="initial", status="RUNNING")
+        claim_run = getattr(self.repository, "claim_run", None)
+        if callable(claim_run):
+            link = claim_run(
+                work_id,
+                task_run_id,
+                run_kind="initial",
+                status="RUNNING",
+            )
+        else:
+            link = self.repository.link_run(work_id, task_run_id, run_kind="initial", status="RUNNING")
+        if link is None:
+            raise WorkRunClaimConflict(work_id)
 
     def mark_run_start_failed(self, *, work_id: str, reason: str) -> WorkItem:
         updated = self.repository.update_status(work_id, status_after_run_start_failure())
@@ -82,18 +110,45 @@ class WorkService:
         return updated
 
     def apply_task_result(self, *, work_id: str, task: TaskRun) -> WorkItem | None:
+        work_before_result = self.repository.get_work(work_id)
         self.repository.update_run_status(work_id, task.task_run_id, task.status)
+        if (
+            work_before_result is not None
+            and work_before_result.active_run_id is not None
+            and work_before_result.active_run_id != task.task_run_id
+        ):
+            return self.repository.get_work(work_id)
         disposition = _extract_work_disposition(task.result_payload)
         status = normalize_disposition_status(disposition.get("status") if disposition else None)
         if status is not None:
-            return self.repository.update_status(work_id, status)
+            updated = self.repository.update_status(work_id, status)
+            self.repository.add_comment(
+                WorkComment(
+                    comment_id=new_id("comment"),
+                    work_id=work_id,
+                    author_type="system",
+                    task_run_id=task.task_run_id,
+                    body=_work_disposition_comment_body(status=status, disposition=disposition or {}),
+                    metadata={
+                        "reason": "work_disposition",
+                        "status": status,
+                        "summary": str((disposition or {}).get("summary") or "").strip(),
+                        "nextAction": str(
+                            (disposition or {}).get("nextAction")
+                            or (disposition or {}).get("next_action")
+                            or ""
+                        ).strip(),
+                    },
+                )
+            )
+            return updated
         task_status = getattr(task.status, "value", str(task.status))
         if task_status == TaskStatus.FAILED.value:
             return self._block_work_after_run_failure(work_id=work_id, task_run_id=task.task_run_id)
         if task_status == TaskStatus.COMPLETED.value and _has_blocking_tool_error(task.result_payload):
             return self._block_work_after_run_failure(work_id=work_id, task_run_id=task.task_run_id)
         if task_status == TaskStatus.COMPLETED.value:
-            updated = self.repository.update_status(work_id, "in_review")
+            updated = self.repository.get_work(work_id)
             self.repository.add_comment(
                 WorkComment(
                     comment_id=new_id("comment"),
@@ -104,8 +159,37 @@ class WorkService:
                     metadata={"reason": "missing_work_disposition"},
                 )
             )
+            self.repository.create_interaction(
+                work_id=work_id,
+                kind="request_confirmation",
+                title="작업 종료 상태 확인 필요",
+                body=(
+                    "실행은 완료됐지만 작업 종료 상태가 명시되지 않았습니다. "
+                    "done, cancelled, in_review, blocked, todo 중 하나로 work_disposition을 남겨야 합니다."
+                ),
+                payload={
+                    "reason": "missing_work_disposition",
+                    "taskRunId": task.task_run_id,
+                    "allowedStatuses": ["done", "cancelled", "in_review", "blocked", "todo"],
+                },
+                continuation_policy="wake_assignee",
+            )
             return updated
         return self.repository.get_work(work_id)
+
+    def apply_linked_task_result(self, *, task: TaskRun) -> WorkItem | None:
+        work_id = _work_id_from_task(task)
+        if not work_id:
+            return None
+        work = self.repository.get_work(work_id)
+        if work is None:
+            return None
+        if not _has_run_link(self.repository, work_id=work_id, task_run_id=task.task_run_id):
+            try:
+                self.mark_run_started(work_id=work_id, task_run_id=task.task_run_id)
+            except WorkRunClaimConflict:
+                return self.repository.get_work(work_id)
+        return self.apply_task_result(work_id=work_id, task=task)
 
     def _block_work_after_run_failure(self, *, work_id: str, task_run_id: str) -> WorkItem:
         updated = self.repository.update_status(work_id, "blocked")
@@ -148,6 +232,52 @@ class WorkService:
 def _extract_work_disposition(payload: dict[str, Any]) -> dict[str, Any] | None:
     candidate = payload.get("workDisposition") or payload.get("work_disposition")
     return candidate if isinstance(candidate, dict) else None
+
+
+def _work_id_from_task(task: TaskRun) -> str | None:
+    input_payload = task.input_payload or {}
+    input_work_id = _text_value(input_payload.get("workId") or input_payload.get("work_id"))
+    if input_work_id:
+        return input_work_id
+    disposition = _extract_work_disposition(task.result_payload or {})
+    if disposition is None:
+        return None
+    return _text_value(disposition.get("workId") or disposition.get("work_id"))
+
+
+def _text_value(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _has_run_link(repository: WorkRepository, *, work_id: str, task_run_id: str) -> bool:
+    try:
+        runs = repository.list_runs(work_id, limit=100, offset=0)
+    except Exception:
+        return False
+    return any(run.task_run_id == task_run_id for run in runs)
+
+
+def _work_disposition_comment_body(*, status: str, disposition: dict[str, Any]) -> str:
+    summary = str(disposition.get("summary") or "").strip()
+    next_action = str(disposition.get("nextAction") or disposition.get("next_action") or "").strip()
+    parts = [f"작업 상태를 {_work_status_label(status)} 상태로 정리했습니다."]
+    if summary:
+        parts.append(f"사유: {summary}")
+    if next_action:
+        parts.append(f"다음 조치: {next_action}")
+    return "\n".join(parts)
+
+
+def _work_status_label(status: str) -> str:
+    return {
+        "todo": "대기",
+        "in_progress": "진행 중",
+        "in_review": "검토 중",
+        "blocked": "차단됨",
+        "done": "완료",
+        "cancelled": "취소됨",
+    }.get(status, status)
 
 
 def _has_blocking_tool_error(payload: dict[str, Any]) -> bool:
@@ -222,6 +352,16 @@ def _string_list(value: Any) -> list[str]:
 def _empty_to_none(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _flow_order_or_none(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
 
 
 def _fallback_title(title: str, raw_user_input: str) -> str:
