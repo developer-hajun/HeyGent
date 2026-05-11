@@ -143,7 +143,16 @@ export function LeftSidebar() {
                 className="flex h-12 w-12 items-center justify-center rounded-xl"
                 aria-label="에이전트 상태로 이동"
               >
-                <img src="/onlylogo.png" alt="HeyGent" className="h-9 w-9 object-contain" />
+                <img
+                  src="/img_logo_light.png"
+                  alt="HeyGent"
+                  className="h-9 w-9 object-contain dark:hidden"
+                />
+                <img
+                  src="/img_logo_dark.png"
+                  alt="HeyGent"
+                  className="hidden h-9 w-9 object-contain dark:block"
+                />
               </button>
             </div>
 
@@ -261,12 +270,12 @@ export function LeftSidebar() {
                 aria-label="에이전트 상태로 이동"
               >
                 <img
-                  src="/text_logo_light_4.png"
+                  src="/text_logo_light.png"
                   alt="HeyGent"
                   className="h-7 w-auto max-w-full shrink-0 translate-y-1 scale-[2] object-contain mix-blend-multiply dark:hidden"
                 />
                 <img
-                  src="/text_logo_dark_4.png"
+                  src="/text_logo_dark.png"
                   alt="HeyGent"
                   className="hidden h-7 w-auto max-w-full shrink-0 translate-y-1 scale-[2] object-contain mix-blend-screen dark:block"
                 />
