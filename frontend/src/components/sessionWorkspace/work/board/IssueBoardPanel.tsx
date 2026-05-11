@@ -47,6 +47,7 @@ import { cn } from '@/components/ui/utils'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useWorkStore } from '@/store/useWorkStore'
 import type { WorkItem, WorkLabel } from '@/types/work'
+import { getApiErrorMessage } from '@/utils/apiErrorMessage'
 import {
   ISSUE_BOARD_STATUSES,
   createIssueBoardIdentifier,
@@ -155,6 +156,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const [dragOverStatus, setDragOverStatus] = useState<IssueBoardStatus | null>(null)
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null)
   const [workNotice, setWorkNotice] = useState<string | null>(null)
+  const visibleWorkError = workError && workError !== workNotice ? workError : null
   const [runningIssueIds, setRunningIssueIds] = useState<Set<string>>(() => new Set())
 
   useEffect(() => {
@@ -394,7 +396,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         return fetchSessionWork(sessionId)
       })
       .catch((error) => {
-        setWorkNotice(error instanceof Error ? error.message : '작업 실행에 실패했습니다.')
+        setWorkNotice(getApiErrorMessage(error, { fallback: '작업 실행에 실패했습니다.' }))
       })
       .finally(() => {
         setRunningIssueIds((current) => {
@@ -415,7 +417,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         })
         .catch((error) => {
           console.error(error)
-          setWorkNotice(error instanceof Error ? error.message : '작업 삭제에 실패했습니다.')
+          setWorkNotice(getApiErrorMessage(error, { fallback: '작업 삭제에 실패했습니다.' }))
         })
       return
     }
@@ -455,7 +457,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         })
         .catch((error) => {
           console.error(error)
-          setWorkNotice(error instanceof Error ? error.message : '작업 생성에 실패했습니다.')
+          setWorkNotice(getApiErrorMessage(error, { fallback: '작업 생성에 실패했습니다.' }))
         })
       return
     }
@@ -617,9 +619,9 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
             </span>
           </div>
         </div>
-        {workError && (
+        {visibleWorkError && (
           <p className="text-destructive text-xs" aria-live="polite">
-            {workError}
+            {visibleWorkError}
           </p>
         )}
         {workNotice && (

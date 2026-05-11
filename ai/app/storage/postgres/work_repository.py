@@ -701,7 +701,6 @@ class PostgresWorkRepository:
               AND wake.wake_id IS NULL
               AND (
                 wi.latest_run_id IS NOT NULL
-                OR wi.parent_id IS NOT NULL
                 OR (wi.metadata ? 'autoWake')
               )
             ORDER BY wi.updated_at ASC

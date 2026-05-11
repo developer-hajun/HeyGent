@@ -780,6 +780,36 @@ def test_stranded_assigned_work_recovery_is_idempotent_and_visible():
     assert first[0].reason == "assignment_recovery"
 
 
+def test_recovery_does_not_auto_wake_new_child_work_without_execution_history():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    parent = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "부모 작업"},
+    )
+    child = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={
+            "rawUserInput": "하위 담당 작업",
+            "parentId": parent.work_id,
+            "assigneeAgentId": "agent-1",
+        },
+    )
+    repository.update_status(parent.work_id, "todo")
+    repository.update_status(child.work_id, "todo")
+
+    queued = WorkWakeService(repository).recover_stranded_assigned_work()
+
+    assert queued == []
+    assert repository.wakes == {}
+
+
 def test_recovery_skips_ceo_work_without_explicit_wake():
     repository = FakeWorkRepository()
     service = WorkService(repository)

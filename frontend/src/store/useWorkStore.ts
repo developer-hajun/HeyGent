@@ -23,6 +23,7 @@ import type {
   WorkLabel,
   WorkStatus,
 } from '@/types/work'
+import { getApiErrorMessage } from '@/utils/apiErrorMessage'
 
 type WorkState = {
   itemsBySessionId: Record<string, WorkItem[]>
@@ -76,7 +77,7 @@ export const useWorkStore = create<WorkState>((set) => ({
     } catch (error) {
       set((state) => ({
         loadingBySessionId: { ...state.loadingBySessionId, [sessionId]: false },
-        lastError: error instanceof Error ? error.message : '작업 목록을 불러오지 못했습니다.',
+        lastError: getApiErrorMessage(error, { fallback: '작업 목록을 불러오지 못했습니다.' }),
       }))
       throw error
     }
@@ -106,7 +107,7 @@ export const useWorkStore = create<WorkState>((set) => ({
     } catch (error) {
       set((state) => ({
         creatingBySessionId: { ...state.creatingBySessionId, [sessionId]: false },
-        lastError: error instanceof Error ? error.message : '작업 생성에 실패했습니다.',
+        lastError: getApiErrorMessage(error, { fallback: '작업 생성에 실패했습니다.' }),
       }))
       throw error
     }
@@ -120,7 +121,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return response.items
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 댓글 조회에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 댓글 조회에 실패했습니다.' }) })
       throw error
     }
   },
@@ -133,7 +134,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return response.items
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 라벨 조회에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 라벨 조회에 실패했습니다.' }) })
       throw error
     }
   },
@@ -152,7 +153,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return response
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 실행에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 실행에 실패했습니다.' }) })
       throw error
     }
   },
@@ -168,7 +169,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return item
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 상태 변경에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 상태 변경에 실패했습니다.' }) })
       throw error
     }
   },
@@ -184,7 +185,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return item
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 내용 변경에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 내용 변경에 실패했습니다.' }) })
       throw error
     }
   },
@@ -201,7 +202,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       return item
     } catch (error) {
       set({
-        lastError: error instanceof Error ? error.message : '작업 담당자 변경에 실패했습니다.',
+        lastError: getApiErrorMessage(error, { fallback: '작업 담당자 변경에 실패했습니다.' }),
       })
       throw error
     }
@@ -218,7 +219,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return comment
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 댓글 추가에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 댓글 추가에 실패했습니다.' }) })
       throw error
     }
   },
@@ -234,7 +235,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return label
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 라벨 생성에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 라벨 생성에 실패했습니다.' }) })
       throw error
     }
   },
@@ -250,7 +251,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return item
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 라벨 변경에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 라벨 변경에 실패했습니다.' }) })
       throw error
     }
   },
@@ -268,7 +269,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return item
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 삭제에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 삭제에 실패했습니다.' }) })
       throw error
     }
   },
