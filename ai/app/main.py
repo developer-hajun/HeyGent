@@ -28,8 +28,12 @@ from app.domain.orchestration.agent.loop import TaskEngine
 from app.domain.orchestration.agent.memory.memory_extraction_provider import ProviderMemoryExtractionClient
 from app.domain.orchestration.agent.memory.memory_extractor import LlmMemoryExtractor
 from app.domain.orchestration.agent.memory.memory_recall_planner_provider import ProviderMemoryRecallPlannerClient
+from app.domain.orchestration.agent.memory.memory_usage_attribution_provider import (
+    ProviderMemoryUsageAttributionClient,
+)
 from app.domain.orchestration.agent.tool_catalog import ToolCatalog
 from app.api.memory_context import LlmMemoryRecallPlanner
+from app.api.memory_mark_used import LlmMemoryUsageAttributionVerifier
 from app.domain.orchestration.orchestrator import Orchestrator
 from app.domain.orchestration.runtime_planning import Planner
 from app.domain.providers.model import OpenAIAPIProvider, OpenAIOAuthProvider
@@ -111,6 +115,8 @@ async def lifespan(app: FastAPI):
     memory_extractor = LlmMemoryExtractor(provider=memory_extraction_provider)
     memory_recall_planner_provider = ProviderMemoryRecallPlannerClient(provider_registry=provider_registry)
     memory_recall_planner = LlmMemoryRecallPlanner(provider=memory_recall_planner_provider)
+    memory_usage_attribution_provider = ProviderMemoryUsageAttributionClient(provider_registry=provider_registry)
+    memory_usage_attribution_verifier = LlmMemoryUsageAttributionVerifier(provider=memory_usage_attribution_provider)
     session_store = PostgresSessionStore(postgres_connection_factory)
     work_repository = PostgresWorkRepository(postgres_connection_factory)
     agent_repository = PostgresAgentRepository(postgres_connection_factory)
@@ -175,6 +181,7 @@ async def lifespan(app: FastAPI):
     app.state.backend_memory_client = backend_memory_client
     app.state.memory_extractor = memory_extractor
     app.state.memory_recall_planner = memory_recall_planner
+    app.state.memory_usage_attribution_verifier = memory_usage_attribution_verifier
     app.state.provider_registry = provider_registry
     app.state.session_store = session_store
     app.state.work_repository = work_repository
