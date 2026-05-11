@@ -659,6 +659,7 @@ async def create_work_run(request: Request, payload: CreateWorkRunRequest, workI
         ),
         session=_session_or_404(request, work.session_id),
         user=user,
+        run_in_background=True,
     )
     updated = request.app.state.work_repository.get_work(work.work_id) or work
     await _publish_work_event(request, str(user.user_id), "work_run.created", work=updated)

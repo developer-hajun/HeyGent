@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -33,6 +35,7 @@ from app.domain.session.session_runtime_state import get_system_prompt_snapshot
 from app.domain.work import WorkItem, WorkRunClaimConflict, WorkService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"], dependencies=[Depends(document_bearer_auth)])
+logger = logging.getLogger(__name__)
 
 _PUBLIC_SESSION_SOURCE = "api.session"
 _TASK_TRANSCRIPT_SOURCE = "agent.loop"
@@ -326,6 +329,7 @@ async def _create_message_in_session(
     *,
     session: dict[str, Any],
     user,
+    run_in_background: bool = False,
 ) -> CreateSessionMessageResponse:
     sessionId = str(session["id"])
     owner_key = str(session.get("user_id") or user.user_id)
@@ -435,26 +439,84 @@ async def _create_message_in_session(
         workspace_key=user.workspace_key or session.get("workspace_key"),
     )
 
+    if run_in_background:
+        asyncio.create_task(
+            _run_created_session_message_background(
+                request,
+                payload=payload,
+                session=session,
+                user=user,
+                session_id=sessionId,
+                owner_key=owner_key,
+                task_run_id=task_run_id,
+                task_input=task_input,
+                user_append=user_append,
+            )
+        )
+        messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
+        return CreateSessionMessageResponse(
+            session_id=sessionId,
+            task_run_id=task_run_id,
+            status=TaskStatus.RUNNING.value,
+            user_message=_message_response(messages_by_id[user_append["message_id"]]),
+            assistant_message=None,
+        )
+
+    task, assistant_message_id = await _run_created_session_message(
+        request,
+        payload=payload,
+        session=session,
+        user=user,
+        session_id=sessionId,
+        owner_key=owner_key,
+        task_run_id=task_run_id,
+        task_input=task_input,
+        user_append=user_append,
+    )
+    messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
+    return CreateSessionMessageResponse(
+        session_id=sessionId,
+        task_run_id=task.task_run_id,
+        status=task.status,
+        user_message=_message_response(messages_by_id[user_append["message_id"]]),
+        assistant_message=_message_response(messages_by_id[assistant_message_id]) if assistant_message_id is not None else None,
+    )
+
+
+async def _run_created_session_message(
+    request: Request,
+    *,
+    payload: CreateSessionMessageRequest,
+    session: dict[str, Any],
+    user,
+    session_id: str,
+    owner_key: str,
+    task_run_id: str,
+    task_input: dict[str, Any],
+    user_append: dict[str, Any],
+):
+    session_store = request.app.state.session_store
     try:
         task = await request.app.state.orchestrator.start(
             OrchestrationRequest(
                 task_run_id=task_run_id,
                 owner_key=owner_key,
-                session_key=sessionId,
+                session_key=session_id,
                 input_payload=task_input,
             )
         )
     except KeyError as error:
         _mark_linked_work_run_failed(request, task_input=task_input, task_run_id=task_run_id)
-        session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
+        session_store.clear_stale_running_task(owner_key=owner_key, session_id=session_id, task_run_id=task_run_id)
         raise HTTPException(status_code=404, detail=f"unknown execution route: {error.args[0]}") from error
     except ValueError as error:
         _mark_linked_work_run_failed(request, task_input=task_input, task_run_id=task_run_id)
-        session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
+        session_store.clear_stale_running_task(owner_key=owner_key, session_id=session_id, task_run_id=task_run_id)
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception:
         _mark_linked_work_run_failed(request, task_input=task_input, task_run_id=task_run_id)
-        session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
+        session_store.clear_stale_running_task(owner_key=owner_key, session_id=session_id, task_run_id=task_run_id)
+        logger.exception("session message orchestration failed", extra={"task_run_id": task_run_id, "session_id": session_id})
         raise
 
     _apply_linked_work_result(request, task_input=task_input, task=task)
@@ -464,7 +526,7 @@ async def _create_message_in_session(
         assistant_content = _assistant_content_from_task(task)
         assistant_append = session_store.append_assistant_message_and_finish_task(
             owner_key=owner_key,
-            session_id=sessionId,
+            session_id=session_id,
             task_run_id=task.task_run_id,
             content=assistant_content,
             completion_expected_version=task_input["completion_expected_version"],
@@ -476,7 +538,7 @@ async def _create_message_in_session(
             user_id=str(user.user_id),
             user_message=payload.content,
             assistant_message=assistant_content,
-            session_id=sessionId,
+            session_id=session_id,
             workspace_key=user.workspace_key or session.get("workspace_key"),
             task_run_id=task.task_run_id,
             user_message_id=str(user_append["message_id"]),
@@ -488,15 +550,17 @@ async def _create_message_in_session(
             writeback=writeback_observation,
         )
     elif task.status != "WAITING":
-        session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task.task_run_id)
-    messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
-    return CreateSessionMessageResponse(
-        session_id=sessionId,
-        task_run_id=task.task_run_id,
-        status=task.status,
-        user_message=_message_response(messages_by_id[user_append["message_id"]]),
-        assistant_message=_message_response(messages_by_id[assistant_message_id]) if assistant_message_id is not None else None,
-    )
+        session_store.clear_stale_running_task(owner_key=owner_key, session_id=session_id, task_run_id=task.task_run_id)
+    return task, assistant_message_id
+
+
+async def _run_created_session_message_background(request: Request, **kwargs: Any) -> None:
+    try:
+        await _run_created_session_message(request, **kwargs)
+    except Exception:
+        task_run_id = str(kwargs.get("task_run_id") or "")
+        session_id = str(kwargs.get("session_id") or "")
+        logger.exception("background session message orchestration failed", extra={"task_run_id": task_run_id, "session_id": session_id})
 
 
 @router.get(
