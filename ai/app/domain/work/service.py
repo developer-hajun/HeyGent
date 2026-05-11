@@ -15,6 +15,12 @@ from app.domain.work.repository import WorkRepository
 from app.domain.tasks.models import TaskRun
 
 
+class WorkRunClaimConflict(RuntimeError):
+    def __init__(self, work_id: str) -> None:
+        super().__init__(f"work already has an active run: {work_id}")
+        self.work_id = work_id
+
+
 class WorkService:
     def __init__(self, repository: WorkRepository) -> None:
         self.repository = repository
@@ -68,7 +74,18 @@ class WorkService:
         return saved
 
     def mark_run_started(self, *, work_id: str, task_run_id: str) -> None:
-        self.repository.link_run(work_id, task_run_id, run_kind="initial", status="RUNNING")
+        claim_run = getattr(self.repository, "claim_run", None)
+        if callable(claim_run):
+            link = claim_run(
+                work_id,
+                task_run_id,
+                run_kind="initial",
+                status="RUNNING",
+            )
+        else:
+            link = self.repository.link_run(work_id, task_run_id, run_kind="initial", status="RUNNING")
+        if link is None:
+            raise WorkRunClaimConflict(work_id)
 
     def mark_run_start_failed(self, *, work_id: str, reason: str) -> WorkItem:
         updated = self.repository.update_status(work_id, status_after_run_start_failure())
@@ -83,7 +100,14 @@ class WorkService:
         return updated
 
     def apply_task_result(self, *, work_id: str, task: TaskRun) -> WorkItem | None:
+        work_before_result = self.repository.get_work(work_id)
         self.repository.update_run_status(work_id, task.task_run_id, task.status)
+        if (
+            work_before_result is not None
+            and work_before_result.active_run_id is not None
+            and work_before_result.active_run_id != task.task_run_id
+        ):
+            return self.repository.get_work(work_id)
         disposition = _extract_work_disposition(task.result_payload)
         status = normalize_disposition_status(disposition.get("status") if disposition else None)
         if status is not None:
@@ -94,7 +118,7 @@ class WorkService:
         if task_status == TaskStatus.COMPLETED.value and _has_blocking_tool_error(task.result_payload):
             return self._block_work_after_run_failure(work_id=work_id, task_run_id=task.task_run_id)
         if task_status == TaskStatus.COMPLETED.value:
-            updated = self.repository.update_status(work_id, "in_review")
+            updated = self.repository.get_work(work_id)
             self.repository.add_comment(
                 WorkComment(
                     comment_id=new_id("comment"),
@@ -104,6 +128,21 @@ class WorkService:
                     body="실행은 완료됐지만 작업 종료 상태가 명시되지 않았습니다. 결과를 확인한 뒤 상태를 정리하세요.",
                     metadata={"reason": "missing_work_disposition"},
                 )
+            )
+            self.repository.create_interaction(
+                work_id=work_id,
+                kind="request_confirmation",
+                title="작업 종료 상태 확인 필요",
+                body=(
+                    "실행은 완료됐지만 작업 종료 상태가 명시되지 않았습니다. "
+                    "done, cancelled, in_review, blocked, todo 중 하나로 work_disposition을 남겨야 합니다."
+                ),
+                payload={
+                    "reason": "missing_work_disposition",
+                    "taskRunId": task.task_run_id,
+                    "allowedStatuses": ["done", "cancelled", "in_review", "blocked", "todo"],
+                },
+                continuation_policy="wake_assignee",
             )
             return updated
         return self.repository.get_work(work_id)

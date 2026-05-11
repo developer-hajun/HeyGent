@@ -5,15 +5,17 @@ from copy import deepcopy
 import pytest
 
 from app.domain.tasks.models import TaskRun
-from app.domain.work.models import WorkComment, WorkItem, WorkRunLink
-from app.domain.work.service import WorkService
+from app.domain.work.models import WorkComment, WorkItem, WorkRunLink, WorkThreadInteraction
+from app.domain.work.service import WorkRunClaimConflict, WorkService
 
 
 class FakeWorkRepository:
     def __init__(self) -> None:
         self.items: dict[str, WorkItem] = {}
         self.comments: list[WorkComment] = []
+        self.interactions: list[WorkThreadInteraction] = []
         self.runs: dict[tuple[str, str], WorkRunLink] = {}
+        self.stale_run_ids: set[str] = set()
         self.client_requests: dict[tuple[str, str], str] = {}
         self.inherited_labels: list[tuple[str, str]] = []
         self.label_links: list[tuple[str, str, str, tuple[str, ...]]] = []
@@ -66,13 +68,62 @@ class FakeWorkRepository:
         self.items[work_id] = WorkItem(**{**_work_dict(work), "active_run_id": task_run_id, "latest_run_id": task_run_id})
         return link
 
+    def claim_run(
+        self,
+        work_id: str,
+        task_run_id: str,
+        *,
+        run_kind: str,
+        status: str,
+        stale_after_seconds: int | None = None,
+    ) -> WorkRunLink | None:
+        work = self.items[work_id]
+        if work.active_run_id and work.active_run_id != task_run_id:
+            if work.active_run_id not in self.stale_run_ids:
+                return None
+            old_key = (work_id, work.active_run_id)
+            if old_key in self.runs:
+                old_link = self.runs[old_key]
+                self.runs[old_key] = WorkRunLink(
+                    work_id=work_id,
+                    task_run_id=work.active_run_id,
+                    run_kind=old_link.run_kind,
+                    status="STALE",
+                )
+        return self.link_run(work_id, task_run_id, run_kind=run_kind, status=status)
+
     def update_run_status(self, work_id: str, task_run_id: str, status: str) -> WorkRunLink:
         link = self.runs[(work_id, task_run_id)]
         self.runs[(work_id, task_run_id)] = WorkRunLink(work_id=work_id, task_run_id=task_run_id, run_kind=link.run_kind, status=status)
         work = self.items[work_id]
         active_run_id = None if status in {"COMPLETED", "FAILED", "CANCELED"} else task_run_id
-        self.items[work_id] = WorkItem(**{**_work_dict(work), "active_run_id": active_run_id, "latest_run_id": task_run_id})
+        if work.active_run_id == task_run_id:
+            self.items[work_id] = WorkItem(**{**_work_dict(work), "active_run_id": active_run_id, "latest_run_id": task_run_id})
+        else:
+            self.items[work_id] = work
         return self.runs[(work_id, task_run_id)]
+
+    def create_interaction(
+        self,
+        *,
+        work_id: str,
+        kind: str,
+        title: str | None = None,
+        body: str | None = None,
+        payload: dict | None = None,
+        continuation_policy: str = "none",
+    ) -> WorkThreadInteraction:
+        interaction = WorkThreadInteraction(
+            interaction_id=f"interaction-{len(self.interactions) + 1}",
+            work_id=work_id,
+            kind=kind,
+            title=title,
+            body=body,
+            payload=payload or {},
+            continuation_policy=continuation_policy,
+        )
+        self.interactions.append(interaction)
+        return interaction
 
 
 def test_work_mode_creation_starts_in_progress_and_preserves_llm_payload_fields():
@@ -207,7 +258,97 @@ def test_work_disposition_from_task_result_updates_work_status():
     assert repository.runs[(work.work_id, "task-1")].status == "COMPLETED"
 
 
-def test_completed_task_without_disposition_moves_work_to_review():
+def test_run_start_conflicts_when_another_active_run_owns_work():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    work = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "작업해줘"},
+    )
+    service.mark_run_started(work_id=work.work_id, task_run_id="task-1")
+
+    with pytest.raises(WorkRunClaimConflict):
+        service.mark_run_started(work_id=work.work_id, task_run_id="task-2")
+
+    assert repository.items[work.work_id].active_run_id == "task-1"
+
+
+def test_run_start_adopts_stale_active_run():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    work = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "작업해줘"},
+    )
+    service.mark_run_started(work_id=work.work_id, task_run_id="task-1")
+    repository.stale_run_ids.add("task-1")
+
+    service.mark_run_started(work_id=work.work_id, task_run_id="task-2")
+
+    assert repository.items[work.work_id].active_run_id == "task-2"
+    assert repository.runs[(work.work_id, "task-1")].status == "STALE"
+
+
+def test_terminal_status_from_old_run_does_not_release_new_active_run():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    work = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "작업해줘"},
+    )
+    service.mark_run_started(work_id=work.work_id, task_run_id="task-1")
+    old_work = repository.items[work.work_id]
+    repository.items[work.work_id] = WorkItem(
+        **{**_work_dict(old_work), "active_run_id": None}
+    )
+    service.mark_run_started(work_id=work.work_id, task_run_id="task-2")
+
+    repository.update_run_status(work.work_id, "task-1", "COMPLETED")
+
+    assert repository.items[work.work_id].active_run_id == "task-2"
+    assert repository.items[work.work_id].latest_run_id == "task-2"
+
+
+def test_old_run_result_does_not_change_status_owned_by_new_active_run():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    work = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "작업해줘"},
+    )
+    service.mark_run_started(work_id=work.work_id, task_run_id="task-1")
+    repository.stale_run_ids.add("task-1")
+    service.mark_run_started(work_id=work.work_id, task_run_id="task-2")
+
+    updated = service.apply_task_result(
+        work_id=work.work_id,
+        task=TaskRun(
+            task_run_id="task-1",
+            task_type="agent.loop",
+            owner_key="7",
+            status="COMPLETED",
+            result_payload={"workDisposition": {"status": "done"}},
+        ),
+    )
+
+    assert updated is not None
+    assert updated.status == "in_progress"
+    assert repository.items[work.work_id].active_run_id == "task-2"
+
+
+def test_completed_task_without_disposition_keeps_status_and_creates_corrective_wake():
     repository = FakeWorkRepository()
     service = WorkService(repository)
     work = service.create_from_payload(
@@ -231,9 +372,12 @@ def test_completed_task_without_disposition_moves_work_to_review():
     )
 
     assert updated is not None
-    assert updated.status == "in_review"
+    assert updated.status == "in_progress"
     assert repository.items[work.work_id].active_run_id is None
     assert repository.comments[-1].metadata == {"reason": "missing_work_disposition"}
+    assert repository.interactions[-1].kind == "request_confirmation"
+    assert repository.interactions[-1].continuation_policy == "wake_assignee"
+    assert repository.interactions[-1].payload["reason"] == "missing_work_disposition"
 
 
 def test_failed_task_result_blocks_work_and_releases_active_run():
@@ -377,7 +521,7 @@ def test_completed_task_with_later_terminal_success_still_requires_disposition()
     )
 
     assert updated is not None
-    assert updated.status == "in_review"
+    assert updated.status == "in_progress"
     assert repository.items[work.work_id].active_run_id is None
 
 
@@ -410,7 +554,7 @@ def test_completed_task_with_later_file_success_still_requires_disposition():
     )
 
     assert updated is not None
-    assert updated.status == "in_review"
+    assert updated.status == "in_progress"
     assert repository.items[work.work_id].active_run_id is None
 
 

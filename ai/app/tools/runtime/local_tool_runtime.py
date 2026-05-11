@@ -613,6 +613,14 @@ class LocalToolRuntime:
             },
             client_request_id=None,
         )
+        block_parent_until_done = args.get("blockParentUntilDone", args.get("block_parent_until_done"))
+        if block_parent_until_done is not False:
+            self.work_repository.add_relation(
+                source_work_id=child.work_id,
+                target_work_id=parent.work_id,
+                relation_type="blocks",
+            )
+            self.work_repository.update_status(parent.work_id, "blocked")
         self.work_repository.add_comment(
             WorkComment(
                 comment_id=new_id("comment"),

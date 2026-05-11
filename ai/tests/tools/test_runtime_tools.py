@@ -1,7 +1,9 @@
 import json
 import sys
 import types
+from copy import deepcopy
 
+from app.domain.work.models import WorkComment, WorkItem, WorkRelation
 from app.domain.orchestration.prompts.skill_prompt import SkillLoader, SkillRegistry
 from app.domain.orchestration.runtime_planning.todo_state import (
     apply_tool_results_to_todo_state,
@@ -16,6 +18,83 @@ class DummySessionStore:
     pass
 
 
+class FakeRuntimeWorkRepository:
+    def __init__(self) -> None:
+        self.items: dict[str, WorkItem] = {}
+        self.comments: list[WorkComment] = []
+        self.relations: list[WorkRelation] = []
+        self.next_number = 1
+
+    def next_identifier(self, session_id: str) -> str:
+        self.next_number += 1
+        return f"TASK-{self.next_number}"
+
+    def create_work(self, work: WorkItem, *, client_request_id: str | None = None) -> WorkItem:
+        saved = deepcopy(work)
+        self.items[saved.work_id] = saved
+        return saved
+
+    def get_work(self, work_id: str) -> WorkItem | None:
+        return self.items.get(work_id)
+
+    def get_work_by_client_request_id(
+        self,
+        session_id: str,
+        client_request_id: str,
+    ) -> WorkItem | None:
+        return None
+
+    def set_label_links_by_names(
+        self,
+        work_id: str,
+        *,
+        session_id: str,
+        owner_key: str,
+        label_names: list[str],
+    ) -> list[str]:
+        return label_names
+
+    def inherit_parent_labels(self, work_id: str, parent_id: str) -> list[str]:
+        return []
+
+    def add_comment(self, comment: WorkComment) -> WorkComment:
+        self.comments.append(comment)
+        return comment
+
+    def update_status(self, work_id: str, status: str) -> WorkItem:
+        work = self.items[work_id]
+        self.items[work_id] = WorkItem(**{**_work_dict(work), "status": status})
+        return self.items[work_id]
+
+    def add_relation(
+        self,
+        *,
+        source_work_id: str,
+        target_work_id: str,
+        relation_type: str,
+    ) -> WorkRelation:
+        relation = WorkRelation(
+            source_work_id=source_work_id,
+            target_work_id=target_work_id,
+            relation_type=relation_type,
+        )
+        self.relations.append(relation)
+        return relation
+
+
+class FakeRuntimeAgentRepository:
+    def __init__(self, profile: dict) -> None:
+        self.profile = profile
+
+    def list_session_agents(self, *, session_id: str, owner_key: str) -> list[dict]:
+        return [self.profile]
+
+    def get_session_agent(self, *, profile_id: str, owner_key: str) -> dict | None:
+        if profile_id == self.profile["profile_id"]:
+            return self.profile
+        return None
+
+
 class SearchRecordingSessionStore:
     def __init__(self) -> None:
         self.calls = []
@@ -23,6 +102,10 @@ class SearchRecordingSessionStore:
     def search_transcript_sessions(self, query, *, owner_key, limit=10):
         self.calls.append({"query": query, "owner_key": owner_key, "limit": limit})
         return [{"id": "session_match", "owner_key": owner_key}]
+
+
+def _work_dict(work: WorkItem) -> dict:
+    return {field: getattr(work, field) for field in WorkItem.__dataclass_fields__}
 
 
 def test_runtime_exposes_todo_schema_without_legacy_write_name():
@@ -267,6 +350,52 @@ def test_delegate_task_runtime_returns_worker_handoff_request():
     assert result["child_session"]["goal"] == "문서 구현 여부 검증"
     assert result["child_session"]["toolsets"] == ["file", "terminal"]
     assert result["child_session"]["metadata"]["profile_key"] == "worker.default"
+
+
+def test_session_agent_task_blocks_parent_by_default():
+    work_repository = FakeRuntimeWorkRepository()
+    parent = WorkItem(
+        work_id="work-parent",
+        identifier="TASK-1",
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        title="부모 작업",
+        description="부모",
+        status="in_progress",
+        assignee_agent_id="CEO",
+    )
+    work_repository.items[parent.work_id] = parent
+    agent_repository = FakeRuntimeAgentRepository(
+        {
+            "profile_id": "agent-research",
+            "session_id": "session-1",
+            "agent_type": "user_subagent",
+            "profile_key": "session.agent",
+            "config_snapshot": {"name": "Research", "role": "research"},
+        }
+    )
+    runtime = LocalToolRuntime(
+        skill_registry=object(),
+        session_store=DummySessionStore(),
+        work_repository=work_repository,
+        agent_repository=agent_repository,
+        runtime_context={"workId": parent.work_id},
+    )
+
+    result = runtime.run_call(
+        name="session_agent_task",
+        args={"title": "자료 조사", "instruction": "자료를 조사해줘"},
+        enabled_toolsets=("work",),
+    )
+
+    child_id = result["child_work"]["workId"]
+    assert result["ok"] is True
+    assert work_repository.items[parent.work_id].status == "blocked"
+    assert work_repository.items[child_id].assignee_agent_id == "agent-research"
+    assert work_repository.relations == [
+        WorkRelation(source_work_id=child_id, target_work_id=parent.work_id, relation_type="blocks")
+    ]
 
 
 def test_delegate_task_normalizes_tool_names_to_worker_toolsets():

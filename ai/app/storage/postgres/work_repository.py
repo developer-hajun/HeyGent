@@ -310,6 +310,86 @@ class PostgresWorkRepository:
         connection.commit()
         return self._get_run_link(work_id, task_run_id)
 
+    def claim_run(
+        self,
+        work_id: str,
+        task_run_id: str,
+        *,
+        run_kind: str,
+        status: str,
+        stale_after_seconds: int | None = None,
+    ) -> WorkRunLink | None:
+        stale_seconds = max(1, int(stale_after_seconds or 1800))
+        connection = self.connection_factory()
+        row = connection.execute(
+            """
+            WITH claimable AS (
+                SELECT wi.work_id, wi.active_run_id AS previous_active_run_id
+                FROM work_items wi
+                LEFT JOIN work_runs active_run
+                  ON active_run.work_id = wi.work_id
+                 AND active_run.task_run_id = wi.active_run_id
+                WHERE wi.work_id = %s
+                  AND wi.deleted_at IS NULL
+                  AND (
+                    wi.active_run_id IS NULL
+                    OR wi.active_run_id = %s
+                    OR active_run.task_run_id IS NULL
+                    OR active_run.updated_at < now() - (%s * interval '1 second')
+                  )
+                FOR UPDATE OF wi
+            ), updated AS (
+                UPDATE work_items wi
+                SET active_run_id = CASE WHEN %s IN ('RUNNING', 'PENDING', 'WAITING') THEN %s ELSE wi.active_run_id END,
+                    latest_run_id = %s,
+                    status = CASE WHEN %s IN ('RUNNING', 'PENDING', 'WAITING') THEN 'in_progress' ELSE wi.status END,
+                    started_at = CASE WHEN %s IN ('RUNNING', 'PENDING', 'WAITING') THEN COALESCE(wi.started_at, now()) ELSE wi.started_at END,
+                    updated_at = now()
+                FROM claimable
+                WHERE wi.work_id = claimable.work_id
+                RETURNING claimable.previous_active_run_id
+            )
+            SELECT previous_active_run_id FROM updated
+            """,
+            (
+                work_id,
+                task_run_id,
+                stale_seconds,
+                status,
+                task_run_id,
+                task_run_id,
+                status,
+                status,
+            ),
+        ).fetchone()
+        if row is None:
+            connection.commit()
+            return None
+
+        previous_active_run_id = _normalize_row(row).get("previous_active_run_id")
+        if previous_active_run_id and previous_active_run_id != task_run_id:
+            connection.execute(
+                """
+                UPDATE work_runs
+                SET status = 'STALE',
+                    updated_at = now()
+                WHERE work_id = %s AND task_run_id = %s
+                """,
+                (work_id, previous_active_run_id),
+            )
+        connection.execute(
+            """
+            INSERT INTO work_runs (work_id, task_run_id, run_kind, status)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (work_id, task_run_id) DO UPDATE SET
+                status = EXCLUDED.status,
+                updated_at = now()
+            """,
+            (work_id, task_run_id, run_kind, status),
+        )
+        connection.commit()
+        return self._get_run_link(work_id, task_run_id)
+
     def update_run_status(self, work_id: str, task_run_id: str, status: str) -> WorkRunLink:
         connection = self.connection_factory()
         connection.execute(
@@ -320,8 +400,29 @@ class PostgresWorkRepository:
             """,
             (status, work_id, task_run_id),
         )
-        active_value = None if status in {"COMPLETED", "FAILED", "CANCELED"} else task_run_id
-        connection.execute("UPDATE work_items SET active_run_id = %s, latest_run_id = %s, updated_at = now() WHERE work_id = %s", (active_value, task_run_id, work_id))
+        if status in {"COMPLETED", "FAILED", "CANCELED"}:
+            connection.execute(
+                """
+                UPDATE work_items
+                SET active_run_id = NULL,
+                    latest_run_id = %s,
+                    updated_at = now()
+                WHERE work_id = %s AND active_run_id = %s
+                """,
+                (task_run_id, work_id, task_run_id),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE work_items
+                SET active_run_id = %s,
+                    latest_run_id = %s,
+                    updated_at = now()
+                WHERE work_id = %s
+                  AND (active_run_id IS NULL OR active_run_id = %s)
+                """,
+                (task_run_id, task_run_id, work_id, task_run_id),
+            )
         connection.commit()
         return self._get_run_link(work_id, task_run_id)
 

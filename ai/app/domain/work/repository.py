@@ -62,6 +62,16 @@ class WorkRepository(Protocol):
 
     def link_run(self, work_id: str, task_run_id: str, *, run_kind: str, status: str) -> WorkRunLink: ...
 
+    def claim_run(
+        self,
+        work_id: str,
+        task_run_id: str,
+        *,
+        run_kind: str,
+        status: str,
+        stale_after_seconds: int | None = None,
+    ) -> WorkRunLink | None: ...
+
     def update_run_status(self, work_id: str, task_run_id: str, status: str) -> WorkRunLink: ...
 
     def list_runs(self, work_id: str, *, limit: int = 50, offset: int = 0) -> list[WorkRunLink]: ...

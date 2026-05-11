@@ -28,7 +28,7 @@ from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
-from app.domain.work import WorkItem, WorkService
+from app.domain.work import WorkItem, WorkRunClaimConflict, WorkService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"], dependencies=[Depends(document_bearer_auth)])
 
@@ -361,10 +361,18 @@ async def _create_message_in_session(
     task_input["completion_expected_version"] = user_append["completion_expected_version"]
     task_input["client_message_id"] = client_message_id
     if work_id is not None:
-        WorkService(request.app.state.work_repository).mark_run_started(
-            work_id=work_id,
-            task_run_id=task_run_id,
-        )
+        try:
+            WorkService(request.app.state.work_repository).mark_run_started(
+                work_id=work_id,
+                task_run_id=task_run_id,
+            )
+        except WorkRunClaimConflict as error:
+            session_store.clear_stale_running_task(
+                owner_key=owner_key,
+                session_id=sessionId,
+                task_run_id=task_run_id,
+            )
+            raise HTTPException(status_code=409, detail="work already has an active run") from error
     await attach_persistent_memory_context(
         app_state=request.app.state,
         task_input=task_input,
