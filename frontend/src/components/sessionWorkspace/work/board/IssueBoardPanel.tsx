@@ -119,7 +119,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
       })),
     ]
   }, [agentPanelsBySessionId, sessionId])
-  const [initialState] = useState(() => loadTodoBoardState(storageKey, sessionId))
+  const [initialState] = useState(() => loadTodoBoardState(storageKey))
   const [issues, setIssues] = useState(initialState.issues)
   const [labels, setLabels] = useState<IssueBoardLabel[]>(initialState.labels)
   const [query, setQuery] = useState(initialState.query)
