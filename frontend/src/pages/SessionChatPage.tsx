@@ -720,7 +720,7 @@ export function SessionChatPage() {
             <button
               onClick={handleStop}
               title="응답 중지"
-              className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-lg p-1.5 text-white transition-colors"
+              className="bg-foreground text-background hover:bg-foreground/85 p-1.5_TBR shrink-0 rounded-lg transition-colors"
             >
               <Square className="h-3.5 w-3.5 fill-current" />
             </button>
@@ -728,7 +728,7 @@ export function SessionChatPage() {
             <button
               onClick={handleSend}
               title="전송"
-              className="bg-primary hover:bg-primary/90 shrink-0 rounded-lg p-1.5 text-white transition-colors"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 shrink-0 rounded-lg p-1.5 transition-colors"
             >
               <Send className="h-4 w-4" />
             </button>
@@ -736,7 +736,7 @@ export function SessionChatPage() {
             <button
               onClick={() => setVoiceChatOpen(true)}
               title="음성 대화 모드"
-              className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-lg p-1.5 text-white transition-colors"
+              className="bg-foreground text-background hover:bg-foreground/85 p-1.5_TBR shrink-0 rounded-lg transition-colors"
             >
               <AudioLines className="h-4 w-4" />
             </button>
@@ -788,7 +788,7 @@ function MessageBubble({
         </span>
         <div
           className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-            isUser ? 'bg-primary text-white' : 'border-border border bg-white'
+            isUser ? 'bg-primary text-primary-foreground' : 'border-border bg-card border'
           }`}
         >
           {msg.text.split('\n').map((line, i) => (
