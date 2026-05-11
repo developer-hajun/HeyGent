@@ -74,6 +74,7 @@ def build_memory_observation(
     *,
     task_input: dict[str, Any] | None,
     writeback: dict[str, Any] | None = None,
+    mark_used: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     input_payload = dict(task_input or {})
     raw_meta = input_payload.get(MEMORY_CONTEXT_META_KEY)
@@ -90,7 +91,7 @@ def build_memory_observation(
             attempted=False,
             reason="writeback_not_applicable",
         )),
-        "mark_used": dict(_MARK_USED_SKIPPED),
+        "mark_used": dict(mark_used or _MARK_USED_SKIPPED),
     }
 
 
@@ -99,6 +100,7 @@ def attach_memory_observation_to_task(
     task: Any,
     repository: Any,
     writeback: dict[str, Any] | None = None,
+    mark_used: dict[str, Any] | None = None,
 ) -> None:
     """TaskRun 결과 payload에 memory 관측값을 보강한다.
 
@@ -110,6 +112,7 @@ def attach_memory_observation_to_task(
         result_payload[MEMORY_OBSERVATION_RESULT_KEY] = build_memory_observation(
             task_input=dict(getattr(task, "input_payload", {}) or {}),
             writeback=writeback,
+            mark_used=mark_used,
         )
         task.result_payload = result_payload
         repository.update_task(task)
