@@ -8,7 +8,7 @@ from typing import Any, Protocol
 MEMORY_EXTRACTION_SYSTEM_PROMPT = """
 You extract only durable long-term memory candidates from one user/assistant turn.
 Return strict JSON only, with this shape:
-{"candidates":[{"memoryType":"PREFERENCE|PROFILE|FACT|INSTRUCTION|PROCEDURE","scopeType":"GLOBAL|WORKSPACE","content":"...","summary":"...","importance":0.0-1.0,"confidence":0.0-1.0,"evidence":"...","metadata":{"tags":["optional"]}}]}
+{"candidates":[{"memoryType":"PREFERENCE|PROFILE|FACT|INSTRUCTION|PROCEDURE","scopeType":"GLOBAL|WORKSPACE","content":"...","summary":"...","importance":0.0-1.0,"confidence":0.0-1.0,"evidence":"...","metadata":{"category":"preference|profile|fact|instruction|procedure|event|reason|task_state","tags":["optional"]}}]}
 
 Rules:
 - Extract nothing unless the user explicitly asked to remember something, stated a stable preference/profile fact, or gave a durable future instruction.
@@ -16,6 +16,15 @@ Rules:
 - If the user asks not to remember, return {"candidates":[]}.
 - Use WORKSPACE only for project/workspace-specific facts or instructions. Otherwise use GLOBAL.
 - Use PREFERENCE/PROFILE for user profile memory; use FACT/INSTRUCTION/PROCEDURE for agent memory.
+- Use metadata.category to classify the durable memory subject:
+  - preference: stable user preference or writing/style preference.
+  - profile: stable user identity, role, or working habit.
+  - fact: durable project/user/environment fact.
+  - instruction: durable future instruction or constraint.
+  - procedure: reusable steps or workflow.
+  - event: durable event that matters later, not a one-off chat detail.
+  - reason: why a preference, decision, or change was made.
+  - task_state: reusable project state, unresolved implementation status, or handoff state. Do not use for transient in-progress tool status.
 - Prefer concise Korean content when the source is Korean.
 """.strip()
 
@@ -108,7 +117,7 @@ def _normalize_candidate(raw: Any, *, context: MemoryExtractionContext) -> dict[
     if scope_type == "WORKSPACE" and not context.workspace_key:
         return None
 
-    metadata = _metadata(raw.get("metadata"), context=context, scope_type=scope_type)
+    metadata = _metadata(raw, context=context, scope_type=scope_type, memory_type=memory_type)
     result: dict[str, Any] = {
         "memoryType": memory_type,
         "storeType": _store_type(memory_type),
@@ -126,8 +135,12 @@ def _normalize_candidate(raw: Any, *, context: MemoryExtractionContext) -> dict[
     return result
 
 
-def _metadata(raw_metadata: Any, *, context: MemoryExtractionContext, scope_type: str) -> dict[str, Any]:
-    metadata: dict[str, Any] = {"source": "ai.writeback"}
+def _metadata(raw: dict[str, Any], *, context: MemoryExtractionContext, scope_type: str, memory_type: str) -> dict[str, Any]:
+    raw_metadata = raw.get("metadata")
+    metadata: dict[str, Any] = {
+        "source": "ai.writeback",
+        "category": _memory_category(raw, memory_type),
+    }
     if scope_type == "WORKSPACE" and context.workspace_key:
         metadata["workspaceKey"] = context.workspace_key[:300]
     if isinstance(raw_metadata, dict):
@@ -136,6 +149,18 @@ def _metadata(raw_metadata: Any, *, context: MemoryExtractionContext, scope_type
             normalized_tags = [_trimmed(tag, max_length=50) for tag in tags[:20]]
             metadata["tags"] = [tag for tag in normalized_tags if tag and not _hard_deny(tag)]
     return metadata
+
+
+def _memory_category(raw: dict[str, Any], memory_type: str) -> str:
+    raw_metadata = raw.get("metadata")
+    raw_category = None
+    if isinstance(raw_metadata, dict):
+        raw_category = raw_metadata.get("category")
+    raw_category = raw_category or raw.get("category") or raw.get("memoryCategory") or raw.get("memory_category")
+    category = _enum_lower(raw_category, _ALLOWED_MEMORY_CATEGORIES)
+    if category:
+        return category
+    return _DEFAULT_CATEGORY_BY_MEMORY_TYPE.get(memory_type, "fact")
 
 
 def _store_type(memory_type: str) -> str:
@@ -148,6 +173,13 @@ def _enum(value: Any, allowed: set[str]) -> str | None:
     if not isinstance(value, str):
         return None
     normalized = value.strip().upper()
+    return normalized if normalized in allowed else None
+
+
+def _enum_lower(value: Any, allowed: set[str]) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower().replace("-", "_")
     return normalized if normalized in allowed else None
 
 
@@ -187,6 +219,23 @@ def _hard_deny(text: Any) -> bool:
 
 
 _ALLOWED_MEMORY_TYPES = {"PREFERENCE", "PROFILE", "FACT", "INSTRUCTION", "PROCEDURE"}
+_ALLOWED_MEMORY_CATEGORIES = {
+    "preference",
+    "profile",
+    "fact",
+    "instruction",
+    "procedure",
+    "event",
+    "reason",
+    "task_state",
+}
+_DEFAULT_CATEGORY_BY_MEMORY_TYPE = {
+    "PREFERENCE": "preference",
+    "PROFILE": "profile",
+    "FACT": "fact",
+    "INSTRUCTION": "instruction",
+    "PROCEDURE": "procedure",
+}
 _DO_NOT_STORE_PHRASES = (
     "기억하지 마",
     "저장하지 마",
