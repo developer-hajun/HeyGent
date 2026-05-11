@@ -54,102 +54,102 @@ const CLUSTER_DEFS: ClusterDef[] = [
     title: 'CORE HUB',
     desc: '각 기능 에이전트를 연결하고 전체 흐름과 작업 맥락을 조율하는 중심 허브입니다.',
     keywords: 'Agent Orchestration · Context Routing · System Hub',
-    count: 50,
-    spread: 105,
+    count: 74,
+    spread: 145,
     isMain: true,
     hubR: 8.5,
     hubAlpha: 1.0,
-    hoverDetectR: 0.15,
+    hoverDetectR: 0.17,
   },
   {
     id: 1,
-    rx: 0.21,
+    rx: 0.14,
     ry: 0.42,
     label: 'MEMORY',
     title: 'MEMORY',
     desc: '이전 대화와 세션 맥락을 기억하고 이어줍니다.',
     keywords: 'Session Context · Recall · Persistence',
-    count: 18,
-    spread: 58,
+    count: 32,
+    spread: 95,
     isMain: false,
-    hubR: 4.4,
+    hubR: 4.6,
     hubAlpha: 0.85,
-    hoverDetectR: 0.1,
+    hoverDetectR: 0.13,
   },
   {
     id: 2,
-    rx: 0.79,
-    ry: 0.3,
+    rx: 0.86,
+    ry: 0.32,
     label: 'PLANNING',
     title: 'PLANNING',
     desc: '일정, 리마인더, 할 일을 정리하고 관리합니다.',
     keywords: 'Schedule · Reminder · Task Management',
-    count: 17,
-    spread: 56,
+    count: 30,
+    spread: 92,
     isMain: false,
-    hubR: 4.4,
+    hubR: 4.6,
     hubAlpha: 0.85,
-    hoverDetectR: 0.1,
+    hoverDetectR: 0.13,
   },
   {
     id: 3,
-    rx: 0.18,
-    ry: 0.72,
+    rx: 0.12,
+    ry: 0.76,
     label: 'VOICE',
     title: 'VOICE',
     desc: '음성 명령과 대화를 통해 에이전트를 호출합니다.',
     keywords: 'Speech · Command · Dialogue',
-    count: 16,
-    spread: 54,
+    count: 28,
+    spread: 88,
     isMain: false,
-    hubR: 4.2,
+    hubR: 4.4,
     hubAlpha: 0.82,
-    hoverDetectR: 0.1,
+    hoverDetectR: 0.13,
   },
   {
     id: 4,
-    rx: 0.83,
-    ry: 0.74,
+    rx: 0.88,
+    ry: 0.78,
     label: 'HEALTH',
     title: 'HEALTH',
     desc: '수면, 걸음 수, 운동 기록 등 건강 데이터를 분석합니다.',
     keywords: 'Sleep · Activity · Biometrics',
-    count: 17,
-    spread: 56,
+    count: 30,
+    spread: 92,
     isMain: false,
-    hubR: 4.2,
+    hubR: 4.4,
     hubAlpha: 0.82,
-    hoverDetectR: 0.1,
+    hoverDetectR: 0.13,
   },
   {
     id: 5,
-    rx: 0.4,
-    ry: 0.85,
+    rx: 0.38,
+    ry: 0.9,
     label: 'SYNC',
     title: 'SYNC',
     desc: '연결된 서비스와 데이터를 실시간으로 동기화합니다.',
     keywords: 'Real-time · Integration · Data Sync',
-    count: 14,
-    spread: 50,
+    count: 26,
+    spread: 82,
     isMain: false,
-    hubR: 4.0,
+    hubR: 4.2,
     hubAlpha: 0.8,
-    hoverDetectR: 0.1,
+    hoverDetectR: 0.12,
   },
   {
     id: 6,
-    rx: 0.65,
-    ry: 0.8,
+    rx: 0.68,
+    ry: 0.85,
     label: 'CONTEXT',
     title: 'CONTEXT',
     desc: '현재 작업 흐름과 필요한 정보를 연결합니다.',
     keywords: 'Workflow · Relevance · State Awareness',
-    count: 14,
-    spread: 50,
+    count: 26,
+    spread: 82,
     isMain: false,
-    hubR: 4.0,
+    hubR: 4.2,
     hubAlpha: 0.8,
-    hoverDetectR: 0.1,
+    hoverDetectR: 0.12,
   },
 ]
 
@@ -347,6 +347,52 @@ function buildNetwork(W: number, H: number): NetNode[] {
   return nodes
 }
 
+// 클러스터별 실제 점 분포 bbox — 매 빌드 시 새로 계산되어 라벨/호버 영역이 점 범위에 따라가도록 함
+// moveRadiusX/Y 는 점 분포보다 살짝 큰 영역 — 점이 마우스/물리로 움직여도 이 영역을 벗어나지 않게 제한
+interface ClusterMeta {
+  centerX: number
+  centerY: number
+  radiusX: number // 라벨 위치 결정용 (실제 점 bbox 반경)
+  radiusY: number
+  moveRadiusX: number // 점이 움직일 수 있는 영역 반경 (bbox + 여유)
+  moveRadiusY: number
+}
+
+// 점 분포 bbox 바깥으로 추가로 허용할 여유 (px). 이 만큼 더 넓은 영역까지 점이 움직일 수 있음
+const MOVE_AREA_MARGIN = 22
+
+function computeClusterMetas(nodes: NetNode[]): Map<number, ClusterMeta> {
+  const metas = new Map<number, ClusterMeta>()
+  for (const cl of CLUSTER_DEFS) {
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    let found = false
+    for (const n of nodes) {
+      if (n.clusterId !== cl.id) continue
+      if (n.tier === 'background' && !cl.isMain) continue // 너무 외곽 점은 라벨 위치 기준에서 제외
+      if (n.ox < minX) minX = n.ox
+      if (n.ox > maxX) maxX = n.ox
+      if (n.oy < minY) minY = n.oy
+      if (n.oy > maxY) maxY = n.oy
+      found = true
+    }
+    if (!found) continue
+    const radiusX = (maxX - minX) / 2
+    const radiusY = (maxY - minY) / 2
+    metas.set(cl.id, {
+      centerX: (minX + maxX) / 2,
+      centerY: (minY + maxY) / 2,
+      radiusX,
+      radiusY,
+      moveRadiusX: radiusX + MOVE_AREA_MARGIN,
+      moveRadiusY: radiusY + MOVE_AREA_MARGIN,
+    })
+  }
+  return metas
+}
+
 function buildPulses(nodes: NetNode[]): Pulse[] {
   const pulses: Pulse[] = []
   for (let i = 0; i < nodes.length; i++) {
@@ -400,6 +446,7 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
   const stateRef = useRef<{
     nodes: NetNode[]
     pulses: Pulse[]
+    clusterMetas: Map<number, ClusterMeta>
     mouse: { x: number; y: number }
     lerpMouse: { x: number; y: number }
     raf: number
@@ -442,7 +489,7 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
     if (!ctx) return
 
     const dpr = window.devicePixelRatio || 1
-    const { W, H, nodes, pulses, mouse, lerpMouse } = s
+    const { W, H, nodes, pulses, mouse, lerpMouse, clusterMetas } = s
     const hc = s.hoveredCluster
     const sp = s.scrollProgress
     const t = performance.now() * 0.001
@@ -534,6 +581,27 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
         else if (nd.x > W - EDGE_SOFT) addVelocity(nd, -(nd.x - (W - EDGE_SOFT)) * er, 0)
         if (nd.y < EDGE_SOFT) addVelocity(nd, 0, (EDGE_SOFT - nd.y) * er)
         else if (nd.y > H - EDGE_SOFT) addVelocity(nd, 0, -(nd.y - (H - EDGE_SOFT)) * er)
+
+        // 클러스터별 이동 가능 영역 (bbox + 여유) — 타원형 soft boundary
+        // 마우스/물리로 점이 영역 바깥으로 밀려도 부드럽게 안으로 끌어당김
+        const meta = clusterMetas.get(nd.clusterId)
+        if (meta && meta.moveRadiusX > 1 && meta.moveRadiusY > 1) {
+          const dx = nd.x - meta.centerX
+          const dy = nd.y - meta.centerY
+          const nx = dx / meta.moveRadiusX
+          const ny = dy / meta.moveRadiusY
+          const ellipseDist2 = nx * nx + ny * ny
+          if (ellipseDist2 > 1) {
+            // 영역 바깥 — 중심으로 부드럽게 끌어당김
+            const overshoot = Math.sqrt(ellipseDist2) - 1
+            const pull = Math.min(overshoot, 1.2) * 0.12 * sgRepel
+            addVelocity(
+              nd,
+              -(dx / Math.max(meta.moveRadiusX, 1)) * pull * meta.moveRadiusX * 0.05,
+              -(dy / Math.max(meta.moveRadiusY, 1)) * pull * meta.moveRadiusY * 0.05,
+            )
+          }
+        }
       }
 
       advanceNode(nd, DAMP)
@@ -762,10 +830,13 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
     }
 
     // ── 클러스터 라벨 (hero state 만) ─────────────────────
+    // 라벨 위치/마진은 클러스터의 실제 점 bbox(clusterMetas)에 따라 동적으로 결정 —
+    // 매 새로고침 시 점 분포가 달라져도 라벨이 점 영역 바깥에 자연스럽게 자리잡음
     const labelOpacity = 1 - progressBand(sp, 0.06, 0.22)
     if (labelOpacity > 0.02) {
       for (const cl of CLUSTER_DEFS) {
         const hubNode = nodes.find((n) => n.clusterId === cl.id && n.tier === 'hub')!
+        const meta = clusterMetas.get(cl.id)
         const isHov = hc === cl.id
         const mDist = Math.hypot(hubNode.x - lerpMouse.x, hubNode.y - lerpMouse.y)
         const prox = Math.max(0, 1 - mDist / 190)
@@ -777,7 +848,9 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
         const ux = vecX / vecLen
         const uy = vecY / vecLen
 
-        const margin = cl.isMain ? cl.spread * 0.65 + 30 : cl.spread * 0.55 + 20
+        // bbox 기준 outward 방향의 실제 반경 — 라벨 마진이 점 분포에 맞춰 조정됨
+        const bboxReach = meta ? Math.abs(ux) * meta.radiusX + Math.abs(uy) * meta.radiusY : 0
+        const margin = bboxReach + (cl.isMain ? 28 : 18)
         let lx = hubNode.x + ux * margin
         let ly = hubNode.y + uy * margin
 
@@ -853,9 +926,11 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
 
     const nodes = buildNetwork(W, H)
     const pulses = buildPulses(nodes)
+    const clusterMetas = computeClusterMetas(nodes)
     stateRef.current = {
       nodes,
       pulses,
+      clusterMetas,
       mouse: { x: W / 2, y: H / 2 },
       lerpMouse: { x: W / 2, y: H / 2 },
       raf: 0,
@@ -893,16 +968,23 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
         return
       }
 
-      const { nodes, W, H } = stateRef.current
+      // 클러스터의 실제 점 분포 bbox(clusterMetas) 기반 호버 감지 —
+      // 점이 있는 곳 어디에 마우스가 와도 해당 군집이 활성화되어 점을 움직일 수 있음
+      const { clusterMetas } = stateRef.current
+      const HOVER_PADDING = 30 // bbox + moveMargin 외에 추가로 적용하는 호버 여유 (px)
       let closest: number | null = null
-      let minDist = 9999
+      let minNormDist = Infinity
       for (const cl of CLUSTER_DEFS) {
-        const hub = nodes.find((n) => n.clusterId === cl.id && n.tier === 'hub')
-        if (!hub) continue
-        const d = Math.hypot(hub.x - e.clientX, hub.y - e.clientY)
-        const r = Math.min(W, H) * cl.hoverDetectR
-        if (d < r && d < minDist) {
-          minDist = d
+        const meta = clusterMetas.get(cl.id)
+        if (!meta) continue
+        const rx = meta.moveRadiusX + HOVER_PADDING
+        const ry = meta.moveRadiusY + HOVER_PADDING
+        const dx = e.clientX - meta.centerX
+        const dy = e.clientY - meta.centerY
+        // 타원 내부 여부 — 정규화 거리 < 1 이면 호버 영역 안
+        const normDist2 = (dx / rx) ** 2 + (dy / ry) ** 2
+        if (normDist2 < 1 && normDist2 < minNormDist) {
+          minNormDist = normDist2
           closest = cl.id
         }
       }
@@ -1001,6 +1083,9 @@ export function LoginPage() {
   const loginEmphasis = clamp01(progressBand(scrollProgress, 0.78, 0.92))
 
   const hintOpacity = clamp01(1 - progressBand(scrollProgress, 0.02, 0.12))
+
+  // 스크롤 끝부분에서 배경 문구 "Handle Everything for You" fade in
+  const bgPhraseOpacity = clamp01(progressBand(scrollProgress, 0.85, 1.0))
 
   return (
     <div
@@ -1173,6 +1258,52 @@ export function LoginPage() {
             <br />
             and sync agents in one intelligent workspace.
           </p>
+        </div>
+
+        {/* 배경 문구 — 스크롤 끝부분에 fade in, 로그인 버튼 아래 영역에 배치하여 겹치지 않음 */}
+        <div
+          style={{
+            position: 'fixed',
+            left: 0,
+            right: 0,
+            top: '60vh',
+            bottom: 0,
+            zIndex: 2,
+            opacity: bgPhraseOpacity,
+            pointerEvents: 'none',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'space-evenly',
+            transition: 'none',
+            userSelect: 'none',
+          }}
+          aria-hidden="true"
+        >
+          {(
+            [
+              { key: 'handle', before: '', accent: 'H', after: 'andle' },
+              { key: 'everything', before: '', accent: 'E', after: 'verything' },
+              { key: 'foryou', before: 'for ', accent: 'Y', after: 'ou' },
+            ] as const
+          ).map(({ key, before, accent, after }) => (
+            <span
+              key={key}
+              style={{
+                fontFamily: 'var(--font-display), -apple-system, BlinkMacSystemFont, sans-serif',
+                fontSize: 'clamp(40px, 8vw, 96px)',
+                fontWeight: 800,
+                letterSpacing: '-0.02em',
+                lineHeight: 1,
+                textTransform: 'none',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {before && <span style={{ color: 'rgba(240,240,242,0.08)' }}>{before}</span>}
+              <span style={{ color: 'rgba(240,240,242,0.32)' }}>{accent}</span>
+              <span style={{ color: 'rgba(240,240,242,0.08)' }}>{after}</span>
+            </span>
+          ))}
         </div>
 
         {/* Login reveal — Stage 2 시점부터 등장 */}

@@ -1,5 +1,19 @@
 import { useEffect, useState, useCallback } from 'react'
-import { Server, Wifi, Bot, Eye, Plus, Loader2, KeyRound } from 'lucide-react'
+import {
+  Server,
+  Wifi,
+  Bot,
+  Eye,
+  Plus,
+  Loader2,
+  KeyRound,
+  Activity,
+  ChevronDown,
+  Heart,
+  Moon,
+  Footprints,
+  Sparkles,
+} from 'lucide-react'
 import { motion } from 'motion/react'
 import { useNavigate } from 'react-router'
 import { useUIStore } from '@/store/useUIStore'
@@ -13,6 +27,44 @@ type AgentStatus = 'idle' | 'working'
 
 const MOCK_SERVER: ServerStatus = 'ok'
 const MOCK_AGENT: AgentStatus = 'idle'
+
+type SamsungHealthData = {
+  stepCount: number
+  activeMinutes: number
+  totalCalories: number
+  activeCalories: number
+  heightCm: number
+  weightKg: number
+  bodyFatPct: number
+  muscleMassKg: number
+  heartRateBpm: number
+  systolicBp: number
+  diastolicBp: number
+  durationMinutes: number
+  sleepScore: number
+}
+
+const MOCK_SAMSUNG_HEALTH: SamsungHealthData = {
+  stepCount: 7842,
+  activeMinutes: 42,
+  totalCalories: 2180,
+  activeCalories: 412,
+  heightCm: 172,
+  weightKg: 68.4,
+  bodyFatPct: 23.4,
+  muscleMassKg: 28.1,
+  heartRateBpm: 72,
+  systolicBp: 118,
+  diastolicBp: 76,
+  durationMinutes: 384,
+  sleepScore: 78,
+}
+
+const HEALTH_RECOMMENDATIONS = [
+  '활동 시간이 하루 목표보다 18분 부족합니다. 점심 이후 10분, 저녁 이후 8분으로 나누어 걷는 것을 권장합니다.',
+  '수면 시간이 권장량보다 1시간 36분 짧습니다. 오늘은 취침 시간을 30분 앞당겨 회복 시간을 확보해 주세요.',
+  '심박과 혈압은 안정 범위입니다. 체성분 변화는 주간 추이를 함께 확인하면 더 정확한 피드백이 가능합니다.',
+]
 
 // ── StatusDot ────────────────────────────────────────────────────────────────
 interface StatusDotProps {
@@ -372,6 +424,130 @@ function ActionButton({ icon, label, onClick }: ActionButtonProps) {
   )
 }
 
+// ── HealthMetricCard ─────────────────────────────────────────────────────────
+interface HealthMetricCardProps {
+  icon: React.ReactNode
+  label: string
+  value: string
+  unit?: string
+  /** 진척도 0~1 — 게이지 바 표시 */
+  progress: number
+  hint?: string
+}
+
+function HealthMetricCard({ icon, label, value, unit, progress, hint }: HealthMetricCardProps) {
+  const pct = Math.max(0, Math.min(1, progress)) * 100
+  return (
+    <div className="border-border bg-card flex flex-col gap-2.5 rounded-xl border p-4">
+      <div className="flex items-center gap-2">
+        <div className="text-muted-foreground bg-muted/60 flex h-7 w-7 items-center justify-center rounded-md">
+          {icon}
+        </div>
+        <span className="text-muted-foreground text-xs font-medium">{label}</span>
+      </div>
+      <div className="flex items-baseline gap-1">
+        <span className="text-foreground text-xl font-semibold tabular-nums">{value}</span>
+        {unit && <span className="text-muted-foreground text-xs">{unit}</span>}
+      </div>
+      <div className="bg-muted/60 relative h-1 w-full overflow-hidden rounded-full">
+        <div
+          className="bg-foreground/70 absolute inset-y-0 left-0 rounded-full transition-[width] duration-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      {hint && <p className="text-muted-foreground text-[10px]">{hint}</p>}
+    </div>
+  )
+}
+
+interface HealthFieldItem {
+  field: keyof SamsungHealthData
+  label: string
+  value: string
+  note: string
+}
+
+interface HealthDataGroupCardProps {
+  icon: React.ReactNode
+  title: string
+  summary: string
+  status: string
+  items: HealthFieldItem[]
+  expanded: boolean
+  onToggle: () => void
+}
+
+function HealthDataGroupCard({
+  icon,
+  title,
+  summary,
+  status,
+  items,
+  expanded,
+  onToggle,
+}: HealthDataGroupCardProps) {
+  return (
+    <div className="border-border bg-card rounded-xl border p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-2">
+          <div className="text-muted-foreground bg-muted/60 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
+            {icon}
+          </div>
+          <div className="min-w-0 space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-foreground text-sm font-medium">{title}</p>
+              <span className="bg-muted/70 text-muted-foreground rounded-full px-2 py-0.5 text-[10px]">
+                {status}
+              </span>
+            </div>
+            <p className="text-muted-foreground text-xs leading-relaxed">{summary}</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onToggle}
+          className="border-border text-foreground hover:bg-accent/50 inline-flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors"
+          aria-expanded={expanded}
+        >
+          {expanded ? '접기' : '자세히보기'}
+          <ChevronDown
+            className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
+          />
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {items.map((item) => (
+            <div key={item.field} className="bg-muted/35 rounded-lg px-3 py-2">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="text-muted-foreground text-xs">{item.label}</span>
+                <span className="text-muted-foreground/80 font-mono text-[10px]">{item.field}</span>
+              </div>
+              <div className="flex items-end justify-between gap-2">
+                <span className="text-foreground text-sm font-semibold tabular-nums">
+                  {item.value}
+                </span>
+                <span className="text-muted-foreground text-[10px]">{item.note}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function formatNumber(value: number) {
+  return value.toLocaleString('ko-KR')
+}
+
+function formatSleepDuration(minutes: number) {
+  const hours = Math.floor(minutes / 60)
+  const restMinutes = minutes % 60
+  return `${hours}h ${restMinutes}m`
+}
+
 // ── config helpers ───────────────────────────────────────────────────────────
 function serverStatusConfig(s: ServerStatus) {
   return s === 'ok'
@@ -396,6 +572,7 @@ export function DashboardPage() {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [pendingDeviceId, setPendingDeviceId] = useState<string | null>(null)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
+  const [expandedHealthGroups, setExpandedHealthGroups] = useState<string[]>([])
 
   const fetchDevices = useCallback(
     () =>
@@ -431,6 +608,124 @@ export function DashboardPage() {
   const server = serverStatusConfig(MOCK_SERVER)
   const agent = agentStatusConfig(MOCK_AGENT)
   const device = iotDevices[0] ?? null
+  const health = MOCK_SAMSUNG_HEALTH
+  const toggleHealthGroup = (title: string) => {
+    setExpandedHealthGroups((current) =>
+      current.includes(title) ? current.filter((item) => item !== title) : [...current, title],
+    )
+  }
+  const healthGroups: Omit<HealthDataGroupCardProps, 'expanded' | 'onToggle'>[] = [
+    {
+      title: '활동',
+      icon: <Activity className="h-4 w-4" />,
+      summary: `${formatNumber(health.stepCount)}걸음, 활동 ${health.activeMinutes}분을 기록했습니다.`,
+      status: health.activeMinutes >= 60 ? '충분' : '보완 필요',
+      items: [
+        {
+          field: 'stepCount',
+          label: '걸음 수',
+          value: `${formatNumber(health.stepCount)} 걸음`,
+          note: '목표 10,000',
+        },
+        {
+          field: 'activeMinutes',
+          label: '활동 시간',
+          value: `${health.activeMinutes}분`,
+          note: '목표 60분',
+        },
+        {
+          field: 'totalCalories',
+          label: '총 칼로리',
+          value: `${formatNumber(health.totalCalories)} kcal`,
+          note: '일일 소비량',
+        },
+        {
+          field: 'activeCalories',
+          label: '활동 칼로리',
+          value: `${formatNumber(health.activeCalories)} kcal`,
+          note: '운동 기여',
+        },
+      ],
+    },
+    {
+      title: '체성분',
+      icon: <Activity className="h-4 w-4" />,
+      summary: `몸무게 ${health.weightKg}kg, 체지방률 ${health.bodyFatPct}% 기준으로 추이를 확인합니다.`,
+      status: '추이 관찰',
+      items: [
+        {
+          field: 'heightCm',
+          label: '키',
+          value: `${health.heightCm} cm`,
+          note: '기준값',
+        },
+        {
+          field: 'weightKg',
+          label: '몸무게',
+          value: `${health.weightKg} kg`,
+          note: '최근 측정',
+        },
+        {
+          field: 'bodyFatPct',
+          label: '체지방률',
+          value: `${health.bodyFatPct}%`,
+          note: '추이 확인',
+        },
+        {
+          field: 'muscleMassKg',
+          label: '근육량',
+          value: `${health.muscleMassKg} kg`,
+          note: '추이 확인',
+        },
+      ],
+    },
+    {
+      title: '활력',
+      icon: <Heart className="h-4 w-4" />,
+      summary: `심박 ${health.heartRateBpm}bpm, 혈압 ${health.systolicBp}/${health.diastolicBp}mmHg입니다.`,
+      status: '안정',
+      items: [
+        {
+          field: 'heartRateBpm',
+          label: '심박수',
+          value: `${health.heartRateBpm} bpm`,
+          note: '안정 범위',
+        },
+        {
+          field: 'systolicBp',
+          label: '수축기 혈압',
+          value: `${health.systolicBp} mmHg`,
+          note: '정상',
+        },
+        {
+          field: 'diastolicBp',
+          label: '이완기 혈압',
+          value: `${health.diastolicBp} mmHg`,
+          note: '정상',
+        },
+      ],
+    },
+    {
+      title: '수면',
+      icon: <Moon className="h-4 w-4" />,
+      summary: `${formatSleepDuration(health.durationMinutes)} 수면, 수면 점수 ${health.sleepScore}점입니다.`,
+      status: health.durationMinutes >= 420 ? '양호' : '부족',
+      items: [
+        {
+          field: 'durationMinutes',
+          label: '수면 시간',
+          value: formatSleepDuration(health.durationMinutes),
+          note: '목표 8h',
+        },
+        {
+          field: 'sleepScore',
+          label: '수면 점수',
+          value: `${health.sleepScore}점`,
+          note: '보통',
+        },
+      ],
+    },
+  ]
 
   return (
     <div className="bg-background flex-1 overflow-y-auto">
@@ -497,6 +792,111 @@ export function DashboardPage() {
               label="API 키 등록"
               onClick={() => setSettingsOpen(true, 'apiKeys')}
             />
+          </div>
+        </motion.section>
+
+        {/* 구분선 */}
+        <div className="border-border border-t" />
+
+        {/* 섹션: 건강 정보 — 삼성 Health 데이터 기반 요약 / 피드백 / 권장 사항 */}
+        <motion.section
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.15 }}
+        >
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+              건강 정보
+            </p>
+            <span className="text-muted-foreground inline-flex items-center gap-1 text-[10px]">
+              <Activity className="h-3 w-3" />
+              Samsung Health 연동
+            </span>
+          </div>
+
+          <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <HealthMetricCard
+              icon={<Footprints className="h-4 w-4" />}
+              label="걸음 수"
+              value={formatNumber(health.stepCount)}
+              unit="걸음"
+              progress={health.stepCount / 10000}
+              hint="목표 10,000"
+            />
+            <HealthMetricCard
+              icon={<Activity className="h-4 w-4" />}
+              label="활동 시간"
+              value={String(health.activeMinutes)}
+              unit="분"
+              progress={health.activeMinutes / 60}
+              hint="목표 60분"
+            />
+            <HealthMetricCard
+              icon={<Heart className="h-4 w-4" />}
+              label="심박수"
+              value={String(health.heartRateBpm)}
+              unit="bpm"
+              progress={health.heartRateBpm / 130}
+              hint="안정 범위"
+            />
+            <HealthMetricCard
+              icon={<Moon className="h-4 w-4" />}
+              label="수면 시간"
+              value={formatSleepDuration(health.durationMinutes)}
+              unit=""
+              progress={health.durationMinutes / 480}
+              hint="목표 8h"
+            />
+          </div>
+
+          <div className="mb-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {healthGroups.map((group) => (
+              <HealthDataGroupCard
+                key={group.title}
+                icon={group.icon}
+                title={group.title}
+                summary={group.summary}
+                status={group.status}
+                items={group.items}
+                expanded={expandedHealthGroups.includes(group.title)}
+                onToggle={() => toggleHealthGroup(group.title)}
+              />
+            ))}
+          </div>
+
+          <div className="border-border bg-card rounded-xl border p-4">
+            <div className="mb-3 flex items-center gap-3">
+              <div className="bg-muted text-foreground/70 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
+                <Sparkles className="h-4 w-4" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-foreground text-sm font-medium">LLM 건강 검토</p>
+                <p className="text-muted-foreground text-xs">
+                  요약, 부족한 항목 피드백, 다음 행동 권장 사항
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1.3fr]">
+              <div className="bg-muted/35 rounded-lg p-3">
+                <p className="text-muted-foreground mb-1 text-xs">오늘의 요약</p>
+                <p className="text-foreground text-sm leading-relaxed">
+                  심박과 혈압은 안정적이며 활동량은 중간 수준입니다. 수면 시간이 짧아 회복 지표가
+                  우선 관리 대상입니다.
+                </p>
+              </div>
+              <ul className="space-y-2">
+                {HEALTH_RECOMMENDATIONS.map((tip) => (
+                  <li
+                    key={tip}
+                    className="text-foreground/85 flex items-start gap-2 text-xs leading-relaxed"
+                  >
+                    <span className="bg-switch-on/80 mt-1.5 h-1 w-1 shrink-0 rounded-full" />
+                    <span>{tip}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
         </motion.section>
 
