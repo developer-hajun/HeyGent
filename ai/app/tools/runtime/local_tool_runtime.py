@@ -555,18 +555,32 @@ class LocalToolRuntime:
         context = dict(self.runtime_context or {})
         parent_work_id = self._optional_text(context.get("workId") or context.get("work_id"))
         if not parent_work_id:
-            return self._tool_error(
-                code="work_context_required",
-                message="session_agent_task requires a connected CEO work item",
-                tool_name="session_agent_task",
-            )
-        parent = self.work_repository.get_work(parent_work_id)
-        if parent is None:
-            return self._tool_error(
-                code="work_not_found",
-                message="connected work item was not found",
-                tool_name="session_agent_task",
-            )
+            if context.get("allowSessionAgentRootWork") is True or context.get("allow_session_agent_root_work") is True:
+                parent = self._create_session_agent_root_work(args=args, context=context)
+                if parent is None:
+                    return self._tool_error(
+                        code="work_context_required",
+                        message="session_agent_task requires a connected CEO work item",
+                        tool_name="session_agent_task",
+                    )
+                self.runtime_context["workId"] = parent.work_id
+                self.runtime_context["workIdentifier"] = parent.identifier
+                self.runtime_context["workAssigneeAgentId"] = parent.assignee_agent_id
+                parent_work_id = parent.work_id
+            else:
+                return self._tool_error(
+                    code="work_context_required",
+                    message="session_agent_task requires a connected CEO work item",
+                    tool_name="session_agent_task",
+                )
+        else:
+            parent = self.work_repository.get_work(parent_work_id)
+            if parent is None:
+                return self._tool_error(
+                    code="work_not_found",
+                    message="connected work item was not found",
+                    tool_name="session_agent_task",
+                )
         if str(parent.assignee_agent_id or "CEO") != "CEO":
             return self._tool_error(
                 code="ceo_work_required",
@@ -613,6 +627,13 @@ class LocalToolRuntime:
             },
             client_request_id=None,
         )
+        block_parent_until_done = args.get("blockParentUntilDone", args.get("block_parent_until_done"))
+        if block_parent_until_done is True:
+            self.work_repository.add_relation(
+                source_work_id=child.work_id,
+                target_work_id=parent.work_id,
+                relation_type="blocks",
+            )
         self.work_repository.add_comment(
             WorkComment(
                 comment_id=new_id("comment"),
@@ -626,6 +647,7 @@ class LocalToolRuntime:
         return {
             "ok": True,
             "content": f"{child.identifier} child work accepted: {child.title}",
+            "parent_work": self._work_tool_payload(parent),
             "child_work": self._work_tool_payload(child),
             "agent": {
                 "profileId": profile_id,
@@ -634,6 +656,31 @@ class LocalToolRuntime:
             },
             "startExecution": True,
         }
+
+    def _create_session_agent_root_work(self, *, args: dict[str, Any], context: dict[str, Any]):
+        session_id = self._optional_text(context.get("sessionId") or context.get("session_id"))
+        owner_key = self._optional_text(context.get("ownerKey") or context.get("owner_key"))
+        if not session_id or not owner_key:
+            return None
+        owner_user_id = self._optional_int(context.get("ownerUserId") or context.get("owner_user_id"))
+        prompt = str(context.get("prompt") or "").strip()
+        title = str(args.get("title") or prompt or "세션 에이전트 작업").strip()
+        description = str(prompt or args.get("description") or title).strip()
+        return WorkService(self.work_repository).create_from_payload(
+            session_id=session_id,
+            owner_key=owner_key,
+            owner_user_id=owner_user_id,
+            payload={
+                "title": title,
+                "description": description,
+                "rawUserInput": prompt,
+                "executionInstruction": description,
+                "assigneeAgentId": "CEO",
+                "source": "session_agent_task",
+                "metadata": {"createdByTool": "session_agent_task"},
+            },
+            client_request_id=None,
+        )
 
     def _work_disposition(self, args: dict[str, Any]) -> dict[str, Any]:
         context = dict(self.runtime_context or {})
@@ -1006,6 +1053,13 @@ class LocalToolRuntime:
         if not isinstance(value, list):
             return []
         return [str(item).strip() for item in value if str(item).strip()]
+
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        try:
+            return int(str(value))
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _optional_positive_int(value: Any) -> int | None:

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Check, FileText, MessageSquare, Plus, Trash2, X } from 'lucide-react'
 import {
   createWorkInteraction,
@@ -24,11 +24,14 @@ export function WorkDocumentsPanel({ workId }: { workId: string }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [revisionCountByKey, setRevisionCountByKey] = useState<Record<string, number>>({})
 
-  const refresh = () =>
-    listWorkDocuments(workId).then((response) => {
-      setItems(response.items)
-      return response.items
-    })
+  const refresh = useCallback(
+    () =>
+      listWorkDocuments(workId).then((response) => {
+        setItems(response.items)
+        return response.items
+      }),
+    [workId],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -50,7 +53,7 @@ export function WorkDocumentsPanel({ workId }: { workId: string }) {
     return () => {
       cancelled = true
     }
-  }, [workId])
+  }, [refresh, workId])
 
   const edit = (document: WorkDocument) => {
     setSelectedKey(document.documentKey)
@@ -142,10 +145,13 @@ export function WorkProductsPanel({ workId }: { workId: string }) {
   const [title, setTitle] = useState('')
   const [summary, setSummary] = useState('')
 
-  const refresh = () => listWorkProducts(workId).then((response) => setItems(response.items))
+  const refresh = useCallback(
+    () => listWorkProducts(workId).then((response) => setItems(response.items)),
+    [workId],
+  )
   useEffect(() => {
     void refresh().catch(console.error)
-  }, [workId])
+  }, [refresh])
 
   const add = () => {
     const nextTitle = title.trim()
@@ -217,10 +223,13 @@ export function WorkInteractionsPanel({ workId }: { workId: string }) {
   const [items, setItems] = useState<WorkInteraction[]>([])
   const [body, setBody] = useState('')
 
-  const refresh = () => listWorkInteractions(workId).then((response) => setItems(response.items))
+  const refresh = useCallback(
+    () => listWorkInteractions(workId).then((response) => setItems(response.items)),
+    [workId],
+  )
   useEffect(() => {
     void refresh().catch(console.error)
-  }, [workId])
+  }, [refresh])
 
   const addQuestion = () => {
     const nextBody = body.trim()

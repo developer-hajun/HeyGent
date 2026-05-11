@@ -14,6 +14,11 @@ type QueueItem = {
 let isRefreshing = false
 let failedQueue: QueueItem[] = []
 
+const aiApiBaseUrl =
+  import.meta.env.VITE_AI_API_BASE_URL ??
+  getAiApiBaseUrlFromWs(import.meta.env.VITE_AI_WS_BASE_URL) ??
+  'http://localhost:8000/ai/api/v1'
+
 const processQueue = (error: unknown, token: string | null) => {
   failedQueue.forEach(({ resolve, reject }) => {
     if (error) reject(error)
@@ -23,7 +28,7 @@ const processQueue = (error: unknown, token: string | null) => {
 }
 
 const aiAxiosInstance = axios.create({
-  baseURL: import.meta.env.VITE_AI_API_BASE_URL,
+  baseURL: aiApiBaseUrl,
   timeout: 30_000,
   headers: { 'Content-Type': 'application/json' },
 })
@@ -95,3 +100,13 @@ aiAxiosInstance.interceptors.response.use(
 )
 
 export default aiAxiosInstance
+
+function getAiApiBaseUrlFromWs(wsUrl: unknown): string | undefined {
+  if (typeof wsUrl !== 'string' || wsUrl.trim() === '') {
+    return undefined
+  }
+  return wsUrl
+    .replace(/^ws:/, 'http:')
+    .replace(/^wss:/, 'https:')
+    .replace(/\/realtime\/user\/ws\/?$/, '')
+}

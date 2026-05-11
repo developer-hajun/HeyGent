@@ -17,7 +17,6 @@ import {
 } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Switch } from '@/components/ui/switch'
 import { VoiceWaveform } from './VoiceWaveform'
 import { getCommandUsage, type CommandUsageSummary } from '@/apis/aiCommandUsage'
 
@@ -28,14 +27,11 @@ type ChatComposerProps = {
   onSend: (content: string) => void
   onClearSelectedWork?: () => void
   onSelectWorkClick?: () => void
-  onWorkModeChange?: (enabled: boolean) => void
   onStop?: () => void
   onVoiceMode?: () => void
   draftValue?: string | null
   statusMessage?: string | null
   selectedWorkLabel?: string | null
-  workMode?: boolean
-  workModeDisabled?: boolean
   sessionId?: string
 }
 
@@ -57,14 +53,11 @@ export function ChatComposer({
   onSend,
   onClearSelectedWork,
   onSelectWorkClick,
-  onWorkModeChange,
   onStop,
   onVoiceMode,
   draftValue = null,
   statusMessage = null,
   selectedWorkLabel = null,
-  workMode = false,
-  workModeDisabled = false,
   sessionId,
 }: ChatComposerProps) {
   const [value, setValue] = useState(draftValue ?? '')
@@ -110,10 +103,6 @@ export function ChatComposer({
     setValue('')
   }
 
-  const toggleWorkMode = (enabled: boolean) => {
-    onWorkModeChange?.(enabled)
-  }
-
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
@@ -126,14 +115,12 @@ export function ChatComposer({
       <div className="mx-auto max-w-3xl">
         <div className="border-border bg-card overflow-hidden rounded-2xl border shadow-sm transition-shadow duration-200 hover:shadow-md">
           {/* Input row */}
-          {(workMode || selectedWorkLabel) && (
+          {selectedWorkLabel && (
             <div className="border-border/60 bg-muted/20 flex items-center gap-2 border-b px-5 py-2 text-xs">
               <ListTodo className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-              <span className="text-muted-foreground">
-                {selectedWorkLabel ? '연결된 작업' : '작업 모드'}
-              </span>
+              <span className="text-muted-foreground">연결된 작업</span>
               <span className="text-foreground min-w-0 flex-1 truncate font-medium">
-                {selectedWorkLabel ?? '새 작업으로 생성'}
+                {selectedWorkLabel}
               </span>
               {selectedWorkLabel && (
                 <button
@@ -194,16 +181,6 @@ export function ChatComposer({
                   <ListTodo className="text-muted-foreground h-4 w-4 shrink-0" />
                   <span className="text-foreground flex-1 text-sm">기존 작업 선택</span>
                 </button>
-                <label className="hover:bg-muted flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2 transition-colors">
-                  <ListTodo className="text-muted-foreground h-4 w-4 shrink-0" />
-                  <span className="text-foreground flex-1 text-sm">작업 모드</span>
-                  <Switch
-                    checked={workMode}
-                    disabled={workModeDisabled}
-                    aria-label="작업 모드"
-                    onCheckedChange={toggleWorkMode}
-                  />
-                </label>
               </PopoverContent>
             </Popover>
             {/* 토큰 사용량 버튼 — 세션 ID가 있을 때만 표시 */}

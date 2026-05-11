@@ -21,6 +21,7 @@ class CreateWorkRequest(BaseModel):
     label_names: list[str] = Field(default_factory=list, alias="labelNames", description="기존 라벨 이름과 매칭할 후보입니다.")
     initial_comment: str | None = Field(default=None, alias="initialComment", description="생성 직후 남길 초기 댓글입니다.")
     metadata: dict[str, Any] = Field(default_factory=dict, description="작업 생성 해석 결과입니다.")
+    flow_order: int | None = Field(default=None, alias="flowOrder", ge=0, description="세션 구조도 표시 순서입니다.")
 
 
 class CreateWorkCommentRequest(BaseModel):
@@ -63,7 +64,14 @@ class CreateChildWorkRequest(BaseModel):
     description: str | None = Field(default=None, max_length=10_000, description="하위 작업 설명입니다.")
     assignee_agent_id: str | None = Field(default=None, alias="assigneeAgentId", description="하위 작업 담당 세션 에이전트 ID입니다.")
     acceptance_criteria: list[str] = Field(default_factory=list, alias="acceptanceCriteria", description="완료 기준입니다.")
-    block_parent_until_done: bool = Field(default=True, alias="blockParentUntilDone", description="하위 작업이 끝날 때까지 부모를 차단할지 여부입니다.")
+    block_parent_until_done: bool = Field(default=False, alias="blockParentUntilDone", description="하위 작업이 끝날 때까지 부모를 차단할지 여부입니다.")
+    flow_order: int | None = Field(default=None, alias="flowOrder", ge=0, description="부모 아래 구조도 표시 순서입니다.")
+
+
+class UpdateWorkFlowOrderRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    work_ids: list[str] = Field(alias="workIds", min_length=1, description="부모 아래에 표시할 작업 ID 순서입니다.")
 
 
 class SetWorkLabelsRequest(BaseModel):

@@ -929,6 +929,8 @@ def test_agent_loop_keeps_delegate_step_running_until_worker_result_before_file_
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "COMPLETED"
+    assert body["displayContext"]["taskRunId"] == body["task_run_id"]
+    assert body["displayContext"]["assigneeAgent"]["kind"] == "main"
     assert (workspace / "tmp/testfile/depth1/report.md").read_text(encoding="utf-8").startswith("# AI 서브에이전트 depth1 설계")
 
     steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
@@ -939,6 +941,9 @@ def test_agent_loop_keeps_delegate_step_running_until_worker_result_before_file_
     research_step, write_step = steps
     assert research_step["detail_json"]["agentDetail"]["workerSessionId"] is not None
     assert research_step["detail_json"]["agentDetail"]["workers"][0]["status"] == TaskStatus.COMPLETED
+    assert research_step["displayContext"]["stepRunId"] == research_step["step_run_id"]
+    assert research_step["displayContext"]["actorAgent"]["kind"] == "worker"
+    assert research_step["displayContext"]["delegatedAgents"][0]["agentSessionId"] == research_step["detail_json"]["agentDetail"]["workerSessionId"]
 
     events = client.app.state.repository.list_events(body["task_run_id"])
     delegate_update = next(
@@ -955,6 +960,8 @@ def test_agent_loop_keeps_delegate_step_running_until_worker_result_before_file_
     )
     assert events.index(delegate_update) < events.index(write_tool_started)
     assert write_tool_started.step_run_id == write_step["step_run_id"]
+    assert write_tool_started.payload["displayContext"]["taskRunId"] == body["task_run_id"]
+    assert write_tool_started.payload["displayContext"]["stepRunId"] == write_step["step_run_id"]
 
     first_turn_tool_messages = [
         message for message in provider_calls[1]["messages"]

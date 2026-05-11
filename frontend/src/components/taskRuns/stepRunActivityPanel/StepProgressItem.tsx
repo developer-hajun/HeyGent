@@ -13,6 +13,7 @@ export function StepProgressItem({
   activities: ActivityItemView[]
 }) {
   const workerItems = getStepWorkerItems(step, activities)
+  const actorName = getStepActorName(step)
 
   return (
     <li className="bg-card border-border rounded-lg border p-3">
@@ -25,6 +26,11 @@ export function StepProgressItem({
           <span className="text-muted-foreground mt-1 line-clamp-1 block text-xs">
             {toStepProgressSentence(step.status)}
           </span>
+          {actorName !== undefined && (
+            <span className="text-muted-foreground mt-0.5 line-clamp-1 block text-[11px]">
+              실행 에이전트: {actorName}
+            </span>
+          )}
         </span>
       </div>
 
@@ -72,6 +78,10 @@ function getStepWorkerItems(step: RawStepRun, activities: ActivityItemView[]) {
 
   getAgentDetailWorkers(step).forEach((worker, index) => {
     mergeWorker(workers, worker, index, delegateTitles[index])
+  })
+
+  getDisplayContextWorkers(step).forEach((worker, index) => {
+    mergeWorker(workers, worker, index)
   })
 
   const workerSession = asRecord(step.worker_session) ?? asRecord(step.workerSession)
@@ -133,13 +143,27 @@ function getAgentDetailWorkers(step: RawStepRun) {
     : []
 }
 
+function getDisplayContextWorkers(step: RawStepRun) {
+  return (step.displayContext?.delegatedAgents ?? []) as Record<string, unknown>[]
+}
+
+function getStepActorName(step: RawStepRun) {
+  return step.displayContext?.actorAgent?.displayName
+}
+
 function mergeWorker(
   workers: Map<string, WorkerStatusItem>,
   rawWorker: Record<string, unknown>,
   index: number,
   fallbackTitle?: string,
 ) {
-  const workerSessionId = pickString(rawWorker, 'workerSessionId', 'worker_session_id', 'id')
+  const workerSessionId = pickString(
+    rawWorker,
+    'workerSessionId',
+    'worker_session_id',
+    'agentSessionId',
+    'id',
+  )
   const agentId = pickString(rawWorker, 'agentId', 'agent_id')
   const id = workerSessionId ?? agentId ?? `worker-${index}`
   const existing = workers.get(id)
@@ -147,7 +171,7 @@ function mergeWorker(
   const firstTask = asRecord(tasks[0])
   const title =
     pickString(firstTask, 'title', 'goal', 'name') ??
-    pickString(rawWorker, 'goal', 'title', 'name') ??
+    pickString(rawWorker, 'goal', 'title', 'name', 'displayName') ??
     fallbackTitle ??
     pickString(rawWorker, 'profileKey', 'profile_key') ??
     `worker ${index + 1}`

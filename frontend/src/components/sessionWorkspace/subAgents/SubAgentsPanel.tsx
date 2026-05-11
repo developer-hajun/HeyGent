@@ -152,6 +152,7 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
           reservedNames={agentPanels
             .filter((item) => item.id !== detailItem.id)
             .map((item) => item.agent.name)}
+          sessionId={sessionId}
         />
       </SubAgentsPanelShell>
     )
