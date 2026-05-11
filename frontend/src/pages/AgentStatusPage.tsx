@@ -306,6 +306,27 @@ const AGENT_CONFIGS: AgentConfig[] = [
       calling: { x: 1250, y: 660 },
     },
   },
+  {
+    id: 'ceo',
+    name: 'CEO',
+    spritePath: '/assets/agents/ceo',
+    scale: 1.05,
+    sittingSprites: {
+      sitting_desk: 'ceo_desk',
+      sitting_meeting: 'ceo_explain',
+      standing_wait: 'walk_side_stand',
+    },
+    allowedUIDestinations: ['desk', 'meeting'],
+    destinationLabels: { meeting: '화이트보드' },
+    initialPosition: { x: 1460, y: 700 },
+    destinations: {
+      desk: { x: 310, y: 215 },
+      meeting: { x: 383, y: 493 },
+      sofa: { x: 310, y: 215 },
+      floorLean: { x: 310, y: 215 },
+      calling: { x: 310, y: 215 },
+    },
+  },
 ]
 
 // ── 격자 A* 경로탐색 ─────────────────────────────────────────────────────────
@@ -751,12 +772,38 @@ function initAgents(): AgentRuntime[] {
 
 const DESTINATIONS: UIDestination[] = ['desk', 'rest', 'meeting', 'calling']
 
+function playSpawnSound() {
+  try {
+    const ctx = new AudioContext()
+    const play = () => {
+      ;[1318.51, 1567.98].forEach((freq, i) => {
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+        osc.type = 'sine'
+        osc.frequency.value = freq
+        const t = ctx.currentTime + i * 0.12
+        gain.gain.setValueAtTime(0.18, t)
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45)
+        osc.start(t)
+        osc.stop(t + 0.45)
+      })
+    }
+    // 페이지 내 이동으로 진입한 경우 AudioContext가 이미 running 상태이므로 즉시 재생됨
+    // 직접 URL 접근 시 브라우저가 차단하면 소리 없이 무시
+    void ctx.resume().then(play)
+  } catch {
+    // AudioContext 미지원 환경 무시
+  }
+}
+
 export function AgentStatusPage() {
   const [agents, setAgents] = useState<AgentRuntime[]>(initAgents)
   const [selectedId, setSelectedId] = useState('agent01')
-  const [ceoMode, setCeoMode] = useState<'desk' | 'explain'>('desk')
   const [panelTop, setPanelTop] = useState(false)
   const [navmeshGrid, setNavmeshGrid] = useState<boolean[][] | null>(null)
+  const [spawningIds, setSpawningIds] = useState<ReadonlySet<string>>(new Set())
   const runtimeGridRef = useRef<boolean[][]>(OBSTACLE_GRID)
   const walkTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({})
 
@@ -764,7 +811,20 @@ export function AgentStatusPage() {
     useAgentVisualizationStore()
 
   useEffect(() => {
-    setAgentInfoMap(createMockAgentInfoMap())
+    const map = createMockAgentInfoMap()
+    setAgentInfoMap(map)
+
+    // 초기 mock 스폰 — API 연동 시 에이전트별 spawnAgent() 개별 호출로 교체
+    // setTimeout(0): 린터 규칙(effect 내 동기 setState 금지)을 피하기 위해 한 프레임 뒤에 실행
+    const spawnTimer = setTimeout(() => {
+      setSpawningIds(new Set(Object.keys(map)))
+      playSpawnSound()
+    }, 0)
+    const clearTimer = setTimeout(() => setSpawningIds(new Set()), 2500)
+    return () => {
+      clearTimeout(spawnTimer)
+      clearTimeout(clearTimer)
+    }
   }, [setAgentInfoMap])
 
   useEffect(() => {
@@ -1002,10 +1062,11 @@ export function AgentStatusPage() {
       <OfficeMap
         agents={agents}
         onAgentArrived={handleAgentArrived}
-        ceoMode={ceoMode}
+        ceoMode={null}
         onAgentClick={selectAgent}
         agentInfoMap={agentInfoMap}
         selectedAgentId={selectedAgentId}
+        spawningIds={spawningIds}
       />
       {selectedInfo && <AgentInfoPanel info={selectedInfo} onClose={() => selectAgent(null)} />}
 
@@ -1037,13 +1098,6 @@ export function AgentStatusPage() {
             >
               {panelTop ? '▼' : '▲'}
             </button>
-            <div className="mx-0.5 h-4 w-px bg-white/20" />
-            <button
-              onClick={() => setCeoMode((prev) => (prev === 'desk' ? 'explain' : 'desk'))}
-              className="rounded-lg bg-amber-400 px-3 py-1 text-xs font-bold text-gray-900 transition-colors hover:bg-amber-300"
-            >
-              {ceoMode === 'desk' ? 'CEO 책상' : 'CEO 화이트보드'}
-            </button>
           </div>
 
           {/* 선택된 에이전트 이동 */}
@@ -1054,14 +1108,14 @@ export function AgentStatusPage() {
                 <span className="text-xs text-white/50">{STATE_LABELS[selectedAgent.state]}</span>
               </div>
               <div className="flex gap-1.5">
-                {DESTINATIONS.map((dest) => (
+                {(selectedAgent.config.allowedUIDestinations ?? DESTINATIONS).map((dest) => (
                   <button
                     key={dest}
                     onClick={() => handleMove(selectedAgent.config.id, dest)}
                     disabled={selectedAgent.state === 'walking'}
                     className="rounded-lg bg-white/90 px-3 py-1.5 text-xs font-semibold text-gray-900 shadow-sm transition-opacity hover:bg-white disabled:cursor-not-allowed disabled:opacity-30"
                   >
-                    {DESTINATION_MAP[dest].label}
+                    {selectedAgent.config.destinationLabels?.[dest] ?? DESTINATION_MAP[dest].label}
                   </button>
                 ))}
               </div>

@@ -1,6 +1,21 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { AgentRuntime } from './types'
 import type { AgentVisualizationInfo } from './types'
+
+const SPAWN_KEYFRAMES = `
+@keyframes spawnBulb {
+  0%   { opacity: 0; transform: scale(0.2); }
+  100% { opacity: 1; transform: scale(1); }
+}
+`
+
+function injectSpawnStyles() {
+  if (document.getElementById('agent-spawn-style')) return
+  const el = document.createElement('style')
+  el.id = 'agent-spawn-style'
+  el.textContent = SPAWN_KEYFRAMES
+  document.head.appendChild(el)
+}
 
 const SIZE_NORMAL = 200
 const SIZE_SITTING = 260
@@ -32,8 +47,12 @@ const TASK_STATUS_COLOR: Record<string, string> = {
 
 function getSpriteSrc(agent: AgentRuntime): string {
   const base = agent.config.spritePath
-  if (agent.state in SITTING_SPRITES) return `${base}/${SITTING_SPRITES[agent.state]}.png`
-  if (agent.state === 'walking') return `${base}/${WALK_FRAMES[agent.walkFrame]}.png`
+  const sittingMap = agent.config.sittingSprites
+    ? { ...SITTING_SPRITES, ...agent.config.sittingSprites }
+    : SITTING_SPRITES
+  if (agent.state in sittingMap) return `${base}/${sittingMap[agent.state]}.png`
+  const frames = agent.config.walkFrames ?? WALK_FRAMES
+  if (agent.state === 'walking') return `${base}/${frames[agent.walkFrame]}.png`
   return `${base}/idle_front.png`
 }
 
@@ -43,6 +62,7 @@ interface AgentSpriteProps {
   onClick?: (agentId: string) => void
   hoverInfo?: AgentVisualizationInfo
   isSelected?: boolean
+  isSpawning?: boolean
 }
 
 export function AgentSprite({
@@ -51,8 +71,12 @@ export function AgentSprite({
   onClick,
   hoverInfo,
   isSelected,
+  isSpawning,
 }: AgentSpriteProps) {
   const [isHovered, setIsHovered] = useState(false)
+  useEffect(() => {
+    injectSpawnStyles()
+  }, [])
   const { config, position, state, transitionDuration } = agent
   const scale = (config.scale ?? 1) * (config.stateScales?.[state] ?? 1)
   const size = (state === 'sitting_desk' ? SIZE_SITTING : SIZE_NORMAL) * scale
@@ -86,6 +110,33 @@ export function AgentSprite({
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
+      {/* 스폰 전구 — 에이전트 등장 시 머리 위에 💡 아이콘이 팝업 */}
+      {isSpawning && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '100%',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            marginBottom: 6,
+            pointerEvents: 'none',
+            zIndex: 40,
+          }}
+        >
+          <span
+            style={{
+              display: 'block',
+              fontSize: 24,
+              lineHeight: 1,
+              animation: 'spawnBulb 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both',
+              filter: 'drop-shadow(0 0 8px rgba(253, 224, 71, 0.9))',
+            }}
+          >
+            💡
+          </span>
+        </div>
+      )}
+
       {/* 호버 툴팁 */}
       {showTooltip && (
         <div

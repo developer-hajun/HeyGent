@@ -305,6 +305,36 @@ const MOCK_AGENTS: AgentVisualizationInfo[] = [
     ],
   },
   {
+    agentId: 'ceo',
+    name: 'CEO',
+    role: '최고경영자',
+    skills: ['전략 기획', '리더십', '의사결정', '비즈니스 개발'],
+    activityStatus: 'working',
+    currentTask: {
+      taskId: 'task-ceo',
+      title: '분기 전략 검토',
+      description: '각 팀의 분기별 성과 및 다음 분기 전략 방향 검토',
+      status: 'in_progress',
+      startedAt: '2026-05-11T08:00:00',
+    },
+    taskHistory: [
+      {
+        taskId: 'h-ceo-1',
+        title: '투자자 미팅',
+        description: '',
+        status: 'completed',
+        completedAt: '2026-05-09T17:00:00',
+      },
+      {
+        taskId: 'h-ceo-2',
+        title: '로드맵 수립',
+        description: '',
+        status: 'completed',
+        completedAt: '2026-05-08T16:00:00',
+      },
+    ],
+  },
+  {
     agentId: 'agent10',
     name: '오채원',
     role: '리서처',

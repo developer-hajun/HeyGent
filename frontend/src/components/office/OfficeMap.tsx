@@ -35,6 +35,7 @@ interface OfficeMapProps {
   onAgentClick?: (agentId: string) => void
   agentInfoMap?: Record<string, AgentVisualizationInfo>
   selectedAgentId?: string | null
+  spawningIds?: ReadonlySet<string>
 }
 
 export function OfficeMap({
@@ -51,6 +52,7 @@ export function OfficeMap({
   onAgentClick,
   agentInfoMap,
   selectedAgentId,
+  spawningIds,
 }: OfficeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
@@ -202,6 +204,7 @@ export function OfficeMap({
             onClick={onAgentClick}
             hoverInfo={agentInfoMap?.[agent.config.id]}
             isSelected={selectedAgentId === agent.config.id}
+            isSpawning={spawningIds?.has(agent.config.id) ?? false}
           />
         ))}
         {ceoMode &&

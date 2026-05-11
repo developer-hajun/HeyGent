@@ -53,6 +53,10 @@ export interface AgentConfig {
   destinations: Record<Destination, { x: number; y: number; waypoints?: Waypoint[] }>
   scale?: number
   stateScales?: Partial<Record<AgentState, number>>
+  walkFrames?: readonly string[]
+  sittingSprites?: Record<string, string>
+  allowedUIDestinations?: UIDestination[]
+  destinationLabels?: Partial<Record<UIDestination, string>>
 }
 
 export interface AgentRuntime {
