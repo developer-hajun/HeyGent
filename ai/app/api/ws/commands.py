@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable
 from pydantic import BaseModel
 
 from app.api.memory_context import attach_persistent_memory_context
+from app.api.memory_mark_used import mark_used_recalled_memories
 from app.api.memory_observation import attach_memory_observation_to_task
 from app.api.memory_writeback import writeback_persistent_memory_candidates
 from app.contracts.task.task_status import TaskStatus
@@ -1102,10 +1103,18 @@ class WebSocketCommandRouter:
                 user_message_id=str(user_message_id),
                 assistant_message_id=str(assistant_append["message_id"]),
             )
+            mark_used_observation = await mark_used_recalled_memories(
+                app_state=context.websocket.app.state,
+                task_input=dict(completed_task.input_payload or {}),
+                user_id=str(completed_task.owner_key),
+                assistant_message=content,
+                task_run_id=completed_task.task_run_id,
+            )
             attach_memory_observation_to_task(
                 task=completed_task,
                 repository=context.websocket.app.state.repository,
                 writeback=writeback_observation,
+                mark_used=mark_used_observation,
             )
         except Exception:
             logger.exception("session.message.create background 실행에 실패했습니다.")

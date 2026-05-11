@@ -9,6 +9,7 @@ from app.api.deps.http_auth import authenticate_http_user, ensure_owner
 from app.api.deps.openapi_auth import document_bearer_auth
 from app.api.deps.task_context import TaskContext, get_task_context
 from app.api.memory_context import attach_persistent_memory_context, select_memory_recall_query
+from app.api.memory_mark_used import mark_used_recalled_memories
 from app.api.memory_observation import attach_memory_observation_to_task
 from app.core.time import utc_now
 from app.contracts.task.step_status import StepStatus
@@ -636,7 +637,18 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
         if payload.session_key and active_lock_task_id and context.task_projection_store is not None:
             context.task_projection_store.release_active_session_lock(payload.session_key, active_lock_task_id, owner_key=owner_key)
             context.task_projection_store.acquire_active_session_lock(payload.session_key, task.task_run_id, owner_key=owner_key)
-        attach_memory_observation_to_task(task=task, repository=context.repository)
+        mark_used_observation = await mark_used_recalled_memories(
+            app_state=request.app.state,
+            task_input=dict(task.input_payload or {}),
+            user_id=str(owner_key),
+            assistant_message=_assistant_content_from_task_result(task),
+            task_run_id=task.task_run_id,
+        )
+        attach_memory_observation_to_task(
+            task=task,
+            repository=context.repository,
+            mark_used=mark_used_observation,
+        )
     except KeyError as error:
         if payload.session_key and active_lock_task_id and context.task_projection_store is not None:
             context.task_projection_store.release_active_session_lock(payload.session_key, active_lock_task_id, owner_key=owner_key)
@@ -775,6 +787,17 @@ async def list_events(
 
     events = context.repository.list_events(task_run_id)
     return [TaskEventResponse.model_validate(event, from_attributes=True) for event in events[:limit]]
+
+
+def _assistant_content_from_task_result(task: Any) -> str:
+    result_payload = dict(getattr(task, "result_payload", {}) or {})
+    for key in ("text", "output_text", "summary", "message", "content"):
+        value = result_payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    if getattr(task, "progress_summary", None):
+        return str(task.progress_summary)
+    return ""
 
 
 @router.post(
