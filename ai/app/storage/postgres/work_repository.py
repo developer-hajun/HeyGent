@@ -11,10 +11,12 @@ from app.domain.work.models import (
     WorkItem,
     WorkLabel,
     WorkProduct,
+    WorkRecoveryAction,
     WorkRelation,
     WorkRunLink,
     WorkStatus,
     WorkThreadInteraction,
+    WorkWakeRequest,
 )
 
 
@@ -496,6 +498,18 @@ class PostgresWorkRepository:
         connection.commit()
         return self._get_run_link(work_id, task_run_id)
 
+    def touch_run(self, work_id: str, task_run_id: str) -> None:
+        connection = self.connection_factory()
+        connection.execute(
+            """
+            UPDATE work_runs
+            SET updated_at = now()
+            WHERE work_id = %s AND task_run_id = %s
+            """,
+            (work_id, task_run_id),
+        )
+        connection.commit()
+
     def list_runs(self, work_id: str, *, limit: int = 50, offset: int = 0) -> list[WorkRunLink]:
         rows = self.connection_factory().execute(
             """
@@ -507,6 +521,236 @@ class PostgresWorkRepository:
             (work_id, limit, offset),
         ).fetchall()
         return [link for row in rows if (link := _run_from_row(row)) is not None]
+
+    def enqueue_work_wake(self, wake: WorkWakeRequest) -> WorkWakeRequest:
+        connection = self.connection_factory()
+        row = connection.execute(
+            """
+            INSERT INTO work_wake_requests (
+                wake_id, work_id, root_work_id, reason, status,
+                requested_by_task_run_id, task_run_id, attempts, last_error, next_attempt_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (work_id)
+            WHERE status IN ('queued', 'claimed', 'dispatching', 'scheduled_retry')
+            DO UPDATE SET
+                root_work_id = COALESCE(work_wake_requests.root_work_id, EXCLUDED.root_work_id),
+                requested_by_task_run_id = COALESCE(work_wake_requests.requested_by_task_run_id, EXCLUDED.requested_by_task_run_id),
+                updated_at = now()
+            RETURNING *
+            """,
+            (
+                wake.wake_id,
+                wake.work_id,
+                wake.root_work_id,
+                wake.reason,
+                wake.status,
+                wake.requested_by_task_run_id,
+                wake.task_run_id,
+                wake.attempts,
+                wake.last_error,
+                wake.next_attempt_at,
+            ),
+        ).fetchone()
+        connection.commit()
+        return _require_wake(_wake_from_row(row), wake.wake_id)
+
+    def claim_work_wakes(self, *, limit: int = 10) -> list[WorkWakeRequest]:
+        connection = self.connection_factory()
+        rows = connection.execute(
+            """
+            WITH claimable AS (
+                SELECT wake_id
+                FROM work_wake_requests
+                WHERE status = 'queued'
+                   OR (
+                        status = 'scheduled_retry'
+                        AND COALESCE(next_attempt_at, created_at) <= now()
+                   )
+                   OR (
+                        status IN ('claimed', 'dispatching')
+                        AND claimed_at < now() - interval '60 seconds'
+                   )
+                ORDER BY created_at ASC
+                LIMIT %s
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE work_wake_requests wake
+            SET status = 'claimed',
+                attempts = wake.attempts + 1,
+                claimed_at = now(),
+                updated_at = now()
+            FROM claimable
+            WHERE wake.wake_id = claimable.wake_id
+            RETURNING wake.*
+            """,
+            (max(1, limit),),
+        ).fetchall()
+        connection.commit()
+        return [wake for row in rows if (wake := _wake_from_row(row)) is not None]
+
+    def complete_work_wake(
+        self,
+        wake_id: str,
+        *,
+        status: str,
+        task_run_id: str | None = None,
+        last_error: str | None = None,
+        retry_delay_seconds: int | None = None,
+    ) -> WorkWakeRequest:
+        connection = self.connection_factory()
+        row = connection.execute(
+            """
+            UPDATE work_wake_requests
+            SET status = %s,
+                task_run_id = COALESCE(%s, task_run_id),
+                last_error = %s,
+                completed_at = CASE WHEN %s IN ('dispatched', 'completed', 'skipped', 'failed') THEN now() ELSE completed_at END,
+                next_attempt_at = CASE
+                    WHEN %s = 'scheduled_retry' THEN now() + (%s * interval '1 second')
+                    ELSE next_attempt_at
+                END,
+                updated_at = now()
+            WHERE wake_id = %s
+            RETURNING *
+            """,
+            (status, task_run_id, last_error, status, status, max(1, int(retry_delay_seconds or 30)), wake_id),
+        ).fetchone()
+        connection.commit()
+        return _require_wake(_wake_from_row(row), wake_id)
+
+    def list_recoverable_work_wakes(self, *, limit: int = 50) -> list[WorkWakeRequest]:
+        rows = self.connection_factory().execute(
+            """
+            SELECT *
+            FROM work_wake_requests
+            WHERE status IN ('queued', 'claimed', 'dispatching', 'scheduled_retry')
+            ORDER BY created_at ASC
+            LIMIT %s
+            """,
+            (max(1, limit),),
+        ).fetchall()
+        return [wake for row in rows if (wake := _wake_from_row(row)) is not None]
+
+    def list_work_wakes(self, work_id: str, *, limit: int = 50, offset: int = 0) -> list[WorkWakeRequest]:
+        rows = self.connection_factory().execute(
+            """
+            SELECT *
+            FROM work_wake_requests
+            WHERE work_id = %s OR root_work_id = %s
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+            """,
+            (work_id, work_id, limit, offset),
+        ).fetchall()
+        return [wake for row in rows if (wake := _wake_from_row(row)) is not None]
+
+    def release_stale_active_work_runs(self, *, stale_after_seconds: int, limit: int = 50) -> list[WorkItem]:
+        stale_seconds = max(1, int(stale_after_seconds))
+        connection = self.connection_factory()
+        rows = connection.execute(
+            """
+            WITH stale AS (
+                SELECT wi.work_id, wi.active_run_id
+                FROM work_items wi
+                JOIN work_runs wr
+                  ON wr.work_id = wi.work_id
+                 AND wr.task_run_id = wi.active_run_id
+                WHERE wi.deleted_at IS NULL
+                  AND wi.active_run_id IS NOT NULL
+                  AND wi.status NOT IN ('done', 'cancelled')
+                  AND wr.status IN ('RUNNING', 'PENDING', 'WAITING')
+                  AND wr.updated_at < now() - (%s * interval '1 second')
+                ORDER BY wr.updated_at ASC
+                LIMIT %s
+                FOR UPDATE OF wi SKIP LOCKED
+            ), run_update AS (
+                UPDATE work_runs wr
+                SET status = 'STALE',
+                    updated_at = now()
+                FROM stale
+                WHERE wr.work_id = stale.work_id
+                  AND wr.task_run_id = stale.active_run_id
+            )
+            UPDATE work_items wi
+            SET active_run_id = NULL,
+                updated_at = now()
+            FROM stale
+            WHERE wi.work_id = stale.work_id
+            RETURNING wi.*
+            """,
+            (stale_seconds, max(1, limit)),
+        ).fetchall()
+        connection.commit()
+        return [work for row in rows if (work := _work_from_row(row)) is not None]
+
+    def list_stranded_assigned_work(self, *, limit: int = 50) -> list[WorkItem]:
+        rows = self.connection_factory().execute(
+            """
+            SELECT wi.*
+            FROM work_items wi
+            LEFT JOIN work_wake_requests wake
+              ON wake.work_id = wi.work_id
+             AND wake.status IN ('queued', 'claimed', 'dispatching', 'scheduled_retry')
+            WHERE wi.deleted_at IS NULL
+              AND wi.archived_at IS NULL
+              AND wi.assignee_agent_id IS NOT NULL
+              AND wi.assignee_agent_id <> 'CEO'
+              AND wi.status IN ('todo', 'in_progress')
+              AND wi.active_run_id IS NULL
+              AND wake.wake_id IS NULL
+              AND (
+                wi.latest_run_id IS NOT NULL
+                OR (wi.metadata ? 'autoWake')
+              )
+            ORDER BY wi.updated_at ASC
+            LIMIT %s
+            """,
+            (max(1, limit),),
+        ).fetchall()
+        return [work for row in rows if (work := _work_from_row(row)) is not None]
+
+    def create_recovery_action(self, action: WorkRecoveryAction) -> tuple[WorkRecoveryAction, bool]:
+        connection = self.connection_factory()
+        row = connection.execute(
+            """
+            INSERT INTO work_recovery_actions (
+                action_id, work_id, action_type, status, reason,
+                idempotency_key, task_run_id, payload
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (idempotency_key) DO UPDATE
+            SET updated_at = work_recovery_actions.updated_at
+            RETURNING *, (xmax = 0) AS inserted
+            """,
+            (
+                action.action_id,
+                action.work_id,
+                action.action_type,
+                action.status,
+                action.reason,
+                action.idempotency_key,
+                action.task_run_id,
+                _json(action.payload),
+            ),
+        ).fetchone()
+        connection.commit()
+        record = _normalize_row(row)
+        inserted = bool(record.pop("inserted", False)) if record is not None else False
+        return _require_recovery_action(_recovery_action_from_row(record), action.action_id), inserted
+
+    def list_recovery_actions(self, work_id: str, *, limit: int = 50, offset: int = 0) -> list[WorkRecoveryAction]:
+        rows = self.connection_factory().execute(
+            """
+            SELECT *
+            FROM work_recovery_actions
+            WHERE work_id = %s
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+            """,
+            (work_id, limit, offset),
+        ).fetchall()
+        return [action for row in rows if (action := _recovery_action_from_row(row)) is not None]
 
     def list_labels(self, session_id: str, *, owner_key: str) -> list[WorkLabel]:
         rows = self.connection_factory().execute(
@@ -1098,6 +1342,47 @@ def _run_from_row(row: Any) -> WorkRunLink | None:
     )
 
 
+def _wake_from_row(row: Any) -> WorkWakeRequest | None:
+    record = _normalize_row(row)
+    if record is None:
+        return None
+    return WorkWakeRequest(
+        wake_id=record["wake_id"],
+        work_id=record["work_id"],
+        root_work_id=record.get("root_work_id"),
+        reason=record["reason"],
+        status=record["status"],
+        requested_by_task_run_id=record.get("requested_by_task_run_id"),
+        task_run_id=record.get("task_run_id"),
+        attempts=int(record.get("attempts") or 0),
+        last_error=record.get("last_error"),
+        created_at=record.get("created_at"),
+        updated_at=record.get("updated_at"),
+        claimed_at=record.get("claimed_at"),
+        next_attempt_at=record.get("next_attempt_at"),
+        completed_at=record.get("completed_at"),
+    )
+
+
+def _recovery_action_from_row(row: Any) -> WorkRecoveryAction | None:
+    record = _normalize_row(row)
+    if record is None:
+        return None
+    return WorkRecoveryAction(
+        action_id=record["action_id"],
+        work_id=record["work_id"],
+        action_type=record["action_type"],
+        status=record["status"],
+        reason=record["reason"],
+        idempotency_key=record["idempotency_key"],
+        task_run_id=record.get("task_run_id"),
+        payload=record.get("payload") or {},
+        created_at=record.get("created_at"),
+        updated_at=record.get("updated_at"),
+        resolved_at=record.get("resolved_at"),
+    )
+
+
 def _relation_from_row(row: Any) -> WorkRelation | None:
     record = _normalize_row(row)
     if record is None:
@@ -1201,6 +1486,18 @@ def _require_relation(relation: WorkRelation | None, relation_id: str) -> WorkRe
     if relation is None:
         raise KeyError(relation_id)
     return relation
+
+
+def _require_wake(wake: WorkWakeRequest | None, wake_id: str) -> WorkWakeRequest:
+    if wake is None:
+        raise KeyError(wake_id)
+    return wake
+
+
+def _require_recovery_action(action: WorkRecoveryAction | None, action_id: str) -> WorkRecoveryAction:
+    if action is None:
+        raise KeyError(action_id)
+    return action
 
 
 def _require_document(document: WorkDocument | None, document_key: str) -> WorkDocument:

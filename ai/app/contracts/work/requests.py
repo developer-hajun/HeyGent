@@ -28,7 +28,7 @@ class CreateWorkCommentRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     body: str = Field(description="댓글 본문입니다.")
-    resume: bool = Field(default=False, description="완료된 작업을 명시적으로 다시 움직일지 여부입니다.")
+    resume: bool = Field(default=False, description="완료되었거나 다시 진행 가능한 차단 작업을 명시적으로 움직일지 여부입니다.")
 
 
 class MoveWorkStatusRequest(BaseModel):

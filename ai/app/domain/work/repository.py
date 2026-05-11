@@ -9,10 +9,12 @@ from app.domain.work.models import (
     WorkItem,
     WorkLabel,
     WorkProduct,
+    WorkRecoveryAction,
     WorkRelation,
     WorkRunLink,
     WorkStatus,
     WorkThreadInteraction,
+    WorkWakeRequest,
 )
 
 
@@ -82,7 +84,35 @@ class WorkRepository(Protocol):
 
     def update_run_status(self, work_id: str, task_run_id: str, status: str) -> WorkRunLink: ...
 
+    def touch_run(self, work_id: str, task_run_id: str) -> None: ...
+
     def list_runs(self, work_id: str, *, limit: int = 50, offset: int = 0) -> list[WorkRunLink]: ...
+
+    def enqueue_work_wake(self, wake: WorkWakeRequest) -> WorkWakeRequest: ...
+
+    def claim_work_wakes(self, *, limit: int = 10) -> list[WorkWakeRequest]: ...
+
+    def complete_work_wake(
+        self,
+        wake_id: str,
+        *,
+        status: str,
+        task_run_id: str | None = None,
+        last_error: str | None = None,
+        retry_delay_seconds: int | None = None,
+    ) -> WorkWakeRequest: ...
+
+    def list_recoverable_work_wakes(self, *, limit: int = 50) -> list[WorkWakeRequest]: ...
+
+    def list_work_wakes(self, work_id: str, *, limit: int = 50, offset: int = 0) -> list[WorkWakeRequest]: ...
+
+    def release_stale_active_work_runs(self, *, stale_after_seconds: int, limit: int = 50) -> list[WorkItem]: ...
+
+    def list_stranded_assigned_work(self, *, limit: int = 50) -> list[WorkItem]: ...
+
+    def create_recovery_action(self, action: WorkRecoveryAction) -> tuple[WorkRecoveryAction, bool]: ...
+
+    def list_recovery_actions(self, work_id: str, *, limit: int = 50, offset: int = 0) -> list[WorkRecoveryAction]: ...
 
     def list_labels(self, session_id: str, *, owner_key: str) -> list[WorkLabel]: ...
 

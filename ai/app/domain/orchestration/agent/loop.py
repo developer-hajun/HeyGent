@@ -89,6 +89,7 @@ class TaskEngine:
         task.wait_payload = {}
         task.current_step_run_id = None
         self.repository.update_task(task)
+        self._touch_linked_work_run(task)
         await self._emit("task.started", task)
 
         try:
@@ -464,6 +465,7 @@ class TaskEngine:
         )
         self.repository.update_task(task)
         self.repository.update_step(step)
+        self._touch_linked_work_run(task)
         await self._emit("task.started", task)
         await self._emit("step.started", task, step)
 
@@ -761,10 +763,21 @@ class TaskEngine:
             linked_work_payload = await self._ensure_skill_work_link(task=task, event_type=event_type, payload=payload)
             if linked_work_payload is not None:
                 await self._emit("work.linked", task, current_step, payload=linked_work_payload)
+            self._touch_linked_work_run(task)
             await self._emit(event_type, task, current_step, payload=payload, summary_message=summary_message)
 
         sink.current_step = current_step
         return sink
+
+    def _touch_linked_work_run(self, task: TaskRun) -> None:
+        if self.work_repository is None:
+            return
+        work_id = self._work_id_from_input(dict(task.input_payload or {}))
+        if not work_id:
+            return
+        touch_run = getattr(self.work_repository, "touch_run", None)
+        if callable(touch_run):
+            touch_run(work_id, task.task_run_id)
 
     async def _ensure_skill_work_link(self, *, task: TaskRun, event_type: str, payload: dict) -> dict | None:
         if event_type != "tool.completed":
