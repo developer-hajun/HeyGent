@@ -177,6 +177,20 @@ class WorkService:
             return updated
         return self.repository.get_work(work_id)
 
+    def apply_linked_task_result(self, *, task: TaskRun) -> WorkItem | None:
+        work_id = _work_id_from_task(task)
+        if not work_id:
+            return None
+        work = self.repository.get_work(work_id)
+        if work is None:
+            return None
+        if not _has_run_link(self.repository, work_id=work_id, task_run_id=task.task_run_id):
+            try:
+                self.mark_run_started(work_id=work_id, task_run_id=task.task_run_id)
+            except WorkRunClaimConflict:
+                return self.repository.get_work(work_id)
+        return self.apply_task_result(work_id=work_id, task=task)
+
     def _block_work_after_run_failure(self, *, work_id: str, task_run_id: str) -> WorkItem:
         updated = self.repository.update_status(work_id, "blocked")
         self.repository.add_comment(
@@ -218,6 +232,30 @@ class WorkService:
 def _extract_work_disposition(payload: dict[str, Any]) -> dict[str, Any] | None:
     candidate = payload.get("workDisposition") or payload.get("work_disposition")
     return candidate if isinstance(candidate, dict) else None
+
+
+def _work_id_from_task(task: TaskRun) -> str | None:
+    input_payload = task.input_payload or {}
+    input_work_id = _text_value(input_payload.get("workId") or input_payload.get("work_id"))
+    if input_work_id:
+        return input_work_id
+    disposition = _extract_work_disposition(task.result_payload or {})
+    if disposition is None:
+        return None
+    return _text_value(disposition.get("workId") or disposition.get("work_id"))
+
+
+def _text_value(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _has_run_link(repository: WorkRepository, *, work_id: str, task_run_id: str) -> bool:
+    try:
+        runs = repository.list_runs(work_id, limit=100, offset=0)
+    except Exception:
+        return False
+    return any(run.task_run_id == task_run_id for run in runs)
 
 
 def _work_disposition_comment_body(*, status: str, disposition: dict[str, Any]) -> str:

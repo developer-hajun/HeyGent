@@ -1394,10 +1394,7 @@ def _apply_work_execution_defaults(task_input: dict[str, Any], *, settings: Any)
 
 
 def _apply_ws_linked_work_result(context: WebSocketBackgroundContext, *, task: Any) -> None:
-    work_id = _work_id_from_task_input(dict(getattr(task, "input_payload", {}) or {}))
-    if work_id is None:
-        return
-    WorkService(context.websocket.app.state.work_repository).apply_task_result(work_id=work_id, task=task)
+    WorkService(context.websocket.app.state.work_repository).apply_linked_task_result(task=task)
 
 
 def _mark_ws_linked_work_run_failed(context: WebSocketBackgroundContext, *, task: Any) -> None:

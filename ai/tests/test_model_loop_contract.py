@@ -39,6 +39,30 @@ def test_prompt_builder_includes_native_tool_call_and_termination_guidance():
     assert "단계 이름은 반드시 대상/주제/산출물과 작업 행위를 함께 포함하세요." in prompt
 
 
+def test_session_agent_task_parent_disposition_is_used_as_task_work_disposition():
+    disposition = ToolCallingLoopHandler._work_disposition_from_tool_results(
+        [
+            {
+                "name": "session_agent_task",
+                "result": {
+                    "ok": True,
+                    "parentWorkDisposition": {
+                        "workId": "work-parent",
+                        "status": "in_review",
+                        "summary": "하위 작업 결과를 반영함",
+                    },
+                },
+            }
+        ]
+    )
+
+    assert disposition == {
+        "workId": "work-parent",
+        "status": "in_review",
+        "summary": "하위 작업 결과를 반영함",
+    }
+
+
 def test_prompt_builder_explains_approval_tool_call_boundary():
     prompt_builder = PromptBuilder(SkillPromptBuilder(SkillRegistry()))
 

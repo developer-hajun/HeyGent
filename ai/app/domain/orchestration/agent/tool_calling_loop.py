@@ -1328,6 +1328,12 @@ class ToolCallingLoopHandler:
             result = item.get("result")
             if isinstance(result, dict) and isinstance(result.get("workDisposition"), dict):
                 return dict(result["workDisposition"])
+        for item in reversed(tool_results):
+            if str(item.get("name") or "") != "session_agent_task":
+                continue
+            result = item.get("result")
+            if isinstance(result, dict) and isinstance(result.get("parentWorkDisposition"), dict):
+                return dict(result["parentWorkDisposition"])
         return None
 
     @staticmethod

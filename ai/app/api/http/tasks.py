@@ -34,6 +34,7 @@ from app.contracts.task.task_status import TaskStatus
 from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.tasks.display_context import build_task_display_context
 from app.domain.tasks.models import StepRun
+from app.domain.work import WorkService
 
 router = APIRouter(prefix="/taskRuns", tags=["taskRuns"], dependencies=[Depends(document_bearer_auth)])
 
@@ -650,6 +651,9 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
         if payload.session_key and active_lock_task_id and context.task_projection_store is not None:
             context.task_projection_store.release_active_session_lock(payload.session_key, active_lock_task_id, owner_key=owner_key)
         raise HTTPException(status_code=400, detail=str(error)) from error
+    work_repository = getattr(request.app.state, "work_repository", None)
+    if work_repository is not None:
+        WorkService(work_repository).apply_linked_task_result(task=task)
     return _build_task_response(task, context)
 
 

@@ -683,10 +683,8 @@ def _apply_work_execution_defaults(task_input: dict[str, Any], *, settings: Any)
 
 
 def _apply_linked_work_result(request: Request, *, task_input: dict[str, Any], task) -> None:
-    work_id = _work_id_from_task_input(task_input)
-    if work_id is None:
-        return
-    WorkService(request.app.state.work_repository).apply_task_result(work_id=work_id, task=task)
+    task.input_payload = {**dict(getattr(task, "input_payload", {}) or {}), **task_input}
+    WorkService(request.app.state.work_repository).apply_linked_task_result(task=task)
 
 
 def _mark_linked_work_run_failed(request: Request, *, task_input: dict[str, Any], task_run_id: str) -> None:

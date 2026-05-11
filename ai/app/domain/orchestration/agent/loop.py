@@ -1048,6 +1048,8 @@ class TaskEngine:
 
             child_status = self._task_status_value(child_task.status)
             ok = child_status == TaskStatus.COMPLETED.value
+            final_work = updated_work or self.work_repository.get_work(work.work_id) or work
+            parent_disposition = self._parent_disposition_from_session_agent_work(work=final_work, task=child_task)
             await self._notify_step_updated(
                 self._step_update_notifier(progress_sink=progress_sink, task=task),
                 step=step,
@@ -1065,9 +1067,11 @@ class TaskEngine:
             return {
                 **accepted_result,
                 "ok": ok,
-                "content": self._session_agent_work_tool_content(work=work, task=child_task),
+                "content": self._session_agent_work_tool_content(work=final_work, task=child_task),
                 "taskRunId": child_task.task_run_id,
                 "childStatus": child_status,
+                "childWorkStatus": final_work.status,
+                "parentWorkDisposition": parent_disposition,
             }
 
         return execute_session_agent_work
@@ -1215,6 +1219,27 @@ class TaskEngine:
         if summary:
             return f"{work.identifier} 세션 에이전트 실행 결과({status}): {summary}"
         return f"{work.identifier} 세션 에이전트 실행이 {status} 상태로 종료되었습니다."
+
+    @staticmethod
+    def _parent_disposition_from_session_agent_work(*, work, task: TaskRun) -> dict | None:
+        if not work.parent_id:
+            return None
+        child_status = str(work.status or "").strip()
+        if child_status == "blocked":
+            parent_status = "blocked"
+        elif child_status == "done":
+            parent_status = "done"
+        else:
+            parent_status = "in_review"
+        disposition = task.result_payload.get("workDisposition") if isinstance(task.result_payload, dict) else None
+        summary = str(disposition.get("summary") or "").strip() if isinstance(disposition, dict) else ""
+        next_action = str(disposition.get("nextAction") or disposition.get("next_action") or "").strip() if isinstance(disposition, dict) else ""
+        return {
+            "workId": work.parent_id,
+            "status": parent_status,
+            "summary": summary or f"{work.identifier} 세션 에이전트 실행 결과를 반영했습니다.",
+            "nextAction": next_action,
+        }
 
     @staticmethod
     def _step_update_notifier(*, progress_sink, task: TaskRun):

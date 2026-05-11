@@ -103,6 +103,10 @@ class FakeWorkRepository:
             self.items[work_id] = work
         return self.runs[(work_id, task_run_id)]
 
+    def list_runs(self, work_id: str, *, limit: int = 50, offset: int = 0) -> list[WorkRunLink]:
+        items = [link for (linked_work_id, _), link in self.runs.items() if linked_work_id == work_id]
+        return items[offset : offset + limit]
+
     def create_interaction(
         self,
         *,
@@ -260,6 +264,42 @@ def test_work_disposition_from_task_result_updates_work_status():
     assert "공식 예매 확인 불가" in repository.comments[-1].body
     assert "사용자 확인 필요" in repository.comments[-1].body
     assert repository.comments[-1].metadata["reason"] == "work_disposition"
+
+
+def test_linked_task_result_claims_work_from_disposition_work_id():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    work = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "세션 에이전트에게 맡겨줘"},
+    )
+
+    updated = service.apply_linked_task_result(
+        task=TaskRun(
+            task_run_id="task-1",
+            task_type="agent.loop",
+            owner_key="7",
+            status="COMPLETED",
+            result_payload={
+                "workDisposition": {
+                    "workId": work.work_id,
+                    "status": "done",
+                    "summary": "하위 작업 결과를 사용자에게 보고함",
+                }
+            },
+        ),
+    )
+
+    assert updated is not None
+    assert updated.status == "done"
+    assert repository.items[work.work_id].active_run_id is None
+    assert repository.items[work.work_id].latest_run_id == "task-1"
+    assert repository.runs[(work.work_id, "task-1")].status == "COMPLETED"
+    assert repository.comments[-1].task_run_id == "task-1"
+    assert "하위 작업 결과를 사용자에게 보고함" in repository.comments[-1].body
 
 
 def test_run_start_conflicts_when_another_active_run_owns_work():
