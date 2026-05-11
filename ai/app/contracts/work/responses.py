@@ -17,6 +17,7 @@ class WorkItemResponse(BaseModel):
     status: str
     assignee_agent_id: str | None = Field(default=None, alias="assigneeAgentId")
     parent_id: str | None = Field(default=None, alias="parentId")
+    flow_order: int | None = Field(default=None, alias="flowOrder")
     source: str
     raw_user_input: str | None = Field(default=None, alias="rawUserInput")
     execution_instruction: str | None = Field(default=None, alias="executionInstruction")
@@ -89,6 +90,14 @@ class WorkRelationsResponse(BaseModel):
 
     items: list[WorkRelationResponse] = Field(default_factory=list)
     total_count: int = Field(alias="totalCount")
+
+
+class WorkFlowResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    root: WorkItemResponse
+    items: list[WorkItemResponse] = Field(default_factory=list)
+    relations: list[WorkRelationResponse] = Field(default_factory=list)
 
 
 class WorkCommentResponse(BaseModel):

@@ -76,6 +76,17 @@ export type AiRealtimeServerFrameType =
 
 export type AiRealtimeFrameType = AiRealtimeCommandType | AiRealtimeServerFrameType | string
 
+export type RawTaskExecutionStatus =
+  | 'PENDING'
+  | 'RUNNING'
+  | 'WAITING'
+  | 'BLOCKED'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELED'
+  | 'CANCELLED'
+  | string
+
 // 서버 실패 응답 원본이다. code/message 외 필드는 서버 shape 그대로 보존한다.
 export type AiCommandErrorPayload = {
   code: string
@@ -220,6 +231,12 @@ export type TaskRunsActiveListPayload = {
 export type TaskRunSnapshotGetPayload = {
   taskRunId?: string
   task_run_id?: string
+  includeSteps?: boolean
+  include_steps?: boolean
+  includeEvents?: boolean
+  include_events?: boolean
+  includeFlow?: boolean
+  include_flow?: boolean
 }
 
 export type TaskRunEventsReplayPayload = {
@@ -227,6 +244,7 @@ export type TaskRunEventsReplayPayload = {
   task_run_id?: string
   afterSequence?: number
   after_sequence?: number
+  limit?: number
 }
 
 export type TaskRunResumePayload = {
@@ -288,7 +306,7 @@ export type RawTaskEventPayload = {
   sequence?: number
   producer?: string | null
   occurred_at?: string | null
-  status?: string | null
+  status?: RawTaskExecutionStatus | null
   summary_message?: string | null
   detail_json?: unknown
   payload?: unknown

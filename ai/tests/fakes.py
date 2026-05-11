@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import replace
 from typing import Any
 
 from app.contracts.event.task_events import TaskEventEnvelope
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
+from app.domain.agents import BUILTIN_AGENT_TEMPLATES, DEFAULT_SESSION_TEMPLATE_KEYS, MAIN_AGENT_TEMPLATE
 from app.domain.tasks.models import StepRun, TaskRun
 
 
@@ -538,6 +538,216 @@ class InMemoryTranscriptStore:
             if len(results) >= limit:
                 break
         return results
+
+
+class InMemoryAgentRepository:
+    storage_backend = "memory"
+
+    def __init__(self) -> None:
+        self.profiles: dict[str, dict[str, Any]] = {}
+        self.bundles: dict[str, dict[str, Any]] = {}
+
+    def ensure_builtin_templates(self) -> None:
+        return None
+
+    def list_templates(self) -> list[dict[str, Any]]:
+        order = {template_key: index for index, template_key in enumerate(DEFAULT_SESSION_TEMPLATE_KEYS)}
+        templates = [self._template_payload(template) for template in BUILTIN_AGENT_TEMPLATES]
+        return sorted(templates, key=lambda item: order.get(str(item.get("templateKey")), len(order)))
+
+    def get_template(self, template_key: str) -> dict[str, Any] | None:
+        for template in [MAIN_AGENT_TEMPLATE, *BUILTIN_AGENT_TEMPLATES]:
+            if template.template_key == template_key:
+                return self._template_payload(template)
+        return None
+
+    def create_default_session_agents(
+        self,
+        *,
+        session_id: str,
+        owner_key: str,
+        owner_user_id: int | None,
+    ) -> list[dict[str, Any]]:
+        self.ensure_session_main_agent(
+            session_id=session_id,
+            owner_key=owner_key,
+            owner_user_id=owner_user_id,
+        )
+        agents: list[dict[str, Any]] = []
+        for template_key in DEFAULT_SESSION_TEMPLATE_KEYS:
+            existing = self.get_session_agent_by_template(
+                session_id=session_id,
+                owner_key=owner_key,
+                template_key=template_key,
+            )
+            if existing is not None:
+                agents.append(existing)
+                continue
+            agents.append(
+                self.create_session_agent_from_template(
+                    session_id=session_id,
+                    owner_key=owner_key,
+                    owner_user_id=owner_user_id,
+                    template_key=template_key,
+                )
+            )
+        return agents
+
+    def create_session_agent_from_template(
+        self,
+        *,
+        session_id: str,
+        owner_key: str,
+        owner_user_id: int | None,
+        template_key: str,
+    ) -> dict[str, Any]:
+        template = self.get_template(template_key)
+        if template is None:
+            raise KeyError(template_key)
+        return self.create_session_agent(
+            session_id=session_id,
+            owner_key=owner_key,
+            owner_user_id=owner_user_id,
+            config_snapshot=dict(template["default_config_snapshot"]),
+            delegation_policy=template.get("default_policy") or {"canDelegate": False},
+            template_key=template_key,
+            agent_type="user_subagent",
+        )
+
+    def ensure_session_main_agent(
+        self,
+        *,
+        session_id: str,
+        owner_key: str,
+        owner_user_id: int | None,
+    ) -> dict[str, Any]:
+        existing = self.get_session_main_agent(session_id=session_id, owner_key=owner_key)
+        if existing is not None:
+            return existing
+        return self.create_session_agent(
+            session_id=session_id,
+            owner_key=owner_key,
+            owner_user_id=owner_user_id,
+            config_snapshot=self._config_snapshot(MAIN_AGENT_TEMPLATE),
+            delegation_policy={"canDelegate": True},
+            template_key=MAIN_AGENT_TEMPLATE.template_key,
+            agent_type="main",
+        )
+
+    def create_session_agent(
+        self,
+        *,
+        session_id: str,
+        owner_key: str,
+        owner_user_id: int | None,
+        config_snapshot: dict[str, Any],
+        delegation_policy: dict[str, Any] | None = None,
+        template_key: str | None = None,
+        agent_type: str = "user_subagent",
+    ) -> dict[str, Any]:
+        profile_id = new_id("agent_profile")
+        bundle_id = new_id("instruction_bundle")
+        profile = {
+            "profile_id": profile_id,
+            "owner_key": owner_key,
+            "owner_user_id": owner_user_id,
+            "session_id": session_id,
+            "profile_key": f"session.{session_id}.{profile_id}",
+            "profile_version": 1,
+            "agent_type": agent_type,
+            "provider_name": config_snapshot.get("adapterType"),
+            "model_name": config_snapshot.get("model"),
+            "config_snapshot": deepcopy(config_snapshot),
+            "delegation_policy": deepcopy(delegation_policy or {"canDelegate": False}),
+            "template_key": template_key,
+            "bundle_id": bundle_id,
+            "entry_document_key": config_snapshot.get("entryDocumentKey") or "AGENTS.md",
+            "instruction_mode": "managed",
+        }
+        self.profiles[profile_id] = profile
+        self.bundles[bundle_id] = {
+            "bundle_id": bundle_id,
+            "profile_id": profile_id,
+            "mode": "managed",
+            "entry_document_key": profile["entry_document_key"],
+            "documents": deepcopy(config_snapshot.get("documents") or []),
+        }
+        return deepcopy(profile)
+
+    def list_session_agents(self, *, session_id: str, owner_key: str) -> list[dict[str, Any]]:
+        return [
+            deepcopy(profile)
+            for profile in self.profiles.values()
+            if profile.get("session_id") == session_id
+            and profile.get("owner_key") == owner_key
+            and profile.get("agent_type") == "user_subagent"
+        ]
+
+    def get_session_main_agent(self, *, session_id: str, owner_key: str) -> dict[str, Any] | None:
+        for profile in self.profiles.values():
+            if (
+                profile.get("session_id") == session_id
+                and profile.get("owner_key") == owner_key
+                and profile.get("agent_type") == "main"
+            ):
+                return deepcopy(profile)
+        return None
+
+    def get_session_agent(self, *, profile_id: str, owner_key: str) -> dict[str, Any] | None:
+        profile = self.profiles.get(profile_id)
+        if profile is None or profile.get("owner_key") != owner_key:
+            return None
+        return deepcopy(profile)
+
+    def get_session_agent_by_template(self, *, session_id: str, owner_key: str, template_key: str) -> dict[str, Any] | None:
+        for profile in self.profiles.values():
+            if (
+                profile.get("session_id") == session_id
+                and profile.get("owner_key") == owner_key
+                and profile.get("template_key") == template_key
+                and profile.get("agent_type") == "user_subagent"
+            ):
+                return deepcopy(profile)
+        return None
+
+    def get_instruction_bundle(self, *, profile_id: str, owner_key: str) -> dict[str, Any] | None:
+        profile = self.get_session_agent(profile_id=profile_id, owner_key=owner_key)
+        if profile is None:
+            return None
+        bundle = self.bundles.get(str(profile.get("bundle_id") or ""))
+        if bundle is None:
+            return None
+        return deepcopy(bundle)
+
+    @classmethod
+    def _template_payload(cls, template) -> dict[str, Any]:
+        return {
+            "template_id": f"system:agent-template:{template.template_key}:1",
+            "templateKey": template.template_key,
+            "template_key": template.template_key,
+            "default_config_snapshot": cls._config_snapshot(template),
+            "default_policy": {"canDelegate": False},
+        }
+
+    @staticmethod
+    def _config_snapshot(template) -> dict[str, Any]:
+        return {
+            "templateKey": template.template_key,
+            "displayName": template.display_name,
+            "name": template.name,
+            "role": template.role,
+            "title": template.title,
+            "description": template.description,
+            "adapterType": template.adapter_type,
+            "model": template.model,
+            "profileImage": template.profile_image,
+            "skills": list(template.skills),
+            "entryDocumentKey": "AGENTS.md",
+            "documents": [
+                {"documentKey": key, "displayName": display_name, "content": content}
+                for key, display_name, content in template.documents
+            ],
+        }
 
 
 def _owner_user_id(value: Any) -> int | None:

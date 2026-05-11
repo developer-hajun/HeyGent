@@ -1,7 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import type { IssueBoardIssue, IssueBoardLabel, IssueBoardStatus } from '../model/issueBoardModel'
 
-export type ViewMode = 'list' | 'board'
+export type ViewMode = 'list' | 'board' | 'flow'
 export type SortField = 'updated' | 'title' | 'status'
 export type DetailTab =
   | 'chat'
@@ -16,6 +16,7 @@ export type BoardAssignee = {
   id: string
   name: string
   icon: LucideIcon
+  templateKey?: string
 }
 
 export interface PersistedTodoBoardState {

@@ -46,14 +46,14 @@ class PostgresWorkRepository:
             """
             INSERT INTO work_items (
                 work_id, identifier, session_id, owner_key, owner_user_id,
-                title, description, status, assignee_agent_id, parent_id, source,
+                title, description, status, assignee_agent_id, parent_id, flow_order, source,
                 raw_user_input, execution_instruction, expected_deliverable,
                 acceptance_criteria, constraints_payload, metadata, client_request_id,
                 active_run_id, latest_run_id
             )
             VALUES (
                 %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s,
                 %s::jsonb, %s::jsonb, %s::jsonb, %s,
                 %s, %s
@@ -70,6 +70,7 @@ class PostgresWorkRepository:
                 work.status,
                 work.assignee_agent_id,
                 work.parent_id,
+                work.flow_order,
                 work.source,
                 work.raw_user_input,
                 work.execution_instruction,
@@ -210,9 +211,78 @@ class PostgresWorkRepository:
             """
             SELECT * FROM work_items
             WHERE parent_id = %s AND deleted_at IS NULL
-            ORDER BY updated_at DESC, created_at DESC
+            ORDER BY flow_order ASC NULLS LAST, created_at ASC
             """,
             (parent_id,),
+        ).fetchall()
+        return [work for row in rows if (work := _work_from_row(row)) is not None]
+
+    def next_child_flow_order(self, parent_id: str) -> int:
+        row = self.connection_factory().execute(
+            """
+            SELECT COALESCE(MAX(flow_order) + 1, 0) AS next_flow_order
+            FROM work_items
+            WHERE parent_id = %s AND deleted_at IS NULL
+            """,
+            (parent_id,),
+        ).fetchone()
+        record = _normalize_row(row)
+        return int((record or {}).get("next_flow_order") or 0)
+
+    def next_root_flow_order(self, *, session_id: str, owner_key: str) -> int:
+        row = self.connection_factory().execute(
+            """
+            SELECT COALESCE(MAX(flow_order) + 1, 0) AS next_flow_order
+            FROM work_items
+            WHERE session_id = %s AND owner_key = %s AND parent_id IS NULL AND deleted_at IS NULL
+            """,
+            (session_id, owner_key),
+        ).fetchone()
+        record = _normalize_row(row)
+        return int((record or {}).get("next_flow_order") or 0)
+
+    def update_flow_order(self, parent_id: str, work_ids: list[str]) -> list[WorkItem]:
+        connection = self.connection_factory()
+        for index, work_id in enumerate(work_ids):
+            connection.execute(
+                """
+                UPDATE work_items
+                SET flow_order = %s,
+                    updated_at = now()
+                WHERE work_id = %s AND parent_id = %s AND deleted_at IS NULL
+                """,
+                (index, work_id, parent_id),
+            )
+        connection.commit()
+        return self.list_children(parent_id)
+
+    def update_root_flow_order(self, *, session_id: str, owner_key: str, work_ids: list[str]) -> list[WorkItem]:
+        connection = self.connection_factory()
+        for index, work_id in enumerate(work_ids):
+            connection.execute(
+                """
+                UPDATE work_items
+                SET flow_order = %s,
+                    updated_at = now()
+                WHERE work_id = %s
+                  AND session_id = %s
+                  AND owner_key = %s
+                  AND parent_id IS NULL
+                  AND deleted_at IS NULL
+                """,
+                (index, work_id, session_id, owner_key),
+            )
+        connection.commit()
+        rows = self.connection_factory().execute(
+            """
+            SELECT * FROM work_items
+            WHERE session_id = %s
+              AND owner_key = %s
+              AND parent_id IS NULL
+              AND deleted_at IS NULL
+            ORDER BY flow_order ASC NULLS LAST, created_at ASC
+            """,
+            (session_id, owner_key),
         ).fetchall()
         return [work for row in rows if (work := _work_from_row(row)) is not None]
 
@@ -310,6 +380,86 @@ class PostgresWorkRepository:
         connection.commit()
         return self._get_run_link(work_id, task_run_id)
 
+    def claim_run(
+        self,
+        work_id: str,
+        task_run_id: str,
+        *,
+        run_kind: str,
+        status: str,
+        stale_after_seconds: int | None = None,
+    ) -> WorkRunLink | None:
+        stale_seconds = max(1, int(stale_after_seconds or 1800))
+        connection = self.connection_factory()
+        row = connection.execute(
+            """
+            WITH claimable AS (
+                SELECT wi.work_id, wi.active_run_id AS previous_active_run_id
+                FROM work_items wi
+                LEFT JOIN work_runs active_run
+                  ON active_run.work_id = wi.work_id
+                 AND active_run.task_run_id = wi.active_run_id
+                WHERE wi.work_id = %s
+                  AND wi.deleted_at IS NULL
+                  AND (
+                    wi.active_run_id IS NULL
+                    OR wi.active_run_id = %s
+                    OR active_run.task_run_id IS NULL
+                    OR active_run.updated_at < now() - (%s * interval '1 second')
+                  )
+                FOR UPDATE OF wi
+            ), updated AS (
+                UPDATE work_items wi
+                SET active_run_id = CASE WHEN %s IN ('RUNNING', 'PENDING', 'WAITING') THEN %s ELSE wi.active_run_id END,
+                    latest_run_id = %s,
+                    status = CASE WHEN %s IN ('RUNNING', 'PENDING', 'WAITING') THEN 'in_progress' ELSE wi.status END,
+                    started_at = CASE WHEN %s IN ('RUNNING', 'PENDING', 'WAITING') THEN COALESCE(wi.started_at, now()) ELSE wi.started_at END,
+                    updated_at = now()
+                FROM claimable
+                WHERE wi.work_id = claimable.work_id
+                RETURNING claimable.previous_active_run_id
+            )
+            SELECT previous_active_run_id FROM updated
+            """,
+            (
+                work_id,
+                task_run_id,
+                stale_seconds,
+                status,
+                task_run_id,
+                task_run_id,
+                status,
+                status,
+            ),
+        ).fetchone()
+        if row is None:
+            connection.commit()
+            return None
+
+        previous_active_run_id = _normalize_row(row).get("previous_active_run_id")
+        if previous_active_run_id and previous_active_run_id != task_run_id:
+            connection.execute(
+                """
+                UPDATE work_runs
+                SET status = 'STALE',
+                    updated_at = now()
+                WHERE work_id = %s AND task_run_id = %s
+                """,
+                (work_id, previous_active_run_id),
+            )
+        connection.execute(
+            """
+            INSERT INTO work_runs (work_id, task_run_id, run_kind, status)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (work_id, task_run_id) DO UPDATE SET
+                status = EXCLUDED.status,
+                updated_at = now()
+            """,
+            (work_id, task_run_id, run_kind, status),
+        )
+        connection.commit()
+        return self._get_run_link(work_id, task_run_id)
+
     def update_run_status(self, work_id: str, task_run_id: str, status: str) -> WorkRunLink:
         connection = self.connection_factory()
         connection.execute(
@@ -320,8 +470,29 @@ class PostgresWorkRepository:
             """,
             (status, work_id, task_run_id),
         )
-        active_value = None if status in {"COMPLETED", "FAILED", "CANCELED"} else task_run_id
-        connection.execute("UPDATE work_items SET active_run_id = %s, latest_run_id = %s, updated_at = now() WHERE work_id = %s", (active_value, task_run_id, work_id))
+        if status in {"COMPLETED", "FAILED", "CANCELED"}:
+            connection.execute(
+                """
+                UPDATE work_items
+                SET active_run_id = NULL,
+                    latest_run_id = %s,
+                    updated_at = now()
+                WHERE work_id = %s AND active_run_id = %s
+                """,
+                (task_run_id, work_id, task_run_id),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE work_items
+                SET active_run_id = %s,
+                    latest_run_id = %s,
+                    updated_at = now()
+                WHERE work_id = %s
+                  AND (active_run_id IS NULL OR active_run_id = %s)
+                """,
+                (task_run_id, task_run_id, work_id, task_run_id),
+            )
         connection.commit()
         return self._get_run_link(work_id, task_run_id)
 
@@ -861,6 +1032,7 @@ def _work_from_row(row: Any) -> WorkItem | None:
         status=record["status"],
         assignee_agent_id=record.get("assignee_agent_id"),
         parent_id=record.get("parent_id"),
+        flow_order=record.get("flow_order"),
         source=record.get("source") or "work_mode",
         raw_user_input=record.get("raw_user_input"),
         execution_instruction=record.get("execution_instruction"),

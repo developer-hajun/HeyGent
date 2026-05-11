@@ -46,6 +46,24 @@ def test_cors_preflight_allows_configured_frontend_origin():
     assert "x-workspace-key" in allowed_headers
 
 
+def test_cors_preflight_allows_default_delete_method():
+    client = _build_client(Settings(cors_allowed_origins=["http://localhost:5173"]))
+
+    response = client.options(
+        "/taskRuns",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "DELETE",
+            "Access-Control-Request-Headers": "Authorization,Content-Type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+    allowed_methods = response.headers["access-control-allow-methods"]
+    assert "DELETE" in allowed_methods
+
+
 def test_cors_does_not_echo_unconfigured_origin():
     client = _build_client(Settings(cors_allowed_origins=["http://localhost:5173"]))
 

@@ -24,6 +24,7 @@ from app.contracts.work import (
     UpdateWorkLabelRequest,
     UpdateWorkAssigneeRequest,
     UpdateWorkFieldsRequest,
+    UpdateWorkFlowOrderRequest,
     UpdateWorkProductRequest,
     UpsertWorkDocumentRequest,
     UpsertWorkRelationRequest,
@@ -38,6 +39,7 @@ from app.contracts.work import (
     WorkInteractionResponse,
     WorkInteractionsResponse,
     WorkItemResponse,
+    WorkFlowResponse,
     WorkLabelResponse,
     WorkLabelsResponse,
     WorkListResponse,
@@ -84,6 +86,47 @@ async def list_session_work(
         offset=offset,
     )
     return WorkListResponse(items=[_work_response(item, repository=repository) for item in items], totalCount=len(items))
+
+
+@router.post(
+    "/sessions/{sessionId}/work/flow-order",
+    response_model=WorkListResponse,
+    summary="세션 작업 구조도 표시 순서 변경",
+)
+async def update_session_work_flow_order(
+    request: Request,
+    payload: UpdateWorkFlowOrderRequest,
+    sessionId: str = Path(..., description="구조도 순서를 저장할 AI 세션 ID입니다."),
+) -> WorkListResponse:
+    user = await authenticate_http_user(request)
+    session = _session_or_404(request, sessionId)
+    ensure_owner(user, session.get("user_id"))
+    repository = request.app.state.work_repository
+    requested_ids = [work_id.strip() for work_id in payload.work_ids if work_id.strip()]
+    if len(requested_ids) != len(set(requested_ids)):
+        raise HTTPException(status_code=400, detail="duplicate work ids are not allowed")
+    current_items = [
+        item
+        for item in repository.list_work(
+            session_id=sessionId,
+            owner_key=str(user.user_id),
+            include_archived=True,
+            limit=500,
+            offset=0,
+        )
+        if item.parent_id is None
+    ]
+    current_ids = {item.work_id for item in current_items}
+    if set(requested_ids) != current_ids:
+        raise HTTPException(status_code=400, detail="flow order must include every root work")
+    updated_items = repository.update_root_flow_order(
+        session_id=sessionId,
+        owner_key=str(user.user_id),
+        work_ids=requested_ids,
+    )
+    for item in updated_items:
+        await _publish_work_event(request, str(user.user_id), "work.updated", work=item)
+    return WorkListResponse(items=[_work_response(item, repository=repository) for item in updated_items], totalCount=len(updated_items))
 
 
 @router.post(
@@ -318,6 +361,24 @@ async def get_work(request: Request, workId: str = Path(...)) -> WorkItemRespons
     return _work_response(work, repository=request.app.state.work_repository)
 
 
+@router.get("/work/{workId}/flow", response_model=WorkFlowResponse, summary="작업 구조도 조회")
+async def get_work_flow(request: Request, workId: str = Path(...)) -> WorkFlowResponse:
+    user = await authenticate_http_user(request)
+    root = _work_or_404(request, workId)
+    _ensure_work_owner(user, root)
+    repository = request.app.state.work_repository
+    children = repository.list_children(root.work_id)
+    relation_by_key = {}
+    for work in [root, *children]:
+        for relation in _safe_relations(repository, work.work_id):
+            relation_by_key[(relation.source_work_id, relation.target_work_id, relation.relation_type)] = relation
+    return WorkFlowResponse(
+        root=_work_response(root, repository=repository),
+        items=[_work_response(child, repository=repository) for child in children],
+        relations=[_relation_response(relation) for relation in relation_by_key.values()],
+    )
+
+
 @router.post("/work/{workId}/move-status", response_model=WorkItemResponse, summary="작업 상태 변경")
 async def move_work_status(request: Request, payload: MoveWorkStatusRequest, workId: str = Path(...)) -> WorkItemResponse:
     user = await authenticate_http_user(request)
@@ -375,6 +436,26 @@ async def update_work_parent(request: Request, payload: UpdateWorkParentRequest,
     return _work_response(updated, repository=request.app.state.work_repository)
 
 
+@router.post("/work/{workId}/flow-order", response_model=WorkListResponse, summary="작업 구조도 표시 순서 변경")
+async def update_work_flow_order(request: Request, payload: UpdateWorkFlowOrderRequest, workId: str = Path(...)) -> WorkListResponse:
+    user = await authenticate_http_user(request)
+    parent = _work_or_404(request, workId)
+    _ensure_work_owner(user, parent)
+    repository = request.app.state.work_repository
+    requested_ids = [work_id.strip() for work_id in payload.work_ids if work_id.strip()]
+    if len(requested_ids) != len(set(requested_ids)):
+        raise HTTPException(status_code=400, detail="duplicate work ids are not allowed")
+    current_children = repository.list_children(parent.work_id)
+    child_by_id = {child.work_id: child for child in current_children}
+    if set(requested_ids) != set(child_by_id):
+        raise HTTPException(status_code=400, detail="flow order must include every child work")
+    updated_items = repository.update_flow_order(parent.work_id, requested_ids)
+    for item in updated_items:
+        await _publish_work_event(request, str(user.user_id), "work.updated", work=item)
+    await _publish_work_event(request, str(user.user_id), "work.updated", work=parent)
+    return WorkListResponse(items=[_work_response(item, repository=repository) for item in updated_items], totalCount=len(updated_items))
+
+
 @router.post("/work/{workId}/children", response_model=WorkItemResponse, summary="하위 작업 생성")
 async def create_child_work(request: Request, payload: CreateChildWorkRequest, workId: str = Path(...)) -> WorkItemResponse:
     user = await authenticate_http_user(request)
@@ -389,6 +470,7 @@ async def create_child_work(request: Request, payload: CreateChildWorkRequest, w
         "executionInstruction": (payload.description or payload.title).strip(),
         "assigneeAgentId": assignee_agent_id or "CEO",
         "parentId": parent.work_id,
+        "flowOrder": payload.flow_order,
         "acceptanceCriteria": payload.acceptance_criteria,
         "metadata": {"createdFromParent": parent.identifier},
     }
@@ -403,7 +485,6 @@ async def create_child_work(request: Request, payload: CreateChildWorkRequest, w
     request.app.state.work_repository.update_status(child.work_id, "todo")
     if payload.block_parent_until_done:
         request.app.state.work_repository.add_relation(source_work_id=child.work_id, target_work_id=parent.work_id, relation_type="blocks")
-        request.app.state.work_repository.update_status(parent.work_id, "blocked")
     updated_child = _work_or_404(request, child.work_id)
     await _publish_work_event(request, str(user.user_id), "work.created", work=updated_child)
     await _publish_work_event(request, str(user.user_id), "work.updated", work=_work_or_404(request, parent.work_id))
@@ -560,6 +641,15 @@ async def create_work_run(request: Request, payload: CreateWorkRunRequest, workI
     _ensure_work_owner(user, work)
     if work.active_run_id:
         raise HTTPException(status_code=409, detail="work already has an active run")
+    unresolved_blocker_ids = _unresolved_blocker_work_ids(request.app.state.work_repository, work.work_id)
+    if unresolved_blocker_ids:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "work is blocked by unresolved blockers",
+                "unresolvedBlockerWorkIds": unresolved_blocker_ids,
+            },
+        )
     message = await _create_message_in_session(
         request,
         CreateSessionMessageRequest(
@@ -569,6 +659,7 @@ async def create_work_run(request: Request, payload: CreateWorkRunRequest, workI
         ),
         session=_session_or_404(request, work.session_id),
         user=user,
+        run_in_background=True,
     )
     updated = request.app.state.work_repository.get_work(work.work_id) or work
     await _publish_work_event(request, str(user.user_id), "work_run.created", work=updated)
@@ -961,11 +1052,7 @@ def _safe_label_ids(repository, work_id: str) -> list[str]:
 
 def _safe_children(repository, work: WorkItem) -> list[WorkItem]:
     try:
-        return [
-            child
-            for child in repository.list_work(session_id=work.session_id, owner_key=work.owner_key, include_archived=True, limit=500, offset=0)
-            if child.parent_id == work.work_id
-        ]
+        return repository.list_children(work.work_id)
     except Exception:
         return []
 
@@ -989,6 +1076,24 @@ def _safe_comments(repository, work_id: str):
         return repository.list_comments(work_id, limit=500)
     except Exception:
         return []
+
+
+def _unresolved_blocker_work_ids(repository, work_id: str) -> list[str]:
+    try:
+        relations = repository.list_relations(work_id)
+    except Exception:
+        return []
+    blocker_ids = [
+        relation.source_work_id
+        for relation in relations
+        if relation.relation_type == "blocks" and relation.target_work_id == work_id
+    ]
+    unresolved: list[str] = []
+    for blocker_id in dict.fromkeys(blocker_ids):
+        blocker = repository.get_work(blocker_id)
+        if blocker is None or blocker.status != "done":
+            unresolved.append(blocker_id)
+    return unresolved
 
 
 def _validate_assignee_or_400(request: Request, *, session_id: str, owner_key: str, assignee_agent_id: Any) -> None:
@@ -1087,6 +1192,8 @@ async def _wake_work_from_comment(request: Request, *, user, work: WorkItem, com
         return
     if work.status == "backlog" or work.status == "cancelled":
         return
+    if _unresolved_blocker_work_ids(request.app.state.work_repository, work.work_id):
+        return
     if work.status == "done" and not bool(getattr(comment, "resume_requested", False)):
         return
     message = str(getattr(comment, "body", "") or "").strip() or "댓글을 반영해서 이 작업을 이어서 진행해."
@@ -1114,6 +1221,8 @@ async def _wake_work_from_comment(request: Request, *, user, work: WorkItem, com
 
 async def _wake_work_from_interaction(request: Request, *, user, work: WorkItem, interaction) -> None:
     if work.active_run_id or work.status in {"backlog", "cancelled"}:
+        return
+    if _unresolved_blocker_work_ids(request.app.state.work_repository, work.work_id):
         return
     title = getattr(interaction, "title", None) or "사용자 응답 반영"
     try:

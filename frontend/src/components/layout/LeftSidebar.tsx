@@ -31,6 +31,8 @@ import { useAuthStore } from '@/store/useAuthStore'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useChatStore } from '@/store/useChatStore'
 import { logout } from '@/apis/auth'
+import { agentProfilesToPanelItems, createDefaultSessionAgents } from '@/apis/agents'
+import { createSession as createAiSession } from '@/apis/sessions'
 import { updateMyInfo } from '@/apis/users'
 import type { RawAiSession } from '@/types/aiChat'
 
@@ -54,9 +56,11 @@ export function LeftSidebar() {
     theme,
     setTheme,
   } = useUIStore()
-  const { setSelectedSessionId, pinnedSessionIds } = useSessionStore()
+  const { setAgentPanelsForSession, setSelectedSessionId, pinnedSessionIds } = useSessionStore()
   const [profileOpen, setProfileOpen] = useState(false)
   const [newSessionModalOpen, setNewSessionModalOpen] = useState(false)
+  const [newSessionCreating, setNewSessionCreating] = useState(false)
+  const [newSessionError, setNewSessionError] = useState<string | null>(null)
   const commandClient = useAiRealtimeStore((state) => state.commandClient)
   const realtimeStatus = useAiRealtimeStore((state) => state.connectionStatus)
   const sessionsById = useChatStore((state) => state.sessionsById)
@@ -114,9 +118,58 @@ export function LeftSidebar() {
         initialTab={settingsInitialTab as 'apiKeys'}
       />
       <NewSessionModal
+        error={newSessionError}
         open={newSessionModalOpen}
-        onOpenChange={setNewSessionModalOpen}
+        onOpenChange={(open) => {
+          if (newSessionCreating) return
+          setNewSessionError(null)
+          setNewSessionModalOpen(open)
+        }}
+        submitting={newSessionCreating}
         onConfirm={(config) => {
+          if (config?.seedDefaultAgents) {
+            setNewSessionCreating(true)
+            setNewSessionError(null)
+            void createAiSession({
+              title: '새 AI 대화',
+              model: config.model.trim() || undefined,
+              settings: {
+                ...(config.persona.trim() ? { systemPrompt: config.persona.trim() } : {}),
+                ...(config.model.trim() ? { model: config.model.trim() } : {}),
+                delegationPolicy: config.delegationPolicy,
+              },
+              metadataPatch: {
+                ui: {
+                  agentName: config.agentName,
+                  callName: config.callName,
+                  agentCapabilities: config.capabilities,
+                  agentProfileImage: config.profileImage,
+                  instructionsEntryFile: config.instructionsEntryFile,
+                  instructionsMode: config.instructionsMode,
+                  instructionsRootPath: config.instructionsRootPath,
+                  instructionsFiles: config.instructionsFiles,
+                },
+              },
+            })
+              .then(async (session) => {
+                const profiles = await createDefaultSessionAgents(session.session_id)
+                setAgentPanelsForSession(session.session_id, agentProfilesToPanelItems(profiles))
+                void fetchSessions().catch(() => undefined)
+                setSelectedSessionId(session.session_id)
+                setNewSessionModalOpen(false)
+                setSidebarCollapsed(true)
+                setSessionWorkspaceCollapsed(false)
+                navigate(`/session/${session.session_id}`)
+              })
+              .catch((error) => {
+                setNewSessionError(getNewSessionErrorMessage(error))
+                setSidebarCollapsed(false)
+              })
+              .finally(() => {
+                setNewSessionCreating(false)
+              })
+            return
+          }
           storePendingSessionConfig(config)
           setNewSessionModalOpen(false)
           if (config && !config.seedDefaultAgents) {
@@ -415,6 +468,20 @@ function storePendingSessionConfig(config: CustomAgentConfig | undefined) {
     return
   }
   sessionStorage.setItem('ai-new-session-config', JSON.stringify(config))
+}
+
+function getNewSessionErrorMessage(error: unknown) {
+  if (isAxiosLikeError(error)) {
+    const detail = error.response?.data?.detail
+    if (typeof detail === 'string' && detail.trim() !== '') {
+      return detail
+    }
+  }
+  return error instanceof Error ? error.message : '세션을 만들지 못했습니다.'
+}
+
+function isAxiosLikeError(error: unknown): error is { response?: { data?: { detail?: unknown } } } {
+  return typeof error === 'object' && error !== null && 'response' in error
 }
 
 function EmptySessionNotice({
