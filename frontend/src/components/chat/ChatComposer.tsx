@@ -18,6 +18,7 @@ import {
 import { useLayoutEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
+import { VoiceWaveform } from './VoiceWaveform'
 import { getCommandUsage, type CommandUsageSummary } from '@/apis/aiCommandUsage'
 
 type ChatComposerProps = {
@@ -269,23 +270,28 @@ export function ChatComposer({
                 </PopoverContent>
               </Popover>
             )}
-            <textarea
-              ref={textareaRef}
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder}
-              disabled={disabled}
-              rows={1}
-              className="text-foreground placeholder:text-muted-foreground max-h-36 min-h-6 flex-1 resize-none bg-transparent py-0 text-[15px] outline-none disabled:opacity-60"
-            />
+            {isRecording ? (
+              <VoiceWaveform active={isRecording} onError={() => setIsRecording(false)} />
+            ) : (
+              <textarea
+                ref={textareaRef}
+                value={value}
+                onChange={(event) => setValue(event.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={placeholder}
+                disabled={disabled}
+                rows={1}
+                className="text-foreground placeholder:text-muted-foreground max-h-36 min-h-6 flex-1 resize-none bg-transparent py-0 text-[15px] outline-none disabled:opacity-60"
+              />
+            )}
             <button
               type="button"
               onClick={() => setIsRecording((r) => !r)}
               aria-label={isRecording ? '음성 입력 중지' : '음성 입력 시작'}
+              aria-pressed={isRecording}
               className={`shrink-0 rounded-2xl p-2.5 transition-colors ${
                 isRecording
-                  ? 'animate-pulse bg-red-500 text-white'
+                  ? 'bg-red-500 text-white hover:bg-red-500/90'
                   : 'bg-muted text-muted-foreground hover:bg-muted/80'
               }`}
             >
@@ -297,7 +303,7 @@ export function ChatComposer({
                 onClick={onStop}
                 aria-label="응답 중지"
                 title="응답 중지"
-                className="border-foreground text-foreground hover:bg-muted shrink-0 rounded-2xl border-2 bg-white p-2.5 transition-colors"
+                className="border-foreground bg-background text-foreground hover:bg-muted shrink-0 rounded-2xl border-2 p-2.5 transition-colors"
               >
                 <Square className="h-4 w-4 fill-current" />
               </button>
@@ -307,7 +313,7 @@ export function ChatComposer({
                 onClick={submit}
                 disabled={disabled}
                 aria-label="메시지 보내기"
-                className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 text-white transition-colors disabled:opacity-40"
+                className="bg-foreground text-background hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 transition-colors disabled:opacity-40"
               >
                 <Send className="h-4 w-4" />
               </button>
@@ -317,7 +323,7 @@ export function ChatComposer({
                 onClick={onVoiceMode}
                 aria-label="음성 대화 모드"
                 title="음성 대화 모드"
-                className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 text-white transition-colors"
+                className="bg-foreground text-background hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 transition-colors"
               >
                 <AudioLines className="h-4 w-4" />
               </button>
