@@ -44,7 +44,7 @@ class Settings:
     internal_service_token: str | None = None
     redis_url: str | None = None
     cors_allowed_origins: list[str] = field(default_factory=list)
-    cors_allowed_methods: list[str] = field(default_factory=lambda: ["GET", "POST", "OPTIONS"])
+    cors_allowed_methods: list[str] = field(default_factory=lambda: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
     cors_allowed_headers: list[str] = field(
         default_factory=lambda: ["Authorization", "Content-Type", "X-Workspace-Key"]
     )
@@ -195,7 +195,7 @@ def get_settings() -> Settings:
         redis_url=_read_env("HEYGENT_REDIS_URL", None, dotenv_values),
         cors_allowed_origins=_parse_csv(_read_env("HEYGENT_CORS_ALLOWED_ORIGINS", "", dotenv_values)),
         cors_allowed_methods=_parse_csv(
-            _read_env("HEYGENT_CORS_ALLOWED_METHODS", "GET,POST,OPTIONS", dotenv_values)
+            _read_env("HEYGENT_CORS_ALLOWED_METHODS", "GET,POST,PUT,PATCH,DELETE,OPTIONS", dotenv_values)
         ),
         cors_allowed_headers=_parse_csv(
             _read_env("HEYGENT_CORS_ALLOWED_HEADERS", "Authorization,Content-Type,X-Workspace-Key", dotenv_values)
