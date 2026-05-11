@@ -38,6 +38,12 @@ class FakeBackendMemoryClient:
             raise BackendMemoryClientError("test memory writeback failure")
         return []
 
+    async def mark_used(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.fail:
+            raise BackendMemoryClientError("test memory mark used failure")
+        return None
+
     async def aclose(self) -> None:
         return None
 
@@ -157,6 +163,8 @@ def _patch_app_runtime(app_main, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_main, "BackendMemoryClient", lambda settings: FakeBackendMemoryClient())
     monkeypatch.setattr(app_main, "ProviderMemoryExtractionClient", lambda **_kwargs: object())
     monkeypatch.setattr(app_main, "LlmMemoryExtractor", lambda **_kwargs: FakeMemoryExtractor())
+    monkeypatch.setattr(app_main, "ProviderMemoryUsageAttributionClient", lambda **_kwargs: object())
+    monkeypatch.setattr(app_main, "LlmMemoryUsageAttributionVerifier", lambda **_kwargs: None)
     monkeypatch.setattr(app_main, "LocalToolRuntime", local_tool_runtime_without_bridge)
     build_memory_connection_registry = app_main.build_connection_registry
     monkeypatch.setattr(app_main, "build_connection_registry", lambda **_kwargs: build_memory_connection_registry(redis_url=None, ttl_seconds=60))

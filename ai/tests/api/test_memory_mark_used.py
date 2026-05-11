@@ -18,6 +18,26 @@ class FakeMemoryClient:
         return SimpleNamespace(id=kwargs["memory_id"])
 
 
+class FakeUsageAttributionVerifier:
+    def __init__(self, scores=None, fail: bool = False) -> None:
+        self.scores = scores or {}
+        self.fail = fail
+        self.calls = []
+
+    async def verify_usage(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.fail:
+            raise RuntimeError("verifier failed")
+        return SimpleNamespace(
+            scores=dict(self.scores),
+            reasons={memory_id: "semantic usage" for memory_id in self.scores},
+            source="llm",
+            failed=False,
+            fallback_reason=None,
+            latency_ms=1,
+        )
+
+
 def _task_input(memory_ids=None) -> dict:
     memory_ids = memory_ids or [10, 10, 11]
     return {
@@ -65,6 +85,7 @@ async def test_mark_used_recalled_memories_marks_attributed_memory_once():
             "user_id": "7",
             "memory_id": 10,
             "usefulness_score": 0.7,
+            "source_task_run_id": "task_1",
         }
     ]
     assert observation["status"] == "completed"
@@ -75,6 +96,40 @@ async def test_mark_used_recalled_memories_marks_attributed_memory_once():
     assert observation["scores"] == {"10": 0.7}
     assert observation["deduplicated"] is True
     assert observation["task_run_id_present"] is True
+    assert observation["attribution"]["heuristic_used_memory_ids"] == [10]
+    assert observation["attribution"]["llm_source"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_mark_used_recalled_memories_uses_llm_attribution_when_semantic_match_has_low_overlap():
+    memory_client = FakeMemoryClient()
+    verifier = FakeUsageAttributionVerifier(scores={11: 0.88})
+
+    observation = await mark_used_recalled_memories(
+        app_state=SimpleNamespace(
+            backend_memory_client=memory_client,
+            memory_usage_attribution_verifier=verifier,
+        ),
+        task_input=_task_input(memory_ids=[11]),
+        user_id="7",
+        assistant_message="해당 흐름을 이어서 반영했습니다.",
+        task_run_id="task_1",
+    )
+
+    assert memory_client.calls == [
+        {
+            "user_id": "7",
+            "memory_id": 11,
+            "usefulness_score": 0.88,
+            "source_task_run_id": "task_1",
+        }
+    ]
+    assert verifier.calls
+    assert observation["status"] == "completed"
+    assert observation["reason"] == "llm_attribution_verifier"
+    assert observation["used_memory_ids"] == [11]
+    assert observation["scores"] == {"11": 0.88}
+    assert observation["attribution"]["llm_used_memory_ids"] == [11]
 
 
 @pytest.mark.asyncio
