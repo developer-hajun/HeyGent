@@ -53,6 +53,9 @@ class UserMemoryServiceTest {
     @Mock
     private MemorySafetyValidator memorySafetyValidator;
 
+    @Mock
+    private UserMemoryEventService userMemoryEventService;
+
     @InjectMocks
     private UserMemoryService userMemoryService;
 
@@ -116,6 +119,7 @@ class UserMemoryServiceTest {
             isNull(),
             isNull(),
             isNull(),
+            eq(List.of()),
             anyDouble(),
             anyDouble(),
             anyDouble(),
@@ -144,11 +148,50 @@ class UserMemoryServiceTest {
             null,
             null,
             null,
+            null,
             null
         );
 
         assertThat(responses).isEmpty();
         assertThat(unrelatedMemory.getAccessCount()).isZero();
+    }
+
+    @Test
+    void recallByFiltersAppliesMetadataCategoryFilter() {
+        UserMemory matchingMemory = memory(30L, MemoryType.FACT, MemoryScopeType.GLOBAL, "[1.0,0.0]");
+        UserMemory otherMemory = memory(31L, MemoryType.FACT, MemoryScopeType.GLOBAL, "[1.0,0.0]");
+        ReflectionTestUtils.setField(matchingMemory, "metadata", Map.of("category", "task_state"));
+        ReflectionTestUtils.setField(otherMemory, "metadata", Map.of("category", "preference"));
+        when(userMemoryRepository.findRecallCandidates(
+            eq(USER_ID),
+            eq(MemoryStatus.ACTIVE),
+            anyDouble(),
+            anyDouble(),
+            any(LocalDateTime.class),
+            isNull(),
+            isNull(),
+            isNull(),
+            eq(MemoryScopeType.SESSION),
+            any(Pageable.class)
+        )).thenReturn(List.of(matchingMemory, otherMemory));
+
+        List<UserMemoryResponse> responses = userMemoryService.recall(
+            USER_ID,
+            5,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            List.of("task_state")
+        );
+
+        assertThat(responses)
+            .extracting(UserMemoryResponse::getId)
+            .containsExactly(30L);
     }
 
     private CreateMemoryRequest createRequest(MemoryType memoryType, MemoryScopeType scopeType) {

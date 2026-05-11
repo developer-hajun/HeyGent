@@ -21,13 +21,22 @@ class MemorySafetyValidatorTest {
             Map.of(
                 "source", "ai.writeback",
                 "category", "task_state",
-                "sensitivity", "medium",
+                "sensitivity", "low",
                 "ttl", "short",
                 "sourceTimestamp", "2026-05-11T10:30:00",
-                "eventTime", "2026-05-11T09:00:00",
-                "reason", "발표 시연 기준을 명확히 하기 위해 저장한다."
+                "eventTime", "2026-05-11T10:00:00",
+                "reason", "사용자가 후속 작업에 필요한 구현 상태를 명시함"
             )
         )).doesNotThrowAnyException();
+    }
+
+    @Test
+    void validateRejectsUnknownMemoryCategory() {
+        assertThatThrownBy(() -> validator.validate(
+            "장기기억 구현은 후보 분류 작업이 남아 있다.",
+            "장기기억 task state",
+            Map.of("source", "ai.writeback", "category", "temporary")
+        )).isInstanceOf(CustomException.class);
     }
 
     @Test

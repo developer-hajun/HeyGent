@@ -1,6 +1,7 @@
 package com.ssafy.heygent.domain.memory.service;
 
 import java.util.Map;
+import java.util.List;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,6 +40,11 @@ public class UserMemoryEventService {
             .score(score)
             .metadata(normalizeMetadata(metadata))
             .build());
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserMemoryEvent> findEvents(Long userId, Long memoryId) {
+        return userMemoryEventRepository.findByMemoryIdAndUserIdOrderByCreatedAtDesc(memoryId, userId);
     }
 
     private Map<String, Object> normalizeMetadata(Map<String, Object> metadata) {

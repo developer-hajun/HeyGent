@@ -1,6 +1,7 @@
 package com.ssafy.heygent.domain.memory.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -33,8 +34,10 @@ import com.ssafy.heygent.domain.memory.entity.MemoryStatus;
 import com.ssafy.heygent.domain.memory.entity.MemoryStoreType;
 import com.ssafy.heygent.domain.memory.entity.MemoryType;
 import com.ssafy.heygent.domain.memory.entity.UserMemory;
+import com.ssafy.heygent.domain.memory.entity.UserMemoryEvent;
 import com.ssafy.heygent.domain.memory.repository.UserMemoryRepository;
 import com.ssafy.heygent.domain.memory.repository.UserMemoryVectorRepository;
+import com.ssafy.heygent.global.exception.CustomException;
 
 @ExtendWith(MockitoExtension.class)
 class UserMemoryServiceEventTest {
@@ -108,6 +111,7 @@ class UserMemoryServiceEventTest {
             null,
             null,
             null,
+            null,
             null
         );
 
@@ -144,6 +148,40 @@ class UserMemoryServiceEventTest {
         assertThat(response.getUsedCount()).isEqualTo(1L);
         assertThat(response.getUsefulnessScore()).isEqualTo(0.8);
         verify(userMemoryEventService).record(memory, MemoryEventType.USED, 0.8, Map.of());
+    }
+
+    @Test
+    void getMemoryEventsReturnsOwnedMemoryEvents() {
+        UserMemory memory = memory(45L);
+        UserMemoryEvent event = memoryEvent(100L, 45L, MemoryEventType.RECALLED);
+        when(userMemoryRepository.findById(45L)).thenReturn(Optional.of(memory));
+        when(userMemoryEventService.findEvents(USER_ID, 45L)).thenReturn(List.of(event));
+
+        var responses = userMemoryService.getMemoryEvents(USER_ID, 45L);
+
+        assertThat(responses).hasSize(1);
+        assertThat(responses.get(0).getId()).isEqualTo(100L);
+        assertThat(responses.get(0).getMemoryId()).isEqualTo(45L);
+        assertThat(responses.get(0).getEventType()).isEqualTo(MemoryEventType.RECALLED);
+        assertThat(responses.get(0).getTaskRunId()).isEqualTo("task-1");
+        assertThat(responses.get(0).getMetadata()).isEqualTo(Map.of("queryProvided", true));
+    }
+
+    @Test
+    void getMemoryEventsRejectsOtherUserMemory() {
+        UserMemory memory = UserMemory.builder()
+            .id(46L)
+            .userId(999L)
+            .memoryType(MemoryType.FACT)
+            .content("다른 사용자 기억")
+            .importance(0.8)
+            .confidence(0.9)
+            .status(MemoryStatus.ACTIVE)
+            .build();
+        when(userMemoryRepository.findById(46L)).thenReturn(Optional.of(memory));
+
+        assertThatThrownBy(() -> userMemoryService.getMemoryEvents(USER_ID, 46L))
+            .isInstanceOf(CustomException.class);
     }
 
     @Test
@@ -245,6 +283,20 @@ class UserMemoryServiceEventTest {
             .accessCount(0L)
             .usedCount(0L)
             .usefulnessScore(0.0)
+            .build();
+    }
+
+    private UserMemoryEvent memoryEvent(Long id, Long memoryId, MemoryEventType eventType) {
+        return UserMemoryEvent.builder()
+            .id(id)
+            .memoryId(memoryId)
+            .userId(USER_ID)
+            .eventType(eventType)
+            .taskRunId("task-1")
+            .messageId("msg-1")
+            .score(0.8)
+            .metadata(Map.of("queryProvided", true))
+            .createdAt(LocalDateTime.of(2026, 5, 11, 15, 30))
             .build();
     }
 }
