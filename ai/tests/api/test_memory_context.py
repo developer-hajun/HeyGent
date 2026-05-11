@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.api.memory_context import attach_persistent_memory_context, plan_memory_recall, select_memory_recall_query
+from app.api.memory_context import LlmMemoryRecallPlanner, attach_persistent_memory_context, plan_memory_recall, select_memory_recall_query
 from app.clients.backend_memory import BackendMemoryClientError, BackendMemoryItem
 
 
@@ -17,6 +17,19 @@ class FakeMemoryClient:
         if self.fail:
             raise BackendMemoryClientError("recall failed")
         return list(self.memories)
+
+
+class FakeRecallPlannerProvider:
+    def __init__(self, payload=None, *, fail: bool = False) -> None:
+        self.payload = payload or {}
+        self.fail = fail
+        self.calls = []
+
+    async def plan_memory_recall_json(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.fail:
+            raise RuntimeError("planner failed")
+        return self.payload
 
 
 def _memory(content: str) -> BackendMemoryItem:
@@ -74,6 +87,49 @@ def test_plan_memory_recall_selects_workspace_task_state_filters():
 
 
 @pytest.mark.asyncio
+async def test_llm_memory_recall_planner_uses_model_structured_filters():
+    provider = FakeRecallPlannerProvider(
+        {
+            "shouldRecall": True,
+            "query": "MR 작성 선호",
+            "reason": "사용자 MR 작성 형식 선호가 필요함",
+            "limit": 3,
+            "filters": {
+                "storeType": "USER_PROFILE",
+                "memoryType": "PREFERENCE",
+                "scopeType": "GLOBAL",
+                "metadataCategories": ["preference", "unknown"],
+            },
+        }
+    )
+    planner = LlmMemoryRecallPlanner(provider=provider)
+
+    plan = await planner.plan_recall("MR 작업내용 정리해줘", workspace_key="team-a", limit=5)
+
+    assert plan.should_recall is True
+    assert plan.query == "MR 작성 선호"
+    assert plan.reason == "사용자 MR 작성 형식 선호가 필요함"
+    assert plan.limit == 3
+    assert plan.filters() == {
+        "store_type": "USER_PROFILE",
+        "memory_type": "PREFERENCE",
+        "scope_type": "GLOBAL",
+        "metadata_categories": ["preference"],
+    }
+    assert provider.calls[0]["rule_plan"].should_recall is True
+
+
+@pytest.mark.asyncio
+async def test_llm_memory_recall_planner_falls_back_to_rules_on_error():
+    planner = LlmMemoryRecallPlanner(provider=FakeRecallPlannerProvider(fail=True))
+
+    plan = await planner.plan_recall("4번 장기기억 작업 이어서 해줘", workspace_key="team-a")
+
+    assert plan.reason == "workspace_memory_needed"
+    assert plan.filters()["metadata_categories"] == ["task_state", "fact"]
+
+
+@pytest.mark.asyncio
 async def test_attach_persistent_memory_context_replaces_client_supplied_context():
     memory_client = FakeMemoryClient([_memory("사용자는 회의 요약을 짧게 받는 것을 선호한다.")])
     task_input = {
@@ -122,6 +178,58 @@ async def test_attach_persistent_memory_context_replaces_client_supplied_context
         "should_recall": True,
         "reason": "general_semantic_recall",
         "filters": {},
+    }
+
+
+@pytest.mark.asyncio
+async def test_attach_persistent_memory_context_uses_llm_planner_when_available():
+    memory_client = FakeMemoryClient([_memory("사용자는 MR 설명을 짧게 받는 것을 선호한다.")])
+    planner = LlmMemoryRecallPlanner(
+        provider=FakeRecallPlannerProvider(
+            {
+                "shouldRecall": True,
+                "query": "MR 작성 선호",
+                "reason": "사용자 MR 작성 선호 필요",
+                "filters": {
+                    "storeType": "USER_PROFILE",
+                    "memoryType": "PREFERENCE",
+                    "scopeType": "GLOBAL",
+                    "metadataCategories": ["preference"],
+                },
+            }
+        )
+    )
+    task_input = {"prompt": "MR 작업내용 정리해줘"}
+
+    await attach_persistent_memory_context(
+        app_state=SimpleNamespace(backend_memory_client=memory_client, memory_recall_planner=planner),
+        task_input=task_input,
+        user_id="7",
+        query="MR 작업내용 정리해줘",
+        workspace_key="team-a",
+    )
+
+    assert memory_client.calls == [
+        {
+            "user_id": "7",
+            "query": "MR 작성 선호",
+            "limit": 5,
+            "workspace_key": None,
+            "store_type": "USER_PROFILE",
+            "memory_type": "PREFERENCE",
+            "scope_type": "GLOBAL",
+            "metadata_categories": ["preference"],
+        }
+    ]
+    assert task_input["memory_context_meta"]["recall"]["planner"] == {
+        "should_recall": True,
+        "reason": "사용자 MR 작성 선호 필요",
+        "filters": {
+            "store_type": "USER_PROFILE",
+            "memory_type": "PREFERENCE",
+            "scope_type": "GLOBAL",
+            "metadata_categories": ["preference"],
+        },
     }
 
 

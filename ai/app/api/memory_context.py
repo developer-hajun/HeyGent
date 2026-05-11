@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from app.api.memory_observation import MEMORY_CONTEXT_META_KEY, build_recall_observation
 from app.clients.backend_memory import BackendMemoryClientError
@@ -13,6 +13,23 @@ logger = logging.getLogger(__name__)
 DEFAULT_MEMORY_RECALL_LIMIT = 5
 MEMORY_CONTEXT_KEYS = ("persistent_memory_context", "memory_context")
 MEMORY_RECALL_QUERY_KEYS = ("prompt", "message", "query", "content", "text", "subject", "title")
+
+MEMORY_RECALL_PLANNER_SYSTEM_PROMPT = """
+You decide whether the AI runtime should recall long-term memory before answering.
+Return strict JSON only, with this shape:
+{"shouldRecall":true,"query":"...","reason":"...","limit":5,"filters":{"storeType":"USER_PROFILE|AGENT_MEMORY|null","memoryType":"PREFERENCE|PROFILE|FACT|INSTRUCTION|PROCEDURE|null","scopeType":"GLOBAL|WORKSPACE|null","metadataCategories":["preference|profile|fact|instruction|procedure|event|reason|task_state"]}}
+
+Rules:
+- Skip recall for greetings, thanks, trivial requests, or requests fully answerable from the current input.
+- Use USER_PROFILE/PREFERENCE/GLOBAL/preference for stable user style, format, or preference.
+- Use USER_PROFILE/PROFILE/GLOBAL/profile for user role, identity, or working habit.
+- Use AGENT_MEMORY/FACT/WORKSPACE/task_state,fact for continuing project implementation or current project state.
+- Use AGENT_MEMORY/PROCEDURE/procedure,instruction for reusable workflow or repeated project procedure.
+- Use reason/event categories when the user asks why, history, records, schedule, or previous event context.
+- If a request may need both user preference and project state, avoid over-narrowing; omit uncertain filters.
+- Do not use tags, sessionKey, or resourceId in this first implementation.
+- Prefer omitting a filter over adding a weak or uncertain filter.
+""".strip()
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +53,50 @@ class MemoryRecallPlan:
         if self.metadata_categories:
             filters["metadata_categories"] = list(self.metadata_categories)
         return filters
+
+
+class MemoryRecallPlannerProvider(Protocol):
+    async def plan_memory_recall_json(
+        self,
+        *,
+        system_prompt: str,
+        query: str,
+        workspace_key: str | None,
+        rule_plan: MemoryRecallPlan,
+    ) -> dict[str, Any]:
+        """Return the model-produced memory recall planning JSON."""
+
+
+class LlmMemoryRecallPlanner:
+    """LLM이 요청별 장기기억 recall 필요성과 backend filter를 판단한다."""
+
+    def __init__(self, provider: MemoryRecallPlannerProvider, *, fallback_to_rules: bool = True) -> None:
+        self._provider = provider
+        self._fallback_to_rules = fallback_to_rules
+
+    async def plan_recall(
+        self,
+        query: str | None,
+        *,
+        workspace_key: str | None = None,
+        limit: int = DEFAULT_MEMORY_RECALL_LIMIT,
+    ) -> MemoryRecallPlan:
+        rule_plan = plan_memory_recall(query, workspace_key=workspace_key, limit=limit)
+        if not rule_plan.query:
+            return rule_plan
+        try:
+            raw = await self._provider.plan_memory_recall_json(
+                system_prompt=MEMORY_RECALL_PLANNER_SYSTEM_PROMPT,
+                query=rule_plan.query,
+                workspace_key=workspace_key,
+                rule_plan=rule_plan,
+            )
+            return _normalize_llm_recall_plan(raw, rule_plan=rule_plan, workspace_key=workspace_key, limit=limit)
+        except Exception:
+            if not self._fallback_to_rules:
+                raise
+            logger.warning("LLM memory recall planner failed; falling back to rule planner", exc_info=True)
+            return rule_plan
 
 
 def clear_client_memory_context(task_input: dict[str, Any]) -> None:
@@ -177,7 +238,11 @@ async def attach_persistent_memory_context(
     limit: int = DEFAULT_MEMORY_RECALL_LIMIT,
 ) -> None:
     clear_client_memory_context(task_input)
-    recall_plan = plan_memory_recall(query, workspace_key=workspace_key, limit=limit)
+    recall_planner = getattr(app_state, "memory_recall_planner", None)
+    if recall_planner is not None:
+        recall_plan = await recall_planner.plan_recall(query, workspace_key=workspace_key, limit=limit)
+    else:
+        recall_plan = plan_memory_recall(query, workspace_key=workspace_key, limit=limit)
     if not recall_plan.should_recall:
         _set_recall_meta(
             task_input,
@@ -284,6 +349,57 @@ def _with_recall_plan(recall_meta: dict[str, Any], recall_plan: MemoryRecallPlan
     return enriched
 
 
+def _normalize_llm_recall_plan(
+    raw: Any,
+    *,
+    rule_plan: MemoryRecallPlan,
+    workspace_key: str | None,
+    limit: int,
+) -> MemoryRecallPlan:
+    if not isinstance(raw, dict):
+        return rule_plan
+    should_recall = raw.get("shouldRecall", raw.get("should_recall"))
+    if not isinstance(should_recall, bool):
+        should_recall = rule_plan.should_recall
+
+    query = _trimmed(raw.get("query"), max_length=500) or rule_plan.query
+    reason = _trimmed(raw.get("reason"), max_length=200) or "llm_recall_planner"
+    normalized_limit = _limit(raw.get("limit"), default=limit)
+    filters = raw.get("filters")
+    filters = filters if isinstance(filters, dict) else {}
+
+    store_type = _enum(filters.get("storeType", filters.get("store_type")), _ALLOWED_STORE_TYPES)
+    memory_type = _enum(filters.get("memoryType", filters.get("memory_type")), _ALLOWED_MEMORY_TYPES)
+    scope_type = _enum(filters.get("scopeType", filters.get("scope_type")), _ALLOWED_SCOPE_TYPES)
+    metadata_categories = _metadata_categories(filters.get("metadataCategories", filters.get("metadata_categories")))
+
+    normalized_workspace_key = str(workspace_key or "").strip() or None
+    if scope_type == "WORKSPACE" and not normalized_workspace_key:
+        scope_type = None
+
+    store_type, memory_type = _align_store_and_memory_type(store_type, memory_type)
+
+    return MemoryRecallPlan(
+        should_recall=should_recall,
+        query=query,
+        reason=reason,
+        limit=normalized_limit,
+        store_type=store_type,
+        memory_type=memory_type,
+        scope_type=scope_type,
+        workspace_key=normalized_workspace_key if scope_type == "WORKSPACE" else None,
+        metadata_categories=metadata_categories,
+    )
+
+
+def _align_store_and_memory_type(store_type: str | None, memory_type: str | None) -> tuple[str | None, str | None]:
+    if memory_type in {"PREFERENCE", "PROFILE"}:
+        return "USER_PROFILE", memory_type
+    if memory_type in {"FACT", "INSTRUCTION", "PROCEDURE"}:
+        return "AGENT_MEMORY", memory_type
+    return store_type, memory_type
+
+
 def _workspace_categories(*, wants_procedure: bool, wants_reason: bool, wants_event: bool) -> tuple[str, ...]:
     categories: list[str] = []
     if wants_procedure:
@@ -310,6 +426,47 @@ def _contains_any(text: str, hints: tuple[str, ...]) -> bool:
 def _put_if_present(payload: dict[str, Any], key: str, value: str | None) -> None:
     if value:
         payload[key] = value
+
+
+def _trimmed(value: Any, *, max_length: int) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text[:max_length]
+
+
+def _limit(value: Any, *, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed < 1:
+        return default
+    return min(parsed, 20)
+
+
+def _enum(value: Any, allowed: set[str]) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().upper()
+    return normalized if normalized in allowed else None
+
+
+def _metadata_categories(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    categories: list[str] = []
+    for item in value[:8]:
+        if not isinstance(item, str):
+            continue
+        normalized = item.strip().lower().replace("-", "_")
+        if normalized in _ALLOWED_METADATA_CATEGORIES:
+            categories.append(normalized)
+    return tuple(dict.fromkeys(categories))
 
 
 _LOW_VALUE_RECALL_QUERIES = {
@@ -361,3 +518,16 @@ _WORKSPACE_HINTS = (
 _PROCEDURE_HINTS = ("작업해줘", "docs/logs", "로그", "mr", "절차", "방법")
 _REASON_HINTS = ("왜", "이유", "근거")
 _EVENT_HINTS = ("언제", "지난", "기록", "이력", "시연", "일정")
+_ALLOWED_STORE_TYPES = {"USER_PROFILE", "AGENT_MEMORY"}
+_ALLOWED_MEMORY_TYPES = {"PREFERENCE", "PROFILE", "FACT", "INSTRUCTION", "PROCEDURE"}
+_ALLOWED_SCOPE_TYPES = {"GLOBAL", "WORKSPACE"}
+_ALLOWED_METADATA_CATEGORIES = {
+    "preference",
+    "profile",
+    "fact",
+    "instruction",
+    "procedure",
+    "event",
+    "reason",
+    "task_state",
+}
