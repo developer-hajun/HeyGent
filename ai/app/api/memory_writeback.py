@@ -6,6 +6,10 @@ from typing import Any
 from app.api.memory_observation import build_writeback_observation
 from app.clients.backend_memory import BackendMemoryClientError
 from app.domain.orchestration.agent.memory.memory_extractor import MemoryExtractionContext
+from app.domain.orchestration.agent.memory.memory_reconciler import (
+    MemoryOperationReconciler,
+    MemoryReconciliationContext,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -70,6 +74,16 @@ async def writeback_persistent_memory_candidates(
             status="no_candidates",
             attempted=False,
         )
+
+    reconciler = MemoryOperationReconciler(memory_client)
+    candidates = await reconciler.reconcile_candidates(
+        candidates=candidates,
+        context=MemoryReconciliationContext(
+            user_id=user_id,
+            user_message=user_message,
+            workspace_key=workspace_key,
+        ),
+    )
 
     try:
         await memory_client.create_candidates(user_id=user_id, candidates=candidates)
