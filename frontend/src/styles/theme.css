@@ -1,6 +1,7 @@
+@custom-variant dark (&:is(.dark *));
+
 /* ──────────────────────────────────────────────────────────
-   Theme — Light only
-   (Monochrome neutral palette, no dark mode variant)
+   Light Mode — Monochrome Neutral
 ────────────────────────────────────────────────────────── */
 :root {
   --font-size: 16px;
@@ -53,6 +54,71 @@
   --agent-completed: #10b981;
   --agent-failed: #ef4444;
   --agent-scheduled: #8b5cf6;
+}
+
+/* ──────────────────────────────────────────────────────────
+   Dark Mode — Layered Graphite
+   (4-tier surface 시스템으로 답답함을 줄이고 시각 계층을 명확히 함)
+   - background  (가장 깊은 베이스)
+   - sidebar     (살짝 분리된 사이드 영역)
+   - card        (살짝 떠 있는 컨테이너)
+   - popover     (가장 떠 있는 플로팅 요소)
+────────────────────────────────────────────────────────── */
+.dark {
+  /* Surface tiers — 한 단계 더 밝은 graphite */
+  --background: #1f2127;
+  --sidebar: #1a1c21;
+  --card: #292c33;
+  --popover: #32353c;
+
+  /* Text */
+  --foreground: #ebedf1;
+  --card-foreground: #ebedf1;
+  --popover-foreground: #ebedf1;
+  --sidebar-foreground: #ebedf1;
+  --secondary-foreground: #ebedf1;
+  --accent-foreground: #f2f3f6;
+  --muted-foreground: #a3a9b4;
+  --primary-foreground: #1f2127;
+  --sidebar-primary-foreground: #1f2127;
+
+  /* Interactive */
+  --primary: #e8eaee;
+  --secondary: rgba(255, 255, 255, 0.06);
+  --muted: rgba(255, 255, 255, 0.04);
+  --accent: rgba(255, 255, 255, 0.07);
+  --sidebar-primary: #e8eaee;
+  --sidebar-accent: rgba(255, 255, 255, 0.07);
+
+  /* Borders / inputs */
+  --border: rgba(255, 255, 255, 0.08);
+  --sidebar-border: rgba(255, 255, 255, 0.06);
+  --input: rgba(255, 255, 255, 0.1);
+  --input-background: rgba(255, 255, 255, 0.04);
+
+  /* Switch / ring */
+  --switch-background: rgba(255, 255, 255, 0.18);
+  --switch-on: #10b981;
+  --switch-on-hover: #34d399;
+  --ring: rgba(255, 255, 255, 0.3);
+  --sidebar-ring: rgba(255, 255, 255, 0.28);
+
+  /* Destructive */
+  --destructive: #f87171;
+  --destructive-foreground: #16181c;
+
+  /* Charts / agent status (시각화는 유색 유지) */
+  --chart-1: #818cf8;
+  --chart-2: #34d399;
+  --chart-3: #fbbf24;
+  --chart-4: #a78bfa;
+  --chart-5: #22d3ee;
+  --agent-idle: #6b7280;
+  --agent-analyzing: #fbbf24;
+  --agent-running: #818cf8;
+  --agent-completed: #34d399;
+  --agent-failed: #f87171;
+  --agent-scheduled: #a78bfa;
 }
 
 /* ──────────────────────────────────────────────────────────
@@ -111,6 +177,45 @@
     font-family: var(--font-body);
     /* 스크롤바 너비를 CSS 변수로 노출 — RightPanel fixed 위치 보정에 사용 */
     --scrollbar-width: calc(100vw - 100%);
+  }
+
+  /* Dark mode: ambient radial layers — 빈 공간에 미세한 깊이감 추가 */
+  .dark body {
+    background-image:
+      radial-gradient(ellipse 70% 50% at 10% 0%, rgba(255, 255, 255, 0.07) 0%, transparent 65%),
+      radial-gradient(ellipse 60% 45% at 95% 20%, rgba(255, 255, 255, 0.05) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 40% at 50% 100%, rgba(255, 255, 255, 0.04) 0%, transparent 70%);
+    background-attachment: fixed;
+  }
+
+  /* Dark mode: 떠 있는 surface 의 outline 강조 (floating panel 느낌) */
+  .dark [data-slot='popover-content'],
+  .dark [data-slot='dialog-content'] {
+    backdrop-filter: blur(24px) saturate(150%);
+    -webkit-backdrop-filter: blur(24px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow:
+      0 10px 32px rgba(0, 0, 0, 0.55),
+      0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+  }
+
+  /* Dark mode: glass panels — 명시적으로 .glass 클래스 적용 시 */
+  .dark .glass {
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+  }
+
+  /* Dark mode: 하드코딩된 흰색 표면을 유리 패널로 변환 */
+  .dark [class*='bg-white'] {
+    background-color: rgba(255, 255, 255, 0.06) !important;
+    backdrop-filter: blur(12px) saturate(140%);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+  }
+
+  /* Dark mode color-scheme hint for browser chrome elements */
+  .dark {
+    color-scheme: dark;
   }
 
   html {

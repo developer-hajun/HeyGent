@@ -313,7 +313,7 @@ export function NewChatPage() {
                   onClick={() => void handleSend()}
                   aria-label="새 대화 메시지 보내기"
                   disabled={isSending || commandClient === null}
-                  className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2 text-white transition-colors disabled:opacity-40"
+                  className="bg-foreground text-background hover:bg-foreground/85 shrink-0 rounded-2xl p-2 transition-colors disabled:opacity-40"
                 >
                   <Send className={`h-4 w-4 ${isSending ? 'animate-pulse' : ''}`} />
                 </button>
@@ -323,7 +323,7 @@ export function NewChatPage() {
                   onClick={() => navigate('/session/voice', { state: { voiceMode: true } })}
                   aria-label="음성 대화 모드"
                   title="음성 대화 모드"
-                  className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2 text-white transition-colors"
+                  className="bg-foreground text-background hover:bg-foreground/85 shrink-0 rounded-2xl p-2 transition-colors"
                 >
                   <AudioLines className="h-4 w-4" />
                 </button>

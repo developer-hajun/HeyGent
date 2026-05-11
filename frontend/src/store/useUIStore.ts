@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-export const DEFAULT_SIDEBAR_WIDTH = 260
+export const DEFAULT_SIDEBAR_WIDTH = 195
 export const DEFAULT_SIDEBAR_COLLAPSED_WIDTH = 64
 
 interface UIState {
@@ -37,7 +37,10 @@ export const useUIStore = create<UIState>()(
       taskActivityPanelOpen: false,
       setTaskActivityPanelOpen: (open) => set({ taskActivityPanelOpen: open }),
       theme: 'dark',
-      setTheme: (theme) => set({ theme }),
+      setTheme: (theme) => {
+        document.documentElement.classList.toggle('dark', theme === 'dark')
+        set({ theme })
+      },
     }),
     {
       name: 'heygent-ui-state',

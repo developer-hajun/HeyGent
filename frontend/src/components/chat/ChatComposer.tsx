@@ -211,7 +211,7 @@ export function ChatComposer({
                 onClick={onStop}
                 aria-label="응답 중지"
                 title="응답 중지"
-                className="border-foreground text-foreground hover:bg-muted shrink-0 rounded-2xl border-2 bg-white p-2.5 transition-colors"
+                className="border-foreground bg-background text-foreground hover:bg-muted shrink-0 rounded-2xl border-2 p-2.5 transition-colors"
               >
                 <Square className="h-4 w-4 fill-current" />
               </button>
@@ -221,7 +221,7 @@ export function ChatComposer({
                 onClick={submit}
                 disabled={disabled}
                 aria-label="메시지 보내기"
-                className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 text-white transition-colors disabled:opacity-40"
+                className="bg-foreground text-background hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 transition-colors disabled:opacity-40"
               >
                 <Send className="h-4 w-4" />
               </button>
@@ -231,7 +231,7 @@ export function ChatComposer({
                 onClick={onVoiceMode}
                 aria-label="음성 대화 모드"
                 title="음성 대화 모드"
-                className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 text-white transition-colors"
+                className="bg-foreground text-background hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 transition-colors"
               >
                 <AudioLines className="h-4 w-4" />
               </button>
