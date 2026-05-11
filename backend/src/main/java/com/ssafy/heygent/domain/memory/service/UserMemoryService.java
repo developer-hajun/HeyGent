@@ -17,6 +17,7 @@ import org.springframework.util.StringUtils;
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryCandidatesRequest;
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryRequest;
 import com.ssafy.heygent.domain.memory.dto.request.MarkMemoryUsedRequest;
+import com.ssafy.heygent.domain.memory.dto.response.UserMemoryEventResponse;
 import com.ssafy.heygent.domain.memory.dto.response.UserMemoryResponse;
 import com.ssafy.heygent.domain.memory.embedding.MemoryEmbeddingService;
 import com.ssafy.heygent.domain.memory.entity.MemoryEventType;
@@ -198,6 +199,13 @@ public class UserMemoryService {
             .stream()
             .filter(memory -> isNotExpired(memory, now))
             .map(UserMemoryResponse::from)
+            .toList();
+    }
+
+    public List<UserMemoryEventResponse> getMemoryEvents(Long userId, Long memoryId) {
+        findOwnedMemory(userId, memoryId);
+        return userMemoryEventService.findEvents(userId, memoryId).stream()
+            .map(UserMemoryEventResponse::from)
             .toList();
     }
 

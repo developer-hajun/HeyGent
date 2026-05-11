@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryCandidatesRequest;
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryRequest;
 import com.ssafy.heygent.domain.memory.dto.request.MarkMemoryUsedRequest;
+import com.ssafy.heygent.domain.memory.dto.response.UserMemoryEventResponse;
 import com.ssafy.heygent.domain.memory.dto.response.UserMemoryResponse;
 import com.ssafy.heygent.domain.memory.entity.MemoryScopeType;
 import com.ssafy.heygent.domain.memory.entity.MemoryStoreType;
@@ -60,6 +61,15 @@ public class UserMemoryController {
         @AuthenticationPrincipal CustomUserPrincipal user
     ) {
         return ApiResponse.success(userMemoryService.getMyMemories(resolveUserId(user)));
+    }
+
+    @Operation(summary = "장기기억 이벤트 조회", description = "로그인된 사용자의 특정 장기기억에 쌓인 이벤트 이력을 조회합니다.")
+    @GetMapping("/{memoryId}/events")
+    public ApiResponse<List<UserMemoryEventResponse>> getMemoryEvents(
+        @AuthenticationPrincipal CustomUserPrincipal user,
+        @PathVariable Long memoryId
+    ) {
+        return ApiResponse.success(userMemoryService.getMemoryEvents(resolveUserId(user), memoryId));
     }
 
     @Operation(summary = "AI recall용 장기기억 조회", description = "AI 요청 전에 prompt에 주입할 활성 장기기억을 조회합니다.")
