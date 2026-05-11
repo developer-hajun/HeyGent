@@ -162,6 +162,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1545, y: 285 },
       meeting: { x: 415, y: 130 },
       calling: { x: 1110, y: 660 },
+      work: { x: 470, y: 395 },
     },
   },
   {
@@ -176,6 +177,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1070, y: 285 },
       meeting: { x: 925, y: 90 },
       calling: { x: 840, y: 350 },
+      work: { x: 650, y: 458 },
     },
   },
   {
@@ -190,6 +192,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1215, y: 370 },
       meeting: { x: 715, y: 215 },
       calling: { x: 990, y: 750 },
+      work: { x: 470, y: 395 },
     },
   },
   {
@@ -205,6 +208,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1415, y: 360 },
       meeting: { x: 920, y: 220 },
       calling: { x: 1110, y: 655 },
+      work: { x: 465, y: 595 },
     },
   },
   {
@@ -224,6 +228,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1535, y: 425 },
       meeting: { x: 415, y: 130 },
       calling: { x: 1334, y: 665 },
+      work: { x: 825, y: 520 },
     },
   },
   {
@@ -243,6 +248,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1290, y: 260 },
       meeting: { x: 925, y: 90 },
       calling: { x: 1070, y: 658 },
+      work: { x: 825, y: 520 },
     },
   },
   {
@@ -262,6 +268,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1340, y: 280 },
       meeting: { x: 850, y: 75 },
       calling: { x: 1430, y: 840 },
+      work: { x: 465, y: 595 },
     },
   },
   {
@@ -277,6 +284,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 995, y: 340 },
       meeting: { x: 670, y: 105 },
       calling: { x: 240, y: 710 },
+      work: { x: 650, y: 458 },
     },
   },
   {
@@ -292,6 +300,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1380, y: 490 },
       meeting: { x: 785, y: 245 },
       calling: { x: 1200, y: 658 },
+      work: { x: 650, y: 685 },
     },
   },
   {
@@ -306,6 +315,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1310, y: 460 },
       meeting: { x: 920, y: 220 },
       calling: { x: 1250, y: 660 },
+      work: { x: 650, y: 685 },
     },
   },
   {
@@ -313,17 +323,20 @@ const AGENT_CONFIGS: AgentConfig[] = [
     name: 'CEO',
     spritePath: '/assets/agents/ceo',
     scale: 1.05,
+    stateScales: { walking: 0.85, standing_wait: 0.85, sitting_work: 0.7 },
     sittingSprites: {
       sitting_desk: 'ceo_desk',
       sitting_meeting: 'ceo_explain',
+      sitting_work: 'ceo_work',
       standing_wait: 'walk_side_stand',
     },
-    allowedUIDestinations: ['desk', 'meeting'],
-    destinationLabels: { meeting: '화이트보드' },
+    allowedUIDestinations: ['desk', 'meeting', 'work'],
+    destinationLabels: { meeting: '화이트보드', work: '작업' },
     initialPosition: { x: 1460, y: 700 },
     destinations: {
       desk: { x: 310, y: 215 },
       meeting: { x: 383, y: 493 },
+      work: { x: 275, y: 195 },
       sofa: { x: 310, y: 215 },
       floorLean: { x: 310, y: 215 },
       calling: { x: 310, y: 215 },
@@ -654,6 +667,7 @@ const DESTINATION_MAP: Record<UIDestination, { targetState: SittingState; label:
   rest: { targetState: 'sitting_sofa', label: '휴식' }, // 런타임에 sofa/floorLean 으로 오버라이드
   meeting: { targetState: 'sitting_meeting', label: '회의' },
   calling: { targetState: 'sitting_calling', label: '전화' },
+  work: { targetState: 'sitting_work', label: '작업' },
 }
 
 const STATE_LABELS: Record<string, string> = {
@@ -664,6 +678,7 @@ const STATE_LABELS: Record<string, string> = {
   sitting_floor_lean: '휴식 중',
   sitting_meeting: '회의 중',
   sitting_calling: '통화 중',
+  sitting_work: '작업 중',
   standing_wait: '대기 중',
 }
 
