@@ -26,7 +26,8 @@ public class MemorySafetyValidator {
         "sessionKey",
         "resourceType",
         "resourceId",
-        "source"
+        "source",
+        "category"
     );
 
     private static final List<Pattern> BLOCKED_PATTERNS = List.of(

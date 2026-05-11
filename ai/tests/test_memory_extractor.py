@@ -48,7 +48,7 @@ async def test_memory_extractor_normalizes_preference_candidate_for_backend_cont
             "scopeType": "GLOBAL",
             "operationType": "ADD",
             "content": "사용자는 답변을 짧게 받는 것을 선호한다.",
-            "metadata": {"source": "ai.writeback", "tags": ["style"]},
+            "metadata": {"source": "ai.writeback", "category": "preference", "tags": ["style"]},
             "importance": 0.8,
             "confidence": 0.9,
             "summary": "짧은 답변 선호",
@@ -116,6 +116,56 @@ async def test_memory_extractor_requires_workspace_key_for_workspace_scope():
     assert without_workspace == []
     assert with_workspace[0]["storeType"] == "AGENT_MEMORY"
     assert with_workspace[0]["metadata"]["workspaceKey"] == "workspace-a"
+    assert with_workspace[0]["metadata"]["category"] == "instruction"
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_preserves_event_reason_task_state_categories():
+    provider = FakeStructuredProvider(
+        {
+            "candidates": [
+                {
+                    "memoryType": "FACT",
+                    "scopeType": "WORKSPACE",
+                    "content": "장기기억 구현은 operation reconciliation 이후 candidate 분류 작업이 남아 있다.",
+                    "summary": "장기기억 구현 task state",
+                    "metadata": {"category": "task-state", "tags": ["memory", "implementation"]},
+                    "importance": 0.8,
+                    "confidence": 0.9,
+                },
+                {
+                    "memoryType": "FACT",
+                    "scopeType": "GLOBAL",
+                    "content": "사용자가 Jira 형식 변경을 요청한 이유는 발표와 협업 정리를 쉽게 하기 위해서다.",
+                    "summary": "Jira 형식 변경 이유",
+                    "category": "reason",
+                    "importance": 0.7,
+                    "confidence": 0.85,
+                },
+                {
+                    "memoryType": "FACT",
+                    "scopeType": "WORKSPACE",
+                    "content": "IoT 3D 모델링은 1차 초안 후 부품 테스트를 거쳐 고도화하기로 했다.",
+                    "summary": "IoT 모델링 진행 이벤트",
+                    "memoryCategory": "event",
+                    "importance": 0.75,
+                    "confidence": 0.9,
+                },
+            ]
+        }
+    )
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="장기기억 작업 상태와 Jira 이유, IoT 진행 이벤트를 기억해줘.",
+        assistant_message="정리했습니다.",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1", workspace_key="workspace-a"),
+    )
+
+    assert [candidate["metadata"]["category"] for candidate in candidates] == ["task_state", "reason", "event"]
+    assert candidates[0]["metadata"]["tags"] == ["memory", "implementation"]
+    assert candidates[0]["metadata"]["workspaceKey"] == "workspace-a"
+    assert candidates[2]["metadata"]["workspaceKey"] == "workspace-a"
 
 
 @pytest.mark.asyncio
