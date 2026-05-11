@@ -433,7 +433,6 @@ function PersonalizationContent() {
   const [settings, setSettings] = useState({
     nickname: 'Heygent',
     tone: '기본값',
-    emoji: true,
     formality: '보통',
     language: '자동 탐지',
   })
@@ -544,21 +543,6 @@ function PersonalizationContent() {
             </Popover>
           </div>
         ))}
-
-        {/* Emoji Toggle */}
-        <div className="bg-muted/30 border-border flex items-start justify-between rounded-xl border p-4">
-          <div className="flex-1 pr-4">
-            <h4 className="text-foreground mb-1 text-sm font-medium">이모지 사용</h4>
-            <p className="text-muted-foreground text-xs">
-              Heygent는 메뉴로 일반 지식을 활용해 빠르고 길이 있는 답변을 제공합니다. 이는 개인
-              맞춤형이 아니며 메모리를 사용하지 않습니다.
-            </p>
-          </div>
-          <Switch
-            checked={settings.emoji}
-            onCheckedChange={(checked) => setSettings({ ...settings, emoji: checked })}
-          />
-        </div>
       </div>
     </div>
   )
@@ -937,8 +921,8 @@ function ChannelsContent() {
         {channels.map((channel) => (
           <div
             key={channel.id}
-            className={`rounded-xl border p-4 transition-all ${
-              channel.connected ? 'bg-primary/5 border-primary/20' : 'bg-muted/30 border-border'
+            className={`rounded-xl border p-4 transition-colors ${
+              channel.connected ? 'bg-muted/40 border-border' : 'bg-background border-border'
             }`}
           >
             <div className="flex items-center justify-between">
@@ -948,12 +932,12 @@ function ChannelsContent() {
                   <h4 className="text-foreground text-sm font-medium">{channel.name}</h4>
                   <span
                     className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${
-                      channel.connected ? 'text-emerald-600' : 'text-muted-foreground'
+                      channel.connected ? 'text-switch-on' : 'text-muted-foreground'
                     }`}
                   >
                     <span
                       className={`h-1.5 w-1.5 rounded-full ${
-                        channel.connected ? 'bg-emerald-500' : 'bg-muted-foreground'
+                        channel.connected ? 'bg-switch-on' : 'bg-muted-foreground/60'
                       }`}
                     />
                     {channel.connected ? '연결됨' : '미연결'}
@@ -962,10 +946,10 @@ function ChannelsContent() {
               </div>
               <button
                 onClick={() => toggleChannel(channel.id)}
-                className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+                className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
                   channel.connected
-                    ? 'bg-muted text-muted-foreground hover:bg-muted/80'
-                    : 'bg-primary hover:bg-primary/90 text-white'
+                    ? 'border-border bg-background text-foreground hover:bg-muted'
+                    : 'border-foreground bg-foreground text-background hover:bg-foreground/90'
                 }`}
               >
                 {channel.connected ? '연결 해제' : '연결하기'}
@@ -1061,8 +1045,8 @@ function ExternalServicesContent() {
 
       <div className="space-y-3">
         <div
-          className={`rounded-xl border p-4 transition-all ${
-            notionConnected ? 'bg-primary/5 border-primary/20' : 'bg-muted/30 border-border'
+          className={`rounded-xl border p-4 transition-colors ${
+            notionConnected ? 'bg-muted/40 border-border' : 'bg-background border-border'
           }`}
         >
           <div className="flex items-center justify-between">
@@ -1080,12 +1064,12 @@ function ExternalServicesContent() {
                 <h4 className="text-foreground text-sm font-medium">Notion</h4>
                 <span
                   className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${
-                    notionConnected ? 'text-emerald-600' : 'text-muted-foreground'
+                    notionConnected ? 'text-switch-on' : 'text-muted-foreground'
                   }`}
                 >
                   <span
                     className={`h-1.5 w-1.5 rounded-full ${
-                      notionConnected ? 'bg-emerald-500' : 'bg-muted-foreground'
+                      notionConnected ? 'bg-switch-on' : 'bg-muted-foreground/60'
                     }`}
                   />
                   {notionConnected ? '연결됨' : '미연결'}
@@ -1095,10 +1079,10 @@ function ExternalServicesContent() {
             <button
               onClick={notionConnected ? handleNotionDisconnect : handleNotionConnect}
               disabled={loading}
-              className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 ${
+              className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 ${
                 notionConnected
-                  ? 'bg-muted text-muted-foreground hover:bg-muted/80'
-                  : 'bg-primary hover:bg-primary/90 text-white'
+                  ? 'border-border bg-background text-foreground hover:bg-muted'
+                  : 'border-foreground bg-foreground text-background hover:bg-foreground/90'
               }`}
             >
               {loading ? '연결 중...' : notionConnected ? '연결 해제' : '연결하기'}
