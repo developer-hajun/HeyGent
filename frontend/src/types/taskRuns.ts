@@ -1,6 +1,19 @@
 import type { JsonObject, RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
 
-export type TaskRunAgentKind = 'main' | 'user_subagent' | 'worker' | 'domain' | string
+export type TaskRunAgentKind = 'main' | 'user_subagent' | 'worker' | 'domain'
+
+export type TaskRunStatus =
+  | 'PENDING'
+  | 'RUNNING'
+  | 'WAITING'
+  | 'BLOCKED'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELED'
+
+export type TaskRunSource = 'active' | 'recent'
+
+export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELED'
 
 export type TaskRunAgentRef = {
   id: string
@@ -22,14 +35,7 @@ export type TaskRunDisplayContext = {
   delegatedAgents: TaskRunAgentRef[]
 }
 
-export type RawTaskRunStatus =
-  | 'PENDING'
-  | 'RUNNING'
-  | 'WAITING'
-  | 'COMPLETED'
-  | 'FAILED'
-  | 'CANCELLED'
-  | string
+export type RawTaskRunStatus = TaskRunStatus | 'CANCELLED' | string
 
 export type RawTaskRun = {
   task_run_id: string
@@ -66,7 +72,7 @@ export type RawApproval = {
   approval_id: string
   task_run_id: string
   step_run_id?: string | null
-  status?: 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED' | string
+  status?: ApprovalStatus | 'CANCELLED' | string
   title?: string | null
   description?: string | null
   payload?: JsonObject | null
@@ -123,16 +129,32 @@ export type TaskRunDetailSummaryView = TaskRunSummaryView & {
 }
 
 export type TaskRunsActiveListResultPayload = {
-  task_runs?: RawTaskRun[]
-  taskRuns?: RawTaskRun[]
-  items?: RawTaskRun[]
+  task_runs?: RawActiveTaskRun[]
+  taskRuns?: RawActiveTaskRun[]
+  items?: RawActiveTaskRun[]
+  total_count?: number
+  totalCount?: number
   [key: string]: unknown
+}
+
+export type RawActiveTaskRun = RawTaskRun & {
+  source?: TaskRunSource
+  current_step_run_id?: string | null
+  currentStepRunId?: string | null
+  current_step?: RawStepRun | null
+  currentStep?: RawStepRun | null
+  wait_reason?: string | null
+  waitReason?: string | null
+  pending_approval?: RawApproval | null
+  pendingApproval?: RawApproval | null
 }
 
 export type TaskRunEventsReplayResultPayload = {
   task_run_id?: string
   taskRunId?: string
   events?: RawTaskEventPayload[]
+  latest_sequence?: number
+  latestSequence?: number
   next_sequence?: number
   nextSequence?: number
   retention_exceeded?: boolean

@@ -20,6 +20,7 @@ from app.contracts.task.task_response import (
     StepRunResponse,
     StepRunSummaryResponse,
     TaskEventResponse,
+    TaskRunDisplayContextResponse,
     TaskRunFlowActivityResponse,
     TaskRunFlowEdgeResponse,
     TaskRunFlowNodeResponse,
@@ -146,13 +147,16 @@ def _display_task_title(task, *, input_summary: str | None) -> str:
     return task.task_type
 
 
+def _display_context_response(task, step: StepRun | None = None) -> TaskRunDisplayContextResponse:
+    return TaskRunDisplayContextResponse.model_validate(build_task_display_context(task, step))
+
 
 def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse:
     current_step = _select_current_step(task, steps)
     current_step_response = None
     if current_step is not None:
         current_step_response = StepRunSummaryResponse.model_validate(current_step, from_attributes=True)
-        current_step_response.display_context = build_task_display_context(task, current_step)
+        current_step_response.display_context = _display_context_response(task, current_step)
     input_summary = _summarize_task_input_payload(task.input_payload)
     return TaskRunListItemResponse(
         task_run_id=task.task_run_id,
@@ -166,7 +170,7 @@ def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse
         created_at=task.created_at,
         updated_at=task.updated_at,
         current_step=current_step_response,
-        display_context=build_task_display_context(task),
+        display_context=_display_context_response(task),
     )
 
 
@@ -184,7 +188,7 @@ def _build_active_task_item(
             step_run_id=current_step.step_run_id,
             title=current_step.title,
             status=current_step.status,
-            display_context=build_task_display_context(task, current_step),
+            display_context=_display_context_response(task, current_step),
         )
     input_summary = _summarize_task_input_payload(task.input_payload)
     return ActiveTaskRunListItemResponse(
@@ -198,7 +202,7 @@ def _build_active_task_item(
         updated_at=task.updated_at,
         wait_reason=(task.wait_payload or {}).get("reason"),
         pending_approval=pending_approval,
-        display_context=build_task_display_context(task),
+        display_context=_display_context_response(task),
     )
 
 
@@ -278,7 +282,7 @@ def _build_task_response(task, context: TaskContext) -> TaskRunResponse:
 
     response = TaskRunResponse.model_validate(task, from_attributes=True)
     response.pending_approval = _build_pending_approval_response(context.repository.get_open_approval(task.task_run_id))
-    response.display_context = build_task_display_context(task)
+    response.display_context = _display_context_response(task)
     return response
 
 
@@ -419,7 +423,7 @@ def _build_step_response(
         output_payload=step.output_payload,
         wait_payload=step.wait_payload,
         pending_approval=pending_approval,
-        display_context=build_task_display_context(task, step),
+        display_context=_display_context_response(task, step),
         detail_json=step.detail_json,
         summary_message=step.summary_message,
         error_message=step.error_message,

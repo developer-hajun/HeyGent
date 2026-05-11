@@ -43,13 +43,42 @@ def test_openapi_documents_task_run_contract_in_plain_language():
     assert "사용자 요청 하나의 실행 묶음" in task_run_schema["task_run_id"]["description"]
     assert "sessionId" in task_run_schema["session_key"]["description"]
     assert "승인" in task_run_schema["pendingApproval"]["description"]
+    assert task_run_schema["status"]["$ref"] == "#/components/schemas/TaskStatus"
+    assert task_run_schema["displayContext"]["$ref"] == "#/components/schemas/TaskRunDisplayContextResponse"
     assert "task_type" in task_run_schema
+
+    assert schema["components"]["schemas"]["TaskStatus"]["enum"] == [
+        "PENDING",
+        "RUNNING",
+        "WAITING",
+        "BLOCKED",
+        "COMPLETED",
+        "FAILED",
+        "CANCELED",
+    ]
+    assert schema["components"]["schemas"]["ApprovalStatus"]["enum"] == [
+        "PENDING",
+        "APPROVED",
+        "REJECTED",
+        "CANCELED",
+    ]
+    display_context_schema = schema["components"]["schemas"]["TaskRunDisplayContextResponse"]["properties"]
+    assert display_context_schema["actorAgent"]["anyOf"][0]["$ref"] == "#/components/schemas/AgentRefResponse"
+    assert display_context_schema["delegatedAgents"]["items"]["$ref"] == "#/components/schemas/AgentRefResponse"
+    agent_schema = schema["components"]["schemas"]["AgentRefResponse"]["properties"]
+    assert agent_schema["kind"]["anyOf"][0]["enum"] == ["main", "user_subagent", "worker", "domain"]
+    assert "스프라이트" in agent_schema["profileKey"]["description"]
 
     active_params = schema["paths"]["/ai/api/v1/taskRuns/active"]["get"]["parameters"]
     active_param_names = {parameter["name"] for parameter in active_params}
     assert "sessionId" in active_param_names
     assert "productSessionId" not in active_param_names
     assert "sessionKey" not in active_param_names
+
+    active_item_schema = schema["components"]["schemas"]["ActiveTaskRunListItemResponse"]["properties"]
+    assert active_item_schema["source"]["enum"] == ["active", "recent"]
+    assert active_item_schema["status"]["$ref"] == "#/components/schemas/TaskStatus"
+    assert "approval_required" in active_item_schema["wait_reason"]["description"]
 
     list_params = schema["paths"]["/ai/api/v1/taskRuns"]["get"]["parameters"]
     list_param_names = {parameter["name"] for parameter in list_params}
