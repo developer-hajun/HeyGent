@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 import re
 from typing import Any, Protocol
 
@@ -8,7 +9,7 @@ from typing import Any, Protocol
 MEMORY_EXTRACTION_SYSTEM_PROMPT = """
 You extract only durable long-term memory candidates from one user/assistant turn.
 Return strict JSON only, with this shape:
-{"candidates":[{"memoryType":"PREFERENCE|PROFILE|FACT|INSTRUCTION|PROCEDURE","scopeType":"GLOBAL|WORKSPACE","content":"...","summary":"...","importance":0.0-1.0,"confidence":0.0-1.0,"evidence":"...","metadata":{"category":"preference|profile|fact|instruction|procedure|event|reason|task_state","tags":["optional"]}}]}
+{"candidates":[{"memoryType":"PREFERENCE|PROFILE|FACT|INSTRUCTION|PROCEDURE","scopeType":"GLOBAL|WORKSPACE","content":"...","summary":"...","importance":0.0-1.0,"confidence":0.0-1.0,"evidence":"...","validFrom":"YYYY-MM-DDTHH:MM:SS|null","validUntil":"YYYY-MM-DDTHH:MM:SS|null","expiresAt":"YYYY-MM-DDTHH:MM:SS|null","metadata":{"category":"preference|profile|fact|instruction|procedure|event|reason|task_state","sensitivity":"low|medium|high","ttl":"session|short|medium|long|permanent","sourceTimestamp":"YYYY-MM-DDTHH:MM:SS","eventTime":"YYYY-MM-DDTHH:MM:SS","reason":"optional","tags":["optional"]}}]}
 
 Rules:
 - Extract nothing unless the user explicitly asked to remember something, stated a stable preference/profile fact, or gave a durable future instruction.
@@ -25,6 +26,11 @@ Rules:
   - event: durable event that matters later, not a one-off chat detail.
   - reason: why a preference, decision, or change was made.
   - task_state: reusable project state, unresolved implementation status, or handoff state. Do not use for transient in-progress tool status.
+- Use low sensitivity for ordinary preferences/facts, medium for personal/project-sensitive context, and high only when it is allowed to remember but should be tightly scoped.
+- Use ttl to express intended lifetime: session, short, medium, long, or permanent. Prefer long/permanent only for stable preferences, profile, instructions, and reusable procedures.
+- Use validFrom/validUntil/expiresAt only when the user gives a clear effective period or expiration. Use ISO-8601 local datetime strings without timezone.
+- Use metadata.sourceTimestamp or metadata.eventTime only when the source or event time is explicitly known.
+- Use metadata.reason only for the durable reason behind a preference, decision, or task state. Do not invent reasons.
 - Prefer concise Korean content when the source is Korean.
 """.strip()
 
@@ -132,14 +138,20 @@ def _normalize_candidate(raw: Any, *, context: MemoryExtractionContext) -> dict[
     _put_if_present(result, "evidence", _trimmed(raw.get("evidence"), max_length=2000))
     _put_if_present(result, "sourceTaskRunId", _trimmed(context.task_run_id, max_length=100))
     _put_if_present(result, "sourceMessageId", _trimmed(context.assistant_message_id or context.user_message_id, max_length=100))
+    _put_if_present(result, "validFrom", _datetime_field(raw, "validFrom", "valid_from"))
+    _put_if_present(result, "validUntil", _datetime_field(raw, "validUntil", "valid_until"))
+    _put_if_present(result, "expiresAt", _datetime_field(raw, "expiresAt", "expires_at"))
     return result
 
 
 def _metadata(raw: dict[str, Any], *, context: MemoryExtractionContext, scope_type: str, memory_type: str) -> dict[str, Any]:
     raw_metadata = raw.get("metadata")
+    category = _memory_category(raw, memory_type)
     metadata: dict[str, Any] = {
         "source": "ai.writeback",
-        "category": _memory_category(raw, memory_type),
+        "category": category,
+        "sensitivity": _memory_sensitivity(raw),
+        "ttl": _memory_ttl(raw, category),
     }
     if scope_type == "WORKSPACE" and context.workspace_key:
         metadata["workspaceKey"] = context.workspace_key[:300]
@@ -148,6 +160,11 @@ def _metadata(raw: dict[str, Any], *, context: MemoryExtractionContext, scope_ty
         if isinstance(tags, list):
             normalized_tags = [_trimmed(tag, max_length=50) for tag in tags[:20]]
             metadata["tags"] = [tag for tag in normalized_tags if tag and not _hard_deny(tag)]
+    _put_if_present(metadata, "sourceTimestamp", _datetime_field(raw, "sourceTimestamp", "source_timestamp"))
+    _put_if_present(metadata, "eventTime", _datetime_field(raw, "eventTime", "event_time"))
+    reason = _metadata_field(raw, "reason", max_length=300)
+    if reason and not _hard_deny(reason):
+        metadata["reason"] = reason
     return metadata
 
 
@@ -161,6 +178,15 @@ def _memory_category(raw: dict[str, Any], memory_type: str) -> str:
     if category:
         return category
     return _DEFAULT_CATEGORY_BY_MEMORY_TYPE.get(memory_type, "fact")
+
+
+def _memory_sensitivity(raw: dict[str, Any]) -> str:
+    return _enum_lower(_metadata_field(raw, "sensitivity", max_length=30), _ALLOWED_SENSITIVITY) or "low"
+
+
+def _memory_ttl(raw: dict[str, Any], category: str) -> str:
+    raw_ttl = _metadata_field(raw, "ttl", max_length=30)
+    return _enum_lower(raw_ttl, _ALLOWED_TTL) or _DEFAULT_TTL_BY_CATEGORY.get(category, "long")
 
 
 def _store_type(memory_type: str) -> str:
@@ -204,6 +230,43 @@ def _trimmed(value: Any, *, max_length: int) -> str | None:
     return text[:max_length]
 
 
+def _metadata_field(raw: dict[str, Any], key: str, *, max_length: int) -> str | None:
+    raw_metadata = raw.get("metadata")
+    value = raw_metadata.get(key) if isinstance(raw_metadata, dict) else None
+    if value is None:
+        value = raw.get(key) or raw.get(_camel_to_snake(key))
+    return _trimmed(value, max_length=max_length)
+
+
+def _datetime_field(raw: dict[str, Any], *keys: str) -> str | None:
+    raw_metadata = raw.get("metadata")
+    for key in keys:
+        value = raw.get(key)
+        if value is None and isinstance(raw_metadata, dict):
+            value = raw_metadata.get(key)
+        normalized = _local_datetime(value)
+        if normalized:
+            return normalized
+    return None
+
+
+def _local_datetime(value: Any) -> str | None:
+    text = _trimmed(value, max_length=40)
+    if text is None:
+        return None
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return f"{text}T00:00:00"
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=None).isoformat(timespec="seconds")
+
+
+def _camel_to_snake(value: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", value).lower()
+
+
 def _put_if_present(payload: dict[str, Any], key: str, value: str | None) -> None:
     if value:
         payload[key] = value
@@ -229,12 +292,24 @@ _ALLOWED_MEMORY_CATEGORIES = {
     "reason",
     "task_state",
 }
+_ALLOWED_SENSITIVITY = {"low", "medium", "high"}
+_ALLOWED_TTL = {"session", "short", "medium", "long", "permanent"}
 _DEFAULT_CATEGORY_BY_MEMORY_TYPE = {
     "PREFERENCE": "preference",
     "PROFILE": "profile",
     "FACT": "fact",
     "INSTRUCTION": "instruction",
     "PROCEDURE": "procedure",
+}
+_DEFAULT_TTL_BY_CATEGORY = {
+    "preference": "long",
+    "profile": "long",
+    "fact": "long",
+    "instruction": "long",
+    "procedure": "long",
+    "event": "medium",
+    "reason": "long",
+    "task_state": "medium",
 }
 _DO_NOT_STORE_PHRASES = (
     "기억하지 마",
