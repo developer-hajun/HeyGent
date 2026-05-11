@@ -17,7 +17,6 @@ import { useTaskRunStore } from '@/store/useTaskRunStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useWorkStore } from '@/store/useWorkStore'
 import type { WorkItem, WorkStatus } from '@/types/work'
-import { createClientCommandId } from '@/utils/requestId'
 import {
   isInternalStepAnchorEvent,
   isInternalStepAnchorStepRun,
@@ -37,7 +36,6 @@ export function ChatSessionPage() {
   const [loadState, setLoadState] = useState<LoadState>('loading')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isSending, setIsSending] = useState(false)
-  const [workMode, setWorkMode] = useState(false)
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
   const [composerDraft, setComposerDraft] = useState<string | null>(null)
   const [workPickerOpen, setWorkPickerOpen] = useState(false)
@@ -76,7 +74,6 @@ export function ChatSessionPage() {
   )
   const fetchMessages = useChatStore((state) => state.fetchMessages)
   const sendMessage = useChatStore((state) => state.sendMessage)
-  const createWork = useWorkStore((state) => state.createWork)
   const fetchSessionWork = useWorkStore((state) => state.fetchSessionWork)
   const workItems = useWorkStore((state) =>
     sessionId === '' ? EMPTY_WORK_ITEMS : (state.itemsBySessionId[sessionId] ?? EMPTY_WORK_ITEMS),
@@ -191,6 +188,7 @@ export function ChatSessionPage() {
       await Promise.all([
         fetchMessages(requestedSessionId),
         fetchActiveTaskRuns(requestedSessionId),
+        fetchSessionWork(requestedSessionId).catch(() => []),
       ])
       if (loadGeneration !== loadGenerationRef.current || requestedSessionId !== sessionId) {
         return
@@ -210,6 +208,7 @@ export function ChatSessionPage() {
     connectionStatus,
     accessToken,
     fetchActiveTaskRuns,
+    fetchSessionWork,
     fetchMessages,
     isPendingSession,
     realtimeError,
@@ -352,80 +351,6 @@ export function ChatSessionPage() {
     if (!sessionId || isSending) return
     setComposerDraft(null)
 
-    if (workMode) {
-      if (!authenticatedReady || commandClient === null) {
-        setLoadState(
-          shouldWaitForRealtime(connectionStatus, authStatus, realtimeError, accessToken)
-            ? 'loading'
-            : 'error',
-        )
-        setErrorMessage(
-          getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError, accessToken),
-        )
-        return
-      }
-
-      setIsSending(true)
-      setErrorMessage(null)
-      setWorkStatusMessage('작업을 생성하는 중입니다.')
-      try {
-        const requestedIdentifier = extractWorkIdentifier(content)
-        if (requestedIdentifier) {
-          const latestItems = await fetchSessionWork(sessionId)
-          const existingWork = latestItems.find(
-            (work) => normalizeWorkIdentifier(work.identifier) === requestedIdentifier,
-          )
-          if (!existingWork) {
-            const message = `${requestedIdentifier} 작업을 찾지 못했습니다. 작업 보드에서 번호를 확인해 주세요.`
-            setErrorMessage(message)
-            setWorkStatusMessage(message)
-            return
-          }
-          await sendMessage({
-            sessionId,
-            content,
-            inputPayload: {
-              workId: existingWork.workId,
-              workIdentifier: existingWork.identifier,
-              workTitle: existingWork.title,
-              workAssigneeAgentId: existingWork.assigneeAgentId ?? 'CEO',
-            },
-          })
-          await fetchMessages(sessionId)
-          await fetchActiveTaskRuns(sessionId)
-          setSelectedWorkId(existingWork.workId)
-          setLoadState('ready')
-          setWorkStatusMessage(`${existingWork.identifier} 작업으로 실행을 시작했습니다.`)
-          return
-        }
-        const response = await createWork(sessionId, {
-          ...buildCreateWorkPayload(content),
-          startExecution: false,
-        })
-        await sendMessage({
-          sessionId,
-          content,
-          inputPayload: {
-            workId: response.work.workId,
-            workIdentifier: response.work.identifier,
-            workTitle: response.work.title,
-            workAssigneeAgentId: response.work.assigneeAgentId ?? 'CEO',
-          },
-        })
-        await fetchMessages(sessionId)
-        await fetchActiveTaskRuns(sessionId)
-        setLoadState('ready')
-        setWorkStatusMessage(`${response.work.identifier} 작업이 생성되고 실행을 시작했습니다.`)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : '작업 생성에 실패했습니다.'
-        setErrorMessage(message)
-        setWorkStatusMessage(message)
-      } finally {
-        setIsSending(false)
-      }
-      return
-    }
-
     if (!authenticatedReady || commandClient === null) {
       setLoadState(
         shouldWaitForRealtime(connectionStatus, authStatus, realtimeError, accessToken)
@@ -441,9 +366,25 @@ export function ChatSessionPage() {
     setIsSending(true)
     setErrorMessage(null)
     try {
-      const selectedWork = selectedWorkId
+      let selectedWork = selectedWorkId
         ? workItems.find((work) => work.workId === selectedWorkId)
         : undefined
+      if (!selectedWork) {
+        const requestedIdentifier = extractWorkIdentifier(content)
+        if (requestedIdentifier) {
+          const latestItems = await fetchSessionWork(sessionId)
+          selectedWork = latestItems.find(
+            (work) => normalizeWorkIdentifier(work.identifier) === requestedIdentifier,
+          )
+          if (!selectedWork) {
+            const message = `${requestedIdentifier} 작업을 찾지 못했습니다. 작업 보드에서 번호를 확인해 주세요.`
+            setErrorMessage(message)
+            setWorkStatusMessage(message)
+            return
+          }
+          setSelectedWorkId(selectedWork.workId)
+        }
+      }
       await sendMessage({
         sessionId,
         content,
@@ -483,6 +424,15 @@ export function ChatSessionPage() {
   const selectedWorkLabel = selectedWork
     ? `${selectedWork.identifier} · ${selectedWork.title}`
     : null
+  const latestLinkedWorkEvent = useMemo(
+    () => findLatestLinkedWorkEvent(eventsByTaskRunId, taskRunIds),
+    [eventsByTaskRunId, taskRunIds],
+  )
+
+  useEffect(() => {
+    if (!sessionId || latestLinkedWorkEvent === undefined) return
+    void fetchSessionWork(sessionId).catch(() => undefined)
+  }, [fetchSessionWork, latestLinkedWorkEvent, sessionId])
 
   useEffect(() => {
     if (!sessionId) return
@@ -495,7 +445,6 @@ export function ChatSessionPage() {
     consumedWorkRouteRef.current = routeKey
     const work = workItems.find((item) => item.workId === workId)
     setSelectedWorkId(workId)
-    setWorkMode(false)
     setComposerDraft(draft)
     setWorkStatusMessage(
       work
@@ -518,6 +467,19 @@ export function ChatSessionPage() {
     typeof currentSession?.active_task_run_id === 'string'
       ? currentSession.active_task_run_id
       : undefined
+  const latestMessageTaskRunId = [...messages]
+    .reverse()
+    .find((message) => message.taskRunId)?.taskRunId
+  const visibleTaskRunId =
+    latestLinkedWorkEvent?.taskRunId ??
+    selectedWork?.activeRunId ??
+    selectedWork?.latestRunId ??
+    activeSessionTaskRunId ??
+    latestMessageTaskRunId
+  const visibleWork =
+    selectedWork ?? findWorkByTaskRunId(workItems, visibleTaskRunId) ?? latestLinkedWorkEvent?.work
+  const visibleTaskRunSummary =
+    visibleTaskRunId === undefined ? undefined : taskRunSummariesById[visibleTaskRunId]
   const hasActiveChatTurn =
     activeSessionTaskRunId !== undefined ||
     messages.some(
@@ -551,6 +513,14 @@ export function ChatSessionPage() {
             <AlertCircle className="h-3.5 w-3.5" />
             <span>{displayErrorMessage}</span>
           </button>
+        )}
+        {visibleWork && (
+          <ChatWorkStatusBar
+            work={visibleWork}
+            taskRunId={visibleTaskRunId}
+            taskRunStatusText={visibleTaskRunSummary?.statusText}
+            onOpenTaskRun={visibleTaskRunId ? () => handleOpenTaskRun(visibleTaskRunId) : undefined}
+          />
         )}
         {loading ? (
           <div className="text-muted-foreground flex min-h-0 flex-1 items-center justify-center gap-2 text-sm">
@@ -599,15 +569,8 @@ export function ChatSessionPage() {
             setWorkStatusMessage(null)
           }}
           onSelectWorkClick={openWorkPicker}
-          onWorkModeChange={(enabled) => {
-            setWorkMode(enabled)
-            if (enabled) {
-              setSelectedWorkId(null)
-            }
-          }}
           selectedWorkLabel={selectedWorkLabel}
           statusMessage={workStatusMessage}
-          workMode={workMode}
         />
       </section>
       {workPickerOpen && (
@@ -620,7 +583,6 @@ export function ChatSessionPage() {
           onQueryChange={setWorkSearch}
           onSelect={(work) => {
             setSelectedWorkId(work.workId)
-            setWorkMode(false)
             setWorkStatusMessage(`${work.identifier} 작업을 이번 메시지에 연결합니다.`)
             setWorkPickerOpen(false)
           }}
@@ -639,6 +601,128 @@ export function ChatSessionPage() {
 }
 
 const EMPTY_WORK_ITEMS: WorkItem[] = []
+
+type ChatWorkStatusItem = {
+  workId: string
+  identifier: string
+  title: string
+  status: WorkStatus
+  assigneeAgentId?: string | null
+  activeRunId?: string | null
+  latestRunId?: string | null
+  recentRunIds?: string[]
+}
+
+function ChatWorkStatusBar({
+  onOpenTaskRun,
+  taskRunId,
+  taskRunStatusText,
+  work,
+}: {
+  onOpenTaskRun?: () => void
+  taskRunId?: string
+  taskRunStatusText?: string
+  work: ChatWorkStatusItem
+}) {
+  return (
+    <div className="border-border bg-muted/25 flex items-center gap-3 border-b px-4 py-2 text-xs">
+      <ListTodo className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-muted-foreground shrink-0">작업</span>
+          <span className="text-foreground truncate font-medium">
+            {work.identifier} · {work.title}
+          </span>
+        </div>
+        <div className="text-muted-foreground mt-0.5 flex items-center gap-2">
+          <span>{workStatusLabel(work.status)}</span>
+          {work.assigneeAgentId && <span>담당 {work.assigneeAgentId}</span>}
+          {taskRunStatusText && <span>실행 {taskRunStatusText}</span>}
+        </div>
+      </div>
+      {taskRunId && onOpenTaskRun && (
+        <button
+          type="button"
+          onClick={onOpenTaskRun}
+          className="border-border bg-background hover:bg-muted text-foreground shrink-0 rounded-md border px-2 py-1 transition-colors"
+        >
+          실행 보기
+        </button>
+      )}
+    </div>
+  )
+}
+
+function findWorkByTaskRunId(items: WorkItem[], taskRunId?: string): WorkItem | undefined {
+  if (!taskRunId) return undefined
+  return items.find(
+    (work) =>
+      work.activeRunId === taskRunId ||
+      work.latestRunId === taskRunId ||
+      work.recentRunIds.includes(taskRunId),
+  )
+}
+
+function findLatestLinkedWorkEvent(
+  eventsByTaskRunId: Record<
+    string,
+    { task_run_id: string; event_type: string; payload?: unknown; sequence?: number }[]
+  >,
+  taskRunIds: string[],
+): { taskRunId: string; work: ChatWorkStatusItem } | undefined {
+  const candidates = taskRunIds
+    .flatMap((taskRunId) => eventsByTaskRunId[taskRunId] ?? [])
+    .filter((event) => event.event_type === 'work.linked')
+    .sort((left, right) => (right.sequence ?? 0) - (left.sequence ?? 0))
+
+  for (const event of candidates) {
+    const payload = toRecord(event.payload)
+    const linkedWork = toRecord(payload.linkedWork)
+    const workId = stringValue(linkedWork.workId) ?? stringValue(payload.workId)
+    const identifier = stringValue(linkedWork.identifier) ?? stringValue(payload.workIdentifier)
+    const title = stringValue(linkedWork.title) ?? stringValue(payload.workTitle)
+    const status = stringValue(linkedWork.status) ?? stringValue(payload.workStatus)
+    if (!workId || !identifier || !title || !isWorkStatus(status)) {
+      continue
+    }
+    return {
+      taskRunId: stringValue(payload.taskRunId) ?? event.task_run_id,
+      work: {
+        workId,
+        identifier,
+        title,
+        status,
+        assigneeAgentId:
+          stringValue(linkedWork.assigneeAgentId) ?? stringValue(payload.workAssigneeAgentId),
+        latestRunId: stringValue(linkedWork.latestRunId) ?? stringValue(payload.taskRunId),
+        recentRunIds: [stringValue(payload.taskRunId) ?? event.task_run_id],
+      },
+    }
+  }
+  return undefined
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function stringValue(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function isWorkStatus(value: unknown): value is WorkStatus {
+  return (
+    value === 'backlog' ||
+    value === 'todo' ||
+    value === 'in_progress' ||
+    value === 'in_review' ||
+    value === 'blocked' ||
+    value === 'done' ||
+    value === 'cancelled'
+  )
+}
 
 function WorkPickerDialog({
   items,
@@ -754,21 +838,6 @@ function compareWorkForPicker(left: WorkItem, right: WorkItem) {
 
 function workStatusLabel(status: WorkStatus) {
   return issueBoardStatusLabel(status)
-}
-
-function buildCreateWorkPayload(content: string) {
-  return {
-    clientRequestId: createClientCommandId(),
-    description: content,
-    rawUserInput: content,
-    executionInstruction: content,
-    expectedDeliverable: null,
-    acceptanceCriteria: [],
-    constraints: [],
-    labelNames: [],
-    initialComment: null,
-    metadata: { source: 'chat_composer' },
-  }
 }
 
 function extractWorkIdentifier(content: string) {
