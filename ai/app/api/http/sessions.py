@@ -12,6 +12,7 @@ from app.api.memory_writeback import writeback_persistent_memory_candidates
 from app.api.deps.openapi_auth import document_bearer_auth
 from app.contracts.session import (
     ArchiveSessionRequest,
+    CreateSessionRequest,
     CreateSessionMessageRequest,
     CreateSessionMessageResponse,
     SessionListResponse,
@@ -85,6 +86,41 @@ async def create_message_in_new_session(
     else:
         session = _create_public_session_for_message(request, owner_key=user.user_id, payload=payload, workspace_key=user.workspace_key)
     return await _create_message_in_session(request, payload, session=session, user=user)
+
+
+@router.post(
+    "",
+    response_model=SessionResponse,
+    summary="빈 AI 대화 세션 생성",
+    description="첫 메시지 없이 세션만 먼저 만들고, 이후 에이전트나 작업 구성을 연결할 때 사용합니다.",
+)
+async def create_session(
+    request: Request,
+    payload: CreateSessionRequest,
+) -> SessionResponse:
+    user = await authenticate_http_user(request)
+    settings = _normalize_session_settings(payload.settings)
+    if payload.metadata_patch:
+        _validate_metadata_patch(payload.metadata_patch)
+
+    session = _create_public_session(
+        request,
+        owner_key=user.user_id,
+        title=payload.title or "새 AI 대화",
+        model=payload.model or settings.get("model"),
+        settings=settings,
+        workspace_key=user.workspace_key,
+    )
+    session_id = str(session["id"])
+    if payload.metadata_patch:
+        _patch_public_session_metadata(
+            request.app.state.session_store,
+            owner_key=user.user_id,
+            session_id=session_id,
+            metadata_patch=payload.metadata_patch,
+        )
+        session = _get_public_session_or_404(request, session_id)
+    return _session_response(session)
 
 
 @router.get(
@@ -610,11 +646,13 @@ def _mark_linked_work_run_failed(request: Request, *, task_input: dict[str, Any]
         return
 
 
-def _create_public_session_for_message(
+def _create_public_session(
     request: Request,
     *,
     owner_key: str,
-    payload: CreateSessionMessageRequest,
+    title: str,
+    model: str | None,
+    settings: dict[str, Any] | None = None,
     workspace_key: str | None = None,
 ) -> dict[str, Any]:
     session_store = request.app.state.session_store
@@ -635,14 +673,31 @@ def _create_public_session_for_message(
         session_key=session_id,
         source=_PUBLIC_SESSION_SOURCE,
         user_id=owner_key,
-        model=payload.model,
-        title=_derive_session_title(payload.content),
+        model=model,
+        title=title,
         metadata=metadata,
+        settings=settings or {},
     )
     session = session_store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=500, detail="session was not created")
     return session
+
+
+def _create_public_session_for_message(
+    request: Request,
+    *,
+    owner_key: str,
+    payload: CreateSessionMessageRequest,
+    workspace_key: str | None = None,
+) -> dict[str, Any]:
+    return _create_public_session(
+        request,
+        owner_key=owner_key,
+        title=_derive_session_title(payload.content),
+        model=payload.model,
+        workspace_key=workspace_key,
+    )
 
 
 def _derive_session_title(content: str) -> str:

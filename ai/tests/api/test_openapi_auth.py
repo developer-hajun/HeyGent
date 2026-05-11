@@ -17,7 +17,7 @@ def test_openapi_documents_bearer_auth_for_task_runs():
         "description": "backend /api/v1/auth/dev-login 에서 받은 accessToken 을 입력한다.",
         "scheme": "bearer",
     }
-    assert "post" not in schema["paths"]["/ai/api/v1/sessions"]
+    assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions"]["post"]["security"]
     assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/messages"]["post"]["security"]
     assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/{sessionId}/messages"]["post"]["security"]
     assert {"BackendAccessToken": []} in schema["paths"]["/ai/api/v1/sessions/{sessionId}/update"]["post"]["security"]
@@ -106,12 +106,18 @@ def test_openapi_documents_public_sessions_without_product_session_alias():
     }
     rendered_session_docs = str(session_paths)
     assert "productSessionId" not in rendered_session_docs
+    assert "/ai/api/v1/sessions" in session_paths
     assert "/ai/api/v1/sessions/messages" in session_paths
     assert "/ai/api/v1/sessions/{sessionId}/messages" in session_paths
     assert "/ai/api/v1/sessions/{sessionId}/update" in session_paths
     assert "/ai/api/v1/sessions/{sessionId}/archive" in session_paths
     assert "/ai/api/v1/sessions/{sessionId}/settings/update" in session_paths
     assert "delete" in session_paths["/ai/api/v1/sessions/{sessionId}"]
+
+    create_request = schema["components"]["schemas"]["CreateSessionRequest"]["properties"]
+    assert "title" in create_request
+    assert "metadataPatch" in create_request
+    assert "content" not in create_request
 
     message_request = schema["components"]["schemas"]["CreateSessionMessageRequest"]["properties"]
     assert "content" in message_request

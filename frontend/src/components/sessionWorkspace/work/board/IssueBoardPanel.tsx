@@ -32,6 +32,11 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
 import {
+  agentProfilesToPanelItems,
+  createDefaultSessionAgents,
+  listSessionAgents,
+} from '@/apis/agents'
+import {
   addWorkRelation,
   createChildWork,
   removeWorkRelation,
@@ -117,6 +122,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const setWorkItemLabels = useWorkStore((state) => state.setLabels)
   const deleteWorkItem = useWorkStore((state) => state.deleteWorkItem)
   const agentPanelsBySessionId = useSessionStore((state) => state.agentPanelsBySessionId)
+  const setAgentPanelsForSession = useSessionStore((state) => state.setAgentPanelsForSession)
   const assignees = useMemo<BoardAssignee[]>(() => {
     const agentPanels = agentPanelsBySessionId[sessionId] ?? EMPTY_AGENT_PANELS
     return [
@@ -125,6 +131,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         id: panel.id,
         name: panel.agent.name,
         icon: Bot,
+        templateKey: panel.agent.templateKey,
       })),
     ]
   }, [agentPanelsBySessionId, sessionId])
@@ -484,6 +491,23 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
     ])
   }
 
+  const ensureDefaultFlowAgents = async (): Promise<BoardAssignee[]> => {
+    if (sessionId.startsWith('pending_session_')) return []
+    await createDefaultSessionAgents(sessionId)
+    const profiles = await listSessionAgents(sessionId)
+    const panels = agentProfilesToPanelItems(profiles)
+    setAgentPanelsForSession(sessionId, panels)
+    return [
+      MAIN_AGENT_ASSIGNEE,
+      ...panels.map((panel) => ({
+        id: panel.id,
+        name: panel.agent.name,
+        icon: Bot,
+        templateKey: panel.agent.templateKey,
+      })),
+    ]
+  }
+
   const reorderRootFlowWork = (workIds: string[]) => {
     if (!sessionId.startsWith('pending_session_')) {
       void updateSessionWorkFlowOrder(sessionId, workIds)
@@ -644,9 +668,9 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
               })
           }}
           onCreateRootWork={createRootFlowWork}
+          onEnsureDefaultAgents={ensureDefaultFlowAgents}
           onOpenIssue={setSelectedIssueId}
           onReorderRootWork={reorderRootFlowWork}
-          sessionId={sessionId}
         />
       ) : viewMode === 'board' ? (
         <TodoKanbanBoard
