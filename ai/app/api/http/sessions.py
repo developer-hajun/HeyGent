@@ -806,6 +806,23 @@ async def enqueue_unblocked_target_wakes(
     return wakes
 
 
+async def enqueue_parent_wakes_after_child_terminal(
+    request: Request,
+    *,
+    user,
+    work: WorkItem,
+    drain: bool = True,
+) -> list:
+    wakes = WorkWakeService(request.app.state.work_repository).enqueue_after_child_terminal_update(
+        child_work_id=work.work_id,
+        requested_by_task_run_id=None,
+    )
+    if drain:
+        dispatched = await _drain_work_wake_queue(request, user=user)
+        return dispatched or wakes
+    return wakes
+
+
 async def run_work_wake_loop(app) -> None:
     while True:
         try:
@@ -855,6 +872,13 @@ async def _dispatch_work_wake(request: Request, *, user, wake):
     if work is None:
         return repository.complete_work_wake(wake.wake_id, status="skipped", last_error="work not found")
     if work.active_run_id:
+        if int(getattr(wake, "attempts", 0) or 0) < MAX_WAKE_ATTEMPTS:
+            return repository.complete_work_wake(
+                wake.wake_id,
+                status="scheduled_retry",
+                last_error="work already has an active run",
+                retry_delay_seconds=30,
+            )
         return repository.complete_work_wake(wake.wake_id, status="skipped", last_error="work already has an active run")
     if work.status not in {"todo", "in_progress", "in_review", "blocked"}:
         return repository.complete_work_wake(wake.wake_id, status="skipped", last_error=f"work status is {work.status}")
@@ -901,6 +925,12 @@ def _user_for_work_wake(work: WorkItem, session: dict[str, Any]):
 def _wake_message_for_work(work: WorkItem, reason: str) -> str:
     if reason == "blockers_resolved":
         return "선행 작업이 완료되었습니다. 이 작업을 이어서 진행해."
+    if reason == "children_completed":
+        return "하위 작업이 모두 종료되었습니다. 부모 작업을 이어서 진행해."
+    if reason == "issue_commented":
+        return "새 댓글을 반영해서 이 작업을 이어서 진행해."
+    if reason == "issue_reopened_via_comment":
+        return "새 댓글로 작업이 다시 열렸습니다. 댓글 내용을 반영해서 이어서 진행해."
     if reason == "active_run_recovered":
         return "이전 실행이 중단되었습니다. 진행 가능한 지점부터 이 작업을 복구해서 이어서 진행해."
     return "이 작업을 이어서 진행해."

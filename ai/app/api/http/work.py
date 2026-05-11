@@ -57,8 +57,14 @@ from app.contracts.work import (
 from app.contracts.session import CreateSessionMessageRequest
 from app.core.utils.ids import new_id
 from app.domain.providers.model.base import AgentMessage
-from app.api.http.sessions import _create_message_in_session, enqueue_unblocked_target_wakes, enqueue_work_graph_wake
+from app.api.http.sessions import (
+    _create_message_in_session,
+    enqueue_parent_wakes_after_child_terminal,
+    enqueue_unblocked_target_wakes,
+    enqueue_work_graph_wake,
+)
 from app.domain.work import WorkComment, WorkItem, WorkService
+from app.domain.work.models import WorkWakeRequest
 from app.domain.work.policies import normalize_disposition_status
 
 router = APIRouter(tags=["work"], dependencies=[Depends(document_bearer_auth)])
@@ -398,6 +404,7 @@ async def move_work_status(request: Request, payload: MoveWorkStatusRequest, wor
     updated = request.app.state.work_repository.update_status(workId, status)
     if status in {"done", "cancelled"}:
         await enqueue_unblocked_target_wakes(request, user=user, work=updated)
+        await enqueue_parent_wakes_after_child_terminal(request, user=user, work=updated)
     await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
     return _work_response(updated, repository=request.app.state.work_repository)
 
@@ -605,14 +612,22 @@ async def add_work_comment(request: Request, payload: CreateWorkCommentRequest, 
     user = await authenticate_http_user(request)
     work = _work_or_404(request, workId)
     _ensure_work_owner(user, work)
+    unresolved_blocker_ids = _unresolved_blocker_work_ids(request.app.state.work_repository, work.work_id)
+    resume_requested = _effective_comment_resume_requested(
+        work=work,
+        payload_resume=payload.resume,
+        unresolved_blocker_ids=unresolved_blocker_ids,
+    )
     comment = WorkService(request.app.state.work_repository).add_comment(
         work=work,
         body=payload.body,
         author_type="user",
         author_id=str(user.user_id),
-        resume_requested=payload.resume,
+        resume_requested=resume_requested,
     )
     updated = _work_or_404(request, workId)
+    if _should_reopen_blocked_work_from_comment(work=updated, unresolved_blocker_ids=unresolved_blocker_ids):
+        updated = request.app.state.work_repository.update_status(work.work_id, "todo")
     await _publish_work_event(request, str(user.user_id), "work_comment.created", work=updated, comment=comment)
     await _wake_work_from_comment(request, user=user, work=updated, comment=comment)
     return _comment_response(comment)
@@ -1150,7 +1165,7 @@ def _unresolved_blocker_work_ids(repository, work_id: str) -> list[str]:
     unresolved: list[str] = []
     for blocker_id in dict.fromkeys(blocker_ids):
         blocker = repository.get_work(blocker_id)
-        if blocker is None or blocker.status not in {"done", "cancelled"}:
+        if blocker is None or blocker.status != "done":
             unresolved.append(blocker_id)
     return unresolved
 
@@ -1248,6 +1263,7 @@ def _label_color(value: str | None) -> str:
 
 async def _wake_work_from_comment(request: Request, *, user, work: WorkItem, comment) -> None:
     if work.active_run_id:
+        _enqueue_comment_followup_wake(request, work=work, comment=comment)
         return
     if work.status == "backlog" or work.status == "cancelled":
         return
@@ -1276,6 +1292,41 @@ async def _wake_work_from_comment(request: Request, *, user, work: WorkItem, com
                 body=f"댓글 실행 시작 실패: {error}",
             )
         )
+
+
+def _enqueue_comment_followup_wake(request: Request, *, work: WorkItem, comment) -> None:
+    enqueue_wake = getattr(request.app.state.work_repository, "enqueue_work_wake", None)
+    if not callable(enqueue_wake):
+        return
+    reason = "issue_reopened_via_comment" if bool(getattr(comment, "resume_requested", False)) else "issue_commented"
+    enqueue_wake(
+        WorkWakeRequest(
+            wake_id=new_id("work_wake"),
+            work_id=work.work_id,
+            root_work_id=work.work_id,
+            reason=reason,
+            status="scheduled_retry",
+            requested_by_task_run_id=work.active_run_id,
+            last_error="work already has an active run",
+        )
+    )
+
+
+def _effective_comment_resume_requested(
+    *,
+    work: WorkItem,
+    payload_resume: bool,
+    unresolved_blocker_ids: list[str],
+) -> bool:
+    if not payload_resume:
+        return False
+    if work.status == "blocked" and unresolved_blocker_ids:
+        return False
+    return True
+
+
+def _should_reopen_blocked_work_from_comment(*, work: WorkItem, unresolved_blocker_ids: list[str]) -> bool:
+    return work.status == "blocked" and not unresolved_blocker_ids
 
 
 async def _wake_work_from_interaction(request: Request, *, user, work: WorkItem, interaction) -> None:

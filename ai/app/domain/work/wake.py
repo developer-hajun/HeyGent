@@ -10,6 +10,7 @@ from app.domain.work.repository import WorkRepository
 
 RUNNABLE_STATUSES = {"todo", "in_progress", "in_review", "blocked"}
 TERMINAL_STATUSES = {"done", "cancelled"}
+RESOLVED_BLOCKER_STATUSES = {"done"}
 WAKE_ACTIVE_STATUSES = {"queued", "claimed", "dispatching", "scheduled_retry"}
 MAX_WAKE_ATTEMPTS = 3
 
@@ -35,7 +36,7 @@ class WorkWakeService:
         unresolved: list[str] = []
         for blocker_id in dict.fromkeys(blocker_ids):
             blocker = self.repository.get_work(blocker_id)
-            if blocker is None or blocker.status not in TERMINAL_STATUSES:
+            if blocker is None or blocker.status not in RESOLVED_BLOCKER_STATUSES:
                 unresolved.append(blocker_id)
         return unresolved
 
@@ -78,7 +79,7 @@ class WorkWakeService:
         requested_by_task_run_id: str | None = None,
     ) -> list[WorkWakeRequest]:
         blocker = self.repository.get_work(blocker_work_id)
-        if blocker is None or blocker.status not in TERMINAL_STATUSES:
+        if blocker is None or blocker.status not in RESOLVED_BLOCKER_STATUSES:
             return []
         queued: list[WorkWakeRequest] = []
         for target_id in self._blocked_targets(blocker_work_id):
@@ -90,6 +91,27 @@ class WorkWakeService:
                 )
             )
         return queued
+
+    def enqueue_after_child_terminal_update(
+        self,
+        *,
+        child_work_id: str,
+        requested_by_task_run_id: str | None = None,
+    ) -> list[WorkWakeRequest]:
+        child = self.repository.get_work(child_work_id)
+        if child is None or child.status not in TERMINAL_STATUSES or not child.parent_id:
+            return []
+        parent = self.repository.get_work(child.parent_id)
+        if parent is None or not parent.assignee_agent_id or parent.status not in RUNNABLE_STATUSES:
+            return []
+        children = self.repository.list_children(parent.work_id)
+        if not children or any(item.status not in TERMINAL_STATUSES for item in children):
+            return []
+        return self.enqueue_plan(
+            root_work_id=parent.work_id,
+            reason="children_completed",
+            requested_by_task_run_id=requested_by_task_run_id,
+        )
 
     def enqueue_recovered_work(
         self,

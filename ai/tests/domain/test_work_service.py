@@ -131,6 +131,9 @@ class FakeWorkRepository:
     def list_relations(self, work_id: str) -> list[WorkRelation]:
         return [item for item in self.relations if item.source_work_id == work_id or item.target_work_id == work_id]
 
+    def list_children(self, parent_id: str) -> list[WorkItem]:
+        return [item for item in self.items.values() if item.parent_id == parent_id]
+
     def enqueue_work_wake(self, wake: WorkWakeRequest) -> WorkWakeRequest:
         for existing in self.wakes.values():
             if existing.work_id == wake.work_id and existing.status in {"queued", "claimed", "dispatching", "scheduled_retry"}:
@@ -749,6 +752,83 @@ def test_done_blocker_enqueues_parent_wake():
     assert queued[0].work_id == parent.work_id
     assert queued[0].root_work_id == parent.work_id
     assert queued[0].reason == "blockers_resolved"
+
+
+def test_cancelled_blocker_does_not_enqueue_parent_wake():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    parent = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "부모 작업"},
+    )
+    child = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "자식 작업", "parentId": parent.work_id},
+    )
+    repository.update_status(parent.work_id, "todo")
+    repository.update_status(child.work_id, "todo")
+    repository.add_relation(source_work_id=child.work_id, target_work_id=parent.work_id, relation_type="blocks")
+    service.mark_run_started(work_id=child.work_id, task_run_id="task-child")
+
+    service.apply_task_result(
+        work_id=child.work_id,
+        task=TaskRun(
+            task_run_id="task-child",
+            task_type="agent.loop",
+            owner_key="7",
+            status="COMPLETED",
+            result_payload={"workDisposition": {"status": "cancelled"}},
+        ),
+    )
+
+    assert repository.wakes == {}
+
+
+def test_terminal_children_enqueue_parent_wake_after_all_children_finish():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    parent = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "부모 작업", "assigneeAgentId": "agent-parent"},
+    )
+    first_child = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "첫째 자식", "parentId": parent.work_id},
+    )
+    second_child = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "둘째 자식", "parentId": parent.work_id},
+    )
+    repository.update_status(parent.work_id, "todo")
+    repository.update_status(first_child.work_id, "todo")
+    repository.update_status(second_child.work_id, "todo")
+
+    assert WorkWakeService(repository).enqueue_after_child_terminal_update(child_work_id=first_child.work_id) == []
+
+    repository.update_status(first_child.work_id, "done")
+    assert WorkWakeService(repository).enqueue_after_child_terminal_update(child_work_id=first_child.work_id) == []
+
+    repository.update_status(second_child.work_id, "cancelled")
+    queued = WorkWakeService(repository).enqueue_after_child_terminal_update(child_work_id=second_child.work_id)
+
+    assert len(queued) == 1
+    assert queued[0].work_id == parent.work_id
+    assert queued[0].reason == "children_completed"
 
 
 def test_stranded_assigned_work_recovery_is_idempotent_and_visible():

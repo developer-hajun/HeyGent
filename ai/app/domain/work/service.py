@@ -143,8 +143,13 @@ class WorkService:
                 )
             )
             if status in {"done", "cancelled"}:
-                WorkWakeService(self.repository).enqueue_after_blocker_update(
+                wake_service = WorkWakeService(self.repository)
+                wake_service.enqueue_after_blocker_update(
                     blocker_work_id=work_id,
+                    requested_by_task_run_id=task.task_run_id,
+                )
+                wake_service.enqueue_after_child_terminal_update(
+                    child_work_id=work_id,
                     requested_by_task_run_id=task.task_run_id,
                 )
             return updated
