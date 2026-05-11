@@ -608,6 +608,7 @@ export function ChatSessionPage() {
           selectedWorkLabel={selectedWorkLabel}
           statusMessage={workStatusMessage}
           workMode={workMode}
+          sessionId={sessionId}
         />
       </section>
       {workPickerOpen && (
