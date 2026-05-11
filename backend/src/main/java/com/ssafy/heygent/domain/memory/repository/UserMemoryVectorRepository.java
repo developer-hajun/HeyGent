@@ -151,6 +151,7 @@ public class UserMemoryVectorRepository {
         String sessionKey,
         String resourceId,
         List<String> tags,
+        List<String> metadataCategories,
         double minConfidence,
         double minImportance,
         double maxDistance,
@@ -191,6 +192,7 @@ public class UserMemoryVectorRepository {
         appendMetadataFilter(sql, params, "sessionKey", sessionKey);
         appendMetadataFilter(sql, params, "resourceId", resourceId);
         appendTagsFilter(sql, params, tags);
+        appendMetadataCategoryFilter(sql, params, metadataCategories);
 
         sql.append("""
             ORDER BY embedding <=> CAST(? AS vector), importance DESC, confidence DESC
@@ -259,6 +261,27 @@ public class UserMemoryVectorRepository {
         normalizedTags.forEach(tag -> {
             joiner.add("metadata @> CAST(? AS jsonb)");
             params.add(toJsonArrayObject("tags", tag));
+        });
+        sql.append(joiner);
+        sql.append(")");
+    }
+
+    private void appendMetadataCategoryFilter(StringBuilder sql, List<Object> params, List<String> metadataCategories) {
+        List<String> normalizedCategories = metadataCategories == null ? List.of() : metadataCategories.stream()
+            .filter(StringUtils::hasText)
+            .map(String::trim)
+            .filter(Objects::nonNull)
+            .toList();
+
+        if (normalizedCategories.isEmpty()) {
+            return;
+        }
+
+        sql.append(" AND (");
+        StringJoiner joiner = new StringJoiner(" OR ");
+        normalizedCategories.forEach(category -> {
+            joiner.add("metadata @> CAST(? AS jsonb)");
+            params.add(toJsonObject("category", category));
         });
         sql.append(joiner);
         sql.append(")");

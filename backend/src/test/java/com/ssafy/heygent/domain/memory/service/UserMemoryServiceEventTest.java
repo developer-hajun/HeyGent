@@ -108,6 +108,7 @@ class UserMemoryServiceEventTest {
             null,
             null,
             null,
+            null,
             null
         );
 
