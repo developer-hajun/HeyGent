@@ -19,6 +19,7 @@ import {
   PauseCircle,
   PlayCircle,
   Plus,
+  RotateCcw,
   Search,
   Send,
   Tag,
@@ -62,6 +63,7 @@ import {
   WorkDocumentsPanel,
   WorkInteractionsPanel,
   WorkProductsPanel,
+  WorkRecoveryPanel,
 } from './WorkCollaborationPanels'
 import { WorkFlowDiagram } from './WorkFlowDiagram'
 import {
@@ -1597,6 +1599,12 @@ function TodoDetailPanel({
                 label="확인"
                 onClick={() => setDetailTab('interactions')}
               />
+              <DetailTabButton
+                active={detailTab === 'recovery'}
+                icon={<RotateCcw className="h-3.5 w-3.5" />}
+                label="복구"
+                onClick={() => setDetailTab('recovery')}
+              />
             </div>
 
             {detailTab === 'chat' && (
@@ -1622,6 +1630,7 @@ function TodoDetailPanel({
             {detailTab === 'documents' && <WorkDocumentsPanel workId={issue.id} />}
             {detailTab === 'products' && <WorkProductsPanel workId={issue.id} />}
             {detailTab === 'interactions' && <WorkInteractionsPanel workId={issue.id} />}
+            {detailTab === 'recovery' && <WorkRecoveryPanel workId={issue.id} />}
           </div>
         </div>
       </aside>

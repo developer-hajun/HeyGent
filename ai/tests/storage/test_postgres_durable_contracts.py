@@ -68,6 +68,8 @@ def test_postgres_schema_contains_required_durable_tables():
         "work_comments",
         "work_relations",
         "work_runs",
+        "work_wake_requests",
+        "work_recovery_actions",
         "work_read_states",
     }
 
@@ -181,6 +183,26 @@ def test_postgres_work_schema_contains_flow_order_contract():
     assert "0011_work_flow_order" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
     assert "ADD COLUMN IF NOT EXISTS flow_order INTEGER" in migration_sql
     assert "idx_work_items_parent_flow_order" in migration_sql
+
+
+def test_postgres_work_schema_contains_wake_recovery_contract():
+    schema_sql = render_postgres_schema()
+    migration_sql = "\n".join(statement for migration in POSTGRES_MIGRATIONS for statement in migration.statements)
+
+    for expected in [
+        "CREATE TABLE IF NOT EXISTS work_wake_requests",
+        "scheduled_retry",
+        "next_attempt_at TIMESTAMPTZ",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_work_wake_requests_work_active",
+        "CREATE TABLE IF NOT EXISTS work_recovery_actions",
+        "idempotency_key TEXT NOT NULL UNIQUE",
+        "payload JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "CREATE INDEX IF NOT EXISTS idx_work_recovery_actions_work_created",
+    ]:
+        assert expected in schema_sql
+
+    assert "0013_work_recovery_actions" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "DROP CONSTRAINT IF EXISTS work_wake_requests_status_check" in migration_sql
 
 
 def test_work_item_response_exposes_flow_order_for_diagram_layout():

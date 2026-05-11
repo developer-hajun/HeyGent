@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 
 from app.domain.tasks.models import TaskRun
-from app.domain.work.models import WorkComment, WorkItem, WorkRelation, WorkRunLink, WorkThreadInteraction, WorkWakeRequest
+from app.domain.work.models import WorkComment, WorkItem, WorkRecoveryAction, WorkRelation, WorkRunLink, WorkThreadInteraction, WorkWakeRequest
 from app.domain.work.service import WorkRunClaimConflict, WorkService
 from app.domain.work.wake import WorkWakeService
 
@@ -18,6 +18,7 @@ class FakeWorkRepository:
         self.runs: dict[tuple[str, str], WorkRunLink] = {}
         self.relations: list[WorkRelation] = []
         self.wakes: dict[str, WorkWakeRequest] = {}
+        self.recovery_actions: dict[str, WorkRecoveryAction] = {}
         self.stale_run_ids: set[str] = set()
         self.client_requests: dict[tuple[str, str], str] = {}
         self.inherited_labels: list[tuple[str, str]] = []
@@ -132,7 +133,7 @@ class FakeWorkRepository:
 
     def enqueue_work_wake(self, wake: WorkWakeRequest) -> WorkWakeRequest:
         for existing in self.wakes.values():
-            if existing.work_id == wake.work_id and existing.status in {"queued", "claimed", "dispatching"}:
+            if existing.work_id == wake.work_id and existing.status in {"queued", "claimed", "dispatching", "scheduled_retry"}:
                 return existing
         self.wakes[wake.wake_id] = wake
         return wake
@@ -140,7 +141,7 @@ class FakeWorkRepository:
     def claim_work_wakes(self, *, limit: int = 10) -> list[WorkWakeRequest]:
         claimed: list[WorkWakeRequest] = []
         for wake in list(self.wakes.values()):
-            if wake.status != "queued":
+            if wake.status not in {"queued", "scheduled_retry"}:
                 continue
             updated = WorkWakeRequest(**{**_wake_dict(wake), "status": "claimed", "attempts": wake.attempts + 1})
             self.wakes[wake.wake_id] = updated
@@ -149,11 +150,44 @@ class FakeWorkRepository:
                 break
         return claimed
 
-    def complete_work_wake(self, wake_id: str, *, status: str, task_run_id: str | None = None, last_error: str | None = None) -> WorkWakeRequest:
+    def complete_work_wake(
+        self,
+        wake_id: str,
+        *,
+        status: str,
+        task_run_id: str | None = None,
+        last_error: str | None = None,
+        retry_delay_seconds: int | None = None,
+    ) -> WorkWakeRequest:
         wake = self.wakes[wake_id]
         updated = WorkWakeRequest(**{**_wake_dict(wake), "status": status, "task_run_id": task_run_id or wake.task_run_id, "last_error": last_error})
         self.wakes[wake_id] = updated
         return updated
+
+    def list_stranded_assigned_work(self, *, limit: int = 50) -> list[WorkItem]:
+        active_wake_work_ids = {wake.work_id for wake in self.wakes.values() if wake.status in {"queued", "claimed", "dispatching", "scheduled_retry"}}
+        items = [
+            work
+            for work in self.items.values()
+            if work.assignee_agent_id
+            and work.assignee_agent_id != "CEO"
+            and work.status in {"todo", "in_progress"}
+            and work.active_run_id is None
+            and work.work_id not in active_wake_work_ids
+            and (work.latest_run_id is not None or bool(work.metadata.get("autoWake")))
+        ]
+        return items[:limit]
+
+    def create_recovery_action(self, action: WorkRecoveryAction) -> tuple[WorkRecoveryAction, bool]:
+        for existing in self.recovery_actions.values():
+            if existing.idempotency_key == action.idempotency_key:
+                return existing, False
+        self.recovery_actions[action.action_id] = action
+        return action, True
+
+    def list_recovery_actions(self, work_id: str, *, limit: int = 50, offset: int = 0) -> list[WorkRecoveryAction]:
+        actions = [action for action in self.recovery_actions.values() if action.work_id == work_id]
+        return actions[offset : offset + limit]
 
     def create_interaction(
         self,
@@ -715,6 +749,53 @@ def test_done_blocker_enqueues_parent_wake():
     assert queued[0].work_id == parent.work_id
     assert queued[0].root_work_id == parent.work_id
     assert queued[0].reason == "blockers_resolved"
+
+
+def test_stranded_assigned_work_recovery_is_idempotent_and_visible():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    work = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={
+            "rawUserInput": "세션 에이전트 작업",
+            "assigneeAgentId": "agent-1",
+            "metadata": {"autoWake": True},
+        },
+    )
+    repository.update_status(work.work_id, "todo")
+    work = repository.update_assignee(work.work_id, assignee_agent_id="agent-1")
+
+    first = WorkWakeService(repository).recover_stranded_assigned_work()
+    second = WorkWakeService(repository).recover_stranded_assigned_work()
+
+    assert len(first) == 1
+    assert second == []
+    assert len(repository.recovery_actions) == 1
+    assert len(repository.comments) == 1
+    assert len(repository.interactions) == 1
+    assert first[0].work_id == work.work_id
+    assert first[0].reason == "assignment_recovery"
+
+
+def test_recovery_skips_ceo_work_without_explicit_wake():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    work = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "CEO 대기 작업", "metadata": {"autoWake": True}},
+    )
+    repository.update_status(work.work_id, "todo")
+
+    queued = WorkWakeService(repository).recover_stranded_assigned_work()
+
+    assert queued == []
+    assert repository.wakes == {}
 
 
 def test_resume_comment_moves_done_or_blocked_work_to_todo_but_not_cancelled():

@@ -494,6 +494,51 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """,
         ),
     ),
+    PostgresMigration(
+        migration_id="0013_work_recovery_actions",
+        statements=(
+            """
+            ALTER TABLE work_wake_requests
+            ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
+            """,
+            """
+            ALTER TABLE work_wake_requests
+            DROP CONSTRAINT IF EXISTS work_wake_requests_status_check;
+            """,
+            """
+            ALTER TABLE work_wake_requests
+            ADD CONSTRAINT work_wake_requests_status_check
+            CHECK (status IN ('queued', 'claimed', 'dispatching', 'scheduled_retry', 'dispatched', 'completed', 'skipped', 'failed'));
+            """,
+            """
+            DROP INDEX IF EXISTS idx_work_wake_requests_work_active;
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_work_wake_requests_work_active
+            ON work_wake_requests(work_id)
+            WHERE status IN ('queued', 'claimed', 'dispatching', 'scheduled_retry');
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS work_recovery_actions (
+                action_id TEXT PRIMARY KEY,
+                work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+                action_type TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('open', 'resolved', 'ignored')),
+                reason TEXT NOT NULL,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                task_run_id TEXT,
+                payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                resolved_at TIMESTAMPTZ
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_work_recovery_actions_work_created
+            ON work_recovery_actions(work_id, created_at DESC);
+            """,
+        ),
+    ),
 )
 
 

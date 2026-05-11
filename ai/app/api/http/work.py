@@ -45,10 +45,14 @@ from app.contracts.work import (
     WorkListResponse,
     WorkProductResponse,
     WorkProductsResponse,
+    WorkRecoveryActionResponse,
+    WorkRecoveryActionsResponse,
     WorkRelationResponse,
     WorkRelationsResponse,
     WorkRunResponse,
     WorkRunsResponse,
+    WorkWakeResponse,
+    WorkWakesResponse,
 )
 from app.contracts.session import CreateSessionMessageRequest
 from app.core.utils.ids import new_id
@@ -640,6 +644,34 @@ async def list_work_runs(
     return WorkRunsResponse(items=[_run_response(item) for item in items], totalCount=len(items))
 
 
+@router.get("/work/{workId}/wakes", response_model=WorkWakesResponse, summary="작업 wake 실행 대기열 조회")
+async def list_work_wakes(
+    request: Request,
+    workId: str = Path(...),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> WorkWakesResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    items = request.app.state.work_repository.list_work_wakes(workId, limit=limit, offset=offset)
+    return WorkWakesResponse(items=[_wake_response(item) for item in items], totalCount=len(items))
+
+
+@router.get("/work/{workId}/recovery-actions", response_model=WorkRecoveryActionsResponse, summary="작업 실행 복구 기록 조회")
+async def list_work_recovery_actions(
+    request: Request,
+    workId: str = Path(...),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> WorkRecoveryActionsResponse:
+    user = await authenticate_http_user(request)
+    work = _work_or_404(request, workId)
+    _ensure_work_owner(user, work)
+    items = request.app.state.work_repository.list_recovery_actions(workId, limit=limit, offset=offset)
+    return WorkRecoveryActionsResponse(items=[_recovery_action_response(item) for item in items], totalCount=len(items))
+
+
 @router.post("/work/{workId}/runs", response_model=WorkCreateResponse, summary="작업 실행 시작")
 async def create_work_run(request: Request, payload: CreateWorkRunRequest, workId: str = Path(...)) -> WorkCreateResponse:
     user = await authenticate_http_user(request)
@@ -998,6 +1030,14 @@ def _relation_response(relation) -> WorkRelationResponse:
 
 def _run_response(run) -> WorkRunResponse:
     return WorkRunResponse.model_validate(run, from_attributes=True)
+
+
+def _wake_response(wake) -> WorkWakeResponse:
+    return WorkWakeResponse.model_validate(wake, from_attributes=True)
+
+
+def _recovery_action_response(action) -> WorkRecoveryActionResponse:
+    return WorkRecoveryActionResponse.model_validate(action, from_attributes=True)
 
 
 def _document_response(document) -> WorkDocumentResponse:

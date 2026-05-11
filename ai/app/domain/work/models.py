@@ -95,7 +95,23 @@ class WorkWakeRequest:
     created_at: datetime | None = None
     updated_at: datetime | None = None
     claimed_at: datetime | None = None
+    next_attempt_at: datetime | None = None
     completed_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class WorkRecoveryAction:
+    action_id: str
+    work_id: str
+    action_type: str
+    status: str
+    reason: str
+    idempotency_key: str
+    task_run_id: str | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    resolved_at: datetime | None = None
 
 
 @dataclass(slots=True)

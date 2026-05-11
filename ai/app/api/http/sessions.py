@@ -34,7 +34,7 @@ from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
 from app.domain.work import WorkItem, WorkRunClaimConflict, WorkService
-from app.domain.work.wake import WorkWakeService
+from app.domain.work.wake import MAX_WAKE_ATTEMPTS, WorkWakeService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"], dependencies=[Depends(document_bearer_auth)])
 logger = logging.getLogger(__name__)
@@ -821,11 +821,19 @@ async def run_work_wake_loop(app) -> None:
 
 async def _recover_stale_work_runs(request: Request) -> None:
     repository = request.app.state.work_repository
+    service = WorkWakeService(repository)
     release_stale = getattr(repository, "release_stale_active_work_runs", None)
-    if not callable(release_stale):
-        return
-    for work in release_stale(stale_after_seconds=_WORK_WAKE_STALE_RUN_SECONDS, limit=50):
-        WorkWakeService(repository).enqueue_plan(root_work_id=work.work_id, reason="active_run_recovered")
+    if callable(release_stale):
+        for work in release_stale(stale_after_seconds=_WORK_WAKE_STALE_RUN_SECONDS, limit=50):
+            service.enqueue_recovered_work(
+                work=work,
+                reason="active_run_recovered",
+                action_type="active_run_recovered",
+                idempotency_key=f"active_run_recovered:{work.work_id}:{work.latest_run_id or 'unknown'}",
+                task_run_id=work.latest_run_id,
+                payload={"staleAfterSeconds": _WORK_WAKE_STALE_RUN_SECONDS},
+            )
+    service.recover_stranded_assigned_work(limit=50)
 
 
 async def _drain_work_wake_queue(request: Request, *, user, limit: int = _WORK_WAKE_DEFAULT_LIMIT) -> list:
@@ -870,6 +878,17 @@ async def _dispatch_work_wake(request: Request, *, user, wake):
             run_in_background=True,
         )
     except Exception as error:
+        if int(getattr(wake, "attempts", 0) or 0) < MAX_WAKE_ATTEMPTS:
+            work_for_action = repository.get_work(wake.work_id)
+            if work_for_action is not None:
+                service.record_recovery_action(
+                    work=work_for_action,
+                    action_type="wake_retry",
+                    reason="wake_retry",
+                    idempotency_key=f"wake_retry:{wake.wake_id}:{getattr(wake, 'attempts', 0)}",
+                    payload={"wakeId": wake.wake_id, "error": str(error)},
+                )
+            return repository.complete_work_wake(wake.wake_id, status="scheduled_retry", last_error=str(error), retry_delay_seconds=30)
         return repository.complete_work_wake(wake.wake_id, status="failed", last_error=str(error))
     # wake는 실행 요청을 만든 뒤 끝난다. 실제 완료/실패 판정은 연결된 WorkRun이 담당한다.
     return repository.complete_work_wake(wake.wake_id, status="dispatched", task_run_id=message.task_run_id)
