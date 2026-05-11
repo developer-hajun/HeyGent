@@ -7,6 +7,7 @@ import type {
   WorkCreateResponse,
   WorkDocument,
   WorkDocumentRevision,
+  WorkFlowResponse,
   WorkInteraction,
   WorkItem,
   WorkLabel,
@@ -37,6 +38,13 @@ export async function createSessionWork(
 
 export async function getWork(workId: string): Promise<WorkItem> {
   const { data } = await aiAxiosInstance.get<WorkItem>(`/work/${encodeURIComponent(workId)}`)
+  return data
+}
+
+export async function getWorkFlow(workId: string): Promise<WorkFlowResponse> {
+  const { data } = await aiAxiosInstance.get<WorkFlowResponse>(
+    `/work/${encodeURIComponent(workId)}/flow`,
+  )
   return data
 }
 
@@ -78,6 +86,28 @@ export async function updateWorkParent(workId: string, parentId: string | null):
   const { data } = await aiAxiosInstance.post<WorkItem>(
     `/work/${encodeURIComponent(workId)}/update-parent`,
     { parentId },
+  )
+  return data
+}
+
+export async function updateSessionWorkFlowOrder(
+  sessionId: string,
+  workIds: string[],
+): Promise<WorkListResponse> {
+  const { data } = await aiAxiosInstance.post<WorkListResponse>(
+    `/sessions/${encodeURIComponent(sessionId)}/work/flow-order`,
+    { workIds },
+  )
+  return data
+}
+
+export async function updateWorkFlowOrder(
+  workId: string,
+  workIds: string[],
+): Promise<WorkListResponse> {
+  const { data } = await aiAxiosInstance.post<WorkListResponse>(
+    `/work/${encodeURIComponent(workId)}/flow-order`,
+    { workIds },
   )
   return data
 }

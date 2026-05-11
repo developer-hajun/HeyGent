@@ -12,6 +12,7 @@ import {
   Filter,
   FileText,
   FolderKanban,
+  GitBranch,
   List,
   ListTree,
   MessageSquare,
@@ -30,7 +31,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
-import { addWorkRelation, createChildWork, removeWorkRelation, updateWorkParent } from '@/apis/work'
+import {
+  addWorkRelation,
+  createChildWork,
+  removeWorkRelation,
+  updateSessionWorkFlowOrder,
+  updateWorkParent,
+} from '@/apis/work'
 import { cn } from '@/components/ui/utils'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useWorkStore } from '@/store/useWorkStore'
@@ -52,6 +59,7 @@ import {
   WorkInteractionsPanel,
   WorkProductsPanel,
 } from './WorkCollaborationPanels'
+import { WorkFlowDiagram } from './WorkFlowDiagram'
 import {
   arraysEqual,
   assigneeLabel,
@@ -105,6 +113,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const updateWorkItemAssignee = useWorkStore((state) => state.updateAssignee)
   const addWorkItemComment = useWorkStore((state) => state.addComment)
   const createWorkItemLabel = useWorkStore((state) => state.createLabel)
+  const createWorkItem = useWorkStore((state) => state.createWork)
   const setWorkItemLabels = useWorkStore((state) => state.setLabels)
   const deleteWorkItem = useWorkStore((state) => state.deleteWorkItem)
   const agentPanelsBySessionId = useSessionStore((state) => state.agentPanelsBySessionId)
@@ -391,6 +400,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         status: 'todo',
         assigneeAgentId: null,
         parentId: null,
+        flowOrder: null,
         labels: [],
         comments: [
           {
@@ -414,6 +424,81 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
       },
       ...current,
     ])
+  }
+
+  const createRootFlowWork = (input: {
+    assigneeAgentId: string | null
+    description: string
+    title: string
+  }) => {
+    const rootCount = boardIssues.filter((issue) => issue.parentId === null).length
+    if (!sessionId.startsWith('pending_session_')) {
+      void createWorkItem(sessionId, {
+        clientRequestId: `flow:${sessionId}:${Date.now()}`,
+        title: input.title,
+        description: input.description,
+        assigneeAgentId: input.assigneeAgentId,
+        rawUserInput: input.description,
+        executionInstruction: input.description,
+        startExecution: false,
+        acceptanceCriteria: [],
+        constraints: [],
+        labelNames: [],
+        initialComment: null,
+        metadata: { createdFrom: 'work_flow' },
+        flowOrder: rootCount,
+      })
+        .then(() => fetchSessionWork(sessionId))
+        .catch((error) => {
+          console.error(error)
+        })
+      return
+    }
+    const now = new Date().toISOString()
+    const sequence = issues.length + 1
+    const todoId = `${sessionId}:todo:${String(sequence).padStart(3, '0')}`
+    setIssues((current) => [
+      {
+        id: todoId,
+        identifier: createIssueBoardIdentifier(sequence),
+        title: input.title,
+        description: input.description,
+        status: 'todo',
+        assigneeAgentId: input.assigneeAgentId,
+        parentId: null,
+        flowOrder: rootCount,
+        labels: [],
+        comments: [],
+        runs: [],
+        documents: [],
+        childItems: [],
+        relatedItems: [],
+        blockedBy: [],
+        createdAt: now,
+        updatedAt: now,
+        startedAt: null,
+        completedAt: null,
+        live: false,
+      },
+      ...current,
+    ])
+  }
+
+  const reorderRootFlowWork = (workIds: string[]) => {
+    if (!sessionId.startsWith('pending_session_')) {
+      void updateSessionWorkFlowOrder(sessionId, workIds)
+        .then(() => fetchSessionWork(sessionId))
+        .catch((error) => {
+          console.error(error)
+        })
+      return
+    }
+    const orderById = new Map(workIds.map((workId, index) => [workId, index]))
+    setIssues((current) =>
+      current.map((issue) =>
+        orderById.has(issue.id) ? { ...issue, flowOrder: orderById.get(issue.id) ?? null } : issue,
+      ),
+    )
   }
 
   return (
@@ -492,6 +577,16 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
               >
                 <Columns3 className="h-4 w-4" />
               </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className={cn(viewMode === 'flow' && 'bg-accent text-foreground')}
+                title="Flow"
+                onClick={() => setViewMode('flow')}
+              >
+                <GitBranch className="h-4 w-4" />
+              </Button>
             </div>
             <FilterPopover
               activeFilterCount={activeFilterCount}
@@ -522,7 +617,38 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         </div>
       </header>
 
-      {viewMode === 'board' ? (
+      {viewMode === 'flow' ? (
+        <WorkFlowDiagram
+          assignees={assignees}
+          issues={boardIssues}
+          onAddRelation={(sourceId, targetId) => {
+            void addWorkRelation(sourceId, targetId, 'blocks')
+              .then(() => fetchSessionWork(sessionId))
+              .catch((error) => {
+                console.error(error)
+              })
+          }}
+          onCreateChildWork={(parentId, input) => {
+            const childCount = boardIssues.filter((issue) => issue.parentId === parentId).length
+            void createChildWork(parentId, {
+              clientRequestId: `flow-child:${parentId}:${Date.now()}`,
+              title: input.title,
+              description: input.description,
+              assigneeAgentId: input.assigneeAgentId,
+              blockParentUntilDone: true,
+              flowOrder: childCount,
+            })
+              .then(() => fetchSessionWork(sessionId))
+              .catch((error) => {
+                console.error(error)
+              })
+          }}
+          onCreateRootWork={createRootFlowWork}
+          onOpenIssue={setSelectedIssueId}
+          onReorderRootWork={reorderRootFlowWork}
+          sessionId={sessionId}
+        />
+      ) : viewMode === 'board' ? (
         <TodoKanbanBoard
           draggedIssueId={draggedIssueId}
           dragOverStatus={dragOverStatus}
@@ -636,6 +762,26 @@ function TodoKanbanBoard({
         {ISSUE_BOARD_STATUSES.map((status) => {
           const issues = grouped[status]
           const isOver = dragOverStatus === status
+          if (issues.length === 0 && !isOver) {
+            return (
+              <section
+                key={status}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  onDragOverStatus(status)
+                }}
+                className="flex w-14 min-w-14 shrink-0 flex-col"
+              >
+                <div className="bg-muted/20 border-border/70 flex min-h-[220px] flex-1 flex-col items-center gap-2 rounded-md border border-dashed py-3">
+                  <StatusIcon status={status} />
+                  <span className="text-muted-foreground text-xs font-semibold tracking-wide [writing-mode:vertical-rl]">
+                    {issueBoardStatusLabel(status)}
+                  </span>
+                  <span className="text-muted-foreground/60 mt-auto text-xs tabular-nums">0</span>
+                </div>
+              </section>
+            )
+          }
           return (
             <section
               key={status}

@@ -46,14 +46,14 @@ class PostgresWorkRepository:
             """
             INSERT INTO work_items (
                 work_id, identifier, session_id, owner_key, owner_user_id,
-                title, description, status, assignee_agent_id, parent_id, source,
+                title, description, status, assignee_agent_id, parent_id, flow_order, source,
                 raw_user_input, execution_instruction, expected_deliverable,
                 acceptance_criteria, constraints_payload, metadata, client_request_id,
                 active_run_id, latest_run_id
             )
             VALUES (
                 %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s,
                 %s::jsonb, %s::jsonb, %s::jsonb, %s,
                 %s, %s
@@ -70,6 +70,7 @@ class PostgresWorkRepository:
                 work.status,
                 work.assignee_agent_id,
                 work.parent_id,
+                work.flow_order,
                 work.source,
                 work.raw_user_input,
                 work.execution_instruction,
@@ -210,9 +211,78 @@ class PostgresWorkRepository:
             """
             SELECT * FROM work_items
             WHERE parent_id = %s AND deleted_at IS NULL
-            ORDER BY updated_at DESC, created_at DESC
+            ORDER BY flow_order ASC NULLS LAST, created_at ASC
             """,
             (parent_id,),
+        ).fetchall()
+        return [work for row in rows if (work := _work_from_row(row)) is not None]
+
+    def next_child_flow_order(self, parent_id: str) -> int:
+        row = self.connection_factory().execute(
+            """
+            SELECT COALESCE(MAX(flow_order) + 1, 0) AS next_flow_order
+            FROM work_items
+            WHERE parent_id = %s AND deleted_at IS NULL
+            """,
+            (parent_id,),
+        ).fetchone()
+        record = _normalize_row(row)
+        return int((record or {}).get("next_flow_order") or 0)
+
+    def next_root_flow_order(self, *, session_id: str, owner_key: str) -> int:
+        row = self.connection_factory().execute(
+            """
+            SELECT COALESCE(MAX(flow_order) + 1, 0) AS next_flow_order
+            FROM work_items
+            WHERE session_id = %s AND owner_key = %s AND parent_id IS NULL AND deleted_at IS NULL
+            """,
+            (session_id, owner_key),
+        ).fetchone()
+        record = _normalize_row(row)
+        return int((record or {}).get("next_flow_order") or 0)
+
+    def update_flow_order(self, parent_id: str, work_ids: list[str]) -> list[WorkItem]:
+        connection = self.connection_factory()
+        for index, work_id in enumerate(work_ids):
+            connection.execute(
+                """
+                UPDATE work_items
+                SET flow_order = %s,
+                    updated_at = now()
+                WHERE work_id = %s AND parent_id = %s AND deleted_at IS NULL
+                """,
+                (index, work_id, parent_id),
+            )
+        connection.commit()
+        return self.list_children(parent_id)
+
+    def update_root_flow_order(self, *, session_id: str, owner_key: str, work_ids: list[str]) -> list[WorkItem]:
+        connection = self.connection_factory()
+        for index, work_id in enumerate(work_ids):
+            connection.execute(
+                """
+                UPDATE work_items
+                SET flow_order = %s,
+                    updated_at = now()
+                WHERE work_id = %s
+                  AND session_id = %s
+                  AND owner_key = %s
+                  AND parent_id IS NULL
+                  AND deleted_at IS NULL
+                """,
+                (index, work_id, session_id, owner_key),
+            )
+        connection.commit()
+        rows = self.connection_factory().execute(
+            """
+            SELECT * FROM work_items
+            WHERE session_id = %s
+              AND owner_key = %s
+              AND parent_id IS NULL
+              AND deleted_at IS NULL
+            ORDER BY flow_order ASC NULLS LAST, created_at ASC
+            """,
+            (session_id, owner_key),
         ).fetchall()
         return [work for row in rows if (work := _work_from_row(row)) is not None]
 
@@ -962,6 +1032,7 @@ def _work_from_row(row: Any) -> WorkItem | None:
         status=record["status"],
         assignee_agent_id=record.get("assignee_agent_id"),
         parent_id=record.get("parent_id"),
+        flow_order=record.get("flow_order"),
         source=record.get("source") or "work_mode",
         raw_user_input=record.get("raw_user_input"),
         execution_instruction=record.get("execution_instruction"),

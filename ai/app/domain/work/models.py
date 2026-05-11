@@ -20,6 +20,7 @@ class WorkItem:
     status: WorkStatus
     assignee_agent_id: str | None = None
     parent_id: str | None = None
+    flow_order: int | None = None
     source: str = "work_mode"
     raw_user_input: str | None = None
     execution_instruction: str | None = None

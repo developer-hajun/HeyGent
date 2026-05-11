@@ -13,6 +13,8 @@ from app.storage.postgres.schema import POSTGRES_SCHEMA_STATEMENTS, render_postg
 from app.storage.postgres.connection import apply_configured_postgres_migrations
 from app.storage.postgres.durable_repository import PostgresDurableRepository, PostgresTaskRepository
 from app.storage.postgres.migrations import POSTGRES_MIGRATIONS, apply_postgres_migrations
+from app.contracts.work.responses import WorkItemResponse
+from app.domain.work.models import WorkItem
 from tests.fakes import InMemoryTaskRepository
 from app.storage.postgres.session_store import PostgresSessionStore, _owner_filter_params, _owner_filter_sql
 
@@ -167,6 +169,37 @@ def test_postgres_work_schema_contains_board_execution_fields():
         "CREATE INDEX IF NOT EXISTS idx_work_items_session_status_updated",
     ]:
         assert expected in schema_sql
+
+
+def test_postgres_work_schema_contains_flow_order_contract():
+    schema_sql = render_postgres_schema()
+    migration_sql = "\n".join(statement for migration in POSTGRES_MIGRATIONS for statement in migration.statements)
+
+    assert "flow_order INTEGER" in schema_sql
+    assert "CREATE INDEX IF NOT EXISTS idx_work_items_parent_flow_order" in schema_sql
+    assert "0011_work_flow_order" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "ADD COLUMN IF NOT EXISTS flow_order INTEGER" in migration_sql
+    assert "idx_work_items_parent_flow_order" in migration_sql
+
+
+def test_work_item_response_exposes_flow_order_for_diagram_layout():
+    response = WorkItemResponse.model_validate(
+        WorkItem(
+            work_id="work-flow-child",
+            identifier="TASK-2",
+            session_id="session-flow",
+            owner_key="user-flow",
+            owner_user_id=7,
+            title="시장 분석",
+            description=None,
+            status="todo",
+            parent_id="work-flow-root",
+            flow_order=2,
+        ),
+        from_attributes=True,
+    )
+
+    assert response.model_dump(by_alias=True)["flowOrder"] == 2
 
 
 def test_sqlite_task_and_approval_contracts_keep_owner_user_columns():

@@ -43,6 +43,15 @@ class WorkService:
         title = _fallback_title(str(payload.get("title") or "").strip(), raw_user_input)
         description = str(payload.get("description") or raw_user_input or title).strip()
         parent_id = _empty_to_none(payload.get("parentId") or payload.get("parent_id"))
+        flow_order = _flow_order_or_none(payload.get("flowOrder") or payload.get("flow_order"))
+        if parent_id and flow_order is None:
+            next_child_flow_order = getattr(self.repository, "next_child_flow_order", None)
+            if callable(next_child_flow_order):
+                flow_order = next_child_flow_order(parent_id)
+        if parent_id is None and flow_order is None:
+            next_root_flow_order = getattr(self.repository, "next_root_flow_order", None)
+            if callable(next_root_flow_order):
+                flow_order = next_root_flow_order(session_id=session_id, owner_key=owner_key)
         work = WorkItem(
             work_id=new_id("work"),
             identifier=self.repository.next_identifier(session_id),
@@ -54,6 +63,7 @@ class WorkService:
             status=initial_status_for_work_mode(),
             assignee_agent_id=_empty_to_none(payload.get("assigneeAgentId") or payload.get("assignee_agent_id")) or "CEO",
             parent_id=parent_id,
+            flow_order=flow_order,
             source=str(payload.get("source") or "work_mode").strip() or "work_mode",
             raw_user_input=raw_user_input,
             execution_instruction=str(payload.get("executionInstruction") or payload.get("execution_instruction") or description).strip(),
@@ -262,6 +272,16 @@ def _string_list(value: Any) -> list[str]:
 def _empty_to_none(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _flow_order_or_none(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
 
 
 def _fallback_title(title: str, raw_user_input: str) -> str:

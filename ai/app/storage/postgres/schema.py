@@ -238,6 +238,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
         status TEXT NOT NULL CHECK (status IN ('backlog', 'todo', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled')),
         assignee_agent_id TEXT,
         parent_id TEXT REFERENCES work_items(work_id) ON DELETE SET NULL,
+        flow_order INTEGER,
         source TEXT NOT NULL DEFAULT 'work_mode',
         raw_user_input TEXT,
         execution_instruction TEXT,
@@ -446,6 +447,11 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_work_items_parent
     ON work_items(parent_id, updated_at DESC)
+    WHERE deleted_at IS NULL;
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_work_items_parent_flow_order
+    ON work_items(parent_id, flow_order ASC, created_at ASC)
     WHERE deleted_at IS NULL;
     """,
     """

@@ -66,6 +66,7 @@ export interface IssueBoardIssue {
   status: IssueBoardStatus
   assigneeAgentId: string | null
   parentId: string | null
+  flowOrder: number | null
   labels: string[]
   comments: IssueBoardComment[]
   runs: IssueBoardRun[]

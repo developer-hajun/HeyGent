@@ -21,6 +21,7 @@ export function toIssueBoardIssue(item: WorkItem, allItems: WorkItem[] = []): Is
     status: item.status,
     assigneeAgentId: item.assigneeAgentId,
     parentId: item.parentId,
+    flowOrder: item.flowOrder,
     labels: item.labelIds ?? [],
     comments: [],
     runs:
@@ -219,7 +220,7 @@ export function loadTodoBoardState(storageKey: string): PersistedTodoBoardState 
       labels: normalizeLabels(parsed.labels, fallback.labels),
       query: typeof parsed.query === 'string' ? parsed.query : fallback.query,
       viewMode:
-        parsed.viewMode === 'list' || parsed.viewMode === 'board'
+        parsed.viewMode === 'list' || parsed.viewMode === 'board' || parsed.viewMode === 'flow'
           ? parsed.viewMode
           : fallback.viewMode,
       sortField: normalizeSortField(parsed.sortField, fallback.sortField),
