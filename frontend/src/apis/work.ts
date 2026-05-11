@@ -125,8 +125,10 @@ export async function createChildWork(
   return data
 }
 
-export async function deleteWork(workId: string): Promise<WorkItem> {
-  const { data } = await aiAxiosInstance.delete<WorkItem>(`/work/${encodeURIComponent(workId)}`)
+export async function deleteWork(workId: string, cascadeChildren = false): Promise<WorkItem> {
+  const { data } = await aiAxiosInstance.delete<WorkItem>(`/work/${encodeURIComponent(workId)}`, {
+    params: { cascadeChildren },
+  })
   return data
 }
 

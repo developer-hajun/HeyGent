@@ -28,6 +28,15 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -122,6 +131,26 @@ function commentSubmitHint(issue: IssueBoardIssue) {
   if (issue.status === 'blocked') return '댓글 전송 후 차단을 풀고 작업을 다시 실행합니다.'
   if (issue.assigneeAgentId) return '댓글 전송 후 담당 에이전트가 내용을 반영합니다.'
   return '댓글은 작업 기록에 남습니다.'
+}
+
+function collectDescendantIssueIds(issues: IssueBoardIssue[], issueId: string) {
+  const childIdsByParent = new Map<string, string[]>()
+  for (const issue of issues) {
+    if (!issue.parentId) continue
+    childIdsByParent.set(issue.parentId, [
+      ...(childIdsByParent.get(issue.parentId) ?? []),
+      issue.id,
+    ])
+  }
+  const descendantIds: string[] = []
+  const queue = [...(childIdsByParent.get(issueId) ?? [])]
+  while (queue.length > 0) {
+    const childId = queue.shift()
+    if (!childId || descendantIds.includes(childId)) continue
+    descendantIds.push(childId)
+    queue.push(...(childIdsByParent.get(childId) ?? []))
+  }
+  return descendantIds
 }
 
 export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
@@ -445,21 +474,35 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
       })
   }
 
-  const deleteIssue = (issueId: string) => {
+  const deleteIssue = async (issueId: string, cascadeChildren = false) => {
     const serverWork = workItems.find((item) => item.workId === issueId)
     if (serverWork) {
-      void deleteWorkItem(issueId)
-        .then((item) => {
-          setSelectedIssueId(null)
-          setWorkNotice(`${item.identifier} 작업을 삭제했습니다.`)
-        })
-        .catch((error) => {
-          console.error(error)
-          setWorkNotice(getApiErrorMessage(error, { fallback: '작업 삭제에 실패했습니다.' }))
-        })
+      try {
+        const item = await deleteWorkItem(issueId, cascadeChildren)
+        await fetchSessionWork(sessionId)
+        setSelectedIssueId(null)
+        setWorkNotice(
+          cascadeChildren
+            ? `${item.identifier} 작업과 하위 작업을 삭제했습니다.`
+            : `${item.identifier} 작업을 삭제했습니다.`,
+        )
+      } catch (error) {
+        console.error(error)
+        setWorkNotice(getApiErrorMessage(error, { fallback: '작업 삭제에 실패했습니다.' }))
+        throw error
+      }
       return
     }
-    setIssues((current) => current.filter((issue) => issue.id !== issueId))
+    setIssues((current) => {
+      if (!cascadeChildren) {
+        return current
+          .filter((issue) => issue.id !== issueId)
+          .map((issue) => (issue.parentId === issueId ? { ...issue, parentId: null } : issue))
+      }
+      const deletedIds = new Set(collectDescendantIssueIds(current, issueId))
+      deletedIds.add(issueId)
+      return current.filter((issue) => !deletedIds.has(issue.id))
+    })
     setSelectedIssueId(null)
   }
 
@@ -1493,7 +1536,7 @@ function TodoDetailPanel({
   onChangeParent: (issueId: string, parentId: string | null) => void
   onCreateChild: (parentId: string, title: string, description: string) => void
   onCreateLabel: (label: IssueBoardLabel) => void
-  onDeleteIssue: (issueId: string) => void
+  onDeleteIssue: (issueId: string, cascadeChildren?: boolean) => Promise<void> | void
   onMoveStatus: (issueId: string, status: IssueBoardStatus) => void
   onOpenChange: (open: boolean) => void
   onRemoveRelation: (sourceId: string, targetId: string, relationType: 'blocks' | 'related') => void
@@ -1502,6 +1545,9 @@ function TodoDetailPanel({
 }) {
   const [detailTab, setDetailTab] = useState<DetailTab>('chat')
   const [commentDraft, setCommentDraft] = useState('')
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   if (issue === null) return null
 
@@ -1512,6 +1558,27 @@ function TodoDetailPanel({
         setCommentDraft('')
       })
       .catch(() => undefined)
+  }
+  const descendantCount = collectDescendantIssueIds(allIssues, issue.id).length
+  const hasChildIssues = descendantCount > 0
+  const requestDelete = () => {
+    if (hasChildIssues) {
+      setDeleteDialogOpen(true)
+      return
+    }
+    void deleteIssue(false)
+  }
+  const deleteIssue = async (cascadeChildren: boolean) => {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await onDeleteIssue(issue.id, cascadeChildren)
+      setDeleteDialogOpen(false)
+    } catch (error) {
+      setDeleteError(getApiErrorMessage(error, { fallback: '작업을 삭제하지 못했습니다.' }))
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return (
@@ -1562,7 +1629,7 @@ function TodoDetailPanel({
               aria-label="작업 삭제"
               variant="ghost"
               size="icon-sm"
-              onClick={() => onDeleteIssue(issue.id)}
+              onClick={requestDelete}
             >
               <Trash2 className="h-4 w-4" />
             </Button>
@@ -1685,7 +1752,71 @@ function TodoDetailPanel({
           </div>
         </div>
       </aside>
+      <DeleteIssueDialog
+        deleteError={deleteError}
+        deleting={deleting}
+        descendantCount={descendantCount}
+        issue={issue}
+        open={deleteDialogOpen}
+        onDeleteOnlyParent={() => void deleteIssue(false)}
+        onDeleteWithChildren={() => void deleteIssue(true)}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeleteError(null)
+          setDeleteDialogOpen(open)
+        }}
+      />
     </div>
+  )
+}
+
+function DeleteIssueDialog({
+  deleteError,
+  deleting,
+  descendantCount,
+  issue,
+  open,
+  onDeleteOnlyParent,
+  onDeleteWithChildren,
+  onOpenChange,
+}: {
+  deleteError: string | null
+  deleting: boolean
+  descendantCount: number
+  issue: IssueBoardIssue
+  open: boolean
+  onDeleteOnlyParent: () => void
+  onDeleteWithChildren: () => void
+  onOpenChange: (open: boolean) => void
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>하위 작업도 함께 삭제할까요?</AlertDialogTitle>
+          <AlertDialogDescription>
+            `{issue.identifier}` 작업 아래에 하위 작업 {descendantCount}개가 있습니다. 부모만
+            삭제하면 하위 작업은 루트 작업으로 남고, 함께 삭제하면 하위 작업 전체가 삭제됩니다.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {deleteError ? <p className="text-destructive text-sm">{deleteError}</p> : null}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleting}>취소</AlertDialogCancel>
+          <Button variant="outline" disabled={deleting} onClick={onDeleteOnlyParent}>
+            부모만 삭제
+          </Button>
+          <Button variant="destructive" disabled={deleting} onClick={onDeleteWithChildren}>
+            {deleting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                삭제 중
+              </>
+            ) : (
+              '하위까지 삭제'
+            )}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 

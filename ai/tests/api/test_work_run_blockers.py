@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from app.api.http.work import (
     _enqueue_comment_followup_wake,
     _effective_comment_resume_requested,
+    _list_descendant_works,
     _should_reopen_blocked_work_from_comment,
     _unresolved_blocker_work_ids,
 )
@@ -41,6 +42,14 @@ class FakeWakeRepository:
     def complete_work_wake(self, wake_id: str, **kwargs):
         self.completed.append((wake_id, kwargs))
         return SimpleNamespace(wake_id=wake_id, **kwargs)
+
+
+class FakeTreeRepository:
+    def __init__(self, works):
+        self.works = works
+
+    def list_children(self, parent_id: str):
+        return [work for work in self.works if work.parent_id == parent_id]
 
 
 def relation(source: str, target: str, relation_type: str = "blocks"):
@@ -147,4 +156,18 @@ async def test_active_work_wake_retries_instead_of_skipping_immediately():
                 "retry_delay_seconds": 30,
             },
         )
+    ]
+
+
+def test_list_descendant_works_returns_nested_children_in_delete_order_base():
+    parent = SimpleNamespace(work_id="parent", parent_id=None)
+    first = SimpleNamespace(work_id="first", parent_id="parent")
+    second = SimpleNamespace(work_id="second", parent_id="parent")
+    grandchild = SimpleNamespace(work_id="grandchild", parent_id="first")
+    repository = FakeTreeRepository([parent, first, second, grandchild])
+
+    assert [work.work_id for work in _list_descendant_works(repository, "parent")] == [
+        "first",
+        "second",
+        "grandchild",
     ]

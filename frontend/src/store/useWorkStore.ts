@@ -47,7 +47,7 @@ type WorkState = {
   addComment: (workId: string, body: string, resume?: boolean) => Promise<WorkComment>
   createLabel: (sessionId: string, payload: { name: string; color: string }) => Promise<WorkLabel>
   setLabels: (workId: string, labelIds: string[]) => Promise<WorkItem>
-  deleteWorkItem: (workId: string) => Promise<WorkItem>
+  deleteWorkItem: (workId: string, cascadeChildren?: boolean) => Promise<WorkItem>
   handleRealtimeFrame: (frame: AiRealtimeRawFrame) => void
   clearWorkState: () => void
 }
@@ -255,14 +255,16 @@ export const useWorkStore = create<WorkState>((set) => ({
       throw error
     }
   },
-  deleteWorkItem: async (workId) => {
+  deleteWorkItem: async (workId, cascadeChildren = false) => {
     try {
-      const item = await deleteWork(workId)
+      const item = await deleteWork(workId, cascadeChildren)
       set((state) => ({
         itemsBySessionId: {
           ...state.itemsBySessionId,
-          [item.sessionId]: (state.itemsBySessionId[item.sessionId] ?? []).filter(
-            (current) => current.workId !== workId,
+          [item.sessionId]: removeDeletedWorkFromList(
+            state.itemsBySessionId[item.sessionId] ?? [],
+            workId,
+            cascadeChildren,
           ),
         },
         lastError: null,
@@ -354,6 +356,39 @@ function upsertWorkComment(items: WorkComment[], item: WorkComment) {
     return [...items, item]
   }
   return items.map((current, itemIndex) => (itemIndex === index ? item : current))
+}
+
+function removeDeletedWorkFromList(items: WorkItem[], workId: string, cascadeChildren: boolean) {
+  if (!cascadeChildren) {
+    return items
+      .filter((item) => item.workId !== workId)
+      .map((item) =>
+        item.parentId === workId ? { ...item, parentId: null, flowOrder: null } : item,
+      )
+  }
+  const deletedIds = collectDescendantWorkIds(items, workId)
+  deletedIds.add(workId)
+  return items.filter((item) => !deletedIds.has(item.workId))
+}
+
+function collectDescendantWorkIds(items: WorkItem[], workId: string) {
+  const childIdsByParent = new Map<string, string[]>()
+  for (const item of items) {
+    if (!item.parentId) continue
+    childIdsByParent.set(item.parentId, [
+      ...(childIdsByParent.get(item.parentId) ?? []),
+      item.workId,
+    ])
+  }
+  const collected = new Set<string>()
+  const queue = [...(childIdsByParent.get(workId) ?? [])]
+  while (queue.length > 0) {
+    const childId = queue.shift()
+    if (!childId || collected.has(childId)) continue
+    collected.add(childId)
+    queue.push(...(childIdsByParent.get(childId) ?? []))
+  }
+  return collected
 }
 
 function upsertWorkLabel(items: WorkLabel[], item: WorkLabel) {

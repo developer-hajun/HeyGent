@@ -529,10 +529,25 @@ async def restore_work(request: Request, workId: str = Path(...)) -> WorkItemRes
 
 
 @router.delete("/work/{workId}", response_model=WorkItemResponse, summary="작업 삭제")
-async def delete_work(request: Request, workId: str = Path(...)) -> WorkItemResponse:
+async def delete_work(
+    request: Request,
+    workId: str = Path(...),
+    cascadeChildren: bool = Query(default=False, description="하위 작업까지 함께 삭제할지 여부입니다."),
+) -> WorkItemResponse:
     user = await authenticate_http_user(request)
     work = _work_or_404(request, workId)
     _ensure_work_owner(user, work)
+    descendants = _list_descendant_works(request.app.state.work_repository, work.work_id)
+    if cascadeChildren:
+        for child in reversed(descendants):
+            _ensure_work_owner(user, child)
+            deleted_child = request.app.state.work_repository.delete_work(child.work_id)
+            await _publish_work_event(request, str(user.user_id), "work.deleted", work=deleted_child)
+    else:
+        for child in [item for item in descendants if item.parent_id == work.work_id]:
+            _ensure_work_owner(user, child)
+            updated_child = request.app.state.work_repository.update_parent(child.work_id, parent_id=None)
+            await _publish_work_event(request, str(user.user_id), "work.updated", work=updated_child)
     deleted = request.app.state.work_repository.delete_work(workId)
     await _publish_work_event(request, str(user.user_id), "work.deleted", work=deleted)
     return _work_response(deleted, repository=request.app.state.work_repository)
@@ -1129,6 +1144,16 @@ def _safe_children(repository, work: WorkItem) -> list[WorkItem]:
         return repository.list_children(work.work_id)
     except Exception:
         return []
+
+
+def _list_descendant_works(repository, work_id: str) -> list[WorkItem]:
+    descendants: list[WorkItem] = []
+    queue = list(repository.list_children(work_id))
+    while queue:
+        child = queue.pop(0)
+        descendants.append(child)
+        queue.extend(repository.list_children(child.work_id))
+    return descendants
 
 
 def _safe_relations(repository, work_id: str):
