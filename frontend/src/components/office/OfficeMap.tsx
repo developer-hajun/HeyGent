@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState } from 'react'
 import { AgentSprite } from './AgentSprite'
-import type { AgentRuntime } from './types'
+import type { AgentRuntime, AgentVisualizationInfo } from './types'
 
 const MAP_WIDTH = 1600
 const MAP_HEIGHT = 900
@@ -32,6 +32,9 @@ interface OfficeMapProps {
   obstacleLineMode?: boolean
   obstacleLines?: Rect[]
   onNewLine?: (line: Rect) => void
+  onAgentClick?: (agentId: string) => void
+  agentInfoMap?: Record<string, AgentVisualizationInfo>
+  selectedAgentId?: string | null
 }
 
 export function OfficeMap({
@@ -45,6 +48,9 @@ export function OfficeMap({
   obstacleLineMode,
   obstacleLines,
   onNewLine,
+  onAgentClick,
+  agentInfoMap,
+  selectedAgentId,
 }: OfficeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
@@ -189,7 +195,14 @@ export function OfficeMap({
           }}
         />
         {agents.map((agent) => (
-          <AgentSprite key={agent.config.id} agent={agent} onArrived={onAgentArrived} />
+          <AgentSprite
+            key={agent.config.id}
+            agent={agent}
+            onArrived={onAgentArrived}
+            onClick={onAgentClick}
+            hoverInfo={agentInfoMap?.[agent.config.id]}
+            isSelected={selectedAgentId === agent.config.id}
+          />
         ))}
         {ceoMode &&
           (() => {

@@ -1,12 +1,150 @@
 import { useState, useRef, useEffect } from 'react'
 import { OfficeMap } from '@/components/office/OfficeMap'
+import {
+  useAgentVisualizationStore,
+  createMockAgentInfoMap,
+} from '@/store/useAgentVisualizationStore'
 import type {
   AgentConfig,
   AgentRuntime,
   Destination,
   UIDestination,
   SittingState,
+  AgentVisualizationInfo,
+  AgentActivityStatus,
+  TaskStatus,
 } from '@/components/office/types'
+
+const ACTIVITY_STATUS_LABEL: Record<AgentActivityStatus, string> = {
+  spawning: '진입 중',
+  working: '작업 중',
+  resting: '휴식 중',
+  inactive: '비활성',
+}
+
+const ACTIVITY_STATUS_CLASS: Record<AgentActivityStatus, string> = {
+  spawning: 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30',
+  working: 'bg-blue-500/20 text-blue-300 border border-blue-500/30',
+  resting: 'bg-green-500/20 text-green-300 border border-green-500/30',
+  inactive: 'bg-gray-500/20 text-gray-400 border border-gray-500/30',
+}
+
+const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
+  pending: '대기 중',
+  in_progress: '진행 중',
+  completed: '완료',
+  failed: '실패',
+}
+
+const TASK_STATUS_CLASS: Record<TaskStatus, string> = {
+  pending: 'text-yellow-300',
+  in_progress: 'text-blue-300',
+  completed: 'text-green-300',
+  failed: 'text-red-400',
+}
+
+function AgentInfoPanel({ info, onClose }: { info: AgentVisualizationInfo; onClose: () => void }) {
+  return (
+    <div className="absolute top-4 right-4 z-30 flex w-72 flex-col rounded-2xl border border-white/15 bg-black/80 shadow-2xl backdrop-blur-md">
+      {/* 헤더 */}
+      <div className="flex items-start justify-between border-b border-white/10 p-4">
+        <div className="flex items-center gap-3">
+          {info.profileImage ? (
+            <img
+              src={info.profileImage}
+              alt={info.name}
+              className="h-10 w-10 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-500/30 text-sm font-bold text-white">
+              {info.name[0]}
+            </div>
+          )}
+          <div>
+            <p className="text-sm font-semibold text-white">{info.name}</p>
+            <p className="text-xs text-white/50">{info.role}</p>
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          className="text-lg leading-none text-white/30 transition-colors hover:text-white"
+        >
+          ×
+        </button>
+      </div>
+
+      {/* 활동 상태 */}
+      <div className="border-b border-white/10 px-4 py-2.5">
+        <span
+          className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${ACTIVITY_STATUS_CLASS[info.activityStatus]}`}
+        >
+          {ACTIVITY_STATUS_LABEL[info.activityStatus]}
+        </span>
+      </div>
+
+      {/* 현재 작업 */}
+      {info.currentTask && (
+        <div className="border-b border-white/10 px-4 py-3">
+          <p className="mb-1.5 text-xs tracking-wide text-white/35 uppercase">현재 작업</p>
+          <p className="text-sm font-semibold text-white">{info.currentTask.title}</p>
+          {info.currentTask.description && (
+            <p className="mt-1 line-clamp-2 text-xs text-white/50">
+              {info.currentTask.description}
+            </p>
+          )}
+          <span
+            className={`mt-1.5 inline-block text-xs ${TASK_STATUS_CLASS[info.currentTask.status]}`}
+          >
+            ● {TASK_STATUS_LABEL[info.currentTask.status]}
+          </span>
+        </div>
+      )}
+
+      {/* 스킬 */}
+      <div className="border-b border-white/10 px-4 py-3">
+        <p className="mb-1.5 text-xs tracking-wide text-white/35 uppercase">스킬</p>
+        <div className="flex flex-wrap gap-1">
+          {info.skills.map((skill) => (
+            <span key={skill} className="rounded-md bg-white/10 px-2 py-0.5 text-xs text-white/70">
+              {skill}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* 작업 내역 */}
+      <div className="max-h-48 flex-1 overflow-y-auto px-4 py-3">
+        <p className="mb-2 text-xs tracking-wide text-white/35 uppercase">작업 내역</p>
+        {info.taskHistory.length === 0 ? (
+          <p className="text-xs text-white/30">작업 내역 없음</p>
+        ) : (
+          <div className="space-y-2">
+            {info.taskHistory.map((task) => (
+              <div key={task.taskId} className="flex items-start gap-2">
+                <span className="mt-0.5 shrink-0 text-xs text-green-400">✓</span>
+                <div>
+                  <p className="text-xs text-white/80">{task.title}</p>
+                  {task.completedAt && (
+                    <p className="text-xs text-white/30">
+                      {new Date(task.completedAt).toLocaleDateString('ko-KR')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 편집 버튼 — 추후 편집 모달 연결 */}
+      <div className="border-t border-white/10 px-4 py-3">
+        <button className="w-full rounded-lg bg-white/10 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/20">
+          에이전트 편집
+        </button>
+      </div>
+    </div>
+  )
+}
 
 // 새 에이전트 추가 시 이 배열에 항목만 추가하면 됩니다.
 const AGENT_CONFIGS: AgentConfig[] = [
@@ -622,6 +760,13 @@ export function AgentStatusPage() {
   const runtimeGridRef = useRef<boolean[][]>(OBSTACLE_GRID)
   const walkTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({})
 
+  const { agentInfoMap, selectedAgentId, setAgentInfoMap, selectAgent } =
+    useAgentVisualizationStore()
+
+  useEffect(() => {
+    setAgentInfoMap(createMockAgentInfoMap())
+  }, [setAgentInfoMap])
+
   useEffect(() => {
     let cancelled = false
     const img = new Image()
@@ -850,9 +995,19 @@ export function AgentStatusPage() {
 
   const selectedAgent = agents.find((a) => a.config.id === selectedId)
 
+  const selectedInfo = selectedAgentId ? agentInfoMap[selectedAgentId] : null
+
   return (
     <div className="relative flex flex-1 overflow-hidden">
-      <OfficeMap agents={agents} onAgentArrived={handleAgentArrived} ceoMode={ceoMode} />
+      <OfficeMap
+        agents={agents}
+        onAgentArrived={handleAgentArrived}
+        ceoMode={ceoMode}
+        onAgentClick={selectAgent}
+        agentInfoMap={agentInfoMap}
+        selectedAgentId={selectedAgentId}
+      />
+      {selectedInfo && <AgentInfoPanel info={selectedInfo} onClose={() => selectAgent(null)} />}
 
       <div className={`absolute left-1/2 z-20 -translate-x-1/2 ${panelTop ? 'top-4' : 'bottom-6'}`}>
         <div className="flex flex-col gap-2.5 rounded-2xl border border-white/20 bg-black/60 px-5 py-3 shadow-2xl backdrop-blur-md">
