@@ -1,8 +1,14 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 
-from app.api.memory_context import LlmMemoryRecallPlanner, attach_persistent_memory_context, plan_memory_recall, select_memory_recall_query
+from app.api.memory_context import (
+    LlmMemoryRecallPlanner,
+    attach_persistent_memory_context,
+    plan_memory_recall,
+    select_memory_recall_query,
+)
 from app.clients.backend_memory import BackendMemoryClientError, BackendMemoryItem
 
 
@@ -20,13 +26,16 @@ class FakeMemoryClient:
 
 
 class FakeRecallPlannerProvider:
-    def __init__(self, payload=None, *, fail: bool = False) -> None:
+    def __init__(self, payload=None, *, fail: bool = False, delay_seconds: float = 0.0) -> None:
         self.payload = payload or {}
         self.fail = fail
+        self.delay_seconds = delay_seconds
         self.calls = []
 
     async def plan_memory_recall_json(self, **kwargs):
         self.calls.append(kwargs)
+        if self.delay_seconds:
+            await asyncio.sleep(self.delay_seconds)
         if self.fail:
             raise RuntimeError("planner failed")
         return self.payload
@@ -110,6 +119,8 @@ async def test_llm_memory_recall_planner_uses_model_structured_filters():
     assert plan.query == "MR 작성 선호"
     assert plan.reason == "사용자 MR 작성 형식 선호가 필요함"
     assert plan.limit == 3
+    assert plan.planner_source == "llm"
+    assert plan.planner_latency_ms is not None
     assert plan.filters() == {
         "store_type": "USER_PROFILE",
         "memory_type": "PREFERENCE",
@@ -126,7 +137,25 @@ async def test_llm_memory_recall_planner_falls_back_to_rules_on_error():
     plan = await planner.plan_recall("4번 장기기억 작업 이어서 해줘", workspace_key="team-a")
 
     assert plan.reason == "workspace_memory_needed"
+    assert plan.planner_source == "rule_fallback"
+    assert plan.fallback_reason == "llm_planner_error:RuntimeError"
+    assert plan.planner_latency_ms is not None
     assert plan.filters()["metadata_categories"] == ["task_state", "fact"]
+
+
+@pytest.mark.asyncio
+async def test_llm_memory_recall_planner_times_out_to_rule_fallback():
+    planner = LlmMemoryRecallPlanner(
+        provider=FakeRecallPlannerProvider(delay_seconds=0.05),
+        timeout_seconds=0.01,
+    )
+
+    plan = await planner.plan_recall("4번 장기기억 작업 이어서 해줘", workspace_key="team-a")
+
+    assert plan.reason == "workspace_memory_needed"
+    assert plan.planner_source == "rule_fallback"
+    assert plan.fallback_reason == "llm_planner_timeout"
+    assert plan.planner_latency_ms is not None
 
 
 @pytest.mark.asyncio
@@ -174,11 +203,10 @@ async def test_attach_persistent_memory_context_replaces_client_supplied_context
     assert recall_meta["store_types"] == ["PROFILE"]
     assert recall_meta["scope_types"] == ["GLOBAL"]
     assert recall_meta["failed"] is False
-    assert recall_meta["planner"] == {
-        "should_recall": True,
-        "reason": "general_semantic_recall",
-        "filters": {},
-    }
+    assert recall_meta["planner"]["should_recall"] is True
+    assert recall_meta["planner"]["reason"] == "general_semantic_recall"
+    assert recall_meta["planner"]["source"] == "rule"
+    assert recall_meta["planner"]["filters"] == {}
 
 
 @pytest.mark.asyncio
@@ -221,15 +249,16 @@ async def test_attach_persistent_memory_context_uses_llm_planner_when_available(
             "metadata_categories": ["preference"],
         }
     ]
-    assert task_input["memory_context_meta"]["recall"]["planner"] == {
-        "should_recall": True,
-        "reason": "사용자 MR 작성 선호 필요",
-        "filters": {
-            "store_type": "USER_PROFILE",
-            "memory_type": "PREFERENCE",
-            "scope_type": "GLOBAL",
-            "metadata_categories": ["preference"],
-        },
+    planner_meta = task_input["memory_context_meta"]["recall"]["planner"]
+    assert planner_meta["should_recall"] is True
+    assert planner_meta["reason"] == "사용자 MR 작성 선호 필요"
+    assert planner_meta["source"] == "llm"
+    assert planner_meta["latency_ms"] is not None
+    assert planner_meta["filters"] == {
+        "store_type": "USER_PROFILE",
+        "memory_type": "PREFERENCE",
+        "scope_type": "GLOBAL",
+        "metadata_categories": ["preference"],
     }
 
 

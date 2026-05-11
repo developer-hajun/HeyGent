@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from app.api.memory_observation import MEMORY_CONTEXT_META_KEY, build_recall_observation
@@ -11,6 +13,7 @@ from app.domain.orchestration.prompts.persistent_memory_prompt import build_pers
 logger = logging.getLogger(__name__)
 
 DEFAULT_MEMORY_RECALL_LIMIT = 5
+DEFAULT_MEMORY_RECALL_PLANNER_TIMEOUT_SECONDS = 3.0
 MEMORY_CONTEXT_KEYS = ("persistent_memory_context", "memory_context")
 MEMORY_RECALL_QUERY_KEYS = ("prompt", "message", "query", "content", "text", "subject", "title")
 
@@ -43,6 +46,9 @@ class MemoryRecallPlan:
     scope_type: str | None = None
     workspace_key: str | None = None
     metadata_categories: tuple[str, ...] = ()
+    planner_source: str = "rule"
+    fallback_reason: str | None = None
+    planner_latency_ms: int | None = None
 
     def filters(self) -> dict[str, Any]:
         filters: dict[str, Any] = {}
@@ -70,9 +76,16 @@ class MemoryRecallPlannerProvider(Protocol):
 class LlmMemoryRecallPlanner:
     """LLM이 요청별 장기기억 recall 필요성과 backend filter를 판단한다."""
 
-    def __init__(self, provider: MemoryRecallPlannerProvider, *, fallback_to_rules: bool = True) -> None:
+    def __init__(
+        self,
+        provider: MemoryRecallPlannerProvider,
+        *,
+        fallback_to_rules: bool = True,
+        timeout_seconds: float = DEFAULT_MEMORY_RECALL_PLANNER_TIMEOUT_SECONDS,
+    ) -> None:
         self._provider = provider
         self._fallback_to_rules = fallback_to_rules
+        self._timeout_seconds = max(0.001, float(timeout_seconds))
 
     async def plan_recall(
         self,
@@ -84,19 +97,41 @@ class LlmMemoryRecallPlanner:
         rule_plan = plan_memory_recall(query, workspace_key=workspace_key, limit=limit)
         if not rule_plan.query:
             return rule_plan
+        started_at = time.perf_counter()
         try:
-            raw = await self._provider.plan_memory_recall_json(
-                system_prompt=MEMORY_RECALL_PLANNER_SYSTEM_PROMPT,
-                query=rule_plan.query,
-                workspace_key=workspace_key,
-                rule_plan=rule_plan,
+            raw = await asyncio.wait_for(
+                self._provider.plan_memory_recall_json(
+                    system_prompt=MEMORY_RECALL_PLANNER_SYSTEM_PROMPT,
+                    query=rule_plan.query,
+                    workspace_key=workspace_key,
+                    rule_plan=rule_plan,
+                ),
+                timeout=self._timeout_seconds,
             )
-            return _normalize_llm_recall_plan(raw, rule_plan=rule_plan, workspace_key=workspace_key, limit=limit)
-        except Exception:
+            latency_ms = _elapsed_ms(started_at)
+            return _normalize_llm_recall_plan(
+                raw,
+                rule_plan=rule_plan,
+                workspace_key=workspace_key,
+                limit=limit,
+                planner_latency_ms=latency_ms,
+            )
+        except asyncio.TimeoutError:
             if not self._fallback_to_rules:
                 raise
+            latency_ms = _elapsed_ms(started_at)
+            logger.warning("LLM memory recall planner timed out; falling back to rule planner", exc_info=True)
+            return _fallback_rule_plan(rule_plan, reason="llm_planner_timeout", latency_ms=latency_ms)
+        except Exception as exc:
+            if not self._fallback_to_rules:
+                raise
+            latency_ms = _elapsed_ms(started_at)
             logger.warning("LLM memory recall planner failed; falling back to rule planner", exc_info=True)
-            return rule_plan
+            return _fallback_rule_plan(
+                rule_plan,
+                reason=f"llm_planner_error:{type(exc).__name__}",
+                latency_ms=latency_ms,
+            )
 
 
 def clear_client_memory_context(task_input: dict[str, Any]) -> None:
@@ -344,8 +379,13 @@ def _with_recall_plan(recall_meta: dict[str, Any], recall_plan: MemoryRecallPlan
     enriched["planner"] = {
         "should_recall": recall_plan.should_recall,
         "reason": recall_plan.reason,
+        "source": recall_plan.planner_source,
         "filters": recall_plan.filters(),
     }
+    if recall_plan.fallback_reason:
+        enriched["planner"]["fallback_reason"] = recall_plan.fallback_reason
+    if recall_plan.planner_latency_ms is not None:
+        enriched["planner"]["latency_ms"] = recall_plan.planner_latency_ms
     return enriched
 
 
@@ -355,9 +395,10 @@ def _normalize_llm_recall_plan(
     rule_plan: MemoryRecallPlan,
     workspace_key: str | None,
     limit: int,
+    planner_latency_ms: int,
 ) -> MemoryRecallPlan:
     if not isinstance(raw, dict):
-        return rule_plan
+        return _fallback_rule_plan(rule_plan, reason="invalid_llm_planner_response", latency_ms=planner_latency_ms)
     should_recall = raw.get("shouldRecall", raw.get("should_recall"))
     if not isinstance(should_recall, bool):
         should_recall = rule_plan.should_recall
@@ -389,6 +430,17 @@ def _normalize_llm_recall_plan(
         scope_type=scope_type,
         workspace_key=normalized_workspace_key if scope_type == "WORKSPACE" else None,
         metadata_categories=metadata_categories,
+        planner_source="llm",
+        planner_latency_ms=planner_latency_ms,
+    )
+
+
+def _fallback_rule_plan(rule_plan: MemoryRecallPlan, *, reason: str, latency_ms: int) -> MemoryRecallPlan:
+    return replace(
+        rule_plan,
+        planner_source="rule_fallback",
+        fallback_reason=reason,
+        planner_latency_ms=latency_ms,
     )
 
 
@@ -426,6 +478,10 @@ def _contains_any(text: str, hints: tuple[str, ...]) -> bool:
 def _put_if_present(payload: dict[str, Any], key: str, value: str | None) -> None:
     if value:
         payload[key] = value
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return max(0, round((time.perf_counter() - started_at) * 1000))
 
 
 def _trimmed(value: Any, *, max_length: int) -> str | None:
