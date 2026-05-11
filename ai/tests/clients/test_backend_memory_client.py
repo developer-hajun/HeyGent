@@ -108,6 +108,28 @@ async def test_mark_used_posts_user_id_and_score():
 
 
 @pytest.mark.asyncio
+async def test_mark_used_posts_source_task_run_id_for_idempotency():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert str(request.url) == "http://backend/internal/ai/memories/10/used"
+        assert request.read() == b'{"userId":1,"usefulnessScore":0.75,"sourceTaskRunId":"task_1"}'
+        return httpx.Response(200, json={"status": 200, "data": memory_payload(10)})
+
+    settings = Settings(backend_base_url="http://backend", internal_service_token="service-token")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = BackendMemoryClient(settings=settings, http_client=http_client)
+
+        memory = await client.mark_used(
+            user_id="1",
+            memory_id=10,
+            usefulness_score=0.75,
+            source_task_run_id="task_1",
+        )
+
+    assert memory.id == 10
+
+
+@pytest.mark.asyncio
 async def test_recall_raises_on_backend_error_status():
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"status": 401, "message": "invalid token"})

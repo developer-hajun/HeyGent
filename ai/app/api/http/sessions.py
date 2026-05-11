@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
 from app.api.deps.openapi_auth import document_bearer_auth
 from app.api.memory_context import attach_persistent_memory_context
+from app.api.memory_mark_used import mark_used_recalled_memories
 from app.api.memory_observation import attach_memory_observation_to_task
 from app.api.memory_writeback import writeback_persistent_memory_candidates
 from app.contracts.session import (
@@ -549,10 +550,18 @@ async def _run_created_session_message(
             user_message_id=str(user_append["message_id"]),
             assistant_message_id=str(assistant_message_id),
         )
+        mark_used_observation = await mark_used_recalled_memories(
+            app_state=request.app.state,
+            task_input=dict(task.input_payload or {}),
+            user_id=str(user.user_id),
+            assistant_message=assistant_content,
+            task_run_id=task.task_run_id,
+        )
         attach_memory_observation_to_task(
             task=task,
             repository=request.app.state.repository,
             writeback=writeback_observation,
+            mark_used=mark_used_observation,
         )
     elif task.status != "WAITING":
         session_store.clear_stale_running_task(owner_key=owner_key, session_id=session_id, task_run_id=task.task_run_id)

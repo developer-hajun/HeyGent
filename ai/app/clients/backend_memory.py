@@ -109,12 +109,14 @@ class BackendMemoryClient:
         user_id: str,
         memory_id: int,
         usefulness_score: float | None = None,
+        source_task_run_id: str | None = None,
     ) -> BackendMemoryItem:
         """AI 응답에 실제 사용한 장기기억을 backend에 피드백한다."""
 
         payload: dict[str, Any] = {"userId": self._coerce_user_id(user_id)}
         if usefulness_score is not None:
             payload["usefulnessScore"] = usefulness_score
+        self._put_if_present(payload, "sourceTaskRunId", source_task_run_id)
 
         try:
             response = await self._http_client.post(
