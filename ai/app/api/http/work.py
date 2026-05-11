@@ -641,6 +641,15 @@ async def create_work_run(request: Request, payload: CreateWorkRunRequest, workI
     _ensure_work_owner(user, work)
     if work.active_run_id:
         raise HTTPException(status_code=409, detail="work already has an active run")
+    unresolved_blocker_ids = _unresolved_blocker_work_ids(request.app.state.work_repository, work.work_id)
+    if unresolved_blocker_ids:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "work is blocked by unresolved blockers",
+                "unresolvedBlockerWorkIds": unresolved_blocker_ids,
+            },
+        )
     message = await _create_message_in_session(
         request,
         CreateSessionMessageRequest(
@@ -1068,6 +1077,24 @@ def _safe_comments(repository, work_id: str):
         return []
 
 
+def _unresolved_blocker_work_ids(repository, work_id: str) -> list[str]:
+    try:
+        relations = repository.list_relations(work_id)
+    except Exception:
+        return []
+    blocker_ids = [
+        relation.source_work_id
+        for relation in relations
+        if relation.relation_type == "blocks" and relation.target_work_id == work_id
+    ]
+    unresolved: list[str] = []
+    for blocker_id in dict.fromkeys(blocker_ids):
+        blocker = repository.get_work(blocker_id)
+        if blocker is None or blocker.status != "done":
+            unresolved.append(blocker_id)
+    return unresolved
+
+
 def _validate_assignee_or_400(request: Request, *, session_id: str, owner_key: str, assignee_agent_id: Any) -> None:
     assignee = str(assignee_agent_id or "").strip()
     if not assignee or assignee == "CEO":
@@ -1164,6 +1191,8 @@ async def _wake_work_from_comment(request: Request, *, user, work: WorkItem, com
         return
     if work.status == "backlog" or work.status == "cancelled":
         return
+    if _unresolved_blocker_work_ids(request.app.state.work_repository, work.work_id):
+        return
     if work.status == "done" and not bool(getattr(comment, "resume_requested", False)):
         return
     message = str(getattr(comment, "body", "") or "").strip() or "댓글을 반영해서 이 작업을 이어서 진행해."
@@ -1191,6 +1220,8 @@ async def _wake_work_from_comment(request: Request, *, user, work: WorkItem, com
 
 async def _wake_work_from_interaction(request: Request, *, user, work: WorkItem, interaction) -> None:
     if work.active_run_id or work.status in {"backlog", "cancelled"}:
+        return
+    if _unresolved_blocker_work_ids(request.app.state.work_repository, work.work_id):
         return
     title = getattr(interaction, "title", None) or "사용자 응답 반영"
     try:
