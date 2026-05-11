@@ -42,6 +42,9 @@ from app.domain.tasks.repository import TaskRepository
 from app.domain.tasks.models import StepRun, TaskRun
 
 
+TRACKED_SKILL_TOOL_NAMES = {"skills.read", "skill.execute"}
+
+
 class TaskEngine:
     """Coordinate task execution, approval waiting, and exact-step resume."""
 
@@ -567,6 +570,7 @@ class TaskEngine:
         return redacted
 
     async def _apply_task_outcome_without_step(self, *, task: TaskRun, outcome: dict) -> TaskRun:
+        await self._ensure_skill_work_link_from_outcome(task=task, outcome=outcome)
         task_status = outcome["task_status"]
         if task_status == TaskStatus.WAITING:
             task_status = TaskStatus.FAILED
@@ -611,6 +615,7 @@ class TaskEngine:
         # operation-only outcome 은 새 StepRun 생성 사유가 아니다. semanticKey 가 유지되는 한
         # result_inspector 가 기존 step.detail_json.operationDetail 에 operation 을 누적한다.
         outcome = self.outcome_inspector.inspect(step=step, outcome=outcome)
+        await self._ensure_skill_work_link_from_outcome(task=task, outcome=outcome)
         task_status = outcome["task_status"]
         step_status = outcome["step_status"]
         was_step_completed = step.status == StepStatus.COMPLETED
@@ -742,19 +747,169 @@ class TaskEngine:
 
         async def sink(*, event_type: str, summary_message: str | None = None, payload: dict | None = None) -> None:
             nonlocal current_step
+            payload = payload or {}
             observed_step = await self._materialize_progress_step(
                 task=task,
                 handler=handler,
                 event_type=event_type,
-                payload=payload or {},
+                payload=payload,
             )
             if observed_step is not None:
                 current_step = observed_step
                 sink.current_step = current_step
+            linked_work_payload = await self._ensure_skill_work_link(task=task, event_type=event_type, payload=payload)
+            if linked_work_payload is not None:
+                await self._emit("work.linked", task, current_step, payload=linked_work_payload)
             await self._emit(event_type, task, current_step, payload=payload, summary_message=summary_message)
 
         sink.current_step = current_step
         return sink
+
+    async def _ensure_skill_work_link(self, *, task: TaskRun, event_type: str, payload: dict) -> dict | None:
+        if event_type != "tool.completed":
+            return None
+        if self.work_repository is None:
+            return None
+        task_input = dict(task.input_payload or {})
+        if self._work_id_from_input(task_input):
+            return None
+        tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").strip()
+        if tool_name not in TRACKED_SKILL_TOOL_NAMES:
+            return None
+        result = payload.get("result")
+        if isinstance(result, dict) and result.get("ok") is False:
+            return None
+        session_id = str(task.session_key or "").strip()
+        if not session_id:
+            return None
+
+        skill_name = self._skill_name_from_tool_payload(payload)
+        prompt = str(task_input.get("prompt") or "").strip()
+        title = self._skill_work_title(skill_name=skill_name, prompt=prompt)
+        service = WorkService(self.work_repository)
+        work = service.create_from_payload(
+            session_id=session_id,
+            owner_key=str(task.owner_key),
+            owner_user_id=self._int_or_none(task.owner_key),
+            client_request_id=f"skill-work:{task.task_run_id}",
+            payload={
+                "source": "skill_use",
+                "title": title,
+                "description": prompt or title,
+                "rawUserInput": prompt or title,
+                "executionInstruction": prompt or title,
+                "expectedDeliverable": "스킬 실행 결과를 반영한 답변",
+                "acceptanceCriteria": ["스킬 실행 결과가 최종 답변에 반영됨"],
+                "constraints": [],
+                "labelNames": ["execution"],
+                "metadata": {
+                    "createdFrom": "skill_use",
+                    "triggerTool": tool_name,
+                    "skillName": skill_name,
+                    "taskRunId": task.task_run_id,
+                },
+            },
+        )
+        service.mark_run_started(work_id=work.work_id, task_run_id=task.task_run_id)
+        next_input = {
+            **task_input,
+            "workId": work.work_id,
+            "workIdentifier": work.identifier,
+            "workTitle": work.title,
+            "workAssigneeAgentId": work.assignee_agent_id or "CEO",
+            "workContext": self.work_repository.context_preview(work.work_id),
+            "workLinkReason": "skill_use",
+        }
+        task.input_payload = next_input
+        self.repository.update_task(task)
+        return {
+            "reason": "skill_use",
+            "workId": work.work_id,
+            "workIdentifier": work.identifier,
+            "workTitle": work.title,
+            "workStatus": work.status,
+            "workAssigneeAgentId": work.assignee_agent_id,
+            "taskRunId": task.task_run_id,
+            "triggerTool": tool_name,
+            "skillName": skill_name,
+            "linkedWork": {
+                "workId": work.work_id,
+                "identifier": work.identifier,
+                "title": work.title,
+                "status": work.status,
+                "assigneeAgentId": work.assignee_agent_id,
+                "latestRunId": task.task_run_id,
+            },
+        }
+
+    async def _ensure_skill_work_link_from_outcome(self, *, task: TaskRun, outcome: dict) -> dict | None:
+        if self._work_id_from_input(dict(task.input_payload or {})):
+            return None
+        for tool_result in self._tool_results_from_outcome(outcome):
+            tool_name = str(tool_result.get("name") or "").strip()
+            if tool_name not in TRACKED_SKILL_TOOL_NAMES:
+                continue
+            result = tool_result.get("result")
+            if isinstance(result, dict) and result.get("ok") is False:
+                continue
+            payload = {
+                "tool_name": tool_name,
+                "input": dict(tool_result.get("args") or {}),
+                "result": result if isinstance(result, dict) else {},
+            }
+            return await self._ensure_skill_work_link(task=task, event_type="tool.completed", payload=payload)
+        return None
+
+    @staticmethod
+    def _tool_results_from_outcome(outcome: dict) -> list[dict]:
+        results: list[dict] = []
+        for container_key in ("result_payload", "output_payload"):
+            container = outcome.get(container_key)
+            if not isinstance(container, dict):
+                continue
+            for item in container.get("tool_results") or []:
+                if isinstance(item, dict):
+                    results.append(item)
+        deduped: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for item in results:
+            key = (str(item.get("tool_call_id") or ""), str(item.get("name") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        return deduped
+
+    @staticmethod
+    def _work_id_from_input(task_input: dict) -> str | None:
+        candidate = task_input.get("workId") or task_input.get("work_id")
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+        return None
+
+    @staticmethod
+    def _skill_name_from_tool_payload(payload: dict) -> str | None:
+        for container in (payload.get("input"), payload.get("result")):
+            if not isinstance(container, dict):
+                continue
+            value = container.get("skill_name") or container.get("skillName") or container.get("name")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    @staticmethod
+    def _skill_work_title(*, skill_name: str | None, prompt: str) -> str:
+        if skill_name:
+            return f"{skill_name} 스킬 실행"
+        first_line = " ".join((prompt.splitlines()[0] if prompt.splitlines() else prompt).split())
+        return (first_line[:40].rstrip() + " 스킬 실행") if first_line else "스킬 실행"
+
+    @staticmethod
+    def _int_or_none(value) -> int | None:
+        try:
+            return int(str(value))
+        except (TypeError, ValueError):
+            return None
 
     def _build_delegate_executor(self, *, task: TaskRun, handler, progress_sink):
         async def execute_delegate(*, child_session: dict, tool_call_id: str, args: dict, accepted_result: dict) -> dict:

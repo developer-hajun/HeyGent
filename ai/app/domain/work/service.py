@@ -48,6 +48,7 @@ class WorkService:
             status=initial_status_for_work_mode(),
             assignee_agent_id=_empty_to_none(payload.get("assigneeAgentId") or payload.get("assignee_agent_id")) or "CEO",
             parent_id=parent_id,
+            source=str(payload.get("source") or "work_mode").strip() or "work_mode",
             raw_user_input=raw_user_input,
             execution_instruction=str(payload.get("executionInstruction") or payload.get("execution_instruction") or description).strip(),
             expected_deliverable=_empty_to_none(payload.get("expectedDeliverable") or payload.get("expected_deliverable")),
