@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   Zap,
   Database,
@@ -14,7 +14,14 @@ import {
   Globe,
   Loader2,
   CheckCircle2,
+  BarChart2,
+  RefreshCw,
 } from 'lucide-react'
+import {
+  getCommandUsage,
+  type CommandUsageSummary,
+  type CommandUsageParams,
+} from '@/apis/aiCommandUsage'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -597,6 +604,33 @@ function ApiKeysContent() {
     { id: 'gemini_api_key' as const, name: 'Gemini API', value: '', visible: false },
     { id: 'claude_api_key' as const, name: 'Claude API', value: '', visible: false },
   ])
+
+  // ── 토큰 사용량 ──────────────────────────────────────────────────────────────
+  const today = new Date().toISOString().slice(0, 10)
+  const firstOfMonth = today.slice(0, 7) + '-01'
+  const [usageFrom, setUsageFrom] = useState(firstOfMonth)
+  const [usageTo, setUsageTo] = useState(today)
+  const [usageSummary, setUsageSummary] = useState<CommandUsageSummary | null>(null)
+  const [usageLoading, setUsageLoading] = useState(false)
+  const [usageError, setUsageError] = useState<string | null>(null)
+
+  const fetchUsage = useCallback(async (params: CommandUsageParams) => {
+    setUsageLoading(true)
+    setUsageError(null)
+    try {
+      const result = await getCommandUsage(params)
+      setUsageSummary(result.summary)
+    } catch {
+      setUsageError('사용량을 불러오지 못했습니다.')
+    } finally {
+      setUsageLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void fetchUsage({ from: firstOfMonth, to: today })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [saveStatuses, setSaveStatuses] = useState<Record<string, SaveStatus>>({})
   const [saveErrors, setSaveErrors] = useState<Record<string, string | null>>({})
@@ -646,134 +680,210 @@ function ApiKeysContent() {
       </div>
 
       <div className="space-y-3">
-        {apiKeys.map((key) => {
-          const guide = API_KEY_GUIDES[key.id]
-          return (
-            <div key={key.id} className="bg-muted/30 border-border space-y-3 rounded-xl border p-4">
-              {/* 레이블 + 버튼 행 */}
-              <div className="flex items-center justify-between gap-4">
-                <label className="text-foreground shrink-0 text-sm font-medium">{key.name}</label>
-                <div className="flex shrink-0 items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setExpandedId(expandedId === key.id ? null : key.id)}
-                    className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs whitespace-nowrap transition-colors"
-                  >
-                    <span>{expandedId === key.id ? '접기' : '발급 방법 보기'}</span>
-                    <ChevronDown
-                      className={`h-3.5 w-3.5 transition-transform duration-200 ${expandedId === key.id ? 'rotate-180' : ''}`}
-                    />
-                  </button>
-                </div>
-              </div>
-
-              {/* 입력창 */}
-              <div className="relative">
-                <input
-                  type={key.visible ? 'text' : 'password'}
-                  value={key.value}
-                  onChange={(e) =>
-                    setApiKeys((prev) =>
-                      prev.map((k) => (k.id === key.id ? { ...k, value: e.target.value } : k)),
-                    )
-                  }
-                  placeholder={guide.placeholder}
-                  className="border-border text-foreground placeholder:text-muted-foreground focus:ring-ring/20 w-full rounded-lg border bg-transparent py-2 pr-10 pl-3 text-sm focus:ring-2 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => toggleVisibility(key.id)}
-                  className="text-muted-foreground hover:text-foreground absolute top-1/2 right-3 -translate-y-1/2 transition-colors"
-                >
-                  {key.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                </button>
-              </div>
-
-              {/* 저장/삭제 버튼 행 */}
-              <div className="flex items-center justify-between gap-2">
-                {saveStatuses[key.id] === 'error' && saveErrors[key.id] ? (
-                  <p className="text-destructive text-xs">{saveErrors[key.id]}</p>
-                ) : saveStatuses[key.id] === 'saved' ? (
-                  <p className="flex items-center gap-1 text-xs text-emerald-500">
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    저장됐습니다
-                  </p>
-                ) : deleteStatuses[key.id] === 'saved' ? (
-                  <p className="flex items-center gap-1 text-xs text-emerald-500">
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    삭제됐습니다
-                  </p>
-                ) : deleteStatuses[key.id] === 'error' ? (
-                  <p className="text-destructive text-xs">삭제에 실패했습니다.</p>
-                ) : (
-                  <span />
-                )}
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={deleteStatuses[key.id] === 'saving'}
-                    onClick={() => void handleDelete(key.id)}
-                    className="flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-500 transition-colors hover:bg-red-50 disabled:opacity-40 dark:border-red-800 dark:hover:bg-red-950"
-                  >
-                    {deleteStatuses[key.id] === 'saving' ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : null}
-                    {deleteStatuses[key.id] === 'saving' ? '삭제 중...' : '삭제'}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!key.value.trim() || saveStatuses[key.id] === 'saving'}
-                    onClick={() => void handleSave(key.id)}
-                    className="bg-foreground text-background hover:bg-foreground/85 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40"
-                  >
-                    {saveStatuses[key.id] === 'saving' ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : null}
-                    {saveStatuses[key.id] === 'saving' ? '저장 중...' : '저장'}
-                  </button>
-                </div>
-              </div>
-
-              {/* 아코디언 발급 안내 */}
-              {expandedId === key.id && (
-                <div className="border-border/60 space-y-3 border-t pt-3">
-                  <ol className="space-y-2">
-                    {guide.steps.map((step, i) => (
-                      <li key={i} className="flex gap-2.5 text-sm">
-                        <span className="text-muted-foreground shrink-0 font-medium">{i + 1}.</span>
-                        <span className="text-muted-foreground leading-5">
-                          {'href' in step ? (
-                            <>
-                              {step.before}
-                              <a
-                                href={step.href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-foreground underline underline-offset-2 transition-opacity hover:opacity-70"
-                              >
-                                {step.linkLabel}
-                              </a>
-                              {step.after}
-                            </>
-                          ) : (
-                            step.text
-                          )}
-                        </span>
-                      </li>
-                    ))}
-                  </ol>
-                  <div className="bg-muted space-y-1 rounded-lg px-3 py-2.5">
-                    <p className="text-foreground text-xs font-medium">⚠️ 보안 주의사항</p>
-                    <ul className="text-muted-foreground space-y-0.5 text-xs leading-5">
-                      <li>• API 키는 비밀번호와 같습니다. 절대 타인과 공유하지 마세요.</li>
-                      <li>• 키가 노출되었다면 즉시 삭제 후 재발급받으세요.</li>
-                    </ul>
+        {apiKeys.map(
+          (key: {
+            id: 'openai_api_key' | 'gemini_api_key' | 'claude_api_key'
+            name: string
+            value: string
+            visible: boolean
+          }) => {
+            const guide = API_KEY_GUIDES[key.id]
+            return (
+              <div
+                key={key.id}
+                className="bg-muted/30 border-border space-y-3 rounded-xl border p-4"
+              >
+                {/* 레이블 + 버튼 행 */}
+                <div className="flex items-center justify-between gap-4">
+                  <label className="text-foreground shrink-0 text-sm font-medium">{key.name}</label>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId(expandedId === key.id ? null : key.id)}
+                      className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs whitespace-nowrap transition-colors"
+                    >
+                      <span>{expandedId === key.id ? '접기' : '발급 방법 보기'}</span>
+                      <ChevronDown
+                        className={`h-3.5 w-3.5 transition-transform duration-200 ${expandedId === key.id ? 'rotate-180' : ''}`}
+                      />
+                    </button>
                   </div>
                 </div>
-              )}
-            </div>
-          )
-        })}
+
+                {/* 입력창 */}
+                <div className="relative">
+                  <input
+                    type={key.visible ? 'text' : 'password'}
+                    value={key.value}
+                    onChange={(e) =>
+                      setApiKeys((prev) =>
+                        prev.map((k) => (k.id === key.id ? { ...k, value: e.target.value } : k)),
+                      )
+                    }
+                    placeholder={guide.placeholder}
+                    className="border-border text-foreground placeholder:text-muted-foreground focus:ring-ring/20 w-full rounded-lg border bg-transparent py-2 pr-10 pl-3 text-sm focus:ring-2 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => toggleVisibility(key.id)}
+                    className="text-muted-foreground hover:text-foreground absolute top-1/2 right-3 -translate-y-1/2 transition-colors"
+                  >
+                    {key.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                  </button>
+                </div>
+
+                {/* 저장/삭제 버튼 행 */}
+                <div className="flex items-center justify-between gap-2">
+                  {saveStatuses[key.id] === 'error' && saveErrors[key.id] ? (
+                    <p className="text-destructive text-xs">{saveErrors[key.id]}</p>
+                  ) : saveStatuses[key.id] === 'saved' ? (
+                    <p className="flex items-center gap-1 text-xs text-emerald-500">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      저장됐습니다
+                    </p>
+                  ) : deleteStatuses[key.id] === 'saved' ? (
+                    <p className="flex items-center gap-1 text-xs text-emerald-500">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      삭제됐습니다
+                    </p>
+                  ) : deleteStatuses[key.id] === 'error' ? (
+                    <p className="text-destructive text-xs">삭제에 실패했습니다.</p>
+                  ) : (
+                    <span />
+                  )}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={deleteStatuses[key.id] === 'saving'}
+                      onClick={() => void handleDelete(key.id)}
+                      className="flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-500 transition-colors hover:bg-red-50 disabled:opacity-40 dark:border-red-800 dark:hover:bg-red-950"
+                    >
+                      {deleteStatuses[key.id] === 'saving' ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : null}
+                      {deleteStatuses[key.id] === 'saving' ? '삭제 중...' : '삭제'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!key.value.trim() || saveStatuses[key.id] === 'saving'}
+                      onClick={() => void handleSave(key.id)}
+                      className="bg-foreground text-background hover:bg-foreground/85 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40"
+                    >
+                      {saveStatuses[key.id] === 'saving' ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : null}
+                      {saveStatuses[key.id] === 'saving' ? '저장 중...' : '저장'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* 아코디언 발급 안내 */}
+                {expandedId === key.id && (
+                  <div className="border-border/60 space-y-3 border-t pt-3">
+                    <ol className="space-y-2">
+                      {guide.steps.map((step, i) => (
+                        <li key={i} className="flex gap-2.5 text-sm">
+                          <span className="text-muted-foreground shrink-0 font-medium">
+                            {i + 1}.
+                          </span>
+                          <span className="text-muted-foreground leading-5">
+                            {'href' in step ? (
+                              <>
+                                {step.before}
+                                <a
+                                  href={step.href}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-foreground underline underline-offset-2 transition-opacity hover:opacity-70"
+                                >
+                                  {step.linkLabel}
+                                </a>
+                                {step.after}
+                              </>
+                            ) : (
+                              step.text
+                            )}
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                    <div className="bg-muted space-y-1 rounded-lg px-3 py-2.5">
+                      <p className="text-foreground text-xs font-medium">⚠️ 보안 주의사항</p>
+                      <ul className="text-muted-foreground space-y-0.5 text-xs leading-5">
+                        <li>• API 키는 비밀번호와 같습니다. 절대 타인과 공유하지 마세요.</li>
+                        <li>• 키가 노출되었다면 즉시 삭제 후 재발급받으세요.</li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          },
+        )}
+      </div>
+
+      {/* 토큰 사용량 */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2">
+          <BarChart2 className="text-muted-foreground h-4 w-4" />
+          <h4 className="text-foreground text-base font-semibold">토큰 사용량</h4>
+        </div>
+
+        {/* 기간 필터 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="date"
+            value={usageFrom}
+            max={usageTo}
+            onChange={(e) => setUsageFrom(e.target.value)}
+            className="border-border bg-muted/30 text-foreground rounded-lg border px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-white/20"
+          />
+          <span className="text-muted-foreground text-sm">~</span>
+          <input
+            type="date"
+            value={usageTo}
+            min={usageFrom}
+            max={today}
+            onChange={(e) => setUsageTo(e.target.value)}
+            className="border-border bg-muted/30 text-foreground rounded-lg border px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-white/20"
+          />
+          <button
+            onClick={() => void fetchUsage({ from: usageFrom, to: usageTo })}
+            disabled={usageLoading}
+            className="bg-muted text-foreground hover:bg-muted/80 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${usageLoading ? 'animate-spin' : ''}`} />
+            조회
+          </button>
+        </div>
+
+        {/* 결과 */}
+        {usageError && <p className="text-destructive text-sm">{usageError}</p>}
+        {usageSummary && !usageLoading && (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {[
+              { label: '총 토큰', value: usageSummary.totalTokens.toLocaleString() },
+              { label: '입력 토큰', value: usageSummary.inputTokens.toLocaleString() },
+              { label: '출력 토큰', value: usageSummary.outputTokens.toLocaleString() },
+              { label: '캐시 토큰', value: usageSummary.cachedInputTokens.toLocaleString() },
+              { label: '추론 토큰', value: usageSummary.reasoningTokens.toLocaleString() },
+              {
+                label: '예상 비용',
+                value: `$${usageSummary.estimatedCostUsd.toFixed(4)}`,
+              },
+            ].map(({ label, value }) => (
+              <div key={label} className="bg-muted/30 border-border rounded-xl border px-4 py-3">
+                <p className="text-muted-foreground mb-1 text-xs">{label}</p>
+                <p className="text-foreground text-sm font-semibold tabular-nums">{value}</p>
+              </div>
+            ))}
+          </div>
+        )}
+        {usageSummary && (
+          <p className="text-muted-foreground text-xs">
+            조회된 기록 {usageSummary.recordCount.toLocaleString()}건
+          </p>
+        )}
       </div>
     </div>
   )

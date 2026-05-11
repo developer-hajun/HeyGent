@@ -1,12 +1,152 @@
 import { useState, useRef, useEffect } from 'react'
 import { OfficeMap } from '@/components/office/OfficeMap'
+import {
+  useAgentVisualizationStore,
+  createMockAgentInfoMap,
+} from '@/store/useAgentVisualizationStore'
+import { getCommandUsage } from '@/apis/aiCommandUsage'
+import type { CommandUsageSummary } from '@/apis/aiCommandUsage'
 import type {
   AgentConfig,
   AgentRuntime,
   Destination,
   UIDestination,
   SittingState,
+  AgentVisualizationInfo,
+  AgentActivityStatus,
+  TaskStatus,
 } from '@/components/office/types'
+
+const ACTIVITY_STATUS_LABEL: Record<AgentActivityStatus, string> = {
+  spawning: '진입 중',
+  working: '작업 중',
+  resting: '휴식 중',
+  inactive: '비활성',
+}
+
+const ACTIVITY_STATUS_CLASS: Record<AgentActivityStatus, string> = {
+  spawning: 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30',
+  working: 'bg-blue-500/20 text-blue-300 border border-blue-500/30',
+  resting: 'bg-green-500/20 text-green-300 border border-green-500/30',
+  inactive: 'bg-gray-500/20 text-gray-400 border border-gray-500/30',
+}
+
+const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
+  pending: '대기 중',
+  in_progress: '진행 중',
+  completed: '완료',
+  failed: '실패',
+}
+
+const TASK_STATUS_CLASS: Record<TaskStatus, string> = {
+  pending: 'text-yellow-300',
+  in_progress: 'text-blue-300',
+  completed: 'text-green-300',
+  failed: 'text-red-400',
+}
+
+function AgentInfoPanel({ info, onClose }: { info: AgentVisualizationInfo; onClose: () => void }) {
+  return (
+    <div className="absolute top-4 right-4 z-30 flex w-72 flex-col rounded-2xl border border-white/15 bg-black/80 shadow-2xl backdrop-blur-md">
+      {/* 헤더 */}
+      <div className="flex items-start justify-between border-b border-white/10 p-4">
+        <div className="flex items-center gap-3">
+          {info.profileImage ? (
+            <img
+              src={info.profileImage}
+              alt={info.name}
+              className="h-10 w-10 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-500/30 text-sm font-bold text-white">
+              {info.name[0]}
+            </div>
+          )}
+          <div>
+            <p className="text-sm font-semibold text-white">{info.name}</p>
+            <p className="text-xs text-white/50">{info.role}</p>
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          className="text-lg leading-none text-white/30 transition-colors hover:text-white"
+        >
+          ×
+        </button>
+      </div>
+
+      {/* 활동 상태 */}
+      <div className="border-b border-white/10 px-4 py-2.5">
+        <span
+          className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${ACTIVITY_STATUS_CLASS[info.activityStatus]}`}
+        >
+          {ACTIVITY_STATUS_LABEL[info.activityStatus]}
+        </span>
+      </div>
+
+      {/* 현재 작업 */}
+      {info.currentTask && (
+        <div className="border-b border-white/10 px-4 py-3">
+          <p className="mb-1.5 text-xs tracking-wide text-white/35 uppercase">현재 작업</p>
+          <p className="text-sm font-semibold text-white">{info.currentTask.title}</p>
+          {info.currentTask.description && (
+            <p className="mt-1 line-clamp-2 text-xs text-white/50">
+              {info.currentTask.description}
+            </p>
+          )}
+          <span
+            className={`mt-1.5 inline-block text-xs ${TASK_STATUS_CLASS[info.currentTask.status]}`}
+          >
+            ● {TASK_STATUS_LABEL[info.currentTask.status]}
+          </span>
+        </div>
+      )}
+
+      {/* 스킬 */}
+      <div className="border-b border-white/10 px-4 py-3">
+        <p className="mb-1.5 text-xs tracking-wide text-white/35 uppercase">스킬</p>
+        <div className="flex flex-wrap gap-1">
+          {info.skills.map((skill) => (
+            <span key={skill} className="rounded-md bg-white/10 px-2 py-0.5 text-xs text-white/70">
+              {skill}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* 작업 내역 */}
+      <div className="max-h-48 flex-1 overflow-y-auto px-4 py-3">
+        <p className="mb-2 text-xs tracking-wide text-white/35 uppercase">작업 내역</p>
+        {info.taskHistory.length === 0 ? (
+          <p className="text-xs text-white/30">작업 내역 없음</p>
+        ) : (
+          <div className="space-y-2">
+            {info.taskHistory.map((task) => (
+              <div key={task.taskId} className="flex items-start gap-2">
+                <span className="mt-0.5 shrink-0 text-xs text-green-400">✓</span>
+                <div>
+                  <p className="text-xs text-white/80">{task.title}</p>
+                  {task.completedAt && (
+                    <p className="text-xs text-white/30">
+                      {new Date(task.completedAt).toLocaleDateString('ko-KR')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 편집 버튼 — 추후 편집 모달 연결 */}
+      <div className="border-t border-white/10 px-4 py-3">
+        <button className="w-full rounded-lg bg-white/10 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/20">
+          에이전트 편집
+        </button>
+      </div>
+    </div>
+  )
+}
 
 // 새 에이전트 추가 시 이 배열에 항목만 추가하면 됩니다.
 const AGENT_CONFIGS: AgentConfig[] = [
@@ -166,6 +306,27 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1310, y: 460 },
       meeting: { x: 920, y: 220 },
       calling: { x: 1250, y: 660 },
+    },
+  },
+  {
+    id: 'ceo',
+    name: 'CEO',
+    spritePath: '/assets/agents/ceo',
+    scale: 1.05,
+    sittingSprites: {
+      sitting_desk: 'ceo_desk',
+      sitting_meeting: 'ceo_explain',
+      standing_wait: 'walk_side_stand',
+    },
+    allowedUIDestinations: ['desk', 'meeting'],
+    destinationLabels: { meeting: '화이트보드' },
+    initialPosition: { x: 1460, y: 700 },
+    destinations: {
+      desk: { x: 310, y: 215 },
+      meeting: { x: 383, y: 493 },
+      sofa: { x: 310, y: 215 },
+      floorLean: { x: 310, y: 215 },
+      calling: { x: 310, y: 215 },
     },
   },
 ]
@@ -613,14 +774,79 @@ function initAgents(): AgentRuntime[] {
 
 const DESTINATIONS: UIDestination[] = ['desk', 'rest', 'meeting', 'calling']
 
+function playSpawnSound() {
+  try {
+    const ctx = new AudioContext()
+    const play = () => {
+      ;[1318.51, 1567.98].forEach((freq, i) => {
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+        osc.type = 'sine'
+        osc.frequency.value = freq
+        const t = ctx.currentTime + i * 0.12
+        gain.gain.setValueAtTime(0.18, t)
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45)
+        osc.start(t)
+        osc.stop(t + 0.45)
+      })
+    }
+    // 페이지 내 이동으로 진입한 경우 AudioContext가 이미 running 상태이므로 즉시 재생됨
+    // 직접 URL 접근 시 브라우저가 차단하면 소리 없이 무시
+    void ctx.resume().then(play)
+  } catch {
+    // AudioContext 미지원 환경 무시
+  }
+}
+
 export function AgentStatusPage() {
   const [agents, setAgents] = useState<AgentRuntime[]>(initAgents)
   const [selectedId, setSelectedId] = useState('agent01')
-  const [ceoMode, setCeoMode] = useState<'desk' | 'explain'>('desk')
   const [panelTop, setPanelTop] = useState(false)
   const [navmeshGrid, setNavmeshGrid] = useState<boolean[][] | null>(null)
+  const [spawningIds, setSpawningIds] = useState<ReadonlySet<string>>(new Set())
+  const [tokenUsageSummary, setTokenUsageSummary] = useState<CommandUsageSummary | null>(null)
+
+  useEffect(() => {
+    void getCommandUsage({})
+      .then((d) => setTokenUsageSummary(d.summary))
+      .catch(() => {
+        // 임시 mock — API 연동 전 화이트보드 차트 미리보기용
+        setTokenUsageSummary({
+          inputTokens: 8400,
+          outputTokens: 3200,
+          cachedInputTokens: 1500,
+          reasoningTokens: 900,
+          totalTokens: 11600,
+          estimatedCostUsd: 0.0842,
+          currency: 'USD',
+          recordCount: 47,
+        })
+      })
+  }, [])
   const runtimeGridRef = useRef<boolean[][]>(OBSTACLE_GRID)
   const walkTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({})
+
+  const { agentInfoMap, selectedAgentId, setAgentInfoMap, selectAgent } =
+    useAgentVisualizationStore()
+
+  useEffect(() => {
+    const map = createMockAgentInfoMap()
+    setAgentInfoMap(map)
+
+    // 초기 mock 스폰 — API 연동 시 에이전트별 spawnAgent() 개별 호출로 교체
+    // setTimeout(0): 린터 규칙(effect 내 동기 setState 금지)을 피하기 위해 한 프레임 뒤에 실행
+    const spawnTimer = setTimeout(() => {
+      setSpawningIds(new Set(Object.keys(map)))
+      playSpawnSound()
+    }, 0)
+    const clearTimer = setTimeout(() => setSpawningIds(new Set()), 2500)
+    return () => {
+      clearTimeout(spawnTimer)
+      clearTimeout(clearTimer)
+    }
+  }, [setAgentInfoMap])
 
   useEffect(() => {
     let cancelled = false
@@ -850,9 +1076,21 @@ export function AgentStatusPage() {
 
   const selectedAgent = agents.find((a) => a.config.id === selectedId)
 
+  const selectedInfo = selectedAgentId ? agentInfoMap[selectedAgentId] : null
+
   return (
     <div className="relative flex flex-1 overflow-hidden">
-      <OfficeMap agents={agents} onAgentArrived={handleAgentArrived} ceoMode={ceoMode} />
+      <OfficeMap
+        agents={agents}
+        onAgentArrived={handleAgentArrived}
+        ceoMode={null}
+        onAgentClick={selectAgent}
+        agentInfoMap={agentInfoMap}
+        selectedAgentId={selectedAgentId}
+        spawningIds={spawningIds}
+        tokenUsageSummary={tokenUsageSummary}
+      />
+      {selectedInfo && <AgentInfoPanel info={selectedInfo} onClose={() => selectAgent(null)} />}
 
       <div className={`absolute left-1/2 z-20 -translate-x-1/2 ${panelTop ? 'top-4' : 'bottom-6'}`}>
         <div className="flex flex-col gap-2.5 rounded-2xl border border-white/20 bg-black/60 px-5 py-3 shadow-2xl backdrop-blur-md">
@@ -882,13 +1120,6 @@ export function AgentStatusPage() {
             >
               {panelTop ? '▼' : '▲'}
             </button>
-            <div className="mx-0.5 h-4 w-px bg-white/20" />
-            <button
-              onClick={() => setCeoMode((prev) => (prev === 'desk' ? 'explain' : 'desk'))}
-              className="rounded-lg bg-amber-400 px-3 py-1 text-xs font-bold text-gray-900 transition-colors hover:bg-amber-300"
-            >
-              {ceoMode === 'desk' ? 'CEO 책상' : 'CEO 화이트보드'}
-            </button>
           </div>
 
           {/* 선택된 에이전트 이동 */}
@@ -899,14 +1130,14 @@ export function AgentStatusPage() {
                 <span className="text-xs text-white/50">{STATE_LABELS[selectedAgent.state]}</span>
               </div>
               <div className="flex gap-1.5">
-                {DESTINATIONS.map((dest) => (
+                {(selectedAgent.config.allowedUIDestinations ?? DESTINATIONS).map((dest) => (
                   <button
                     key={dest}
                     onClick={() => handleMove(selectedAgent.config.id, dest)}
                     disabled={selectedAgent.state === 'walking'}
                     className="rounded-lg bg-white/90 px-3 py-1.5 text-xs font-semibold text-gray-900 shadow-sm transition-opacity hover:bg-white disabled:cursor-not-allowed disabled:opacity-30"
                   >
-                    {DESTINATION_MAP[dest].label}
+                    {selectedAgent.config.destinationLabels?.[dest] ?? DESTINATION_MAP[dest].label}
                   </button>
                 ))}
               </div>

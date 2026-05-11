@@ -9,9 +9,18 @@ from app.clients.backend_memory import BackendMemoryClientError
 
 
 class FakeMemoryClient:
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, fail_recall: bool = False, memories=None) -> None:
         self.calls = []
+        self.recall_calls = []
         self.fail = fail
+        self.fail_recall = fail_recall
+        self.memories = list(memories or [])
+
+    async def recall(self, **kwargs):
+        self.recall_calls.append(kwargs)
+        if self.fail_recall:
+            raise BackendMemoryClientError("backend failed")
+        return list(self.memories)
 
     async def create_candidates(self, **kwargs):
         self.calls.append(kwargs)
@@ -49,7 +58,7 @@ async def test_writeback_extracts_and_posts_candidates_to_backend():
     extractor = FakeExtractor([candidate])
     app_state = SimpleNamespace(backend_memory_client=memory_client, memory_extractor=extractor)
 
-    await writeback_persistent_memory_candidates(
+    observation = await writeback_persistent_memory_candidates(
         app_state=app_state,
         user_id="1",
         user_message="앞으로 짧게 답해줘.",
@@ -63,7 +72,29 @@ async def test_writeback_extracts_and_posts_candidates_to_backend():
 
     assert len(extractor.calls) == 1
     assert extractor.calls[0]["context"].workspace_key == "workspace-a"
+    assert memory_client.recall_calls == [
+        {
+            "user_id": "1",
+            "query": "사용자는 짧은 답변을 선호한다.",
+            "limit": 5,
+            "workspace_key": None,
+            "store_type": "USER_PROFILE",
+            "memory_type": "PREFERENCE",
+            "scope_type": "GLOBAL",
+            "tags": None,
+        }
+    ]
     assert memory_client.calls == [{"user_id": "1", "candidates": [candidate]}]
+    assert observation == {
+        "status": "succeeded",
+        "attempted": True,
+        "candidate_count": 1,
+        "memory_types": ["PREFERENCE"],
+        "store_types": ["USER_PROFILE"],
+        "scope_types": ["GLOBAL"],
+        "operation_types": ["ADD"],
+        "failed": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -72,7 +103,7 @@ async def test_writeback_is_nonfatal_when_extractor_fails():
     extractor = FakeExtractor(fail=True)
     app_state = SimpleNamespace(backend_memory_client=memory_client, memory_extractor=extractor)
 
-    await writeback_persistent_memory_candidates(
+    observation = await writeback_persistent_memory_candidates(
         app_state=app_state,
         user_id="1",
         user_message="기억해줘.",
@@ -81,6 +112,8 @@ async def test_writeback_is_nonfatal_when_extractor_fails():
     )
 
     assert memory_client.calls == []
+    assert observation["status"] == "extract_failed"
+    assert observation["failed"] is True
 
 
 @pytest.mark.asyncio
@@ -102,7 +135,7 @@ async def test_writeback_is_nonfatal_when_backend_fails():
     )
     app_state = SimpleNamespace(backend_memory_client=memory_client, memory_extractor=extractor)
 
-    await writeback_persistent_memory_candidates(
+    observation = await writeback_persistent_memory_candidates(
         app_state=app_state,
         user_id="1",
         user_message="기억해줘.",
@@ -111,3 +144,78 @@ async def test_writeback_is_nonfatal_when_backend_fails():
     )
 
     assert len(memory_client.calls) == 1
+    assert observation["status"] == "store_failed"
+    assert observation["attempted"] is True
+    assert observation["candidate_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_writeback_reconciles_preference_change_to_update():
+    candidate = {
+        "memoryType": "PREFERENCE",
+        "storeType": "USER_PROFILE",
+        "scopeType": "GLOBAL",
+        "operationType": "ADD",
+        "content": "사용자는 Jira 항목을 [BE] fix / [AI] feat 형식으로 나누는 것을 선호한다.",
+        "summary": "Jira 작성 형식 선호",
+        "metadata": {"source": "ai.writeback", "tags": ["jira"]},
+        "importance": 0.8,
+        "confidence": 0.9,
+    }
+    memory_client = FakeMemoryClient(
+        memories=[
+            SimpleNamespace(
+                id=10,
+                memory_type="PREFERENCE",
+                store_type="USER_PROFILE",
+                scope_type="GLOBAL",
+                content="사용자는 Jira 항목을 [AI] feat 형식으로 정리하는 것을 선호한다.",
+                summary="Jira 작성 형식 선호",
+            )
+        ]
+    )
+    extractor = FakeExtractor([candidate])
+    app_state = SimpleNamespace(backend_memory_client=memory_client, memory_extractor=extractor)
+
+    observation = await writeback_persistent_memory_candidates(
+        app_state=app_state,
+        user_id="1",
+        user_message="앞으로 Jira는 [BE] fix / [AI] feat 이렇게 역할별로 나눠줘.",
+        assistant_message="알겠습니다.",
+        session_id="session_1",
+    )
+
+    saved_candidate = memory_client.calls[0]["candidates"][0]
+    assert saved_candidate["operationType"] == "UPDATE"
+    assert saved_candidate["targetMemoryId"] == 10
+    assert "갱신" in saved_candidate["updateReason"]
+    assert observation["operation_types"] == ["UPDATE"]
+
+
+@pytest.mark.asyncio
+async def test_writeback_keeps_add_when_reconciliation_recall_fails():
+    candidate = {
+        "memoryType": "FACT",
+        "storeType": "AGENT_MEMORY",
+        "scopeType": "GLOBAL",
+        "operationType": "ADD",
+        "content": "프로젝트는 장기기억 후보 저장 기능을 사용한다.",
+        "metadata": {"source": "ai.writeback"},
+        "importance": 0.7,
+        "confidence": 0.9,
+    }
+    memory_client = FakeMemoryClient(fail_recall=True)
+    extractor = FakeExtractor([candidate])
+    app_state = SimpleNamespace(backend_memory_client=memory_client, memory_extractor=extractor)
+
+    observation = await writeback_persistent_memory_candidates(
+        app_state=app_state,
+        user_id="1",
+        user_message="기억해줘.",
+        assistant_message="알겠습니다.",
+        session_id="session_1",
+    )
+
+    assert memory_client.calls == [{"user_id": "1", "candidates": [candidate]}]
+    assert observation["status"] == "succeeded"
+    assert observation["operation_types"] == ["ADD"]
