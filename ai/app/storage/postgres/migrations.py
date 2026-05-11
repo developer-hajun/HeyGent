@@ -463,6 +463,37 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """,
         ),
     ),
+    PostgresMigration(
+        migration_id="0012_work_wake_requests",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS work_wake_requests (
+                wake_id TEXT PRIMARY KEY,
+                work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+                root_work_id TEXT REFERENCES work_items(work_id) ON DELETE SET NULL,
+                reason TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('queued', 'claimed', 'dispatching', 'dispatched', 'completed', 'skipped', 'failed')),
+                requested_by_task_run_id TEXT,
+                task_run_id TEXT,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                claimed_at TIMESTAMPTZ,
+                completed_at TIMESTAMPTZ
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_work_wake_requests_status_created
+            ON work_wake_requests(status, created_at ASC);
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_work_wake_requests_work_active
+            ON work_wake_requests(work_id)
+            WHERE status IN ('queued', 'claimed', 'dispatching');
+            """,
+        ),
+    ),
 )
 
 

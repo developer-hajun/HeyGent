@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -33,6 +34,7 @@ from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
 from app.domain.work import WorkItem, WorkRunClaimConflict, WorkService
+from app.domain.work.wake import WorkWakeService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"], dependencies=[Depends(document_bearer_auth)])
 logger = logging.getLogger(__name__)
@@ -40,6 +42,9 @@ logger = logging.getLogger(__name__)
 _PUBLIC_SESSION_SOURCE = "api.session"
 _TASK_TRANSCRIPT_SOURCE = "agent.loop"
 _ACTIVE_TASK_STATUSES = {status.value for status in (TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.WAITING, TaskStatus.BLOCKED)}
+_WORK_WAKE_DEFAULT_LIMIT = 10
+_WORK_WAKE_LOOP_INTERVAL_SECONDS = 5
+_WORK_WAKE_STALE_RUN_SECONDS = 1800
 _PROTECTED_SESSION_METADATA_KEYS = {
     "owner_key",
     "ownerUserId",
@@ -551,6 +556,8 @@ async def _run_created_session_message(
         )
     elif task.status != "WAITING":
         session_store.clear_stale_running_task(owner_key=owner_key, session_id=session_id, task_run_id=task.task_run_id)
+    if task.status != "WAITING":
+        await _drain_work_wake_queue(request, user=user)
     return task, assistant_message_id
 
 
@@ -765,6 +772,119 @@ def _mark_linked_work_run_failed(request: Request, *, task_input: dict[str, Any]
         request.app.state.work_repository.update_run_status(work_id, task_run_id, "FAILED")
     except Exception:
         return
+
+
+async def enqueue_work_graph_wake(
+    request: Request,
+    *,
+    user,
+    work: WorkItem,
+    reason: str,
+    drain: bool = True,
+) -> list:
+    wakes = WorkWakeService(request.app.state.work_repository).enqueue_plan(root_work_id=work.work_id, reason=reason)
+    if drain:
+        dispatched = await _drain_work_wake_queue(request, user=user)
+        return dispatched or wakes
+    return wakes
+
+
+async def enqueue_unblocked_target_wakes(
+    request: Request,
+    *,
+    user,
+    work: WorkItem,
+    drain: bool = True,
+) -> list:
+    wakes = WorkWakeService(request.app.state.work_repository).enqueue_after_blocker_update(
+        blocker_work_id=work.work_id,
+        requested_by_task_run_id=None,
+    )
+    if drain:
+        dispatched = await _drain_work_wake_queue(request, user=user)
+        return dispatched or wakes
+    return wakes
+
+
+async def run_work_wake_loop(app) -> None:
+    while True:
+        try:
+            request = SimpleNamespace(app=app)
+            await _recover_stale_work_runs(request)
+            await _drain_work_wake_queue(request, user=None)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("work wake loop failed")
+        await asyncio.sleep(_WORK_WAKE_LOOP_INTERVAL_SECONDS)
+
+
+async def _recover_stale_work_runs(request: Request) -> None:
+    repository = request.app.state.work_repository
+    release_stale = getattr(repository, "release_stale_active_work_runs", None)
+    if not callable(release_stale):
+        return
+    for work in release_stale(stale_after_seconds=_WORK_WAKE_STALE_RUN_SECONDS, limit=50):
+        WorkWakeService(repository).enqueue_plan(root_work_id=work.work_id, reason="active_run_recovered")
+
+
+async def _drain_work_wake_queue(request: Request, *, user, limit: int = _WORK_WAKE_DEFAULT_LIMIT) -> list:
+    repository = request.app.state.work_repository
+    claim_wakes = getattr(repository, "claim_work_wakes", None)
+    if not callable(claim_wakes):
+        return []
+    wakes = claim_wakes(limit=limit)
+    completed = []
+    for wake in wakes:
+        completed.append(await _dispatch_work_wake(request, user=user, wake=wake))
+    return completed
+
+
+async def _dispatch_work_wake(request: Request, *, user, wake):
+    repository = request.app.state.work_repository
+    service = WorkWakeService(repository)
+    work = repository.get_work(wake.work_id)
+    if work is None:
+        return repository.complete_work_wake(wake.wake_id, status="skipped", last_error="work not found")
+    if work.active_run_id:
+        return repository.complete_work_wake(wake.wake_id, status="skipped", last_error="work already has an active run")
+    if work.status not in {"todo", "in_progress", "in_review", "blocked"}:
+        return repository.complete_work_wake(wake.wake_id, status="skipped", last_error=f"work status is {work.status}")
+    unresolved = service.unresolved_blocker_work_ids(work.work_id)
+    if unresolved:
+        return repository.complete_work_wake(wake.wake_id, status="skipped", last_error=f"unresolved blockers: {', '.join(unresolved)}")
+    session = request.app.state.session_store.get_session(work.session_id)
+    if session is None:
+        return repository.complete_work_wake(wake.wake_id, status="failed", last_error="session not found")
+    effective_user = user if user is not None and str(getattr(user, "user_id", "")) == str(work.owner_key) else _user_for_work_wake(work, session)
+    try:
+        message = await _create_message_in_session(
+            request,
+            CreateSessionMessageRequest(
+                content=_wake_message_for_work(work, wake.reason),
+                clientMessageId=f"work-wake:{wake.wake_id}",
+                inputPayload={"workId": work.work_id},
+            ),
+            session=session,
+            user=effective_user,
+            run_in_background=True,
+        )
+    except Exception as error:
+        return repository.complete_work_wake(wake.wake_id, status="failed", last_error=str(error))
+    # wake는 실행 요청을 만든 뒤 끝난다. 실제 완료/실패 판정은 연결된 WorkRun이 담당한다.
+    return repository.complete_work_wake(wake.wake_id, status="dispatched", task_run_id=message.task_run_id)
+
+
+def _user_for_work_wake(work: WorkItem, session: dict[str, Any]):
+    return SimpleNamespace(user_id=work.owner_key, workspace_key=session.get("workspace_key"))
+
+
+def _wake_message_for_work(work: WorkItem, reason: str) -> str:
+    if reason == "blockers_resolved":
+        return "선행 작업이 완료되었습니다. 이 작업을 이어서 진행해."
+    if reason == "active_run_recovered":
+        return "이전 실행이 중단되었습니다. 진행 가능한 지점부터 이 작업을 복구해서 이어서 진행해."
+    return "이 작업을 이어서 진행해."
 
 
 def _create_public_session(

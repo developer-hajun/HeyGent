@@ -53,7 +53,7 @@ from app.contracts.work import (
 from app.contracts.session import CreateSessionMessageRequest
 from app.core.utils.ids import new_id
 from app.domain.providers.model.base import AgentMessage
-from app.api.http.sessions import _create_message_in_session
+from app.api.http.sessions import _create_message_in_session, enqueue_unblocked_target_wakes, enqueue_work_graph_wake
 from app.domain.work import WorkComment, WorkItem, WorkService
 from app.domain.work.policies import normalize_disposition_status
 
@@ -206,6 +206,10 @@ async def _enrich_work_payload(request: Request, *, session: dict[str, Any], pay
     enriched.setdefault("description", raw_user_input)
     enriched.setdefault("executionInstruction", raw_user_input)
     return enriched
+
+
+async def _enrich_work_payload_title(request: Request, *, session: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    return await _enrich_work_payload(request, session=session, payload=payload)
 
 
 async def _generate_work_payload(request: Request, *, session: dict[str, Any], raw_user_input: str) -> dict[str, Any]:
@@ -388,6 +392,8 @@ async def move_work_status(request: Request, payload: MoveWorkStatusRequest, wor
     if status is None:
         raise HTTPException(status_code=400, detail="invalid work status")
     updated = request.app.state.work_repository.update_status(workId, status)
+    if status in {"done", "cancelled"}:
+        await enqueue_unblocked_target_wakes(request, user=user, work=updated)
     await _publish_work_event(request, str(user.user_id), "work.updated", work=updated)
     return _work_response(updated, repository=request.app.state.work_repository)
 
@@ -643,6 +649,16 @@ async def create_work_run(request: Request, payload: CreateWorkRunRequest, workI
         raise HTTPException(status_code=409, detail="work already has an active run")
     unresolved_blocker_ids = _unresolved_blocker_work_ids(request.app.state.work_repository, work.work_id)
     if unresolved_blocker_ids:
+        wakes = await enqueue_work_graph_wake(request, user=user, work=work, reason="manual_run_blocked")
+        updated = request.app.state.work_repository.get_work(work.work_id) or work
+        await _publish_work_event(request, str(user.user_id), "work_run.queued", work=updated)
+        if wakes:
+            first_wake = wakes[0]
+            return WorkCreateResponse(
+                work=_work_response(updated, repository=request.app.state.work_repository),
+                taskRunId=getattr(first_wake, "task_run_id", None),
+                taskStatus="QUEUED",
+            )
         raise HTTPException(
             status_code=409,
             detail={
@@ -712,7 +728,10 @@ async def remove_work_relation(request: Request, workId: str = Path(...), relati
     target = _work_or_404(request, targetWorkId)
     _ensure_work_owner(user, work)
     _ensure_work_owner(user, target)
-    deleted = request.app.state.work_repository.remove_relation(source_work_id=workId, target_work_id=targetWorkId, relation_type=_normalize_relation_type(relationType))
+    normalized_relation_type = _normalize_relation_type(relationType)
+    deleted = request.app.state.work_repository.remove_relation(source_work_id=workId, target_work_id=targetWorkId, relation_type=normalized_relation_type)
+    if deleted and normalized_relation_type == "blocks":
+        await enqueue_work_graph_wake(request, user=user, work=target, reason="blockers_resolved")
     await _publish_work_event(request, str(user.user_id), "work.updated", work=work)
     return {"deleted": deleted}
 
@@ -1091,7 +1110,7 @@ def _unresolved_blocker_work_ids(repository, work_id: str) -> list[str]:
     unresolved: list[str] = []
     for blocker_id in dict.fromkeys(blocker_ids):
         blocker = repository.get_work(blocker_id)
-        if blocker is None or blocker.status != "done":
+        if blocker is None or blocker.status not in {"done", "cancelled"}:
             unresolved.append(blocker_id)
     return unresolved
 

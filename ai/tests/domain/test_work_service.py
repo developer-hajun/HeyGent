@@ -5,8 +5,9 @@ from copy import deepcopy
 import pytest
 
 from app.domain.tasks.models import TaskRun
-from app.domain.work.models import WorkComment, WorkItem, WorkRunLink, WorkThreadInteraction
+from app.domain.work.models import WorkComment, WorkItem, WorkRelation, WorkRunLink, WorkThreadInteraction, WorkWakeRequest
 from app.domain.work.service import WorkRunClaimConflict, WorkService
+from app.domain.work.wake import WorkWakeService
 
 
 class FakeWorkRepository:
@@ -15,6 +16,8 @@ class FakeWorkRepository:
         self.comments: list[WorkComment] = []
         self.interactions: list[WorkThreadInteraction] = []
         self.runs: dict[tuple[str, str], WorkRunLink] = {}
+        self.relations: list[WorkRelation] = []
+        self.wakes: dict[str, WorkWakeRequest] = {}
         self.stale_run_ids: set[str] = set()
         self.client_requests: dict[tuple[str, str], str] = {}
         self.inherited_labels: list[tuple[str, str]] = []
@@ -103,9 +106,54 @@ class FakeWorkRepository:
             self.items[work_id] = work
         return self.runs[(work_id, task_run_id)]
 
+    def touch_run(self, work_id: str, task_run_id: str) -> None:
+        return None
+
     def list_runs(self, work_id: str, *, limit: int = 50, offset: int = 0) -> list[WorkRunLink]:
         items = [link for (linked_work_id, _), link in self.runs.items() if linked_work_id == work_id]
         return items[offset : offset + limit]
+
+    def add_relation(self, *, source_work_id: str, target_work_id: str, relation_type: str) -> WorkRelation:
+        relation = WorkRelation(source_work_id=source_work_id, target_work_id=target_work_id, relation_type=relation_type)
+        self.relations = [
+            item
+            for item in self.relations
+            if not (
+                item.source_work_id == source_work_id
+                and item.target_work_id == target_work_id
+                and item.relation_type == relation_type
+            )
+        ]
+        self.relations.append(relation)
+        return relation
+
+    def list_relations(self, work_id: str) -> list[WorkRelation]:
+        return [item for item in self.relations if item.source_work_id == work_id or item.target_work_id == work_id]
+
+    def enqueue_work_wake(self, wake: WorkWakeRequest) -> WorkWakeRequest:
+        for existing in self.wakes.values():
+            if existing.work_id == wake.work_id and existing.status in {"queued", "claimed", "dispatching"}:
+                return existing
+        self.wakes[wake.wake_id] = wake
+        return wake
+
+    def claim_work_wakes(self, *, limit: int = 10) -> list[WorkWakeRequest]:
+        claimed: list[WorkWakeRequest] = []
+        for wake in list(self.wakes.values()):
+            if wake.status != "queued":
+                continue
+            updated = WorkWakeRequest(**{**_wake_dict(wake), "status": "claimed", "attempts": wake.attempts + 1})
+            self.wakes[wake.wake_id] = updated
+            claimed.append(updated)
+            if len(claimed) >= limit:
+                break
+        return claimed
+
+    def complete_work_wake(self, wake_id: str, *, status: str, task_run_id: str | None = None, last_error: str | None = None) -> WorkWakeRequest:
+        wake = self.wakes[wake_id]
+        updated = WorkWakeRequest(**{**_wake_dict(wake), "status": status, "task_run_id": task_run_id or wake.task_run_id, "last_error": last_error})
+        self.wakes[wake_id] = updated
+        return updated
 
     def create_interaction(
         self,
@@ -602,6 +650,73 @@ def test_completed_task_with_later_file_success_still_requires_disposition():
     assert repository.items[work.work_id].active_run_id is None
 
 
+def test_wake_plan_runs_unblocked_blocker_before_blocked_parent():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    parent = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "부모 작업"},
+    )
+    child = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "자식 작업", "parentId": parent.work_id},
+    )
+    repository.update_status(parent.work_id, "todo")
+    repository.update_status(child.work_id, "todo")
+    repository.add_relation(source_work_id=child.work_id, target_work_id=parent.work_id, relation_type="blocks")
+
+    plan = WorkWakeService(repository).plan(parent.work_id)
+
+    assert [item.work_id for item in plan.targets] == [child.work_id]
+    assert plan.unresolved_blocker_ids == [child.work_id]
+
+
+def test_done_blocker_enqueues_parent_wake():
+    repository = FakeWorkRepository()
+    service = WorkService(repository)
+    parent = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "부모 작업"},
+    )
+    child = service.create_from_payload(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        client_request_id=None,
+        payload={"rawUserInput": "자식 작업", "parentId": parent.work_id},
+    )
+    repository.update_status(parent.work_id, "todo")
+    repository.update_status(child.work_id, "todo")
+    repository.add_relation(source_work_id=child.work_id, target_work_id=parent.work_id, relation_type="blocks")
+    service.mark_run_started(work_id=child.work_id, task_run_id="task-child")
+
+    service.apply_task_result(
+        work_id=child.work_id,
+        task=TaskRun(
+            task_run_id="task-child",
+            task_type="agent.loop",
+            owner_key="7",
+            status="COMPLETED",
+            result_payload={"workDisposition": {"status": "done"}},
+        ),
+    )
+
+    queued = list(repository.wakes.values())
+    assert len(queued) == 1
+    assert queued[0].work_id == parent.work_id
+    assert queued[0].root_work_id == parent.work_id
+    assert queued[0].reason == "blockers_resolved"
+
+
 def test_resume_comment_moves_done_or_blocked_work_to_todo_but_not_cancelled():
     repository = FakeWorkRepository()
     service = WorkService(repository)
@@ -638,3 +753,7 @@ def test_resume_comment_moves_done_or_blocked_work_to_todo_but_not_cancelled():
 
 def _work_dict(work: WorkItem) -> dict:
     return {field: getattr(work, field) for field in work.__dataclass_fields__}
+
+
+def _wake_dict(wake: WorkWakeRequest) -> dict:
+    return {field: getattr(wake, field) for field in wake.__dataclass_fields__}

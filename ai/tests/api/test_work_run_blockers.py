@@ -29,8 +29,8 @@ def work(status: str):
 
 def test_unresolved_blocker_work_ids_ignores_completed_blockers():
     repository = FakeWorkRepository(
-        relations=[relation("blocker-1", "target-1"), relation("target-1", "related-1", "related")],
-        works={"blocker-1": work("done")},
+        relations=[relation("blocker-1", "target-1"), relation("blocker-2", "target-1"), relation("target-1", "related-1", "related")],
+        works={"blocker-1": work("done"), "blocker-2": work("cancelled")},
     )
 
     assert _unresolved_blocker_work_ids(repository, "target-1") == []
