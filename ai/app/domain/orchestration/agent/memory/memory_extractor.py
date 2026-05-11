@@ -43,7 +43,12 @@ class StructuredModelProvider(Protocol):
 
 
 class LlmMemoryExtractor:
-    """LLM 판단 결과를 backend memory 저장 계약에 맞는 후보로 정규화한다."""
+    """대화 한 턴에서 저장할 만한 장기기억 후보를 뽑아 정규화한다.
+
+    예를 들어 사용자가 "앞으로 답변은 짧게 해줘"처럼 지속될 선호나
+    지시를 말하면, LLM 판단 결과를 backend memory 저장 계약에 맞는
+    candidate payload로 변환한다.
+    """
 
     def __init__(self, provider: StructuredModelProvider, *, max_candidates: int = 8) -> None:
         self._provider = provider
