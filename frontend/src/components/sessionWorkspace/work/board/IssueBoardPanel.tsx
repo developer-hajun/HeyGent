@@ -101,6 +101,7 @@ const QUICK_FILTERS = [
 
 export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const storageKey = `heygent-task-board:v4:${sessionId}`
+  const isPendingSession = sessionId.startsWith('pending_session_')
   const workItems = useWorkStore((state) => state.itemsBySessionId[sessionId] ?? EMPTY_WORK_ITEMS)
   const commentsByWorkId = useWorkStore((state) => state.commentsByWorkId)
   const isWorkLoading = useWorkStore((state) => state.loadingBySessionId[sessionId] === true)
@@ -155,11 +156,11 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const [runningIssueIds, setRunningIssueIds] = useState<Set<string>>(() => new Set())
 
   useEffect(() => {
-    if (sessionId.startsWith('pending_session_')) return
+    if (isPendingSession) return
     void Promise.all([fetchSessionWork(sessionId), fetchWorkLabels(sessionId)]).catch((error) => {
       console.error(error)
     })
-  }, [fetchSessionWork, fetchWorkLabels, sessionId])
+  }, [fetchSessionWork, fetchWorkLabels, isPendingSession, sessionId])
 
   useEffect(() => {
     saveTodoBoardState(storageKey, {
@@ -187,13 +188,12 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   ])
 
   const boardIssues = useMemo(
-    () =>
-      workItems.length > 0 ? workItems.map((item) => toIssueBoardIssue(item, workItems)) : issues,
-    [issues, workItems],
+    () => (isPendingSession ? issues : workItems.map((item) => toIssueBoardIssue(item, workItems))),
+    [isPendingSession, issues, workItems],
   )
   const boardLabels = useMemo(
-    () => (serverLabels.length > 0 ? serverLabels.map(toIssueBoardLabel) : labels),
-    [labels, serverLabels],
+    () => (isPendingSession ? labels : serverLabels.map(toIssueBoardLabel)),
+    [isPendingSession, labels, serverLabels],
   )
   const filteredIssues = useMemo(
     () =>
@@ -346,7 +346,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   }
 
   const createLabel = (label: IssueBoardLabel) => {
-    if (!sessionId.startsWith('pending_session_')) {
+    if (!isPendingSession) {
       void createWorkItemLabel(sessionId, { name: label.name, color: label.color }).catch(
         (error) => {
           console.error(error)
@@ -407,9 +407,13 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
     const serverWork = workItems.find((item) => item.workId === issueId)
     if (serverWork) {
       void deleteWorkItem(issueId)
-        .then(() => setSelectedIssueId(null))
+        .then((item) => {
+          setSelectedIssueId(null)
+          setWorkNotice(`${item.identifier} 작업을 삭제했습니다.`)
+        })
         .catch((error) => {
           console.error(error)
+          setWorkNotice(error instanceof Error ? error.message : '작업 삭제에 실패했습니다.')
         })
       return
     }
@@ -426,6 +430,33 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   }
 
   const createNewTodo = () => {
+    if (!isPendingSession) {
+      void createWorkItem(sessionId, {
+        clientRequestId: `manual:${sessionId}:${Date.now()}`,
+        title: '새 작업',
+        description: '담당 에이전트 한 명에게 맡길 작업입니다.',
+        assigneeAgentId: null,
+        rawUserInput: '새 작업',
+        executionInstruction: '작업 내용을 확인하고 필요한 실행을 진행합니다.',
+        startExecution: false,
+        acceptanceCriteria: [],
+        constraints: [],
+        labelNames: [],
+        initialComment: '새 작업이 생성되었습니다.',
+        metadata: { createdFrom: 'work_board' },
+        flowOrder: boardIssues.length,
+      })
+        .then((response) => {
+          setSelectedIssueId(response.work.workId)
+          setWorkNotice(`${response.work.identifier} 작업을 만들었습니다.`)
+          return fetchSessionWork(sessionId)
+        })
+        .catch((error) => {
+          console.error(error)
+          setWorkNotice(error instanceof Error ? error.message : '작업 생성에 실패했습니다.')
+        })
+      return
+    }
     const now = new Date().toISOString()
     const sequence = issues.length + 1
     const todoId = `${sessionId}:todo:${String(sequence).padStart(3, '0')}`
@@ -470,7 +501,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
     title: string
   }) => {
     const rootCount = boardIssues.filter((issue) => issue.parentId === null).length
-    if (!sessionId.startsWith('pending_session_')) {
+    if (!isPendingSession) {
       void createWorkItem(sessionId, {
         clientRequestId: `flow:${sessionId}:${Date.now()}`,
         title: input.title,
@@ -523,7 +554,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   }
 
   const ensureDefaultFlowAgents = async (): Promise<BoardAssignee[]> => {
-    if (sessionId.startsWith('pending_session_')) return []
+    if (isPendingSession) return []
     await createDefaultSessionAgents(sessionId)
     const profiles = await listSessionAgents(sessionId)
     const panels = agentProfilesToPanelItems(profiles)
@@ -540,7 +571,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   }
 
   const reorderChildFlowWork = (parentId: string, workIds: string[]) => {
-    if (!sessionId.startsWith('pending_session_')) {
+    if (!isPendingSession) {
       void updateWorkFlowOrder(parentId, workIds)
         .then(() => fetchSessionWork(sessionId))
         .catch((error) => {
