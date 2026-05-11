@@ -85,7 +85,7 @@ WORK_DISPOSITION_SCHEMA = {
             "status": {
                 "type": "string",
                 "enum": ["todo", "in_progress", "in_review", "blocked", "done", "cancelled"],
-                "description": "Final work status after this run.",
+                "description": "Final work status after this run. Use blocked only when required input, permission, tools, or prerequisite work prevents progress.",
             },
             "summary": {
                 "type": "string",

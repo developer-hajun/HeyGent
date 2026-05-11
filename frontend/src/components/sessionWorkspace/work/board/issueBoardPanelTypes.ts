@@ -11,6 +11,7 @@ export type DetailTab =
   | 'documents'
   | 'products'
   | 'interactions'
+  | 'recovery'
 
 export type BoardAssignee = {
   id: string

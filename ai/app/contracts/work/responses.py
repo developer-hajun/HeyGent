@@ -140,6 +140,55 @@ class WorkRunsResponse(BaseModel):
     total_count: int = Field(alias="totalCount")
 
 
+class WorkWakeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    wake_id: str = Field(alias="wakeId")
+    work_id: str = Field(alias="workId")
+    root_work_id: str | None = Field(default=None, alias="rootWorkId")
+    reason: str
+    status: str
+    requested_by_task_run_id: str | None = Field(default=None, alias="requestedByTaskRunId")
+    task_run_id: str | None = Field(default=None, alias="taskRunId")
+    attempts: int
+    last_error: str | None = Field(default=None, alias="lastError")
+    created_at: datetime | None = Field(default=None, alias="createdAt")
+    updated_at: datetime | None = Field(default=None, alias="updatedAt")
+    claimed_at: datetime | None = Field(default=None, alias="claimedAt")
+    next_attempt_at: datetime | None = Field(default=None, alias="nextAttemptAt")
+    completed_at: datetime | None = Field(default=None, alias="completedAt")
+
+
+class WorkWakesResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[WorkWakeResponse] = Field(default_factory=list)
+    total_count: int = Field(alias="totalCount")
+
+
+class WorkRecoveryActionResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    action_id: str = Field(alias="actionId")
+    work_id: str = Field(alias="workId")
+    action_type: str = Field(alias="actionType")
+    status: str
+    reason: str
+    idempotency_key: str = Field(alias="idempotencyKey")
+    task_run_id: str | None = Field(default=None, alias="taskRunId")
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = Field(default=None, alias="createdAt")
+    updated_at: datetime | None = Field(default=None, alias="updatedAt")
+    resolved_at: datetime | None = Field(default=None, alias="resolvedAt")
+
+
+class WorkRecoveryActionsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[WorkRecoveryActionResponse] = Field(default_factory=list)
+    total_count: int = Field(alias="totalCount")
+
+
 class WorkDocumentResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 

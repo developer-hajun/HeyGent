@@ -36,10 +36,14 @@ from app.contracts.work.responses import (
     WorkFlowResponse,
     WorkProductResponse,
     WorkProductsResponse,
+    WorkRecoveryActionResponse,
+    WorkRecoveryActionsResponse,
     WorkRelationResponse,
     WorkRelationsResponse,
     WorkRunResponse,
     WorkRunsResponse,
+    WorkWakeResponse,
+    WorkWakesResponse,
 )
 
 __all__ = [
@@ -78,8 +82,12 @@ __all__ = [
     "WorkFlowResponse",
     "WorkProductResponse",
     "WorkProductsResponse",
+    "WorkRecoveryActionResponse",
+    "WorkRecoveryActionsResponse",
     "WorkRelationResponse",
     "WorkRelationsResponse",
     "WorkRunResponse",
     "WorkRunsResponse",
+    "WorkWakeResponse",
+    "WorkWakesResponse",
 ]

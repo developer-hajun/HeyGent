@@ -23,6 +23,7 @@ import type {
   WorkLabel,
   WorkStatus,
 } from '@/types/work'
+import { getApiErrorMessage } from '@/utils/apiErrorMessage'
 
 type WorkState = {
   itemsBySessionId: Record<string, WorkItem[]>
@@ -46,7 +47,7 @@ type WorkState = {
   addComment: (workId: string, body: string, resume?: boolean) => Promise<WorkComment>
   createLabel: (sessionId: string, payload: { name: string; color: string }) => Promise<WorkLabel>
   setLabels: (workId: string, labelIds: string[]) => Promise<WorkItem>
-  deleteWorkItem: (workId: string) => Promise<WorkItem>
+  deleteWorkItem: (workId: string, cascadeChildren?: boolean) => Promise<WorkItem>
   handleRealtimeFrame: (frame: AiRealtimeRawFrame) => void
   clearWorkState: () => void
 }
@@ -76,7 +77,7 @@ export const useWorkStore = create<WorkState>((set) => ({
     } catch (error) {
       set((state) => ({
         loadingBySessionId: { ...state.loadingBySessionId, [sessionId]: false },
-        lastError: error instanceof Error ? error.message : '작업 목록을 불러오지 못했습니다.',
+        lastError: getApiErrorMessage(error, { fallback: '작업 목록을 불러오지 못했습니다.' }),
       }))
       throw error
     }
@@ -106,7 +107,7 @@ export const useWorkStore = create<WorkState>((set) => ({
     } catch (error) {
       set((state) => ({
         creatingBySessionId: { ...state.creatingBySessionId, [sessionId]: false },
-        lastError: error instanceof Error ? error.message : '작업 생성에 실패했습니다.',
+        lastError: getApiErrorMessage(error, { fallback: '작업 생성에 실패했습니다.' }),
       }))
       throw error
     }
@@ -120,7 +121,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return response.items
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 댓글 조회에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 댓글 조회에 실패했습니다.' }) })
       throw error
     }
   },
@@ -133,7 +134,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return response.items
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 라벨 조회에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 라벨 조회에 실패했습니다.' }) })
       throw error
     }
   },
@@ -152,7 +153,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return response
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 실행에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 실행에 실패했습니다.' }) })
       throw error
     }
   },
@@ -168,7 +169,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return item
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 상태 변경에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 상태 변경에 실패했습니다.' }) })
       throw error
     }
   },
@@ -184,7 +185,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return item
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 내용 변경에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 내용 변경에 실패했습니다.' }) })
       throw error
     }
   },
@@ -201,7 +202,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       return item
     } catch (error) {
       set({
-        lastError: error instanceof Error ? error.message : '작업 담당자 변경에 실패했습니다.',
+        lastError: getApiErrorMessage(error, { fallback: '작업 담당자 변경에 실패했습니다.' }),
       })
       throw error
     }
@@ -218,7 +219,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return comment
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 댓글 추가에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 댓글 추가에 실패했습니다.' }) })
       throw error
     }
   },
@@ -234,7 +235,7 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return label
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 라벨 생성에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 라벨 생성에 실패했습니다.' }) })
       throw error
     }
   },
@@ -250,25 +251,27 @@ export const useWorkStore = create<WorkState>((set) => ({
       }))
       return item
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 라벨 변경에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 라벨 변경에 실패했습니다.' }) })
       throw error
     }
   },
-  deleteWorkItem: async (workId) => {
+  deleteWorkItem: async (workId, cascadeChildren = false) => {
     try {
-      const item = await deleteWork(workId)
+      const item = await deleteWork(workId, cascadeChildren)
       set((state) => ({
         itemsBySessionId: {
           ...state.itemsBySessionId,
-          [item.sessionId]: (state.itemsBySessionId[item.sessionId] ?? []).filter(
-            (current) => current.workId !== workId,
+          [item.sessionId]: removeDeletedWorkFromList(
+            state.itemsBySessionId[item.sessionId] ?? [],
+            workId,
+            cascadeChildren,
           ),
         },
         lastError: null,
       }))
       return item
     } catch (error) {
-      set({ lastError: error instanceof Error ? error.message : '작업 삭제에 실패했습니다.' })
+      set({ lastError: getApiErrorMessage(error, { fallback: '작업 삭제에 실패했습니다.' }) })
       throw error
     }
   },
@@ -353,6 +356,39 @@ function upsertWorkComment(items: WorkComment[], item: WorkComment) {
     return [...items, item]
   }
   return items.map((current, itemIndex) => (itemIndex === index ? item : current))
+}
+
+function removeDeletedWorkFromList(items: WorkItem[], workId: string, cascadeChildren: boolean) {
+  if (!cascadeChildren) {
+    return items
+      .filter((item) => item.workId !== workId)
+      .map((item) =>
+        item.parentId === workId ? { ...item, parentId: null, flowOrder: null } : item,
+      )
+  }
+  const deletedIds = collectDescendantWorkIds(items, workId)
+  deletedIds.add(workId)
+  return items.filter((item) => !deletedIds.has(item.workId))
+}
+
+function collectDescendantWorkIds(items: WorkItem[], workId: string) {
+  const childIdsByParent = new Map<string, string[]>()
+  for (const item of items) {
+    if (!item.parentId) continue
+    childIdsByParent.set(item.parentId, [
+      ...(childIdsByParent.get(item.parentId) ?? []),
+      item.workId,
+    ])
+  }
+  const collected = new Set<string>()
+  const queue = [...(childIdsByParent.get(workId) ?? [])]
+  while (queue.length > 0) {
+    const childId = queue.shift()
+    if (!childId || collected.has(childId)) continue
+    collected.add(childId)
+    queue.push(...(childIdsByParent.get(childId) ?? []))
+  }
+  return collected
 }
 
 function upsertWorkLabel(items: WorkLabel[], item: WorkLabel) {

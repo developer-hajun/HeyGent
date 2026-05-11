@@ -15,10 +15,12 @@ import {
   GitBranch,
   List,
   ListTree,
+  Loader2,
   MessageSquare,
   PauseCircle,
   PlayCircle,
   Plus,
+  RotateCcw,
   Search,
   Send,
   Tag,
@@ -26,6 +28,15 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -46,6 +57,7 @@ import { cn } from '@/components/ui/utils'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useWorkStore } from '@/store/useWorkStore'
 import type { WorkItem, WorkLabel } from '@/types/work'
+import { getApiErrorMessage } from '@/utils/apiErrorMessage'
 import {
   ISSUE_BOARD_STATUSES,
   createIssueBoardIdentifier,
@@ -62,6 +74,7 @@ import {
   WorkDocumentsPanel,
   WorkInteractionsPanel,
   WorkProductsPanel,
+  WorkRecoveryPanel,
 } from './WorkCollaborationPanels'
 import { WorkFlowDiagram } from './WorkFlowDiagram'
 import {
@@ -98,6 +111,47 @@ const QUICK_FILTERS = [
   { id: 'blocked', label: '차단됨', statuses: ['blocked'] },
   { id: 'done', label: '완료', statuses: ['done'] },
 ] as const
+
+function hasUnresolvedBlockers(issue: IssueBoardIssue) {
+  return issue.blockedBy.some((item) => item.status !== 'done')
+}
+
+function shouldResumeWorkFromComment(issue: IssueBoardIssue) {
+  if (issue.status === 'done') return true
+  if (issue.status === 'blocked') return !hasUnresolvedBlockers(issue)
+  return false
+}
+
+function commentSubmitHint(issue: IssueBoardIssue) {
+  if (issue.live) return '실행 중인 작업이라 댓글 반영을 대기열에 올립니다.'
+  if (issue.status === 'done') return '댓글 전송 후 완료된 작업을 다시 실행합니다.'
+  if (issue.status === 'blocked' && hasUnresolvedBlockers(issue)) {
+    return '선행 작업이 남아 있어 댓글만 기록합니다.'
+  }
+  if (issue.status === 'blocked') return '댓글 전송 후 차단을 풀고 작업을 다시 실행합니다.'
+  if (issue.assigneeAgentId) return '댓글 전송 후 담당 에이전트가 내용을 반영합니다.'
+  return '댓글은 작업 기록에 남습니다.'
+}
+
+function collectDescendantIssueIds(issues: IssueBoardIssue[], issueId: string) {
+  const childIdsByParent = new Map<string, string[]>()
+  for (const issue of issues) {
+    if (!issue.parentId) continue
+    childIdsByParent.set(issue.parentId, [
+      ...(childIdsByParent.get(issue.parentId) ?? []),
+      issue.id,
+    ])
+  }
+  const descendantIds: string[] = []
+  const queue = [...(childIdsByParent.get(issueId) ?? [])]
+  while (queue.length > 0) {
+    const childId = queue.shift()
+    if (!childId || descendantIds.includes(childId)) continue
+    descendantIds.push(childId)
+    queue.push(...(childIdsByParent.get(childId) ?? []))
+  }
+  return descendantIds
+}
 
 export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const storageKey = `heygent-task-board:v4:${sessionId}`
@@ -153,7 +207,11 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const [dragOverStatus, setDragOverStatus] = useState<IssueBoardStatus | null>(null)
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null)
   const [workNotice, setWorkNotice] = useState<string | null>(null)
+  const visibleWorkError = workError && workError !== workNotice ? workError : null
   const [runningIssueIds, setRunningIssueIds] = useState<Set<string>>(() => new Set())
+  const [commentSubmittingIssueIds, setCommentSubmittingIssueIds] = useState<Set<string>>(
+    () => new Set(),
+  )
 
   useEffect(() => {
     if (isPendingSession) return
@@ -310,16 +368,29 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
     )
   }
 
-  const addIssueComment = (issueId: string, body: string) => {
+  const addIssueComment = async (issueId: string, body: string) => {
     const trimmed = body.trim()
     if (!trimmed) return
     const serverWork = workItems.find((item) => item.workId === issueId)
     if (serverWork) {
-      void addWorkItemComment(issueId, trimmed)
-        .then(() => Promise.all([fetchSessionWork(sessionId), fetchWorkComments(issueId)]))
-        .catch((error) => {
-          console.error(error)
+      const issue = boardIssues.find((item) => item.id === issueId)
+      const resume = issue ? shouldResumeWorkFromComment(issue) : false
+      setCommentSubmittingIssueIds((current) => new Set(current).add(issueId))
+      try {
+        await addWorkItemComment(issueId, trimmed, resume)
+        await Promise.all([fetchSessionWork(sessionId), fetchWorkComments(issueId)])
+      } catch (error) {
+        const message = getApiErrorMessage(error, { fallback: '댓글을 전송하지 못했습니다.' })
+        setWorkNotice(message)
+        console.error(error)
+        throw error
+      } finally {
+        setCommentSubmittingIssueIds((current) => {
+          const next = new Set(current)
+          next.delete(issueId)
+          return next
         })
+      }
       return
     }
     const now = new Date().toISOString()
@@ -392,7 +463,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         return fetchSessionWork(sessionId)
       })
       .catch((error) => {
-        setWorkNotice(error instanceof Error ? error.message : '작업 실행에 실패했습니다.')
+        setWorkNotice(getApiErrorMessage(error, { fallback: '작업 실행에 실패했습니다.' }))
       })
       .finally(() => {
         setRunningIssueIds((current) => {
@@ -403,21 +474,35 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
       })
   }
 
-  const deleteIssue = (issueId: string) => {
+  const deleteIssue = async (issueId: string, cascadeChildren = false) => {
     const serverWork = workItems.find((item) => item.workId === issueId)
     if (serverWork) {
-      void deleteWorkItem(issueId)
-        .then((item) => {
-          setSelectedIssueId(null)
-          setWorkNotice(`${item.identifier} 작업을 삭제했습니다.`)
-        })
-        .catch((error) => {
-          console.error(error)
-          setWorkNotice(error instanceof Error ? error.message : '작업 삭제에 실패했습니다.')
-        })
+      try {
+        const item = await deleteWorkItem(issueId, cascadeChildren)
+        await fetchSessionWork(sessionId)
+        setSelectedIssueId(null)
+        setWorkNotice(
+          cascadeChildren
+            ? `${item.identifier} 작업과 하위 작업을 삭제했습니다.`
+            : `${item.identifier} 작업을 삭제했습니다.`,
+        )
+      } catch (error) {
+        console.error(error)
+        setWorkNotice(getApiErrorMessage(error, { fallback: '작업 삭제에 실패했습니다.' }))
+        throw error
+      }
       return
     }
-    setIssues((current) => current.filter((issue) => issue.id !== issueId))
+    setIssues((current) => {
+      if (!cascadeChildren) {
+        return current
+          .filter((issue) => issue.id !== issueId)
+          .map((issue) => (issue.parentId === issueId ? { ...issue, parentId: null } : issue))
+      }
+      const deletedIds = new Set(collectDescendantIssueIds(current, issueId))
+      deletedIds.add(issueId)
+      return current.filter((issue) => !deletedIds.has(issue.id))
+    })
     setSelectedIssueId(null)
   }
 
@@ -453,7 +538,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         })
         .catch((error) => {
           console.error(error)
-          setWorkNotice(error instanceof Error ? error.message : '작업 생성에 실패했습니다.')
+          setWorkNotice(getApiErrorMessage(error, { fallback: '작업 생성에 실패했습니다.' }))
         })
       return
     }
@@ -615,9 +700,9 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
             </span>
           </div>
         </div>
-        {workError && (
+        {visibleWorkError && (
           <p className="text-destructive text-xs" aria-live="polite">
-            {workError}
+            {visibleWorkError}
           </p>
         )}
         {workNotice && (
@@ -773,6 +858,9 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         assignees={assignees}
         allIssues={boardIssues}
         issue={selectedIssue}
+        isCommentSubmitting={
+          selectedIssue ? commentSubmittingIssueIds.has(selectedIssue.id) : false
+        }
         isRunning={selectedIssue ? runningIssueIds.has(selectedIssue.id) : false}
         labels={boardLabels}
         onAssignIssue={assignIssue}
@@ -1420,6 +1508,7 @@ function TodoDetailPanel({
   assignees,
   allIssues,
   issue,
+  isCommentSubmitting,
   isRunning,
   labels,
   onAssignIssue,
@@ -1438,15 +1527,16 @@ function TodoDetailPanel({
   assignees: BoardAssignee[]
   allIssues: IssueBoardIssue[]
   issue: IssueBoardIssue | null
+  isCommentSubmitting: boolean
   isRunning: boolean
   labels: IssueBoardLabel[]
   onAssignIssue: (issueId: string, assigneeAgentId: string | null) => void
-  onAddComment: (issueId: string, body: string) => void
+  onAddComment: (issueId: string, body: string) => Promise<void> | void
   onAddRelation: (sourceId: string, targetId: string, relationType: 'blocks' | 'related') => void
   onChangeParent: (issueId: string, parentId: string | null) => void
   onCreateChild: (parentId: string, title: string, description: string) => void
   onCreateLabel: (label: IssueBoardLabel) => void
-  onDeleteIssue: (issueId: string) => void
+  onDeleteIssue: (issueId: string, cascadeChildren?: boolean) => Promise<void> | void
   onMoveStatus: (issueId: string, status: IssueBoardStatus) => void
   onOpenChange: (open: boolean) => void
   onRemoveRelation: (sourceId: string, targetId: string, relationType: 'blocks' | 'related') => void
@@ -1455,13 +1545,40 @@ function TodoDetailPanel({
 }) {
   const [detailTab, setDetailTab] = useState<DetailTab>('chat')
   const [commentDraft, setCommentDraft] = useState('')
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   if (issue === null) return null
 
   const submitComment = () => {
-    if (!commentDraft.trim()) return
-    onAddComment(issue.id, commentDraft)
-    setCommentDraft('')
+    if (!commentDraft.trim() || isCommentSubmitting) return
+    void Promise.resolve(onAddComment(issue.id, commentDraft))
+      .then(() => {
+        setCommentDraft('')
+      })
+      .catch(() => undefined)
+  }
+  const descendantCount = collectDescendantIssueIds(allIssues, issue.id).length
+  const hasChildIssues = descendantCount > 0
+  const requestDelete = () => {
+    if (hasChildIssues) {
+      setDeleteDialogOpen(true)
+      return
+    }
+    void deleteIssue(false)
+  }
+  const deleteIssue = async (cascadeChildren: boolean) => {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await onDeleteIssue(issue.id, cascadeChildren)
+      setDeleteDialogOpen(false)
+    } catch (error) {
+      setDeleteError(getApiErrorMessage(error, { fallback: '작업을 삭제하지 못했습니다.' }))
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return (
@@ -1512,7 +1629,7 @@ function TodoDetailPanel({
               aria-label="작업 삭제"
               variant="ghost"
               size="icon-sm"
-              onClick={() => onDeleteIssue(issue.id)}
+              onClick={requestDelete}
             >
               <Trash2 className="h-4 w-4" />
             </Button>
@@ -1597,14 +1714,23 @@ function TodoDetailPanel({
                 label="확인"
                 onClick={() => setDetailTab('interactions')}
               />
+              <DetailTabButton
+                active={detailTab === 'recovery'}
+                icon={<RotateCcw className="h-3.5 w-3.5" />}
+                label="복구"
+                onClick={() => setDetailTab('recovery')}
+              />
             </div>
 
             {detailTab === 'chat' && (
               <IssueChatThread
                 commentDraft={commentDraft}
                 comments={issue.comments}
+                hint={commentSubmitHint(issue)}
+                isSubmitting={isCommentSubmitting}
                 onCommentDraftChange={setCommentDraft}
                 onSubmit={submitComment}
+                submitLabel={shouldResumeWorkFromComment(issue) ? '다시 실행' : '전송'}
               />
             )}
             {detailTab === 'runs' && <IssueRunLedger issue={issue} />}
@@ -1622,10 +1748,75 @@ function TodoDetailPanel({
             {detailTab === 'documents' && <WorkDocumentsPanel workId={issue.id} />}
             {detailTab === 'products' && <WorkProductsPanel workId={issue.id} />}
             {detailTab === 'interactions' && <WorkInteractionsPanel workId={issue.id} />}
+            {detailTab === 'recovery' && <WorkRecoveryPanel workId={issue.id} />}
           </div>
         </div>
       </aside>
+      <DeleteIssueDialog
+        deleteError={deleteError}
+        deleting={deleting}
+        descendantCount={descendantCount}
+        issue={issue}
+        open={deleteDialogOpen}
+        onDeleteOnlyParent={() => void deleteIssue(false)}
+        onDeleteWithChildren={() => void deleteIssue(true)}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeleteError(null)
+          setDeleteDialogOpen(open)
+        }}
+      />
     </div>
+  )
+}
+
+function DeleteIssueDialog({
+  deleteError,
+  deleting,
+  descendantCount,
+  issue,
+  open,
+  onDeleteOnlyParent,
+  onDeleteWithChildren,
+  onOpenChange,
+}: {
+  deleteError: string | null
+  deleting: boolean
+  descendantCount: number
+  issue: IssueBoardIssue
+  open: boolean
+  onDeleteOnlyParent: () => void
+  onDeleteWithChildren: () => void
+  onOpenChange: (open: boolean) => void
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>하위 작업도 함께 삭제할까요?</AlertDialogTitle>
+          <AlertDialogDescription>
+            `{issue.identifier}` 작업 아래에 하위 작업 {descendantCount}개가 있습니다. 부모만
+            삭제하면 하위 작업은 루트 작업으로 남고, 함께 삭제하면 하위 작업 전체가 삭제됩니다.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {deleteError ? <p className="text-destructive text-sm">{deleteError}</p> : null}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleting}>취소</AlertDialogCancel>
+          <Button variant="outline" disabled={deleting} onClick={onDeleteOnlyParent}>
+            부모만 삭제
+          </Button>
+          <Button variant="destructive" disabled={deleting} onClick={onDeleteWithChildren}>
+            {deleting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                삭제 중
+              </>
+            ) : (
+              '하위까지 삭제'
+            )}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
@@ -1746,13 +1937,19 @@ function DetailTabButton({
 function IssueChatThread({
   commentDraft,
   comments,
+  hint,
+  isSubmitting,
   onCommentDraftChange,
   onSubmit,
+  submitLabel,
 }: {
   commentDraft: string
   comments: IssueBoardIssue['comments']
+  hint: string
+  isSubmitting: boolean
   onCommentDraftChange: (value: string) => void
   onSubmit: () => void
+  submitLabel: string
 }) {
   return (
     <div className="space-y-3">
@@ -1777,6 +1974,16 @@ function IssueChatThread({
             </div>
           ))
         )}
+        {isSubmitting && commentDraft.trim().length > 0 && (
+          <div className="bg-muted/20 rounded-md border border-dashed p-3 opacity-80">
+            <div className="mb-1 flex items-center gap-2 text-xs">
+              <span className="font-medium">사용자</span>
+              <span className="text-muted-foreground">전송 중</span>
+              <Loader2 className="text-muted-foreground ml-auto h-3.5 w-3.5 animate-spin" />
+            </div>
+            <p className="text-sm leading-relaxed whitespace-pre-wrap">{commentDraft.trim()}</p>
+          </div>
+        )}
       </div>
       <div className="rounded-md border p-2">
         <Textarea
@@ -1784,6 +1991,7 @@ function IssueChatThread({
           onChange={(event) => onCommentDraftChange(event.target.value)}
           placeholder="실행 시 참고할 작업 댓글 입력..."
           className="min-h-20 resize-none border-0 p-2 shadow-none focus-visible:ring-0"
+          disabled={isSubmitting}
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
               event.preventDefault()
@@ -1792,10 +2000,22 @@ function IssueChatThread({
           }}
         />
         <div className="flex items-center justify-between gap-2 px-2 pb-1">
-          <span className="text-muted-foreground text-xs">Ctrl/⌘ + Enter로 전송</span>
-          <Button type="button" size="sm" className="h-8 gap-1.5" onClick={onSubmit}>
-            <Send className="h-3.5 w-3.5" />
-            전송
+          <span className="text-muted-foreground min-w-0 text-xs">
+            {isSubmitting ? '댓글 전송 중...' : hint}
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 shrink-0 gap-1.5"
+            disabled={isSubmitting || commentDraft.trim().length === 0}
+            onClick={onSubmit}
+          >
+            {isSubmitting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Send className="h-3.5 w-3.5" />
+            )}
+            {isSubmitting ? '전송 중' : submitLabel}
           </Button>
         </div>
       </div>
