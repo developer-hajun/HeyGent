@@ -26,7 +26,6 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { useNavigate } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -101,7 +100,6 @@ const QUICK_FILTERS = [
 ] as const
 
 export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
-  const navigate = useNavigate()
   const storageKey = `heygent-task-board:v4:${sessionId}`
   const workItems = useWorkStore((state) => state.itemsBySessionId[sessionId] ?? EMPTY_WORK_ITEMS)
   const commentsByWorkId = useWorkStore((state) => state.commentsByWorkId)
@@ -119,6 +117,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const addWorkItemComment = useWorkStore((state) => state.addComment)
   const createWorkItemLabel = useWorkStore((state) => state.createLabel)
   const createWorkItem = useWorkStore((state) => state.createWork)
+  const createWorkItemRun = useWorkStore((state) => state.createRun)
   const setWorkItemLabels = useWorkStore((state) => state.setLabels)
   const deleteWorkItem = useWorkStore((state) => state.deleteWorkItem)
   const agentPanelsBySessionId = useSessionStore((state) => state.agentPanelsBySessionId)
@@ -153,6 +152,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const [dragOverStatus, setDragOverStatus] = useState<IssueBoardStatus | null>(null)
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null)
   const [workNotice, setWorkNotice] = useState<string | null>(null)
+  const [runningIssueIds, setRunningIssueIds] = useState<Set<string>>(() => new Set())
 
   useEffect(() => {
     if (sessionId.startsWith('pending_session_')) return
@@ -363,6 +363,11 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const runIssue = (issueId: string) => {
     const issue = boardIssues.find((item) => item.id === issueId)
     if (!issue) return
+    const serverWork = workItems.find((item) => item.workId === issueId)
+    if (!serverWork) {
+      setWorkNotice('서버에 저장된 작업만 실행할 수 있습니다.')
+      return
+    }
     const unresolvedBlockers = issue.blockedBy.filter((item) => item.status !== 'done')
     if (unresolvedBlockers.length > 0) {
       setWorkNotice(
@@ -379,8 +384,23 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         : issue.status === 'done'
           ? '이 작업을 다시 검토하고 필요한 후속 실행을 진행해.'
           : '이 작업을 이어서 진행해.'
-    const params = new URLSearchParams({ workId: issue.id, draft: message })
-    navigate(`/session/${sessionId}?${params.toString()}`)
+    setRunningIssueIds((current) => new Set(current).add(issueId))
+    void createWorkItemRun(issueId, message)
+      .then((response) => {
+        setSelectedIssueId(response.work.workId)
+        setWorkNotice(`${response.work.identifier} 작업 실행을 시작했습니다.`)
+        return fetchSessionWork(sessionId)
+      })
+      .catch((error) => {
+        setWorkNotice(error instanceof Error ? error.message : '작업 실행에 실패했습니다.')
+      })
+      .finally(() => {
+        setRunningIssueIds((current) => {
+          const next = new Set(current)
+          next.delete(issueId)
+          return next
+        })
+      })
   }
 
   const deleteIssue = (issueId: string) => {
@@ -722,6 +742,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         assignees={assignees}
         allIssues={boardIssues}
         issue={selectedIssue}
+        isRunning={selectedIssue ? runningIssueIds.has(selectedIssue.id) : false}
         labels={boardLabels}
         onAssignIssue={assignIssue}
         onAddComment={addIssueComment}
@@ -1368,6 +1389,7 @@ function TodoDetailPanel({
   assignees,
   allIssues,
   issue,
+  isRunning,
   labels,
   onAssignIssue,
   onAddComment,
@@ -1385,6 +1407,7 @@ function TodoDetailPanel({
   assignees: BoardAssignee[]
   allIssues: IssueBoardIssue[]
   issue: IssueBoardIssue | null
+  isRunning: boolean
   labels: IssueBoardLabel[]
   onAssignIssue: (issueId: string, assigneeAgentId: string | null) => void
   onAddComment: (issueId: string, body: string) => void
@@ -1438,11 +1461,20 @@ function TodoDetailPanel({
               variant="outline"
               size="sm"
               className="h-8 gap-1.5"
-              disabled={issue.live || issue.status === 'backlog' || issue.status === 'cancelled'}
+              disabled={
+                isRunning ||
+                issue.live ||
+                issue.status === 'backlog' ||
+                issue.status === 'cancelled'
+              }
               onClick={() => onRunIssue(issue.id)}
             >
-              <PlayCircle className="h-3.5 w-3.5" />
-              실행
+              {isRunning ? (
+                <Clock3 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <PlayCircle className="h-3.5 w-3.5" />
+              )}
+              {isRunning ? '실행 중' : '실행'}
             </Button>
             <Button
               type="button"
