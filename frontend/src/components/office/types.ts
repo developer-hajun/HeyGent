@@ -1,3 +1,27 @@
+export type AgentActivityStatus = 'spawning' | 'working' | 'resting' | 'inactive'
+
+export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed'
+
+export interface VisualizationTask {
+  taskId: string
+  title: string
+  description: string
+  status: TaskStatus
+  startedAt?: string
+  completedAt?: string
+}
+
+export interface AgentVisualizationInfo {
+  agentId: string
+  name: string
+  role: string
+  profileImage?: string
+  skills: string[]
+  activityStatus: AgentActivityStatus
+  currentTask?: VisualizationTask
+  taskHistory: VisualizationTask[]
+}
+
 // AgentConfig.destinations 에서 사용하는 내부 목적지 타입
 export type Destination = 'desk' | 'sofa' | 'floorLean' | 'meeting' | 'calling'
 
@@ -29,6 +53,10 @@ export interface AgentConfig {
   destinations: Record<Destination, { x: number; y: number; waypoints?: Waypoint[] }>
   scale?: number
   stateScales?: Partial<Record<AgentState, number>>
+  walkFrames?: readonly string[]
+  sittingSprites?: Record<string, string>
+  allowedUIDestinations?: UIDestination[]
+  destinationLabels?: Partial<Record<UIDestination, string>>
 }
 
 export interface AgentRuntime {
