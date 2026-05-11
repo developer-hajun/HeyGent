@@ -4,6 +4,8 @@ import {
   useAgentVisualizationStore,
   createMockAgentInfoMap,
 } from '@/store/useAgentVisualizationStore'
+import { getCommandUsage } from '@/apis/aiCommandUsage'
+import type { CommandUsageSummary } from '@/apis/aiCommandUsage'
 import type {
   AgentConfig,
   AgentRuntime,
@@ -804,6 +806,25 @@ export function AgentStatusPage() {
   const [panelTop, setPanelTop] = useState(false)
   const [navmeshGrid, setNavmeshGrid] = useState<boolean[][] | null>(null)
   const [spawningIds, setSpawningIds] = useState<ReadonlySet<string>>(new Set())
+  const [tokenUsageSummary, setTokenUsageSummary] = useState<CommandUsageSummary | null>(null)
+
+  useEffect(() => {
+    void getCommandUsage({})
+      .then((d) => setTokenUsageSummary(d.summary))
+      .catch(() => {
+        // 임시 mock — API 연동 전 화이트보드 차트 미리보기용
+        setTokenUsageSummary({
+          inputTokens: 8400,
+          outputTokens: 3200,
+          cachedInputTokens: 1500,
+          reasoningTokens: 900,
+          totalTokens: 11600,
+          estimatedCostUsd: 0.0842,
+          currency: 'USD',
+          recordCount: 47,
+        })
+      })
+  }, [])
   const runtimeGridRef = useRef<boolean[][]>(OBSTACLE_GRID)
   const walkTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({})
 
@@ -1067,6 +1088,7 @@ export function AgentStatusPage() {
         agentInfoMap={agentInfoMap}
         selectedAgentId={selectedAgentId}
         spawningIds={spawningIds}
+        tokenUsageSummary={tokenUsageSummary}
       />
       {selectedInfo && <AgentInfoPanel info={selectedInfo} onClose={() => selectAgent(null)} />}
 
