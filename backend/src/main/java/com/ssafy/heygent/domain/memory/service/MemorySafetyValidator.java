@@ -27,7 +27,12 @@ public class MemorySafetyValidator {
         "resourceType",
         "resourceId",
         "source",
-        "category"
+        "category",
+        "sensitivity",
+        "ttl",
+        "sourceTimestamp",
+        "eventTime",
+        "reason"
     );
 
     private static final List<Pattern> BLOCKED_PATTERNS = List.of(
