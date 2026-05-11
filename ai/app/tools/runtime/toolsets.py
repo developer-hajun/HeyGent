@@ -34,7 +34,7 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "web": RuntimeToolsetDefinition(
         description="Web research, extraction, and crawl tools.",
-        tools=("web_search", "web_extract", "web_crawl"),
+        tools=("web_search", "web_extract", "web_crawl", "http_get"),
     ),
     "browser": RuntimeToolsetDefinition(
         description="Browser automation tools.",
@@ -68,9 +68,13 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
         description="Worker delegation tools.",
         tools=("delegate_task",),
     ),
+    "work": RuntimeToolsetDefinition(
+        description="Work board assignment tools.",
+        tools=("session_agent_task", "work_disposition"),
+    ),
     "local-core": RuntimeToolsetDefinition(
         description="Current minimal local runtime tool bundle.",
-        includes=("skills", "session", "planning", "terminal", "file", "web", "delegation"),
+        includes=("skills", "session", "planning", "terminal", "file", "web", "work", "delegation"),
     ),
 }
 

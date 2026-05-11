@@ -28,7 +28,11 @@ class BackendMemoryItem:
 
 
 class BackendMemoryClient:
-    """backend 내부 장기기억 API를 호출하는 client이다."""
+    """AI runtime에서 Spring backend 장기기억 API를 호출하는 client이다.
+
+    recall 조회, 기억 후보 저장, 사용 피드백 전달처럼 장기기억의 실제
+    저장소인 backend와 통신하는 경계 역할을 맡는다.
+    """
 
     def __init__(self, *, settings: Settings | None = None, http_client: httpx.AsyncClient | None = None) -> None:
         self._settings = settings or get_settings()

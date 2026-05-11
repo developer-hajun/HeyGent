@@ -9,6 +9,7 @@ import {
   FileImage,
   Globe,
   ImagePlus,
+  ListTodo,
   Mic,
   MoreHorizontal,
   Plus,
@@ -19,6 +20,7 @@ import { motion } from 'motion/react'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Switch } from '@/components/ui/switch'
 import {
   type AiRealtimeAuthStatus,
   type AiRealtimeConnectionStatus,
@@ -28,7 +30,9 @@ import {
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import { useSessionStore } from '@/store/useSessionStore'
 import type { CustomAgentConfig } from '@/components/session/NewSessionModal'
+import { agentProfilesToPanelItems, createDefaultSessionAgents } from '@/apis/agents'
 import { createClientMessageId } from '@/utils/requestId'
 
 const suggestedPrompts = [
@@ -55,6 +59,7 @@ export function NewChatPage() {
   const [isSending, setIsSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [attachOpen, setAttachOpen] = useState(false)
+  const [workMode, setWorkMode] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   useLayoutEffect(() => {
@@ -71,6 +76,7 @@ export function NewChatPage() {
   const accessToken = useAuthStore((state) => state.accessToken)
   const sendMessage = useChatStore((state) => state.sendMessage)
   const updateSession = useChatStore((state) => state.updateSession)
+  const setAgentPanelsForSession = useSessionStore((state) => state.setAgentPanelsForSession)
   const providerMessage =
     commandClient === null
       ? getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError, accessToken)
@@ -86,6 +92,10 @@ export function NewChatPage() {
   const handleSend = async () => {
     const content = inputValue.trim()
     if (!content || isSending) return
+    if (workMode) {
+      setSendError('작업 모드는 기존 세션에서 사용할 수 있습니다.')
+      return
+    }
     if (commandClient === null) {
       setSendError(
         getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError, accessToken),
@@ -133,6 +143,7 @@ export function NewChatPage() {
                   instructionsFiles: pendingConfig.instructionsFiles,
                   profileImage: pendingConfig.profileImage,
                   profileImageProvided: pendingConfig.profileImage !== null,
+                  seedDefaultAgents: pendingConfig.seedDefaultAgents === true,
                 },
               },
       })
@@ -148,21 +159,29 @@ export function NewChatPage() {
       }
 
       if (pendingConfig !== null) {
-        await updateSession({
-          sessionId: acceptedSessionId,
-          metadataPatch: {
-            ui: {
-              agentName: pendingConfig.agentName,
-              callName: pendingConfig.callName,
-              agentCapabilities: pendingConfig.capabilities,
-              agentProfileImage: pendingConfig.profileImage,
-              instructionsEntryFile: pendingConfig.instructionsEntryFile,
-              instructionsMode: pendingConfig.instructionsMode,
-              instructionsRootPath: pendingConfig.instructionsRootPath,
-              instructionsFiles: pendingConfig.instructionsFiles,
+        if (pendingConfig.seedDefaultAgents) {
+          const profiles = await createDefaultSessionAgents(acceptedSessionId)
+          setAgentPanelsForSession(acceptedSessionId, agentProfilesToPanelItems(profiles))
+        }
+        if (!pendingConfig.seedDefaultAgents) {
+          void updateSession({
+            sessionId: acceptedSessionId,
+            metadataPatch: {
+              ui: {
+                agentName: pendingConfig.agentName,
+                callName: pendingConfig.callName,
+                agentCapabilities: pendingConfig.capabilities,
+                agentProfileImage: pendingConfig.profileImage,
+                instructionsEntryFile: pendingConfig.instructionsEntryFile,
+                instructionsMode: pendingConfig.instructionsMode,
+                instructionsRootPath: pendingConfig.instructionsRootPath,
+                instructionsFiles: pendingConfig.instructionsFiles,
+              },
             },
-          },
-        })
+          }).catch(() => {
+            // 실행 중 세션은 표시 설정 갱신이 잠시 거절될 수 있다. 채팅 시작 흐름은 계속 진행한다.
+          })
+        }
       }
 
       navigate(`/session/${acceptedSessionId}`, { replace: true })
@@ -245,6 +264,19 @@ export function NewChatPage() {
                       </button>
                     ),
                   )}
+                  <div className="border-border/60 my-1 border-t" />
+                  <label className="hover:bg-muted flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2 transition-colors">
+                    <ListTodo className="text-muted-foreground h-4 w-4 shrink-0" />
+                    <span className="text-foreground flex-1 text-sm">작업 모드</span>
+                    <Switch
+                      checked={workMode}
+                      aria-label="작업 모드"
+                      onCheckedChange={(checked) => {
+                        setWorkMode(checked)
+                        setSendError(null)
+                      }}
+                    />
+                  </label>
                 </PopoverContent>
               </Popover>
               <textarea
@@ -359,6 +391,7 @@ function readPendingSessionConfig(): CustomAgentConfig | null {
           : {}
       return {
         agentName: typeof value.agentName === 'string' ? value.agentName : '',
+        seedDefaultAgents: value.seedDefaultAgents === true,
         persona: parsed.persona,
         callName: typeof value.callName === 'string' ? value.callName : '',
         capabilities: typeof value.capabilities === 'string' ? value.capabilities : '',

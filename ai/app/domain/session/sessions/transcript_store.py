@@ -78,6 +78,7 @@ class TranscriptStore(Protocol):
         client_message_id: str,
         task_run_id: str,
         base_history_version: int,
+        metadata_patch: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """user message 저장과 running guard 획득은 하나의 상태 전이다.
 

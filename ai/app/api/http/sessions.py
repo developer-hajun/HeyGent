@@ -7,9 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel
 
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
-from app.api.memory_context import attach_persistent_memory_context
-from app.api.memory_writeback import writeback_persistent_memory_candidates
 from app.api.deps.openapi_auth import document_bearer_auth
+from app.api.memory_context import attach_persistent_memory_context
+from app.api.memory_observation import attach_memory_observation_to_task
+from app.api.memory_writeback import writeback_persistent_memory_candidates
 from app.contracts.session import (
     ArchiveSessionRequest,
     CreateSessionMessageRequest,
@@ -28,6 +29,7 @@ from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
+from app.domain.work import WorkItem, WorkService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"], dependencies=[Depends(document_bearer_auth)])
 
@@ -60,7 +62,7 @@ _PROTECTED_SESSION_METADATA_KEYS = {
 }
 _SESSION_METADATA_PATCH_ALLOWLIST = {"pinned", "color", "tags", "description", "lastViewedAt", "last_viewed_at", "ui"}
 _SESSION_SETTINGS_ALLOWLIST = {"model", "systemPrompt", "system_prompt", "toolsets", "delegationPolicy", "delegation_policy"}
-_PUBLIC_SESSION_TOOLSETS = {"skills", "session", "planning", "web", "safe"}
+_PUBLIC_SESSION_TOOLSETS = {"skills", "session", "planning", "web", "work", "safe"}
 
 
 @router.post(
@@ -318,6 +320,22 @@ async def _create_message_in_session(
     _apply_session_settings_snapshot(task_input, settings_snapshot, session=session)
     task_run_id = new_id("task")
     client_message_id = payload.client_message_id or new_id("client_msg")
+    work_id = _work_id_from_task_input(task_input)
+    work_metadata: dict[str, Any] = {}
+    if work_id is not None:
+        work = _attach_work_context_or_404(
+            request,
+            task_input=task_input,
+            work_id=work_id,
+            session_id=sessionId,
+            owner_key=owner_key,
+        )
+        work_metadata = {
+            "work_id": work.work_id,
+            "work_identifier": work.identifier,
+            "work_title": work.title,
+            "work_assignee_agent_id": work.assignee_agent_id,
+        }
     user_append = session_store.append_user_message_and_start_task(
         owner_key=owner_key,
         session_id=sessionId,
@@ -325,6 +343,7 @@ async def _create_message_in_session(
         client_message_id=client_message_id,
         task_run_id=task_run_id,
         base_history_version=base_history_version,
+        metadata_patch=work_metadata,
     )
     if user_append.get("duplicate"):
         messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
@@ -342,6 +361,11 @@ async def _create_message_in_session(
     task_input["after_user_message_version"] = user_append["after_user_message_version"]
     task_input["completion_expected_version"] = user_append["completion_expected_version"]
     task_input["client_message_id"] = client_message_id
+    if work_id is not None:
+        WorkService(request.app.state.work_repository).mark_run_started(
+            work_id=work_id,
+            task_run_id=task_run_id,
+        )
     await attach_persistent_memory_context(
         app_state=request.app.state,
         task_input=task_input,
@@ -360,14 +384,19 @@ async def _create_message_in_session(
             )
         )
     except KeyError as error:
+        _mark_linked_work_run_failed(request, task_input=task_input, task_run_id=task_run_id)
         session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
         raise HTTPException(status_code=404, detail=f"unknown execution route: {error.args[0]}") from error
     except ValueError as error:
+        _mark_linked_work_run_failed(request, task_input=task_input, task_run_id=task_run_id)
         session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception:
+        _mark_linked_work_run_failed(request, task_input=task_input, task_run_id=task_run_id)
         session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
         raise
+
+    _apply_linked_work_result(request, task_input=task_input, task=task)
 
     assistant_message_id = None
     if task.status == "COMPLETED":
@@ -381,7 +410,7 @@ async def _create_message_in_session(
             status=task.status,
         )
         assistant_message_id = assistant_append["message_id"]
-        await writeback_persistent_memory_candidates(
+        writeback_observation = await writeback_persistent_memory_candidates(
             app_state=request.app.state,
             user_id=str(user.user_id),
             user_message=payload.content,
@@ -391,6 +420,11 @@ async def _create_message_in_session(
             task_run_id=task.task_run_id,
             user_message_id=str(user_append["message_id"]),
             assistant_message_id=str(assistant_message_id),
+        )
+        attach_memory_observation_to_task(
+            task=task,
+            repository=request.app.state.repository,
+            writeback=writeback_observation,
         )
     elif task.status != "WAITING":
         session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task.task_run_id)
@@ -453,6 +487,125 @@ def _create_task_transcript_session(
         metadata={"source": _TASK_TRANSCRIPT_SOURCE, "public_session_id": session_id},
     )
     return transcript_session_id
+
+
+def _work_id_from_task_input(task_input: dict[str, Any]) -> str | None:
+    candidate = task_input.get("workId") or task_input.get("work_id")
+    text = str(candidate or "").strip()
+    return text or None
+
+
+def _attach_work_context_or_404(
+    request: Request,
+    *,
+    task_input: dict[str, Any],
+    work_id: str,
+    session_id: str,
+    owner_key: str,
+) -> WorkItem:
+    repository = getattr(request.app.state, "work_repository", None)
+    if repository is None:
+        raise HTTPException(status_code=500, detail="work repository is not configured")
+    work = repository.get_work(work_id)
+    if work is None:
+        raise HTTPException(status_code=404, detail="work not found")
+    if str(work.owner_key) != str(owner_key):
+        raise HTTPException(status_code=403, detail="forbidden")
+    if work.session_id != session_id:
+        raise HTTPException(status_code=409, detail="work belongs to another session")
+    task_input["workId"] = work.work_id
+    task_input["workIdentifier"] = work.identifier
+    task_input["workAssigneeAgentId"] = work.assignee_agent_id
+    task_input["workContext"] = repository.context_preview(work.work_id)
+    _attach_target_agent_context(request.app.state, task_input=task_input, work=work)
+    _apply_work_execution_defaults(task_input, settings=request.app.state.settings)
+    return work
+
+
+def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work: WorkItem) -> None:
+    assignee_agent_id = str(work.assignee_agent_id or "").strip()
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return
+    if not assignee_agent_id or assignee_agent_id == "CEO":
+        profile = agent_repository.ensure_session_main_agent(
+            session_id=work.session_id,
+            owner_key=str(work.owner_key),
+            owner_user_id=None,
+        )
+    else:
+        profile = agent_repository.get_session_agent(profile_id=assignee_agent_id, owner_key=str(work.owner_key))
+    if profile is None:
+        return
+    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
+    profile_id = str(profile.get("profile_id") or assignee_agent_id)
+    if not assignee_agent_id or assignee_agent_id == "CEO":
+        task_input["sessionAgentProfiles"] = [
+            _agent_profile_prompt_payload(item)
+            for item in agent_repository.list_session_agents(session_id=work.session_id, owner_key=str(work.owner_key))
+        ]
+    bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
+    if bundle is not None:
+        task_input["targetAgentInstructions"] = _instruction_bundle_prompt_payload(bundle)
+
+
+def _agent_profile_prompt_payload(profile: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "profileId": profile.get("profile_id"),
+        "profileKey": profile.get("profile_key"),
+        "agentType": profile.get("agent_type"),
+        "templateKey": profile.get("template_key"),
+        "configSnapshot": profile.get("config_snapshot") or {},
+    }
+
+
+def _instruction_bundle_prompt_payload(bundle: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "bundleId": bundle.get("bundle_id"),
+        "entryDocumentKey": bundle.get("entry_document_key") or "AGENTS.md",
+        "documents": [
+            {
+                "documentKey": document.get("document_key"),
+                "displayName": document.get("display_name"),
+                "content": document.get("content") or "",
+            }
+            for document in list(bundle.get("documents") or [])
+            if isinstance(document, dict)
+        ],
+    }
+
+
+def _apply_work_execution_defaults(task_input: dict[str, Any], *, settings: Any) -> None:
+    if task_input.get("max_iterations") not in (None, ""):
+        return
+    raw_value = getattr(settings, "work_execution_max_iterations", 24)
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        value = 24
+    raw_upper = getattr(settings, "agent_loop_max_iterations", 120)
+    try:
+        upper_bound = int(raw_upper)
+    except (TypeError, ValueError):
+        upper_bound = 120
+    task_input["max_iterations"] = max(1, min(value, max(1, upper_bound)))
+
+
+def _apply_linked_work_result(request: Request, *, task_input: dict[str, Any], task) -> None:
+    work_id = _work_id_from_task_input(task_input)
+    if work_id is None:
+        return
+    WorkService(request.app.state.work_repository).apply_task_result(work_id=work_id, task=task)
+
+
+def _mark_linked_work_run_failed(request: Request, *, task_input: dict[str, Any], task_run_id: str) -> None:
+    work_id = _work_id_from_task_input(task_input)
+    if work_id is None:
+        return
+    try:
+        request.app.state.work_repository.update_run_status(work_id, task_run_id, "FAILED")
+    except Exception:
+        return
 
 
 def _create_public_session_for_message(

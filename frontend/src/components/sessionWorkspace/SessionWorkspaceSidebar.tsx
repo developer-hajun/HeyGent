@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import { SessionWorkspaceMenu } from './SessionWorkspaceMenu'
 import {
@@ -12,6 +13,7 @@ import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useUIStore } from '@/store/useUIStore'
+import { agentProfilesToPanelItems, listSessionAgents } from '@/apis/agents'
 
 export function SessionWorkspaceSidebar() {
   const location = useLocation()
@@ -20,6 +22,7 @@ export function SessionWorkspaceSidebar() {
   const setSidebarCollapsed = useUIStore((state) => state.setSidebarCollapsed)
   const setSessionWorkspaceCollapsed = useUIStore((state) => state.setSessionWorkspaceCollapsed)
   const setSelectedSessionId = useSessionStore((state) => state.setSelectedSessionId)
+  const setAgentPanelsForSession = useSessionStore((state) => state.setAgentPanelsForSession)
   const sessionsById = useChatStore((state) => state.sessionsById)
   const deleteSession = useChatStore((state) => state.deleteSession)
   const connectionStatus = useAiRealtimeStore((state) => state.connectionStatus)
@@ -38,6 +41,25 @@ export function SessionWorkspaceSidebar() {
     accessToken,
     realtimeError,
   )
+
+  useEffect(() => {
+    if (sessionId === null || accessToken === null) return
+    if (sessionId.startsWith('pending_session_')) return
+
+    let cancelled = false
+    void listSessionAgents(sessionId)
+      .then((profiles) => {
+        if (cancelled) return
+        setAgentPanelsForSession(sessionId, agentProfilesToPanelItems(profiles))
+      })
+      .catch(() => {
+        // 세션 확정 전 pending 경로에서는 서버 세션이 아직 없을 수 있다.
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [accessToken, sessionId, setAgentPanelsForSession])
 
   if (sessionId === null) {
     return null

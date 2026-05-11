@@ -3,15 +3,13 @@ import { X, Bot, Sparkles, SlidersHorizontal, ChevronLeft, ChevronRight } from '
 import { motion, AnimatePresence } from 'motion/react'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import {
-  AgentAdapterTypeDropdown,
   AgentInstructionsBundlePanel,
   AgentModelDropdown,
   AgentSectionCard,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
-import { Button } from '@/components/ui/button'
-import { useUIStore } from '@/store/useUIStore'
 
 export interface CustomAgentConfig {
+  seedDefaultAgents?: boolean
   agentName: string
   persona: string
   callName: string
@@ -38,7 +36,6 @@ type ModalView = 'select' | 'customize'
 type CustomizeStep = 'settings' | 'instructions'
 
 export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionModalProps) {
-  const setSettingsOpen = useUIStore((state) => state.setSettingsOpen)
   const [view, setView] = useState<ModalView>('select')
   const [customizeStep, setCustomizeStep] = useState<CustomizeStep>('settings')
   const [agentName, setAgentName] = useState('')
@@ -111,7 +108,7 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent
-        className="max-h-[calc(100vh-24px)] w-[920px] max-w-[calc(100vw-24px)] gap-0 overflow-hidden p-0 [&>button]:hidden"
+        className="max-h-[calc(100vh-24px)] w-full max-w-lg gap-0 overflow-hidden p-0 [&>button]:hidden"
         aria-describedby="new-session-description"
       >
         <DialogTitle className="sr-only">새 대화 시작</DialogTitle>
@@ -146,7 +143,7 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
               <div className="space-y-3 p-6">
                 {/* 기본 제공 에이전트 */}
                 <button
-                  onClick={() => onConfirm()}
+                  onClick={() => onConfirm(defaultAgentSessionConfig())}
                   className="border-border hover:border-primary/40 hover:bg-primary/3 group flex w-full items-start gap-4 rounded-xl border p-4 text-left transition-all duration-150"
                 >
                   <div className="bg-primary/10 group-hover:bg-primary/15 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl transition-colors">
@@ -218,9 +215,9 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                 </button>
               </div>
 
-              <div className="space-y-4 px-5 py-4">
+              <div className="max-h-[calc(100vh-200px)] space-y-4 overflow-y-auto px-5 py-4">
                 {customizeStep === 'settings' ? (
-                  <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(20rem,0.78fr)]">
+                  <div className="grid gap-3">
                     <div className="space-y-3">
                       <AgentSectionCard title="프로필">
                         <div className="grid gap-3 sm:grid-cols-[13rem_minmax(0,1fr)]">
@@ -260,48 +257,9 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                           </div>
                         </div>
                       </AgentSectionCard>
-
-                      <AgentSectionCard title="실행 환경">
-                        <div className="grid gap-3 sm:grid-cols-3">
-                          <Field label="기본 환경">
-                            <select
-                              className={`${inputClass} cursor-not-allowed opacity-70`}
-                              disabled
-                            >
-                              <option>회사 기본값 (로컬)</option>
-                            </select>
-                          </Field>
-                          <Field label="역할">
-                            <input
-                              className={`${inputClass} opacity-70`}
-                              value="CEO"
-                              disabled
-                              readOnly
-                            />
-                          </Field>
-                          <Field label="상위 에이전트">
-                            <input
-                              className={`${inputClass} opacity-70`}
-                              value="Root"
-                              disabled
-                              readOnly
-                            />
-                          </Field>
-                        </div>
-                      </AgentSectionCard>
                     </div>
 
                     <div className="space-y-3">
-                      <AgentSectionCard title="연결 방식">
-                        <Field label="연결 방식">
-                          <AgentAdapterTypeDropdown
-                            value="gpt"
-                            options={[{ value: 'gpt', label: 'OpenAI API' }]}
-                            onChange={() => undefined}
-                          />
-                        </Field>
-                      </AgentSectionCard>
-
                       <AgentSectionCard title="모델">
                         <Field label="모델">
                           <AgentModelDropdown
@@ -330,19 +288,6 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                             </span>
                           </span>
                         </label>
-                      </AgentSectionCard>
-
-                      <AgentSectionCard title="API 키">
-                        <div>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setSettingsOpen(true, 'apiKeys')}
-                          >
-                            API 키 설정 열기
-                          </Button>
-                        </div>
                       </AgentSectionCard>
                     </div>
                   </div>
@@ -405,6 +350,23 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
       </DialogContent>
     </Dialog>
   )
+}
+
+function defaultAgentSessionConfig(): CustomAgentConfig {
+  return {
+    seedDefaultAgents: true,
+    agentName: 'CEO',
+    persona: '',
+    callName: 'CEO',
+    capabilities: '',
+    profileImage: CEO_IMAGE_OPTIONS[0].src,
+    model: 'gpt-5.4',
+    delegationPolicy: { canDelegate: true },
+    instructionsEntryFile: 'AGENTS.md',
+    instructionsMode: 'managed',
+    instructionsRootPath: '',
+    instructionsFiles: {},
+  }
 }
 
 const inputClass =

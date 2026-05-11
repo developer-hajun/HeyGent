@@ -32,7 +32,14 @@ from app.domain.orchestration.orchestrator import Orchestrator
 from app.domain.orchestration.runtime_planning import Planner
 from app.domain.providers.model import OpenAIAPIProvider, OpenAIOAuthProvider
 from app.domain.providers.registry import ProviderRegistry
-from app.storage.postgres import PostgresSessionStore, PostgresTaskRepository, apply_configured_postgres_migrations, connect_postgres
+from app.storage.postgres import (
+    PostgresAgentRepository,
+    PostgresSessionStore,
+    PostgresTaskRepository,
+    PostgresWorkRepository,
+    apply_configured_postgres_migrations,
+    connect_postgres,
+)
 from app.storage.redis import ProjectingTaskRepository, build_task_projection_store
 
 
@@ -101,6 +108,9 @@ async def lifespan(app: FastAPI):
     memory_extraction_provider = ProviderMemoryExtractionClient(provider_registry=provider_registry)
     memory_extractor = LlmMemoryExtractor(provider=memory_extraction_provider)
     session_store = PostgresSessionStore(postgres_connection_factory)
+    work_repository = PostgresWorkRepository(postgres_connection_factory)
+    agent_repository = PostgresAgentRepository(postgres_connection_factory)
+    agent_repository.ensure_builtin_templates()
     # recall_service = RecallService(session_store)
     # memory_store = MemoryStore()
     skill_registry = SkillRegistry()
@@ -114,8 +124,10 @@ async def lifespan(app: FastAPI):
         skill_registry=skill_registry,
         session_store=session_store,
         bridge_session_manager=bridge_session_manager,
+        work_repository=work_repository,
+        agent_repository=agent_repository,
     )
-    tool_catalog = ToolCatalog(tool_runtime, default_toolsets=("skills", "session", "planning", "terminal", "file", "web", "browser", "delegation"))
+    tool_catalog = ToolCatalog(tool_runtime, default_toolsets=("skills", "session", "planning", "terminal", "file", "web", "browser", "work", "delegation"))
     child_session_launcher = ChildSessionLauncher()
     planner = Planner()
     tool_registry = ToolRegistry(
@@ -125,7 +137,18 @@ async def lifespan(app: FastAPI):
         tool_catalog=tool_catalog,
         session_store=session_store,
     )
-    task_engine = TaskEngine(repository, broadcaster, approval_service, child_session_launcher, planner, tool_registry, session_store=session_store)
+    task_engine = TaskEngine(
+        repository,
+        broadcaster,
+        approval_service,
+        child_session_launcher,
+        planner,
+        tool_registry,
+        session_store=session_store,
+        work_repository=work_repository,
+        agent_repository=agent_repository,
+        settings=settings,
+    )
     loop_runner = AgentLoopRunner(
         repository=repository,
         planner=planner,
@@ -149,6 +172,8 @@ async def lifespan(app: FastAPI):
     app.state.memory_extractor = memory_extractor
     app.state.provider_registry = provider_registry
     app.state.session_store = session_store
+    app.state.work_repository = work_repository
+    app.state.agent_repository = agent_repository
     # app.state.recall_service = recall_service
     # app.state.memory_store = memory_store
     app.state.skill_registry = skill_registry

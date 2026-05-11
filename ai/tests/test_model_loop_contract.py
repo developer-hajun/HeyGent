@@ -71,6 +71,30 @@ def test_prompt_builder_places_persistent_memory_before_current_prompt():
     assert prompt.index("<memory-context>") < prompt.index("오늘 회의 정리해줘")
 
 
+def test_prompt_builder_includes_work_assignment_context_before_current_prompt():
+    prompt_builder = PromptBuilder(SkillPromptBuilder(SkillRegistry()))
+
+    prompt = prompt_builder.build_model_prompt(
+        input_payload={
+            "prompt": "결과를 파일로 저장해줘",
+            "workId": "work-1",
+            "workIdentifier": "TASK-7",
+            "workAssigneeAgentId": "agent-researcher",
+            "workContext": {
+                "title": "삼성전자와 SK하이닉스 조사",
+                "labels": ["research"],
+                "promptPreview": "최근 이슈를 요약한다.",
+            },
+        }
+    )
+
+    assert "연결된 작업 컨텍스트" in prompt
+    assert "TASK-7" in prompt
+    assert "agent-researcher" in prompt
+    assert "담당 작업 실행 자체를 worker delegate로 다시 위임하지 마세요." in prompt
+    assert prompt.index("연결된 작업 컨텍스트") < prompt.index("결과를 파일로 저장해줘")
+
+
 def test_persistent_memory_prompt_sanitizes_metadata():
     prompt = build_persistent_memory_prompt(
         [
@@ -81,7 +105,7 @@ def test_persistent_memory_prompt_sanitizes_metadata():
                 scope_type="GLOBAL",
                 content="사용자는 한국어 답변을 선호한다.",
                 summary="언어 선호",
-                metadata={"workspaceKey": "team-a", "token": "secret-token", "tags": ["language"]},
+                metadata={"workspaceKey": "team-a", "token": "secret-token", "tags": ["language"], "category": "preference"},
             )
         ]
     )
@@ -89,7 +113,33 @@ def test_persistent_memory_prompt_sanitizes_metadata():
     assert "<memory-context>" in prompt
     assert "사용자는 한국어 답변을 선호한다." in prompt
     assert "workspaceKey" in prompt
+    assert "preference" in prompt
     assert "secret-token" not in prompt
+
+
+def test_prompt_builder_includes_skill_catalog_before_web_tool_choice():
+    registry = SkillRegistry()
+    registry.register_many(SkillLoader().load_builtin())
+    prompt_builder = PromptBuilder(SkillPromptBuilder(registry))
+
+    prompt = prompt_builder.build_agent_loop_prompt(
+        input_payload={"prompt": "강남구 날씨 알려줘"},
+        available_tools=[
+            {"name": "skills.read", "summary": "skill 문서 읽기", "toolset": "skills"},
+            {"name": "web_search", "summary": "웹 검색", "toolset": "web"},
+        ],
+        tool_results=[],
+        task_todo_state=None,
+        resume_payload=None,
+        turn_index=1,
+        max_iterations=4,
+    )
+
+    assert "프로젝트 skill 라우팅 힌트" in prompt
+    assert "`web_search`보다 먼저 `skills.read`" in prompt
+    assert "`http_get`으로 해당 endpoint를 호출하세요" in prompt
+    assert "`korea-weather`" in prompt
+    assert "한국 날씨를 기상청 단기예보 조회서비스" in prompt
 
 
 def test_assemble_agent_loop_messages_preserves_history_as_native_messages():
@@ -157,6 +207,7 @@ def test_first_batch_k_skills_are_loaded_from_app_skills():
 
     assert expected <= set(loaded)
     assert "https://k-skill-proxy.nomadamas.org" in loaded["korea-weather"]["body"]
+    assert "`http_get` runtime tool" in loaded["korea-weather"]["body"]
     assert "https://k-skill-proxy.nomadamas.org" in loaded["seoul-subway-arrival"]["body"]
     assert (Path(loaded["zipcode-search"]["path"]).parent / "scripts" / "zipcode_search.py").is_file()
     assert "scripts/geeknews_search.py" in loaded["geeknews-search"]["body"]

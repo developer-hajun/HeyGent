@@ -58,6 +58,14 @@ def test_postgres_schema_contains_required_durable_tables():
         "ai_agent_templates",
         "provider_oauth_states",
         "provider_tokens",
+        "work_counters",
+        "work_items",
+        "work_labels",
+        "work_label_links",
+        "work_comments",
+        "work_relations",
+        "work_runs",
+        "work_read_states",
     }
 
     for table_name in required_tables:
@@ -129,11 +137,36 @@ def test_postgres_schema_contains_user_owner_and_session_lifecycle_columns():
 
     assert "0006_session_owner_lifecycle_settings" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
     assert "0007_session_command_receipts" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "0008_work_board_schema" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
     assert "ALTER TABLE agent_sessions" in migration_sql
     assert "ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id)" in migration_sql
     assert "ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}'::jsonb" in migration_sql
     assert "agent_sessions_public_owner_user_required" in migration_sql
     assert "CREATE TABLE IF NOT EXISTS session_command_receipts" in migration_sql
+    assert "CREATE TABLE IF NOT EXISTS work_items" in migration_sql
+
+
+def test_postgres_work_schema_contains_board_execution_fields():
+    schema_sql = render_postgres_schema()
+
+    for expected in [
+        "identifier TEXT NOT NULL",
+        "status TEXT NOT NULL",
+        "assignee_agent_id TEXT",
+        "parent_id TEXT REFERENCES work_items(work_id) ON DELETE SET NULL",
+        "raw_user_input TEXT",
+        "execution_instruction TEXT",
+        "expected_deliverable TEXT",
+        "acceptance_criteria JSONB NOT NULL DEFAULT '[]'::jsonb",
+        "constraints_payload JSONB NOT NULL DEFAULT '[]'::jsonb",
+        "client_request_id TEXT",
+        "active_run_id TEXT",
+        "latest_run_id TEXT",
+        "UNIQUE (session_id, identifier)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_session_client_request",
+        "CREATE INDEX IF NOT EXISTS idx_work_items_session_status_updated",
+    ]:
+        assert expected in schema_sql
 
 
 def test_sqlite_task_and_approval_contracts_keep_owner_user_columns():

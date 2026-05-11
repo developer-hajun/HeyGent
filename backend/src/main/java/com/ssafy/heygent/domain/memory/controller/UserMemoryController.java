@@ -74,7 +74,8 @@ public class UserMemoryController {
         @RequestParam(required = false) String workspaceKey,
         @RequestParam(required = false) String sessionKey,
         @RequestParam(required = false) String resourceId,
-        @RequestParam(required = false) List<String> tags
+        @RequestParam(required = false) List<String> tags,
+        @RequestParam(required = false) List<String> metadataCategories
     ) {
         return ApiResponse.success(userMemoryService.recall(
             resolveUserId(user),
@@ -86,7 +87,8 @@ public class UserMemoryController {
             workspaceKey,
             sessionKey,
             resourceId,
-            tags
+            tags,
+            metadataCategories
         ));
     }
 
