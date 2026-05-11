@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.api.memory_context import attach_persistent_memory_context, select_memory_recall_query
+from app.api.memory_context import attach_persistent_memory_context, plan_memory_recall, select_memory_recall_query
 from app.clients.backend_memory import BackendMemoryClientError, BackendMemoryItem
 
 
@@ -39,6 +39,40 @@ def test_select_memory_recall_query_uses_prompt_like_fields():
     assert select_memory_recall_query({"subject": "회의 정리"}) == "회의 정리"
 
 
+def test_plan_memory_recall_skips_low_value_greeting():
+    plan = plan_memory_recall("안녕")
+
+    assert plan.should_recall is False
+    assert plan.reason == "low_value_query"
+
+
+def test_plan_memory_recall_selects_user_preference_filters():
+    plan = plan_memory_recall("앞으로 답변은 짧게 해줘", workspace_key="team-a")
+
+    assert plan.should_recall is True
+    assert plan.reason == "user_preference_needed"
+    assert plan.filters() == {
+        "store_type": "USER_PROFILE",
+        "memory_type": "PREFERENCE",
+        "scope_type": "GLOBAL",
+        "metadata_categories": ["preference"],
+    }
+
+
+def test_plan_memory_recall_selects_workspace_task_state_filters():
+    plan = plan_memory_recall("4번 장기기억 작업 이어서 해줘", workspace_key="team-a")
+
+    assert plan.should_recall is True
+    assert plan.reason == "workspace_memory_needed"
+    assert plan.filters() == {
+        "store_type": "AGENT_MEMORY",
+        "memory_type": "FACT",
+        "scope_type": "WORKSPACE",
+        "workspace_key": "team-a",
+        "metadata_categories": ["task_state", "fact"],
+    }
+
+
 @pytest.mark.asyncio
 async def test_attach_persistent_memory_context_replaces_client_supplied_context():
     memory_client = FakeMemoryClient([_memory("사용자는 회의 요약을 짧게 받는 것을 선호한다.")])
@@ -62,25 +96,52 @@ async def test_attach_persistent_memory_context_replaces_client_supplied_context
             "user_id": "7",
             "query": "오늘 회의 정리해줘",
             "limit": 5,
-            "workspace_key": "team-a",
+            "workspace_key": None,
+            "store_type": None,
+            "memory_type": None,
+            "scope_type": None,
+            "metadata_categories": None,
         }
     ]
     assert "client supplied context" not in task_input["persistent_memory_context"]
     assert "legacy client supplied context" not in str(task_input)
     assert "사용자는 회의 요약을 짧게 받는 것을 선호한다." in task_input["persistent_memory_context"]
     assert "hidden" not in task_input["persistent_memory_context"]
-    assert task_input["memory_context_meta"]["recall"] == {
-        "status": "injected",
-        "source": "backend",
-        "query_present": True,
-        "workspace_key_present": True,
-        "count": 1,
-        "memory_ids": [1],
-        "memory_types": ["PREFERENCE"],
-        "store_types": ["PROFILE"],
-        "scope_types": ["GLOBAL"],
-        "failed": False,
+    recall_meta = task_input["memory_context_meta"]["recall"]
+    assert recall_meta["status"] == "injected"
+    assert recall_meta["source"] == "backend"
+    assert recall_meta["query_present"] is True
+    assert recall_meta["workspace_key_present"] is False
+    assert recall_meta["count"] == 1
+    assert recall_meta["memory_ids"] == [1]
+    assert recall_meta["memory_types"] == ["PREFERENCE"]
+    assert recall_meta["store_types"] == ["PROFILE"]
+    assert recall_meta["scope_types"] == ["GLOBAL"]
+    assert recall_meta["failed"] is False
+    assert recall_meta["planner"] == {
+        "should_recall": True,
+        "reason": "general_semantic_recall",
+        "filters": {},
     }
+
+
+@pytest.mark.asyncio
+async def test_attach_persistent_memory_context_skips_low_value_recall():
+    memory_client = FakeMemoryClient([_memory("불러오면 안 되는 기억")])
+    task_input = {"prompt": "안녕", "persistent_memory_context": "client supplied context"}
+
+    await attach_persistent_memory_context(
+        app_state=SimpleNamespace(backend_memory_client=memory_client),
+        task_input=task_input,
+        user_id="7",
+        query="안녕",
+        workspace_key="team-a",
+    )
+
+    assert memory_client.calls == []
+    assert "persistent_memory_context" not in task_input
+    assert task_input["memory_context_meta"]["recall"]["status"] == "skipped"
+    assert task_input["memory_context_meta"]["recall"]["reason"] == "low_value_query"
 
 
 @pytest.mark.asyncio
@@ -98,6 +159,7 @@ async def test_attach_persistent_memory_context_is_nonfatal_on_backend_failure()
     assert task_input["memory_context_meta"]["recall"]["status"] == "failed"
     assert task_input["memory_context_meta"]["recall"]["failed"] is True
     assert task_input["memory_context_meta"]["recall"]["reason"] == "backend_memory_client_error"
+    assert task_input["memory_context_meta"]["recall"]["planner"]["reason"] == "general_semantic_recall"
 
 
 @pytest.mark.asyncio

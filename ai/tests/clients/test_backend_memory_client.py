@@ -29,7 +29,8 @@ async def test_recall_sends_internal_header_and_user_id_params():
         assert str(request.url) == (
             "http://backend/internal/ai/memories/recall"
             "?userId=1&limit=5&query=%ED%9A%8C%EC%9D%98%EB%A1%9D+%EC%9A%94%EC%95%BD"
-            "&workspaceKey=workspace-a&scopeType=WORKSPACE&tags=project"
+            "&workspaceKey=workspace-a&scopeType=WORKSPACE&tags=project&metadataCategories=task_state"
+            "&metadataCategories=procedure"
         )
         return httpx.Response(200, json={"status": 200, "data": [memory_payload()]})
 
@@ -47,6 +48,7 @@ async def test_recall_sends_internal_header_and_user_id_params():
             workspace_key="workspace-a",
             scope_type="WORKSPACE",
             tags=["project"],
+            metadata_categories=["task_state", "procedure"],
         )
 
     assert len(memories) == 1

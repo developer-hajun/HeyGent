@@ -51,6 +51,7 @@ class BackendMemoryClient:
         scope_type: str | None = None,
         resource_id: str | None = None,
         tags: list[str] | None = None,
+        metadata_categories: list[str] | None = None,
     ) -> list[BackendMemoryItem]:
         """AI 요청 전 prompt에 주입할 장기기억 후보를 조회한다."""
 
@@ -66,6 +67,8 @@ class BackendMemoryClient:
         self._put_if_present(params, "resourceId", resource_id)
         if tags:
             params["tags"] = tags
+        if metadata_categories:
+            params["metadataCategories"] = metadata_categories
 
         try:
             response = await self._http_client.get(
