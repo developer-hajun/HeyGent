@@ -162,14 +162,6 @@ function inCopySZ(px: number, py: number, W: number, H: number): boolean {
   return Math.abs(px - W * 0.5) < COPY_SZ_HW && Math.abs(py - H * 0.5) < COPY_SZ_HH
 }
 
-// 좌측 상단 로고 영역 — 절대 좌표 기준
-const LOGO_SZ_X2 = 175
-const LOGO_SZ_Y2 = 78
-
-function inLogoSZ(px: number, py: number): boolean {
-  return px < LOGO_SZ_X2 && py < LOGO_SZ_Y2
-}
-
 // 화면 가장자리 soft margin — 노드는 이 거리 안쪽에서 시작
 const EDGE_SOFT = 70
 
@@ -296,7 +288,7 @@ function buildNetwork(W: number, H: number): NetNode[] {
         oy = cy + g2 * cl.spread * 0.78
 
         const okEdge = ox > EDGE_SOFT && ox < W - EDGE_SOFT && oy > EDGE_SOFT && oy < H - EDGE_SOFT
-        const okSafe = !inCopySZ(ox, oy, W, H) && !inLogoSZ(ox, oy)
+        const okSafe = !inCopySZ(ox, oy, W, H)
 
         if (okEdge && okSafe) break
         attempts++
@@ -307,7 +299,6 @@ function buildNetwork(W: number, H: number): NetNode[] {
       if (ox > W - EDGE_SOFT) ox = W - EDGE_SOFT - 10 - Math.random() * 40
       if (oy < EDGE_SOFT) oy = EDGE_SOFT + 10 + Math.random() * 40
       if (oy > H - EDGE_SOFT) oy = H - EDGE_SOFT - 10 - Math.random() * 40
-      if (inLogoSZ(ox, oy)) oy = LOGO_SZ_Y2 + 18 + Math.random() * 30
       if (inCopySZ(ox, oy, W, H)) {
         // 위/아래로 부드럽게 밀어냄 (랜덤 방향)
         const dy = Math.random() < 0.5 ? -1 : 1
@@ -537,15 +528,6 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
           if (penX < penY) addVelocity(nd, Math.sign(sdx || 1) * penX * push, 0)
           else addVelocity(nd, 0, Math.sign(sdy || 1) * penY * push)
         }
-        // 로고 영역 — 부드러운 방사 push
-        if (inLogoSZ(nd.x, nd.y)) {
-          const lcx = LOGO_SZ_X2 * 0.5
-          const lcy = LOGO_SZ_Y2 * 0.5
-          const ldx = nd.x - lcx
-          const ldy = nd.y - lcy
-          const len = Math.hypot(ldx, ldy) || 1
-          addVelocity(nd, (ldx / len) * 0.6 * sgRepel, (ldy / len) * 0.6 * sgRepel)
-        }
         // 화면 가장자리 — soft (약한 반발)
         const er = 0.01 * sgRepel
         if (nd.x < EDGE_SOFT) addVelocity(nd, (EDGE_SOFT - nd.x) * er, 0)
@@ -586,10 +568,9 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
           const midX = (a.x + b.x) / 2
           const midY = (a.y + b.y) / 2
 
-          // hero 상태에서만 카피/로고 통과 차단
+          // hero 상태에서만 카피 통과 차단
           if (stage1Band < 0.08) {
             if (inCopySZ(midX, midY, W, H)) continue
-            if (inLogoSZ(midX, midY)) continue
           }
 
           const mDist = Math.hypot(midX - lerpMouse.x, midY - lerpMouse.y)
@@ -1065,31 +1046,6 @@ export function LoginPage() {
           }}
         />
 
-        {/* 로고 — 좌측 상단 */}
-        <div
-          style={{
-            position: 'fixed',
-            top: 22,
-            left: 28,
-            zIndex: 12,
-            pointerEvents: 'none',
-          }}
-        >
-          <span
-            style={{
-              fontFamily: 'var(--font-display), -apple-system, BlinkMacSystemFont, sans-serif',
-              fontSize: 22,
-              fontWeight: 800,
-              letterSpacing: '-0.02em',
-              userSelect: 'none',
-            }}
-          >
-            <span style={{ color: '#F0F0F2' }}>Hey</span>
-            <span style={{ color: 'rgba(210,210,214,0.36)' }}>G</span>
-            <span style={{ color: '#F0F0F2' }}>ent</span>
-          </span>
-        </div>
-
         {/* hover tooltip — hero state 만 */}
         <div
           style={{
@@ -1202,7 +1158,7 @@ export function LoginPage() {
                 '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif',
             }}
           >
-            Your agent is ready.
+            Your agent is ready
           </h1>
           <p
             style={{
