@@ -86,7 +86,8 @@ class AiInternalMemoryControllerTest {
             eq("workspace-a"),
             isNull(),
             eq("resource-a"),
-            eq(List.of("project"))
+            eq(List.of("project")),
+            eq(List.of("task_state"))
         )).thenReturn(List.of(memoryResponse(10L)));
 
         mockMvc.perform(get("/internal/ai/memories/recall")
@@ -99,7 +100,8 @@ class AiInternalMemoryControllerTest {
                 .param("scopeType", "WORKSPACE")
                 .param("workspaceKey", "workspace-a")
                 .param("resourceId", "resource-a")
-                .param("tags", "project"))
+                .param("tags", "project")
+                .param("metadataCategories", "task_state"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data[0].id").value(10L))
             .andExpect(jsonPath("$.data[0].content").value("사용자는 회의록을 짧게 요약하는 것을 선호한다."));

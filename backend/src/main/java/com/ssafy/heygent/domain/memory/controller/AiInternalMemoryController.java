@@ -41,7 +41,8 @@ public class AiInternalMemoryController {
         @RequestParam(required = false) MemoryScopeType scopeType,
         @RequestParam(required = false) String workspaceKey,
         @RequestParam(required = false) String resourceId,
-        @RequestParam(required = false) List<String> tags
+        @RequestParam(required = false) List<String> tags,
+        @RequestParam(required = false) List<String> metadataCategories
     ) {
         return ApiResponse.success(userMemoryService.recall(
             userId,
@@ -53,7 +54,8 @@ public class AiInternalMemoryController {
             workspaceKey,
             null,
             resourceId,
-            tags
+            tags,
+            metadataCategories
         ));
     }
 

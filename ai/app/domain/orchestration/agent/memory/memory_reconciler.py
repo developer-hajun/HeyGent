@@ -1,0 +1,257 @@
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass
+from typing import Any, Protocol
+
+from app.clients.backend_memory import BackendMemoryClientError
+
+logger = logging.getLogger(__name__)
+
+
+class MemoryRecallClient(Protocol):
+    async def recall(
+        self,
+        *,
+        user_id: str,
+        query: str | None = None,
+        limit: int = 5,
+        workspace_key: str | None = None,
+        store_type: str | None = None,
+        memory_type: str | None = None,
+        scope_type: str | None = None,
+        resource_id: str | None = None,
+        tags: list[str] | None = None,
+    ) -> list[Any]:
+        """Return recalled memories from backend."""
+
+
+@dataclass(slots=True)
+class MemoryReconciliationContext:
+    user_id: str
+    user_message: str
+    workspace_key: str | None = None
+
+
+class MemoryOperationReconciler:
+    """기존 장기기억과 새 후보를 비교해 backend operation payload를 보강한다."""
+
+    def __init__(self, memory_client: MemoryRecallClient, *, recall_limit: int = 5) -> None:
+        self._memory_client = memory_client
+        self._recall_limit = max(1, min(recall_limit, 10))
+
+    async def reconcile_candidates(
+        self,
+        *,
+        candidates: list[dict[str, Any]],
+        context: MemoryReconciliationContext,
+    ) -> list[dict[str, Any]]:
+        reconciled: list[dict[str, Any]] = []
+        for candidate in candidates:
+            reconciled.append(await self._reconcile_candidate(candidate, context=context))
+        return reconciled
+
+    async def _reconcile_candidate(
+        self,
+        candidate: dict[str, Any],
+        *,
+        context: MemoryReconciliationContext,
+    ) -> dict[str, Any]:
+        current_operation = _operation(candidate.get("operationType"))
+        if current_operation != "ADD":
+            return dict(candidate)
+
+        query = _recall_query(candidate)
+        if not query:
+            return dict(candidate)
+
+        try:
+            memories = await self._memory_client.recall(
+                user_id=context.user_id,
+                query=query,
+                limit=self._recall_limit,
+                workspace_key=context.workspace_key if candidate.get("scopeType") == "WORKSPACE" else None,
+                store_type=_string(candidate.get("storeType")),
+                memory_type=_string(candidate.get("memoryType")),
+                scope_type=_string(candidate.get("scopeType")),
+                tags=_tags(candidate),
+            )
+        except BackendMemoryClientError:
+            logger.warning("장기기억 operation 판단용 recall에 실패했습니다.", exc_info=True)
+            return dict(candidate)
+        except Exception:
+            logger.warning("장기기억 operation 판단 중 예기치 않은 recall 오류가 발생했습니다.", exc_info=True)
+            return dict(candidate)
+
+        target = _best_related_memory(candidate, memories)
+        if target is None:
+            return dict(candidate)
+
+        operation = _decide_operation(candidate, target, user_message=context.user_message)
+        if operation == "ADD":
+            return dict(candidate)
+
+        result = dict(candidate)
+        result["operationType"] = operation
+        result["targetMemoryId"] = getattr(target, "id")
+        result["updateReason"] = _update_reason(operation, candidate, target, context.user_message)
+        return result
+
+
+def _recall_query(candidate: dict[str, Any]) -> str | None:
+    for key in ("summary", "content", "evidence"):
+        value = _string(candidate.get(key))
+        if value:
+            return value
+    return None
+
+
+def _best_related_memory(candidate: dict[str, Any], memories: list[Any]) -> Any | None:
+    candidate_content = _string(candidate.get("content")) or ""
+    candidate_summary = _string(candidate.get("summary")) or ""
+    candidate_text = f"{candidate_summary} {candidate_content}".strip()
+    candidate_tokens = _tokens(candidate_text)
+
+    best_memory: Any | None = None
+    best_score = 0.0
+    for memory in memories:
+        if not _same_contract(candidate, memory):
+            continue
+        memory_text = f"{getattr(memory, 'summary', '') or ''} {getattr(memory, 'content', '') or ''}".strip()
+        score = _similarity(candidate_tokens, _tokens(memory_text))
+        if score > best_score:
+            best_score = score
+            best_memory = memory
+
+    if best_memory is None or best_score < 0.2:
+        return None
+    return best_memory
+
+
+def _same_contract(candidate: dict[str, Any], memory: Any) -> bool:
+    return (
+        _string(candidate.get("memoryType")) == getattr(memory, "memory_type", None)
+        and _string(candidate.get("storeType")) == getattr(memory, "store_type", None)
+        and _string(candidate.get("scopeType")) == getattr(memory, "scope_type", None)
+    )
+
+
+def _decide_operation(candidate: dict[str, Any], memory: Any, *, user_message: str) -> str:
+    candidate_content = _normalize_text(_string(candidate.get("content")) or "")
+    memory_content = _normalize_text(getattr(memory, "content", "") or "")
+    if candidate_content and candidate_content == memory_content:
+        return "ADD"
+
+    user_text = _normalize_text(user_message)
+    if _has_update_signal(user_text):
+        return "UPDATE"
+    if _has_invalidation_signal(user_text):
+        return "INVALIDATE"
+    if _has_merge_signal(user_text):
+        return "MERGE"
+
+    memory_type = _string(candidate.get("memoryType"))
+    if memory_type in {"PREFERENCE", "PROFILE", "INSTRUCTION"}:
+        return "UPDATE"
+    return "MERGE"
+
+
+def _has_update_signal(text: str) -> bool:
+    return any(signal in text for signal in _UPDATE_SIGNALS)
+
+
+def _has_merge_signal(text: str) -> bool:
+    return any(signal in text for signal in _MERGE_SIGNALS)
+
+
+def _has_invalidation_signal(text: str) -> bool:
+    return any(signal in text for signal in _INVALIDATE_SIGNALS)
+
+
+def _update_reason(operation: str, candidate: dict[str, Any], memory: Any, user_message: str) -> str:
+    summary = _string(candidate.get("summary")) or _string(candidate.get("content")) or "장기기억 후보"
+    old_summary = getattr(memory, "summary", None) or getattr(memory, "content", "") or "기존 기억"
+    if operation == "UPDATE":
+        return _trim(f"사용자 발화를 기준으로 기존 기억('{old_summary}')을 새 후보('{summary}')로 갱신함")
+    if operation == "MERGE":
+        return _trim(f"사용자 발화에서 기존 기억('{old_summary}')에 보완 정보('{summary}')가 추가됨")
+    if operation == "INVALIDATE":
+        return _trim(f"사용자 발화에서 기존 기억('{old_summary}')이 더 이상 유효하지 않음을 확인함")
+    return _trim(f"사용자 발화 기반 operation 판단: {user_message}")
+
+
+def _tags(candidate: dict[str, Any]) -> list[str] | None:
+    metadata = candidate.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    tags = metadata.get("tags")
+    if not isinstance(tags, list):
+        return None
+    result = [tag for tag in (_string(tag) for tag in tags) if tag]
+    return result or None
+
+
+def _operation(value: Any) -> str:
+    text = _string(value)
+    return text if text in {"ADD", "UPDATE", "MERGE", "INVALIDATE"} else "ADD"
+
+
+def _string(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _tokens(text: str) -> set[str]:
+    normalized = _normalize_text(text)
+    tokens = set(re.findall(r"[0-9A-Za-z가-힣_]{2,}", normalized))
+    tags = set(re.findall(r"\[[^\]]+\]", normalized))
+    return tokens | tags
+
+
+def _similarity(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip().lower())
+
+
+def _trim(text: str) -> str:
+    return text[:500]
+
+
+_UPDATE_SIGNALS = (
+    "앞으로",
+    "이제",
+    "대신",
+    "바꿔",
+    "변경",
+    "수정",
+    "더 이상",
+    "from now on",
+    "instead",
+    "change",
+    "update",
+)
+_MERGE_SIGNALS = (
+    "추가",
+    "그리고",
+    "또",
+    "포함",
+    "also",
+    "additionally",
+    "include",
+)
+_INVALIDATE_SIGNALS = (
+    "더 이상 아니",
+    "이제 아니",
+    "취소",
+    "무효",
+    "not valid",
+    "no longer",
+)

@@ -571,6 +571,7 @@ export function ChatSessionPage() {
           onSelectWorkClick={openWorkPicker}
           selectedWorkLabel={selectedWorkLabel}
           statusMessage={workStatusMessage}
+          sessionId={sessionId}
         />
       </section>
       {workPickerOpen && (

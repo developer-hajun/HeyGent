@@ -215,7 +215,17 @@ def test_persistent_memory_prompt_sanitizes_metadata():
                 scope_type="GLOBAL",
                 content="사용자는 한국어 답변을 선호한다.",
                 summary="언어 선호",
-                metadata={"workspaceKey": "team-a", "token": "secret-token", "tags": ["language"]},
+                metadata={
+                    "workspaceKey": "team-a",
+                    "token": "secret-token",
+                    "tags": ["language"],
+                    "category": "preference",
+                    "ttl": "long",
+                    "sourceTimestamp": "2026-05-11T10:30:00",
+                    "eventTime": "2026-05-11T09:00:00",
+                    "reason": "발표 응답 톤을 맞추기 위해 저장한다.",
+                    "sensitivity": "medium",
+                },
             )
         ]
     )
@@ -223,7 +233,12 @@ def test_persistent_memory_prompt_sanitizes_metadata():
     assert "<memory-context>" in prompt
     assert "사용자는 한국어 답변을 선호한다." in prompt
     assert "workspaceKey" in prompt
+    assert "preference" in prompt
+    assert "sourceTimestamp" in prompt
+    assert "eventTime" in prompt
+    assert "발표 응답 톤" in prompt
     assert "secret-token" not in prompt
+    assert "sensitivity" not in prompt
 
 
 def test_prompt_builder_includes_skill_catalog_before_web_tool_choice():

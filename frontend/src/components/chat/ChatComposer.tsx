@@ -1,10 +1,12 @@
 import {
   AudioLines,
+  BarChart2,
   ChevronRight,
   FileImage,
   Globe,
   ImagePlus,
   ListTodo,
+  Loader2,
   Mic,
   MoreHorizontal,
   Plus,
@@ -13,8 +15,10 @@ import {
   Square,
   X,
 } from 'lucide-react'
-import { useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useLayoutEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { VoiceWaveform } from './VoiceWaveform'
+import { getCommandUsage, type CommandUsageSummary } from '@/apis/aiCommandUsage'
 
 type ChatComposerProps = {
   disabled?: boolean
@@ -28,6 +32,7 @@ type ChatComposerProps = {
   draftValue?: string | null
   statusMessage?: string | null
   selectedWorkLabel?: string | null
+  sessionId?: string
 }
 
 const attachMenuItems = [
@@ -53,11 +58,35 @@ export function ChatComposer({
   draftValue = null,
   statusMessage = null,
   selectedWorkLabel = null,
+  sessionId,
 }: ChatComposerProps) {
   const [value, setValue] = useState(draftValue ?? '')
   const [isRecording, setIsRecording] = useState(false)
   const [attachOpen, setAttachOpen] = useState(false)
+  const [usageOpen, setUsageOpen] = useState(false)
+  const [usageSummary, setUsageSummary] = useState<CommandUsageSummary | null>(null)
+  const [usageLoading, setUsageLoading] = useState(false)
+  const [usageError, setUsageError] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+
+  const fetchSessionUsage = useCallback(async () => {
+    if (!sessionId) return
+    setUsageLoading(true)
+    setUsageError(null)
+    try {
+      const result = await getCommandUsage({ sessionId })
+      setUsageSummary(result.summary)
+    } catch {
+      setUsageError('사용량을 불러오지 못했습니다.')
+    } finally {
+      setUsageLoading(false)
+    }
+  }, [sessionId])
+
+  const handleUsageOpen = (open: boolean) => {
+    setUsageOpen(open)
+    if (open && !usageSummary && !usageLoading) void fetchSessionUsage()
+  }
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current
@@ -154,23 +183,92 @@ export function ChatComposer({
                 </button>
               </PopoverContent>
             </Popover>
-            <textarea
-              ref={textareaRef}
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder}
-              disabled={disabled}
-              rows={1}
-              className="text-foreground placeholder:text-muted-foreground max-h-36 min-h-6 flex-1 resize-none bg-transparent py-0 text-[15px] outline-none disabled:opacity-60"
-            />
+            {/* 토큰 사용량 버튼 — 세션 ID가 있을 때만 표시 */}
+            {sessionId && (
+              <Popover open={usageOpen} onOpenChange={handleUsageOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="토큰 사용량 보기"
+                    className="bg-muted text-muted-foreground hover:bg-muted/80 shrink-0 rounded-full p-1 transition-colors"
+                  >
+                    <BarChart2 className="h-4 w-4" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  side="top"
+                  align="start"
+                  sideOffset={8}
+                  className="w-64 rounded-2xl p-4"
+                >
+                  <div className="mb-3 flex items-center justify-between">
+                    <p className="text-foreground text-sm font-semibold">이 세션 토큰 사용량</p>
+                    <button
+                      type="button"
+                      onClick={() => void fetchSessionUsage()}
+                      disabled={usageLoading}
+                      className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
+                      aria-label="새로고침"
+                    >
+                      <Loader2
+                        className={`h-3.5 w-3.5 ${usageLoading ? 'animate-spin' : 'hidden'}`}
+                      />
+                    </button>
+                  </div>
+                  {usageLoading && !usageSummary && (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="text-muted-foreground h-5 w-5 animate-spin" />
+                    </div>
+                  )}
+                  {usageError && <p className="text-destructive text-xs">{usageError}</p>}
+                  {usageSummary && (
+                    <div className="space-y-2">
+                      {[
+                        { label: '총 토큰', value: usageSummary.totalTokens.toLocaleString() },
+                        { label: '입력', value: usageSummary.inputTokens.toLocaleString() },
+                        { label: '출력', value: usageSummary.outputTokens.toLocaleString() },
+                        {
+                          label: '예상 비용',
+                          value: `$${usageSummary.estimatedCostUsd.toFixed(4)}`,
+                        },
+                      ].map(({ label, value: val }) => (
+                        <div key={label} className="flex items-center justify-between">
+                          <span className="text-muted-foreground text-xs">{label}</span>
+                          <span className="text-foreground text-xs font-semibold tabular-nums">
+                            {val}
+                          </span>
+                        </div>
+                      ))}
+                      <p className="text-muted-foreground border-border mt-2 border-t pt-2 text-xs">
+                        {usageSummary.recordCount}건의 기록
+                      </p>
+                    </div>
+                  )}
+                </PopoverContent>
+              </Popover>
+            )}
+            {isRecording ? (
+              <VoiceWaveform active={isRecording} onError={() => setIsRecording(false)} />
+            ) : (
+              <textarea
+                ref={textareaRef}
+                value={value}
+                onChange={(event) => setValue(event.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={placeholder}
+                disabled={disabled}
+                rows={1}
+                className="text-foreground placeholder:text-muted-foreground max-h-36 min-h-6 flex-1 resize-none bg-transparent py-0 text-[15px] outline-none disabled:opacity-60"
+              />
+            )}
             <button
               type="button"
               onClick={() => setIsRecording((r) => !r)}
               aria-label={isRecording ? '음성 입력 중지' : '음성 입력 시작'}
+              aria-pressed={isRecording}
               className={`shrink-0 rounded-2xl p-2.5 transition-colors ${
                 isRecording
-                  ? 'animate-pulse bg-red-500 text-white'
+                  ? 'bg-red-500 text-white hover:bg-red-500/90'
                   : 'bg-muted text-muted-foreground hover:bg-muted/80'
               }`}
             >
@@ -182,7 +280,7 @@ export function ChatComposer({
                 onClick={onStop}
                 aria-label="응답 중지"
                 title="응답 중지"
-                className="border-foreground text-foreground hover:bg-muted shrink-0 rounded-2xl border-2 bg-white p-2.5 transition-colors"
+                className="border-foreground bg-background text-foreground hover:bg-muted shrink-0 rounded-2xl border-2 p-2.5 transition-colors"
               >
                 <Square className="h-4 w-4 fill-current" />
               </button>
@@ -192,7 +290,7 @@ export function ChatComposer({
                 onClick={submit}
                 disabled={disabled}
                 aria-label="메시지 보내기"
-                className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 text-white transition-colors disabled:opacity-40"
+                className="bg-foreground text-background hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 transition-colors disabled:opacity-40"
               >
                 <Send className="h-4 w-4" />
               </button>
@@ -202,7 +300,7 @@ export function ChatComposer({
                 onClick={onVoiceMode}
                 aria-label="음성 대화 모드"
                 title="음성 대화 모드"
-                className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 text-white transition-colors"
+                className="bg-foreground text-background hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 transition-colors"
               >
                 <AudioLines className="h-4 w-4" />
               </button>

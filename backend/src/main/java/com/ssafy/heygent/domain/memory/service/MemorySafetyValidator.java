@@ -26,7 +26,37 @@ public class MemorySafetyValidator {
         "sessionKey",
         "resourceType",
         "resourceId",
-        "source"
+        "source",
+        "category",
+        "sensitivity",
+        "ttl",
+        "sourceTimestamp",
+        "eventTime",
+        "reason"
+    );
+
+    private static final Set<String> ALLOWED_CATEGORIES = Set.of(
+        "preference",
+        "profile",
+        "fact",
+        "instruction",
+        "procedure",
+        "event",
+        "reason",
+        "task_state"
+    );
+
+    private static final Set<String> ALLOWED_SENSITIVITIES = Set.of(
+        "low",
+        "medium",
+        "high"
+    );
+
+    private static final Set<String> ALLOWED_TTLS = Set.of(
+        "short",
+        "medium",
+        "long",
+        "permanent"
     );
 
     private static final List<Pattern> BLOCKED_PATTERNS = List.of(
@@ -92,7 +122,28 @@ public class MemorySafetyValidator {
         if (textValue.length() > MAX_METADATA_VALUE_LENGTH) {
             throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
         }
+        validateMetadataEnumValue(key, textValue);
         validateText(textValue);
+    }
+
+    private void validateMetadataEnumValue(String key, String value) {
+        if ("category".equals(key)) {
+            validateAllowedValue(value, ALLOWED_CATEGORIES);
+            return;
+        }
+        if ("sensitivity".equals(key)) {
+            validateAllowedValue(value, ALLOWED_SENSITIVITIES);
+            return;
+        }
+        if ("ttl".equals(key)) {
+            validateAllowedValue(value, ALLOWED_TTLS);
+        }
+    }
+
+    private void validateAllowedValue(String value, Set<String> allowedValues) {
+        if (!allowedValues.contains(value.trim())) {
+            throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
+        }
     }
 
     private void validateTags(Object value) {
