@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -45,6 +46,16 @@ public class UserMemoryService {
     private static final double MIN_RECALL_SIMILARITY = 0.35;
     private static final double MAX_RECALL_DISTANCE = 1.0 - MIN_RECALL_SIMILARITY;
     private static final double SEMANTIC_DUPLICATE_SIMILARITY = 0.92;
+    private static final Set<String> ALLOWED_METADATA_CATEGORIES = Set.of(
+        "preference",
+        "profile",
+        "fact",
+        "instruction",
+        "procedure",
+        "event",
+        "reason",
+        "task_state"
+    );
 
     private final UserMemoryRepository userMemoryRepository;
     private final UserMemoryVectorRepository userMemoryVectorRepository;
@@ -201,9 +212,11 @@ public class UserMemoryService {
         String workspaceKey,
         String sessionKey,
         String resourceId,
-        List<String> tags
+        List<String> tags,
+        List<String> metadataCategories
     ) {
         int normalizedLimit = normalizeRecallLimit(limit);
+        List<String> normalizedMetadataCategories = normalizeMetadataCategories(metadataCategories);
         List<UserMemory> memories;
 
         if (StringUtils.hasText(query)) {
@@ -217,7 +230,8 @@ public class UserMemoryService {
                 workspaceKey,
                 sessionKey,
                 resourceId,
-                tags
+                tags,
+                normalizedMetadataCategories
             );
         } else {
             memories = recallByFilters(
@@ -229,7 +243,8 @@ public class UserMemoryService {
                 workspaceKey,
                 sessionKey,
                 resourceId,
-                tags
+                tags,
+                normalizedMetadataCategories
             );
         }
 
@@ -257,7 +272,8 @@ public class UserMemoryService {
         String workspaceKey,
         String sessionKey,
         String resourceId,
-        List<String> tags
+        List<String> tags,
+        List<String> metadataCategories
     ) {
         List<Double> queryEmbedding = memoryEmbeddingService.embed(query.trim());
         List<Long> memoryIds = userMemoryVectorRepository.searchIds(
@@ -270,6 +286,7 @@ public class UserMemoryService {
             sessionKey,
             resourceId,
             tags,
+            metadataCategories,
             MIN_CONFIDENCE_TO_STORE,
             MIN_IMPORTANCE_TO_STORE,
             MAX_RECALL_DISTANCE,
@@ -287,7 +304,8 @@ public class UserMemoryService {
                 workspaceKey,
                 sessionKey,
                 resourceId,
-                tags
+                tags,
+                metadataCategories
             );
         }
 
@@ -311,10 +329,11 @@ public class UserMemoryService {
         String workspaceKey,
         String sessionKey,
         String resourceId,
-        List<String> tags
+        List<String> tags,
+        List<String> metadataCategories
     ) {
         List<ScoredMemory> scoredMemories = findRecallCandidates(userId, storeType, memoryType, scopeType).stream()
-            .filter(memory -> matchesMetadata(memory, workspaceKey, sessionKey, resourceId, tags))
+            .filter(memory -> matchesMetadata(memory, workspaceKey, sessionKey, resourceId, tags, metadataCategories))
             .filter(memory -> StringUtils.hasText(memory.getEmbeddingText()))
             .map(memory -> new ScoredMemory(
                 memory,
@@ -343,10 +362,11 @@ public class UserMemoryService {
         String workspaceKey,
         String sessionKey,
         String resourceId,
-        List<String> tags
+        List<String> tags,
+        List<String> metadataCategories
     ) {
         return findRecallCandidates(userId, storeType, memoryType, scopeType).stream()
-            .filter(memory -> matchesMetadata(memory, workspaceKey, sessionKey, resourceId, tags))
+            .filter(memory -> matchesMetadata(memory, workspaceKey, sessionKey, resourceId, tags, metadataCategories))
             .limit(limit)
             .toList();
     }
@@ -637,7 +657,8 @@ public class UserMemoryService {
         String workspaceKey,
         String sessionKey,
         String resourceId,
-        List<String> tags
+        List<String> tags,
+        List<String> metadataCategories
     ) {
         Map<String, Object> metadata = memory.getMetadata();
         if (!matchesMetadataValue(metadata, "workspaceKey", workspaceKey)) {
@@ -649,7 +670,7 @@ public class UserMemoryService {
         if (!matchesMetadataValue(metadata, "resourceId", resourceId)) {
             return false;
         }
-        return matchesTags(metadata, tags);
+        return matchesTags(metadata, tags) && matchesMetadataCategories(metadata, metadataCategories);
     }
 
     private boolean matchesMetadataValue(Map<String, Object> metadata, String key, String expectedValue) {
@@ -683,6 +704,36 @@ public class UserMemoryService {
             .toList();
 
         return normalizedTags.stream().anyMatch(normalizedStoredTags::contains);
+    }
+
+    private boolean matchesMetadataCategories(Map<String, Object> metadata, List<String> metadataCategories) {
+        List<String> normalizedCategories = normalizeMetadataCategories(metadataCategories);
+        if (normalizedCategories.isEmpty()) {
+            return true;
+        }
+        if (metadata == null) {
+            return false;
+        }
+        Object category = metadata.get("category");
+        return category != null && normalizedCategories.contains(category.toString().trim());
+    }
+
+    private List<String> normalizeMetadataCategories(List<String> metadataCategories) {
+        if (metadataCategories == null) {
+            return List.of();
+        }
+        return metadataCategories.stream()
+            .filter(StringUtils::hasText)
+            .map(category -> category.trim().toLowerCase().replace("-", "_"))
+            .peek(this::validateMetadataCategory)
+            .distinct()
+            .toList();
+    }
+
+    private void validateMetadataCategory(String category) {
+        if (!ALLOWED_METADATA_CATEGORIES.contains(category)) {
+            throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
+        }
     }
 
     private boolean isNotExpired(UserMemory memory, LocalDateTime now) {
