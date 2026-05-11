@@ -1,5 +1,27 @@
 import type { JsonObject, RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
 
+export type TaskRunAgentKind = 'main' | 'user_subagent' | 'worker' | 'domain' | string
+
+export type TaskRunAgentRef = {
+  id: string
+  kind: TaskRunAgentKind
+  profileId?: string | null
+  profileKey?: string | null
+  displayName: string
+  agentSessionId?: string | null
+  status?: string | null
+  summary?: string | null
+}
+
+export type TaskRunDisplayContext = {
+  sessionId?: string | null
+  taskRunId: string
+  stepRunId?: string | null
+  assigneeAgent: TaskRunAgentRef
+  actorAgent: TaskRunAgentRef
+  delegatedAgents: TaskRunAgentRef[]
+}
+
 export type RawTaskRunStatus =
   | 'PENDING'
   | 'RUNNING'
@@ -19,6 +41,7 @@ export type RawTaskRun = {
   updated_at?: string | null
   completed_at?: string | null
   last_sequence?: number | null
+  displayContext?: TaskRunDisplayContext | null
   [key: string]: unknown
 }
 
@@ -35,6 +58,7 @@ export type RawStepRun = {
   sequence?: number | null
   started_at?: string | null
   completed_at?: string | null
+  displayContext?: TaskRunDisplayContext | null
   [key: string]: unknown
 }
 
@@ -75,6 +99,7 @@ export type ActivityItemView = {
   tone: TaskRunStatusTone
   sequence?: number
   occurredAt?: string
+  displayContext?: TaskRunDisplayContext
   raw: RawTaskEventPayload
 }
 

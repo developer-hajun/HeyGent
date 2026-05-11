@@ -1054,6 +1054,12 @@ class ToolCallingLoopHandler:
             # worker 실행은 tool 호출 중간에 이미 StepRun detail 에 반영되지만,
             # 최종 handler detail_json 이 agentDetail 기본값으로 덮어쓰지 않도록 같은 정보를 다시 싣는다.
             detail_json["agentDetail"] = delegate_agent_detail
+        session_agent_detail = self._session_agent_detail_from_tool_results(tool_results)
+        if session_agent_detail is not None:
+            detail_json["agentDetail"] = {
+                **dict(detail_json.get("agentDetail") or {}),
+                **session_agent_detail,
+            }
         observed_steps = self._observed_semantic_steps(tool_results)
         step_summary = self._observed_step_summary(observed_steps)
         if resume_payload is not None:
@@ -1355,6 +1361,40 @@ class ToolCallingLoopHandler:
             "summary": latest.get("summary"),
             "status": latest.get("status"),
             "workers": workers,
+        }
+
+    @staticmethod
+    def _session_agent_detail_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+        session_agents: list[dict[str, Any]] = []
+        for tool_result in tool_results:
+            if str(tool_result.get("name") or "") != "session_agent_task":
+                continue
+            result = tool_result.get("result")
+            if not isinstance(result, dict):
+                continue
+            child_work = result.get("child_work") or result.get("childWork")
+            if not isinstance(child_work, dict):
+                continue
+            assignee_agent_id = child_work.get("assigneeAgentId") or child_work.get("assignee_agent_id")
+            session_agents.append(
+                {
+                    "agentId": assignee_agent_id,
+                    "workId": child_work.get("workId") or child_work.get("work_id"),
+                    "identifier": child_work.get("identifier"),
+                    "taskRunId": result.get("taskRunId") or result.get("task_run_id"),
+                    "status": result.get("childStatus") or result.get("child_status"),
+                    "summary": result.get("content"),
+                }
+            )
+        if not session_agents:
+            return None
+        latest = session_agents[-1]
+        return {
+            "called": True,
+            "agentId": latest.get("agentId"),
+            "status": latest.get("status"),
+            "summary": latest.get("summary"),
+            "sessionAgents": session_agents,
         }
 
     @staticmethod

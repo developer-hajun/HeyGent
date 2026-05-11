@@ -28,7 +28,7 @@ from app.domain.orchestration.runtime_planning.todo_state import (
 )
 from app.domain.orchestration.result_inspector import OutcomeInspector
 from app.domain.session.sessions.transcript_store import TranscriptStore
-from app.domain.work import WorkService
+from app.domain.work import WorkComment, WorkService
 from app.domain.tasks.detail import (
     build_model_decision_detail,
     build_planning_detail,
@@ -37,6 +37,7 @@ from app.domain.tasks.detail import (
     merge_step_detail,
     semantic_key_of,
 )
+from app.domain.tasks.display_context import build_task_display_context
 from app.domain.tasks.events import build_task_event
 from app.domain.tasks.repository import TaskRepository
 from app.domain.tasks.models import StepRun, TaskRun
@@ -1016,7 +1017,9 @@ class TaskEngine:
                     task_run_id=task_run_id,
                 )
                 child_task = await self.run(task=child_task, handler=handler)
-                service.apply_task_result(work_id=work.work_id, task=child_task)
+                updated_work = service.apply_task_result(work_id=work.work_id, task=child_task)
+                if updated_work is not None:
+                    self._record_session_agent_parent_result_comment(work=updated_work, task=child_task)
             except Exception as error:
                 self.work_repository.update_run_status(work.work_id, task_run_id, "FAILED")
                 failed_work = service.mark_run_start_failed(work_id=work.work_id, reason=str(error))
@@ -1080,8 +1083,8 @@ class TaskEngine:
             "conversation_history": [],
             "system_prompt_snapshot": parent_input.get("system_prompt_snapshot") or "",
             "model": parent_input.get("model"),
-            "enabled_toolsets": ["skills", "session", "planning", "terminal", "file", "web", "browser"],
-            "toolsets": ["skills", "session", "planning", "terminal", "file", "web", "browser"],
+            "enabled_toolsets": ["skills", "session", "planning", "terminal", "file", "web", "browser", "work"],
+            "toolsets": ["skills", "session", "planning", "terminal", "file", "web", "browser", "work"],
             "max_iterations": self._work_execution_max_iterations(),
             "parentWorkId": work.parent_id,
         }
@@ -1103,6 +1106,7 @@ class TaskEngine:
         payload["targetAgentProfile"] = {
             "profileId": profile.get("profile_id"),
             "profileKey": profile.get("profile_key"),
+            "profileVersion": profile.get("profile_version"),
             "agentType": profile.get("agent_type"),
             "templateKey": profile.get("template_key"),
             "configSnapshot": profile.get("config_snapshot") or {},
@@ -1129,6 +1133,7 @@ class TaskEngine:
         session_id = new_id("agent_session")
         parent_input = dict(parent_task.input_payload or {})
         parent_session_id = str(parent_input.get("transcript_session_id") or "").strip() or None
+        agent_metadata = self._agent_profile_metadata_for_work(work)
         self.session_store.create_session(
             session_id=session_id,
             session_key=work.session_id,
@@ -1143,9 +1148,49 @@ class TaskEngine:
                 "work_identifier": work.identifier,
                 "parent_work_id": work.parent_id,
                 "assignee_agent_id": work.assignee_agent_id,
+                **agent_metadata,
             },
         )
         return session_id
+
+    def _agent_profile_metadata_for_work(self, work) -> dict[str, object]:
+        if self.agent_repository is None:
+            return {}
+        profile_id = str(work.assignee_agent_id or "").strip()
+        if not profile_id:
+            return {}
+        profile = self.agent_repository.get_session_agent(profile_id=profile_id, owner_key=str(work.owner_key))
+        if profile is None:
+            return {}
+        return {
+            "agent_profile_id": profile_id,
+            "agent_profile_version": int(profile.get("profile_version") or 1),
+            "agent_config_snapshot": dict(profile.get("config_snapshot") or {}),
+        }
+
+    def _record_session_agent_parent_result_comment(self, *, work, task: TaskRun) -> None:
+        if self.work_repository is None or not work.parent_id:
+            return
+        disposition = task.result_payload.get("workDisposition") if isinstance(task.result_payload, dict) else None
+        summary = str(disposition.get("summary") or "").strip() if isinstance(disposition, dict) else ""
+        body = f"{work.identifier} 세션 에이전트 실행이 {_work_status_label(work.status)} 상태로 끝났습니다."
+        if summary:
+            body = f"{body}\n요약: {summary}"
+        self.work_repository.add_comment(
+            WorkComment(
+                comment_id=new_id("comment"),
+                work_id=work.parent_id,
+                author_type="system",
+                task_run_id=task.task_run_id,
+                body=body,
+                metadata={
+                    "reason": "session_agent_work_result",
+                    "childWorkId": work.work_id,
+                    "childStatus": work.status,
+                    "taskRunId": task.task_run_id,
+                },
+            )
+        )
 
     def _work_execution_max_iterations(self) -> int:
         raw_value = getattr(self.settings, "work_execution_max_iterations", 24) if self.settings is not None else 24
@@ -1222,6 +1267,8 @@ class TaskEngine:
     ) -> None:
         event_status = self._event_status(event_type=event_type, task=task, step=step)
         event_summary = summary_message if summary_message is not None else self._event_summary(event_type=event_type, task=task, step=step)
+        event_payload = self._event_payload(event_type=event_type, step=step, payload=payload)
+        event_payload["displayContext"] = build_task_display_context(task, step)
         event = build_task_event(
             event_type=event_type,
             task_run_id=task.task_run_id,
@@ -1229,7 +1276,7 @@ class TaskEngine:
             producer="task_engine",
             status=event_status,
             summary_message=event_summary,
-            payload=self._event_payload(event_type=event_type, step=step, payload=payload),
+            payload=event_payload,
         )
         saved_event = self.repository.append_event(event)
         await self.broadcaster.publish(saved_event)
@@ -1299,3 +1346,14 @@ class TaskEngine:
             ),
         )
         self.repository.update_step(current_step)
+
+
+def _work_status_label(status: str) -> str:
+    return {
+        "todo": "대기",
+        "in_progress": "진행 중",
+        "in_review": "검토 중",
+        "blocked": "차단됨",
+        "done": "완료",
+        "cancelled": "취소됨",
+    }.get(str(status or ""), str(status or ""))

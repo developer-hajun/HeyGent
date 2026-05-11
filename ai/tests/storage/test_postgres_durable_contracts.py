@@ -7,6 +7,7 @@ from app.domain.tasks.repository import (
     TaskRunRepository,
 )
 from app.domain.tasks.models import TaskRun
+from app.contracts.event.task_events import TaskEventEnvelope
 from app.storage.queries.approval_queries import CREATE_APPROVAL_REQUESTS
 from app.storage.queries.task_queries import CREATE_TASK_RUNS
 from app.storage.postgres.schema import POSTGRES_SCHEMA_STATEMENTS, render_postgres_schema
@@ -428,6 +429,8 @@ class _FakeDurableConnection:
                 session_key,
                 current_step_run_id,
                 durable_status,
+                agent_profile_id,
+                agent_profile_version,
                 agent_config_snapshot,
                 anchor_payload,
             ) = params
@@ -439,6 +442,8 @@ class _FakeDurableConnection:
                 "session_key": session_key,
                 "current_step_run_id": current_step_run_id,
                 "durable_status": durable_status,
+                "agent_profile_id": agent_profile_id,
+                "agent_profile_version": agent_profile_version,
                 "agent_config_snapshot": agent_config_snapshot,
                 "anchor_payload": anchor_payload,
             }
@@ -480,6 +485,8 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
             "session_key": "session_pg",
             "current_step_run_id": "step_pg_anchor",
             "durable_status": "WAITING",
+            "agent_profile_id": "agent_profile_pg",
+            "agent_profile_version": 3,
             "agent_config_snapshot": {"model": "gpt-session", "enabled_toolsets": ["session"]},
             "anchor_payload": {"reason": "approval"},
         },
@@ -496,11 +503,47 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
     )
 
     assert run_anchor["owner_key"] == "user_pg"
+    assert run_anchor["agent_profile_id"] == "agent_profile_pg"
+    assert run_anchor["agent_profile_version"] == 3
     assert run_anchor["agent_config_snapshot"] == {"model": "gpt-session", "enabled_toolsets": ["session"]}
     assert run_anchor["anchor_payload"] == {"reason": "approval"}
     assert step_anchor["step_order"] == 3
     assert step_anchor["anchor_payload"] == {"tool": "terminal.run"}
     assert connection.commits == 2
+
+
+def test_postgres_durable_repository_preserves_agent_profile_columns_when_appending_events():
+    connection = _FakeDurableConnection()
+    repository = PostgresTaskRepository(lambda: connection)
+
+    repository.upsert_run_anchor(
+        "task_pg_agent_anchor",
+        {
+            "owner_key": "user_pg",
+            "session_key": "session_pg",
+            "agent_profile_id": "agent_profile_pg",
+            "agent_profile_version": 2,
+            "agent_config_snapshot": {"model": "gpt-session"},
+            "anchor_payload": {"task": {"task_run_id": "task_pg_agent_anchor"}},
+        },
+    )
+
+    repository.append_event(
+        TaskEventEnvelope(
+            event_id="event-1",
+            event_type="task.started",
+            task_run_id="task_pg_agent_anchor",
+            producer="test",
+            occurred_at="2026-05-11T00:00:00+00:00",
+            status="RUNNING",
+        )
+    )
+
+    anchor = repository.get_run_anchor("task_pg_agent_anchor")
+    assert anchor is not None
+    assert anchor["agent_profile_id"] == "agent_profile_pg"
+    assert anchor["agent_profile_version"] == 2
+    assert anchor["agent_config_snapshot"] == {"model": "gpt-session"}
 
 
 def test_postgres_task_repository_copies_task_settings_to_run_anchor_config_snapshot():
@@ -517,12 +560,15 @@ def test_postgres_task_repository_copies_task_settings_to_run_anchor_config_snap
                 "settings_snapshot": {"model": "gpt-session", "systemPrompt": "세션 프롬프트"},
                 "enabled_toolsets": ["session", "planning"],
                 "delegation_policy": {"canDelegate": False},
+                "targetAgentProfile": {"profileId": "agent_profile_42", "profileVersion": 2},
             },
         )
     )
 
     anchor = repository.get_run_anchor("task_pg_settings_anchor")
     assert anchor is not None
+    assert anchor["agent_profile_id"] == "agent_profile_42"
+    assert anchor["agent_profile_version"] == 2
     assert anchor["agent_config_snapshot"] == {
         "model": "gpt-session",
         "systemPrompt": "세션 프롬프트",

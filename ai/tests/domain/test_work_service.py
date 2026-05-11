@@ -249,13 +249,17 @@ def test_work_disposition_from_task_result_updates_work_status():
             task_type="agent.loop",
             owner_key="7",
             status="COMPLETED",
-            result_payload={"workDisposition": {"status": "done"}},
+            result_payload={"workDisposition": {"status": "blocked", "summary": "공식 예매 확인 불가", "nextAction": "사용자 확인 필요"}},
         ),
     )
 
     assert updated is not None
-    assert updated.status == "done"
+    assert updated.status == "blocked"
     assert repository.runs[(work.work_id, "task-1")].status == "COMPLETED"
+    assert repository.comments[-1].task_run_id == "task-1"
+    assert "공식 예매 확인 불가" in repository.comments[-1].body
+    assert "사용자 확인 필요" in repository.comments[-1].body
+    assert repository.comments[-1].metadata["reason"] == "work_disposition"
 
 
 def test_run_start_conflicts_when_another_active_run_owns_work():

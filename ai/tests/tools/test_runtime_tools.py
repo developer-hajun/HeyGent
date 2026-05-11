@@ -174,7 +174,7 @@ def test_file_toolset_is_available_for_coding_and_local_core_but_not_safe():
     assert file_tool_names <= resolve_runtime_tool_names(("file",))
     assert file_tool_names <= resolve_runtime_tool_names(("coding",))
     assert file_tool_names <= resolve_runtime_tool_names(("local-core",))
-    assert "delegate_task" in resolve_runtime_tool_names(("local-core",))
+    assert "delegate_task" not in resolve_runtime_tool_names(("local-core",))
     assert file_tool_names.isdisjoint(resolve_runtime_tool_names(("safe",)))
 
 
@@ -394,6 +394,47 @@ def test_session_agent_task_leaves_parent_waiting_by_default():
     assert work_repository.items[parent.work_id].status == "in_progress"
     assert work_repository.items[child_id].assignee_agent_id == "agent-research"
     assert work_repository.relations == []
+
+
+def test_session_agent_task_can_create_root_work_when_default_agent_session_allows_it():
+    work_repository = FakeRuntimeWorkRepository()
+    agent_repository = FakeRuntimeAgentRepository(
+        {
+            "profile_id": "agent-travel",
+            "session_id": "session-1",
+            "agent_type": "user_subagent",
+            "profile_key": "session.travel",
+            "config_snapshot": {"name": "Travel", "role": "travel"},
+        }
+    )
+    runtime = LocalToolRuntime(
+        skill_registry=object(),
+        session_store=DummySessionStore(),
+        work_repository=work_repository,
+        agent_repository=agent_repository,
+        runtime_context={
+            "sessionId": "session-1",
+            "ownerKey": "7",
+            "ownerUserId": 7,
+            "prompt": "SRT 예약 가능 여부를 확인해줘.",
+            "allowSessionAgentRootWork": True,
+        },
+    )
+
+    result = runtime.run_call(
+        name="session_agent_task",
+        args={"title": "SRT 예약 확인", "instruction": "부산에서 수서까지 SRT 예약 가능 여부를 확인해줘."},
+        enabled_toolsets=("work",),
+    )
+
+    child_id = result["child_work"]["workId"]
+    parent_id = result["parent_work"]["workId"]
+    assert result["ok"] is True
+    assert result["child_work"]["parentId"] == parent_id
+    assert work_repository.items[parent_id].assignee_agent_id == "CEO"
+    assert work_repository.items[parent_id].source == "session_agent_task"
+    assert work_repository.items[child_id].assignee_agent_id == "agent-travel"
+    assert runtime.runtime_context["workId"] == parent_id
 
 
 def test_session_agent_task_can_record_parent_dependency_without_changing_status():

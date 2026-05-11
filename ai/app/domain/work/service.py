@@ -121,7 +121,27 @@ class WorkService:
         disposition = _extract_work_disposition(task.result_payload)
         status = normalize_disposition_status(disposition.get("status") if disposition else None)
         if status is not None:
-            return self.repository.update_status(work_id, status)
+            updated = self.repository.update_status(work_id, status)
+            self.repository.add_comment(
+                WorkComment(
+                    comment_id=new_id("comment"),
+                    work_id=work_id,
+                    author_type="system",
+                    task_run_id=task.task_run_id,
+                    body=_work_disposition_comment_body(status=status, disposition=disposition or {}),
+                    metadata={
+                        "reason": "work_disposition",
+                        "status": status,
+                        "summary": str((disposition or {}).get("summary") or "").strip(),
+                        "nextAction": str(
+                            (disposition or {}).get("nextAction")
+                            or (disposition or {}).get("next_action")
+                            or ""
+                        ).strip(),
+                    },
+                )
+            )
+            return updated
         task_status = getattr(task.status, "value", str(task.status))
         if task_status == TaskStatus.FAILED.value:
             return self._block_work_after_run_failure(work_id=work_id, task_run_id=task.task_run_id)
@@ -198,6 +218,28 @@ class WorkService:
 def _extract_work_disposition(payload: dict[str, Any]) -> dict[str, Any] | None:
     candidate = payload.get("workDisposition") or payload.get("work_disposition")
     return candidate if isinstance(candidate, dict) else None
+
+
+def _work_disposition_comment_body(*, status: str, disposition: dict[str, Any]) -> str:
+    summary = str(disposition.get("summary") or "").strip()
+    next_action = str(disposition.get("nextAction") or disposition.get("next_action") or "").strip()
+    parts = [f"작업 상태를 {_work_status_label(status)} 상태로 정리했습니다."]
+    if summary:
+        parts.append(f"사유: {summary}")
+    if next_action:
+        parts.append(f"다음 조치: {next_action}")
+    return "\n".join(parts)
+
+
+def _work_status_label(status: str) -> str:
+    return {
+        "todo": "대기",
+        "in_progress": "진행 중",
+        "in_review": "검토 중",
+        "blocked": "차단됨",
+        "done": "완료",
+        "cancelled": "취소됨",
+    }.get(status, status)
 
 
 def _has_blocking_tool_error(payload: dict[str, Any]) -> bool:

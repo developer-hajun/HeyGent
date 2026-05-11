@@ -17,6 +17,7 @@ from app.core.utils.ids import new_id
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
+from app.domain.tasks.display_context import build_task_display_context
 from app.domain.work import WorkService
 logger = logging.getLogger(__name__)
 
@@ -346,6 +347,23 @@ class WebSocketCommandRouter:
             model=effective_model,
         )
         task_input = dict(input_payload)
+        task_input["sessionId"] = session_id
+        task_input["ownerKey"] = context.auth.user_id
+        task_input["ownerUserId"] = _owner_user_id(context.auth.user_id)
+        _seed_default_session_agents_if_requested(
+            context.websocket.app.state,
+            task_input=task_input,
+            session_id=session_id,
+            owner_key=context.auth.user_id,
+        )
+        session_agent_profiles = _attach_session_agent_candidates(
+            context.websocket.app.state,
+            task_input=task_input,
+            session_id=session_id,
+            owner_key=context.auth.user_id,
+        )
+        if session_agent_profiles:
+            task_input["allowSessionAgentRootWork"] = True
         if effective_model and not task_input.get("model"):
             task_input["model"] = effective_model
         task_input["prompt"] = content
@@ -863,22 +881,24 @@ class WebSocketCommandRouter:
             if include_events
             else []
         )
+        task_payload = _jsonable(task)
+        task_payload["displayContext"] = build_task_display_context(task)
         snapshot = {
-            "task": _jsonable(task),
-            "task_run": _jsonable(task),
+            "task": task_payload,
+            "task_run": task_payload,
             "pending_approval": pending_approval,
             "approvals": [pending_approval] if pending_approval is not None else [],
             "events": events,
         }
         if include_steps:
-            step_payloads = [_jsonable(step) for step in steps]
+            step_payloads = [_step_payload_with_display_context(task, step) for step in steps]
             snapshot["steps"] = step_payloads
             snapshot["step_runs"] = step_payloads
         if include_flow:
             snapshot["flow"] = {
                 "task_run_id": task.task_run_id,
                 "current_step_run_id": task.current_step_run_id,
-                "nodes": [_jsonable(step) for step in steps],
+                "nodes": [_step_payload_with_display_context(task, step) for step in steps],
                 "edges": [
                     {"from_step_run_id": previous.step_run_id, "to_step_run_id": current.step_run_id, "relation": "next"}
                     for previous, current in zip(steps, steps[1:])
@@ -1335,25 +1355,10 @@ def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work
         profile = agent_repository.get_session_agent(profile_id=assignee_agent_id, owner_key=str(work.owner_key))
     if profile is None:
         return
-    task_input["targetAgentProfile"] = {
-        "profileId": profile.get("profile_id"),
-        "profileKey": profile.get("profile_key"),
-        "agentType": profile.get("agent_type"),
-        "templateKey": profile.get("template_key"),
-        "configSnapshot": profile.get("config_snapshot") or {},
-    }
+    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
     profile_id = str(profile.get("profile_id") or assignee_agent_id)
     if not assignee_agent_id or assignee_agent_id == "CEO":
-        task_input["sessionAgentProfiles"] = [
-            {
-                "profileId": item.get("profile_id"),
-                "profileKey": item.get("profile_key"),
-                "agentType": item.get("agent_type"),
-                "templateKey": item.get("template_key"),
-                "configSnapshot": item.get("config_snapshot") or {},
-            }
-            for item in agent_repository.list_session_agents(session_id=work.session_id, owner_key=str(work.owner_key))
-        ]
+        _attach_session_agent_candidates(state, task_input=task_input, session_id=work.session_id, owner_key=str(work.owner_key))
     bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
     if bundle is None:
         return
@@ -2006,6 +2011,7 @@ def _task_status_for_payload(context: WebSocketCommandContext, task_run_id: str)
 
 def _active_task_payload(task: Any, steps: list[Any], *, source: str, repository: Any) -> dict[str, Any]:
     current_step = _select_current_step(task, steps)
+    current_step_payload = _step_payload_with_display_context(task, current_step) if current_step is not None else None
     return {
         "task_run_id": task.task_run_id,
         "source": source,
@@ -2013,11 +2019,67 @@ def _active_task_payload(task: Any, steps: list[Any], *, source: str, repository
         "status": task.status,
         "title": task.title,
         "current_step_run_id": task.current_step_run_id,
-        "current_step": _jsonable(current_step) if current_step is not None else None,
+        "current_step": current_step_payload,
         "updated_at": task.updated_at,
         "wait_reason": (task.wait_payload or {}).get("reason"),
         "pending_approval": _pending_approval_payload(repository.get_open_approval(task.task_run_id)),
+        "displayContext": build_task_display_context(task),
     }
+
+
+def _seed_default_session_agents_if_requested(
+    state: Any,
+    *,
+    task_input: dict[str, Any],
+    session_id: str,
+    owner_key: str,
+) -> None:
+    snapshot = task_input.get("sessionConfigSnapshot") or task_input.get("session_config_snapshot")
+    if not isinstance(snapshot, dict) or snapshot.get("seedDefaultAgents") is not True:
+        return
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return
+    agent_repository.create_default_session_agents(
+        session_id=session_id,
+        owner_key=str(owner_key),
+        owner_user_id=_owner_user_id(owner_key),
+    )
+
+
+def _attach_session_agent_candidates(
+    state: Any,
+    *,
+    task_input: dict[str, Any],
+    session_id: str,
+    owner_key: str,
+) -> list[dict[str, Any]]:
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return []
+    profiles = [
+        _agent_profile_prompt_payload(item)
+        for item in agent_repository.list_session_agents(session_id=session_id, owner_key=str(owner_key))
+    ]
+    if profiles:
+        task_input["sessionAgentProfiles"] = profiles
+    return profiles
+
+
+def _agent_profile_prompt_payload(profile: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "profileId": profile.get("profile_id"),
+        "profileKey": profile.get("profile_key"),
+        "agentType": profile.get("agent_type"),
+        "templateKey": profile.get("template_key"),
+        "configSnapshot": profile.get("config_snapshot") or {},
+    }
+
+
+def _step_payload_with_display_context(task: Any, step: Any) -> dict[str, Any]:
+    payload = _jsonable(step)
+    payload["displayContext"] = build_task_display_context(task, step)
+    return payload
 
 
 def _projection_steps(projection: Any, task_run_id: str) -> list[Any]:

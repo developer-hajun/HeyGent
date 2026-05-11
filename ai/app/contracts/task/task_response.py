@@ -36,6 +36,7 @@ class StepRunResponse(BaseModel):
     output_payload: dict[str, Any] = Field(default_factory=dict, description="이 단계가 만든 출력 데이터입니다. 결과 상세나 디버깅에 사용합니다.")
     wait_payload: dict[str, Any] = Field(default_factory=dict, description="단계가 `WAITING`일 때 기다리는 이유와 추가 입력 요구사항을 담습니다.")
     pending_approval: PendingApprovalResponse | None = Field(default=None, alias="pendingApproval", description="사용자 승인이 필요한 상태이면 승인 정보가 들어갑니다.")
+    display_context: dict[str, Any] = Field(default_factory=dict, alias="displayContext", description="시각화 화면에서 StepRun을 담당/실행 에이전트에 매핑하는 표시 컨텍스트입니다.")
     # approval 은 UI가 wait/detail payload를 직접 해석하지 않도록 별도 view로도 노출한다.
     detail_json: dict[str, Any] = Field(default_factory=dict, description="내부 실행 상세 정보입니다. UI가 직접 해석하기보다 디버깅/상세 보기용으로 사용합니다.")
     summary_message: str | None = Field(default=None, description="단계 진행 상황을 사람이 읽기 쉽게 요약한 문장입니다.")
@@ -60,6 +61,7 @@ class TaskRunResponse(BaseModel):
     todo_state: dict[str, Any] = Field(default_factory=dict, description="Task Engine(작업 실행 엔진)이 내부 계획/할 일 상태를 저장하는 객체입니다. 보통 디버깅용입니다.")
     wait_payload: dict[str, Any] = Field(default_factory=dict, description="TaskRun이 `WAITING`일 때 사용자가 무엇을 해야 하는지 담는 객체입니다.")
     pending_approval: PendingApprovalResponse | None = Field(default=None, alias="pendingApproval", description="사용자 승인 대기 상태이면 승인 요청 정보가 들어갑니다.")
+    display_context: dict[str, Any] = Field(default_factory=dict, alias="displayContext", description="시각화 화면에서 TaskRun을 담당 에이전트에 매핑하는 표시 컨텍스트입니다.")
     error_message: str | None = Field(default=None, description="TaskRun 실패 이유입니다. 실패가 아니면 `null`입니다.")
     progress_summary: str | None = Field(default=None, description="현재까지 진행 상황을 사람이 읽기 쉽게 요약한 문장입니다.")
     revision: int = Field(description="TaskRun 수정 번호입니다. 값이 커지면 상태나 결과가 갱신된 것입니다.")
@@ -70,6 +72,8 @@ class TaskRunResponse(BaseModel):
 
 
 class StepRunSummaryResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     step_run_id: str = Field(description="StepRun ID(작업 안의 세부 단계 ID)입니다.")
     step_order: int = Field(description="TaskRun 안에서의 단계 순서입니다.")
     step_type: str = Field(description="단계 종류입니다.")
@@ -77,9 +81,12 @@ class StepRunSummaryResponse(BaseModel):
     title: str | None = Field(default=None, description="단계 제목입니다.")
     summary_message: str | None = Field(default=None, description="단계 진행 요약입니다.")
     updated_at: datetime | None = Field(default=None, description="단계가 마지막으로 갱신된 시각입니다.")
+    display_context: dict[str, Any] = Field(default_factory=dict, alias="displayContext", description="시각화 화면에서 StepRun 요약을 실행 에이전트에 매핑하는 표시 컨텍스트입니다.")
 
 
 class TaskRunListItemResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     task_run_id: str = Field(description="TaskRun ID(사용자 요청 하나의 실행 묶음 ID)입니다.")
     task_type: str = Field(description="실제로 실행된 TaskRun 종류입니다.")
     session_key: str | None = Field(default=None, description="sessionId의 내부 저장명입니다.")
@@ -91,6 +98,7 @@ class TaskRunListItemResponse(BaseModel):
     created_at: datetime | None = Field(default=None, description="TaskRun 생성 시각입니다.")
     updated_at: datetime | None = Field(default=None, description="TaskRun 마지막 갱신 시각입니다.")
     current_step: StepRunSummaryResponse | None = Field(default=None, description="현재 또는 마지막 대표 StepRun 요약입니다.")
+    display_context: dict[str, Any] = Field(default_factory=dict, alias="displayContext", description="시각화 화면에서 목록 항목을 담당 에이전트에 매핑하는 표시 컨텍스트입니다.")
 
 
 class TaskRunListResponse(BaseModel):
@@ -161,9 +169,12 @@ class TaskRunFlowResponse(BaseModel):
 
 
 class ActiveTaskRunCurrentStepResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     step_run_id: str = Field(description="현재 StepRun ID입니다.")
     title: str | None = Field(default=None, description="현재 단계 제목입니다.")
     status: str = Field(description="현재 단계 상태입니다.")
+    display_context: dict[str, Any] = Field(default_factory=dict, alias="displayContext", description="시각화 화면에서 현재 StepRun을 실행 에이전트에 매핑하는 표시 컨텍스트입니다.")
 
 
 class ActiveTaskRunListItemResponse(BaseModel):
@@ -179,6 +190,7 @@ class ActiveTaskRunListItemResponse(BaseModel):
     updated_at: datetime | None = Field(default=None, description="TaskRun 마지막 갱신 시각입니다.")
     wait_reason: str | None = Field(default=None, description="작업이 기다리는 이유입니다. `WAITING` 상태에서 화면 안내에 사용할 수 있습니다.")
     pending_approval: PendingApprovalResponse | None = Field(default=None, alias="pendingApproval", description="승인 대기 중이면 승인 정보가 들어갑니다.")
+    display_context: dict[str, Any] = Field(default_factory=dict, alias="displayContext", description="시각화 화면에서 활성 TaskRun을 담당 에이전트에 매핑하는 표시 컨텍스트입니다.")
 
 
 class ActiveTaskRunListResponse(BaseModel):

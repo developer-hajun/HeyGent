@@ -345,6 +345,23 @@ async def _create_message_in_session(
         model=effective_model,
     )
     task_input = dict(payload.input_payload)
+    task_input["sessionId"] = sessionId
+    task_input["ownerKey"] = owner_key
+    task_input["ownerUserId"] = _owner_user_id(owner_key)
+    _seed_default_session_agents_if_requested(
+        request.app.state,
+        task_input=task_input,
+        session_id=sessionId,
+        owner_key=owner_key,
+    )
+    session_agent_profiles = _attach_session_agent_candidates(
+        request.app.state,
+        task_input=task_input,
+        session_id=sessionId,
+        owner_key=owner_key,
+    )
+    if session_agent_profiles:
+        task_input["allowSessionAgentRootWork"] = True
     if effective_model and not task_input.get("model"):
         task_input["model"] = effective_model
     task_input["prompt"] = payload.content
@@ -578,13 +595,49 @@ def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work
     task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
     profile_id = str(profile.get("profile_id") or assignee_agent_id)
     if not assignee_agent_id or assignee_agent_id == "CEO":
-        task_input["sessionAgentProfiles"] = [
-            _agent_profile_prompt_payload(item)
-            for item in agent_repository.list_session_agents(session_id=work.session_id, owner_key=str(work.owner_key))
-        ]
+        _attach_session_agent_candidates(state, task_input=task_input, session_id=work.session_id, owner_key=str(work.owner_key))
     bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
     if bundle is not None:
         task_input["targetAgentInstructions"] = _instruction_bundle_prompt_payload(bundle)
+
+
+def _seed_default_session_agents_if_requested(
+    state: Any,
+    *,
+    task_input: dict[str, Any],
+    session_id: str,
+    owner_key: str,
+) -> None:
+    snapshot = task_input.get("sessionConfigSnapshot") or task_input.get("session_config_snapshot")
+    if not isinstance(snapshot, dict) or snapshot.get("seedDefaultAgents") is not True:
+        return
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return
+    agent_repository.create_default_session_agents(
+        session_id=session_id,
+        owner_key=str(owner_key),
+        owner_user_id=_owner_user_id(owner_key),
+    )
+
+
+def _attach_session_agent_candidates(
+    state: Any,
+    *,
+    task_input: dict[str, Any],
+    session_id: str,
+    owner_key: str,
+) -> list[dict[str, Any]]:
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return []
+    profiles = [
+        _agent_profile_prompt_payload(item)
+        for item in agent_repository.list_session_agents(session_id=session_id, owner_key=str(owner_key))
+    ]
+    if profiles:
+        task_input["sessionAgentProfiles"] = profiles
+    return profiles
 
 
 def _agent_profile_prompt_payload(profile: dict[str, Any]) -> dict[str, Any]:

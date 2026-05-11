@@ -53,14 +53,14 @@ type AgentChoice = {
 
 const ROOT_NODE_ID = 'flow-root-task'
 const CHILD_NODE_PREFIX = 'flow-child-'
-const WORK_NODE_WIDTH = 148
-const CEO_NODE_WIDTH = 168
-const NODE_GAP = 18
+const WORK_NODE_WIDTH = 190
+const CEO_NODE_WIDTH = 210
+const NODE_GAP = 28
 const MAP_SIDE_PADDING = 80
 const FLOW_CANVAS_MIN_WIDTH = 820
-const FLOW_CANVAS_HEIGHT = 480
+const FLOW_CANVAS_HEIGHT = 520
 const FLOW_ROOT_Y = 132
-const FLOW_CHILD_Y = 274
+const FLOW_CHILD_Y = 292
 
 type FlowNodeData = Record<string, unknown> & {
   assigneeName?: string
@@ -651,15 +651,15 @@ function FixedMap({
 
 function CeoCard({ label = '메인 에이전트' }: { label?: string }) {
   return (
-    <div className="bg-background border-foreground/20 flex h-[52px] items-center gap-2 rounded-md border px-2.5 shadow-sm">
-      <div className="bg-accent flex h-8 w-8 shrink-0 items-center justify-center rounded">
+    <div className="bg-background border-foreground/20 flex h-[60px] min-w-0 items-center gap-3 rounded-md border px-3 shadow-sm">
+      <div className="bg-accent flex h-9 w-9 shrink-0 items-center justify-center rounded">
         <UserRound className="h-4 w-4" />
       </div>
       <div className="min-w-0">
         <div className="text-muted-foreground text-[11px] font-semibold tracking-widest uppercase">
           CEO
         </div>
-        <div className="truncate text-[13px] font-semibold">{label}</div>
+        <div className="truncate text-sm font-semibold">{label}</div>
       </div>
     </div>
   )
@@ -798,7 +798,7 @@ function WorkCard({
     <div
       id={primary ? ROOT_NODE_ID : `${CHILD_NODE_PREFIX}${issue.id}`}
       className={cn(
-        'bg-background border-border pointer-events-auto relative h-[76px] rounded-md border shadow-sm',
+        'bg-background border-border pointer-events-auto relative h-[96px] rounded-md border shadow-sm',
         primary && 'border-foreground/30',
         selectedForConnection && 'ring-primary ring-2',
       )}
@@ -807,11 +807,11 @@ function WorkCard({
         type="button"
         onClick={handleClick}
         className={cn(
-          'block h-full w-full px-2 py-1.5 text-left',
+          'block h-full w-full px-3 py-2.5 text-left',
           toolMode === 'connect' && !primary && 'cursor-crosshair',
         )}
       >
-        <div className="mb-1 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5">
+        <div className="mb-1.5 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
           <StatusDot status={issue.status} />
           <span className="text-muted-foreground text-xs whitespace-nowrap">
             {issueBoardStatusLabel(issue.status)}
@@ -822,13 +822,13 @@ function WorkCard({
         </div>
         <div
           className={cn(
-            'line-clamp-2 min-h-7 text-xs leading-[15px] font-semibold',
-            primary && 'text-[13px]',
+            'line-clamp-2 min-h-9 text-sm leading-[18px] font-semibold',
+            primary && 'text-[15px] leading-5',
           )}
         >
           {issue.title}
         </div>
-        <div className="text-muted-foreground mt-1 flex min-w-0 items-center gap-1.5 text-xs">
+        <div className="text-muted-foreground mt-1.5 flex min-w-0 items-center gap-1.5 text-xs">
           <Bot className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{assigneeName}</span>
         </div>
@@ -842,7 +842,7 @@ function AddAgentSlot({ onRequestAddAgent }: { onRequestAddAgent: () => void }) 
     <button
       type="button"
       onClick={onRequestAddAgent}
-      className="nodrag nopan border-primary bg-primary/10 text-primary hover:bg-primary/15 flex h-[76px] w-full flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed shadow-sm transition-colors"
+      className="nodrag nopan border-primary bg-primary/10 text-primary hover:bg-primary/15 flex h-[96px] w-full flex-col items-center justify-center gap-1.5 rounded-md border-2 border-dashed shadow-sm transition-colors"
       aria-label="하위 에이전트 작업 추가"
     >
       <span className="bg-primary text-primary-foreground flex h-7 w-7 items-center justify-center rounded">

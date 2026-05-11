@@ -5,6 +5,7 @@ import type {
   RawStepRun,
   RawTaskRun,
   TaskRunDetailSummaryView,
+  TaskRunDisplayContext,
   TaskRunStatusTone,
   TaskRunSummaryView,
 } from '@/types/taskRuns'
@@ -126,8 +127,19 @@ export const toActivityItemView = (event: RawTaskEventPayload): ActivityItemView
     tone: toTaskRunStatusTone(statusKey),
     sequence: typeof event.sequence === 'number' ? event.sequence : undefined,
     occurredAt: typeof event.occurred_at === 'string' ? event.occurred_at : undefined,
+    displayContext: getDisplayContext(event.payload),
     raw: event,
   }
+}
+
+const getDisplayContext = (payload: unknown): TaskRunDisplayContext | undefined => {
+  if (!isJsonObject(payload) || !isJsonObject(payload.displayContext)) {
+    return undefined
+  }
+  const context = payload.displayContext
+  return isJsonObject(context.assigneeAgent) && isJsonObject(context.actorAgent)
+    ? (context as TaskRunDisplayContext)
+    : undefined
 }
 
 export const toTaskRunSummaryView = (
