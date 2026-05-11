@@ -485,7 +485,6 @@ async def create_child_work(request: Request, payload: CreateChildWorkRequest, w
     request.app.state.work_repository.update_status(child.work_id, "todo")
     if payload.block_parent_until_done:
         request.app.state.work_repository.add_relation(source_work_id=child.work_id, target_work_id=parent.work_id, relation_type="blocks")
-        request.app.state.work_repository.update_status(parent.work_id, "blocked")
     updated_child = _work_or_404(request, child.work_id)
     await _publish_work_event(request, str(user.user_id), "work.created", work=updated_child)
     await _publish_work_event(request, str(user.user_id), "work.updated", work=_work_or_404(request, parent.work_id))

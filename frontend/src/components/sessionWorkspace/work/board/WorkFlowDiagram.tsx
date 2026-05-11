@@ -1,5 +1,27 @@
-import { useMemo, useState } from 'react'
-import { Bot, CheckCircle2, Circle, GitBranch, ListTree, Plus, UserRound, X } from 'lucide-react'
+import { useMemo, useState, type CSSProperties } from 'react'
+import {
+  Background,
+  Handle,
+  MarkerType,
+  Position,
+  ReactFlow,
+  type Edge,
+  type EdgeProps,
+  type Node,
+  type NodeProps,
+} from '@xyflow/react'
+import '@xyflow/react/dist/style.css'
+import {
+  Bot,
+  CheckCircle2,
+  Circle,
+  GitBranch,
+  ListTree,
+  MousePointer2,
+  Plus,
+  UserRound,
+  X,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/components/ui/utils'
@@ -31,6 +53,36 @@ type AgentChoice = {
 
 const ROOT_NODE_ID = 'flow-root-task'
 const CHILD_NODE_PREFIX = 'flow-child-'
+const WORK_NODE_WIDTH = 148
+const CEO_NODE_WIDTH = 168
+const NODE_GAP = 18
+const MAP_SIDE_PADDING = 80
+const FLOW_CANVAS_MIN_WIDTH = 820
+const FLOW_CANVAS_HEIGHT = 480
+const FLOW_ROOT_Y = 132
+const FLOW_CHILD_Y = 274
+
+type FlowNodeData = Record<string, unknown> & {
+  assigneeName?: string
+  issue?: IssueBoardIssue
+  label?: string
+  onConnectSelect?: () => void
+  onOpen?: () => void
+  onRequestAddAgent?: () => void
+  primary?: boolean
+  selectedForConnection?: boolean
+  toolMode?: 'select' | 'connect'
+}
+
+type FlowNode = Node<FlowNodeData>
+const FLOW_NODE_TYPES = {
+  ceo: CeoFlowNode,
+  work: WorkFlowNode,
+  add: AddFlowNode,
+}
+const FLOW_EDGE_TYPES = {
+  order: OrderLaneEdge,
+}
 const DEFAULT_AGENT_CHOICES: AgentChoice[] = [
   {
     id: 'provided-default',
@@ -82,7 +134,7 @@ export function WorkFlowDiagram({
   onCreateRootWork,
   onEnsureDefaultAgents,
   onOpenIssue,
-  onReorderRootWork,
+  onReorderChildWork,
 }: {
   assignees: BoardAssignee[]
   issues: IssueBoardIssue[]
@@ -91,7 +143,7 @@ export function WorkFlowDiagram({
   onCreateRootWork: (input: CreateWorkInput) => void
   onEnsureDefaultAgents: () => Promise<BoardAssignee[]>
   onOpenIssue: (issueId: string) => void
-  onReorderRootWork: (workIds: string[]) => void
+  onReorderChildWork: (parentId: string, workIds: string[]) => void
 }) {
   const rootIssues = useMemo(
     () => sortFlowIssues(issues.filter((issue) => !issue.parentId)),
@@ -101,10 +153,13 @@ export function WorkFlowDiagram({
   const [draftTarget, setDraftTarget] = useState<DraftTarget | null>(null)
   const [draftTitle, setDraftTitle] = useState('')
   const [draftDescription, setDraftDescription] = useState('')
-  const [sourceId, setSourceId] = useState('')
-  const [targetId, setTargetId] = useState('')
+  const [toolMode, setToolMode] = useState<'select' | 'connect'>('select')
+  const [connectionSourceId, setConnectionSourceId] = useState('')
+  const [connectionPair, setConnectionPair] = useState<{
+    firstId: string
+    secondId: string
+  } | null>(null)
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
-  const [orderPanelOpen, setOrderPanelOpen] = useState(false)
   const [agentSeedPending, setAgentSeedPending] = useState(false)
 
   const selectedRoot =
@@ -114,8 +169,9 @@ export function WorkFlowDiagram({
       sortFlowIssues(issues.filter((issue) => selectedRoot && issue.parentId === selectedRoot.id)),
     [issues, selectedRoot],
   )
-  const validSourceId = childIssues.some((issue) => issue.id === sourceId) ? sourceId : ''
-  const validTargetId = childIssues.some((issue) => issue.id === targetId) ? targetId : ''
+  const validConnectionSourceId = childIssues.some((issue) => issue.id === connectionSourceId)
+    ? connectionSourceId
+    : ''
   const agentChoices = useMemo<AgentChoice[]>(
     () => [
       ...assignees
@@ -192,21 +248,35 @@ export function WorkFlowDiagram({
     setDraftDescription('')
   }
 
-  const moveRootIssue = (issueId: string, direction: -1 | 1) => {
-    const currentIndex = rootIssues.findIndex((issue) => issue.id === issueId)
-    const nextIndex = currentIndex + direction
-    if (currentIndex < 0 || nextIndex < 0 || nextIndex >= rootIssues.length) return
-    const next = [...rootIssues]
-    const [item] = next.splice(currentIndex, 1)
-    next.splice(nextIndex, 0, item)
-    onReorderRootWork(next.map((issue) => issue.id))
+  const selectConnectIssue = (issueId: string) => {
+    if (toolMode !== 'connect') return
+    if (!validConnectionSourceId) {
+      setConnectionSourceId(issueId)
+      return
+    }
+    if (validConnectionSourceId === issueId) {
+      setConnectionSourceId('')
+      return
+    }
+    setConnectionPair({ firstId: validConnectionSourceId, secondId: issueId })
   }
 
-  const connectOrder = () => {
-    if (!validSourceId || !validTargetId || validSourceId === validTargetId) return
-    onAddRelation(validSourceId, validTargetId)
-    setSourceId('')
-    setTargetId('')
+  const firstConnectionIssue = connectionPair
+    ? (childIssues.find((issue) => issue.id === connectionPair.firstId) ?? null)
+    : null
+  const secondConnectionIssue = connectionPair
+    ? (childIssues.find((issue) => issue.id === connectionPair.secondId) ?? null)
+    : null
+
+  const closeConnectionChoice = () => {
+    setConnectionPair(null)
+    setConnectionSourceId('')
+    setToolMode('select')
+  }
+
+  const confirmConnection = (sourceId: string, targetId: string) => {
+    onAddRelation(sourceId, targetId)
+    closeConnectionChoice()
   }
 
   return (
@@ -220,11 +290,24 @@ export function WorkFlowDiagram({
             <Button
               type="button"
               size="icon-sm"
-              variant="ghost"
+              variant={toolMode === 'select' ? 'secondary' : 'ghost'}
+              title="기본 선택"
+              onClick={() => {
+                setToolMode('select')
+                setConnectionSourceId('')
+              }}
+            >
+              <MousePointer2 className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              size="icon-sm"
+              variant={toolMode === 'connect' ? 'secondary' : 'ghost'}
               title="실행 순서"
               disabled={childIssues.length < 2}
               onClick={() => {
-                setOrderPanelOpen((current) => !current)
+                setToolMode((current) => (current === 'connect' ? 'select' : 'connect'))
+                setConnectionSourceId('')
                 setAgentPickerOpen(false)
               }}
             >
@@ -242,56 +325,40 @@ export function WorkFlowDiagram({
           />
         )}
 
-        {orderPanelOpen && (
-          <OrderToolPanel
-            childIssues={childIssues}
-            sourceId={validSourceId}
-            targetId={validTargetId}
-            onConnect={connectOrder}
-            onSourceChange={setSourceId}
-            onTargetChange={setTargetId}
-          />
-        )}
-
         <div className="border-border/70 flex h-12 items-center gap-2 border-b px-3">
           <ListTree className="text-muted-foreground h-4 w-4" />
           <span className="text-sm font-semibold">CEO 작업</span>
         </div>
         <div className="min-h-0 space-y-1 overflow-y-auto p-2">
-          {rootIssues.length === 0 ? (
+          {rootIssues.map((issue, index) => (
             <button
+              key={issue.id}
               type="button"
-              onClick={() => openDraft({ agentName: 'CEO', assigneeAgentId: null, parentId: null })}
-              className="border-primary/60 bg-primary/5 text-primary hover:bg-primary/10 flex h-20 w-full flex-col items-center justify-center gap-1 rounded-md border border-dashed text-xs font-semibold transition-colors"
-              aria-label="CEO 작업 추가"
+              onClick={() => setSelectedRootId(issue.id)}
+              className={cn(
+                'flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors',
+                selectedRoot?.id === issue.id ? 'bg-accent text-foreground' : 'hover:bg-accent/50',
+              )}
             >
-              <Plus className="h-5 w-5" />
-              작업 추가
-            </button>
-          ) : (
-            rootIssues.map((issue, index) => (
-              <button
-                key={issue.id}
-                type="button"
-                onClick={() => setSelectedRootId(issue.id)}
-                className={cn(
-                  'flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors',
-                  selectedRoot?.id === issue.id
-                    ? 'bg-accent text-foreground'
-                    : 'hover:bg-accent/50',
-                )}
-              >
-                <StatusDot status={issue.status} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] font-medium">{issue.title}</span>
-                  <span className="text-muted-foreground mt-0.5 block truncate text-xs">
-                    {issue.identifier} · {formatRelativeTime(issue.updatedAt)}
-                  </span>
+              <StatusDot status={issue.status} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-medium">{issue.title}</span>
+                <span className="text-muted-foreground mt-0.5 block truncate text-xs">
+                  {issue.identifier} · {formatRelativeTime(issue.updatedAt)}
                 </span>
-                <span className="text-muted-foreground text-xs tabular-nums">{index + 1}</span>
-              </button>
-            ))
-          )}
+              </span>
+              <span className="text-muted-foreground text-xs tabular-nums">{index + 1}</span>
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => openDraft({ agentName: 'CEO', assigneeAgentId: null, parentId: null })}
+            className="border-primary/60 bg-primary/5 text-primary hover:bg-primary/10 mt-1 flex h-11 w-full items-center justify-center gap-1.5 rounded-md border border-dashed text-xs font-semibold transition-colors"
+            aria-label="CEO 작업 추가"
+          >
+            <Plus className="h-4 w-4" />
+            작업 추가
+          </button>
         </div>
       </aside>
 
@@ -303,10 +370,14 @@ export function WorkFlowDiagram({
             rootIssue={selectedRoot}
             onRequestAddAgent={() => {
               setAgentPickerOpen(true)
-              setOrderPanelOpen(false)
+              setToolMode('select')
+              setConnectionSourceId('')
             }}
-            onMoveRoot={moveRootIssue}
             onOpenIssue={onOpenIssue}
+            onReorderChildWork={onReorderChildWork}
+            onSelectConnectIssue={selectConnectIssue}
+            selectedConnectSourceId={validConnectionSourceId}
+            toolMode={toolMode}
           />
         ) : (
           <div className="flex h-full items-center justify-center">
@@ -342,7 +413,7 @@ export function WorkFlowDiagram({
           <Textarea
             value={draftDescription}
             onChange={(event) => setDraftDescription(event.target.value)}
-            placeholder="코멘트"
+            placeholder="세부사항"
             className="mt-2 min-h-20 resize-y"
           />
           <div className="mt-3 flex justify-end gap-2">
@@ -355,6 +426,19 @@ export function WorkFlowDiagram({
           </div>
         </div>
       )}
+      {firstConnectionIssue && secondConnectionIssue && (
+        <ConnectionChoiceDialog
+          firstIssue={firstConnectionIssue}
+          secondIssue={secondConnectionIssue}
+          onCancel={closeConnectionChoice}
+          onChooseFirstBeforeSecond={() =>
+            confirmConnection(firstConnectionIssue.id, secondConnectionIssue.id)
+          }
+          onChooseSecondBeforeFirst={() =>
+            confirmConnection(secondConnectionIssue.id, firstConnectionIssue.id)
+          }
+        />
+      )}
     </div>
   )
 }
@@ -364,98 +448,208 @@ function FixedMap({
   childIssues,
   rootIssue,
   onRequestAddAgent,
-  onMoveRoot,
   onOpenIssue,
+  onReorderChildWork,
+  onSelectConnectIssue,
+  selectedConnectSourceId,
+  toolMode,
 }: {
   assignees: BoardAssignee[]
   childIssues: IssueBoardIssue[]
   rootIssue: IssueBoardIssue
   onRequestAddAgent: () => void
-  onMoveRoot: (issueId: string, direction: -1 | 1) => void
   onOpenIssue: (issueId: string) => void
+  onReorderChildWork: (parentId: string, workIds: string[]) => void
+  onSelectConnectIssue: (issueId: string) => void
+  selectedConnectSourceId: string
+  toolMode: 'select' | 'connect'
 }) {
   const childSlots = childIssues.length + 1
-  const addSlotX = childXPercent(childIssues.length, childSlots)
+  const canvasWidth = flowCanvasWidth(childSlots)
+  const childPositions = flowChildPositions(childSlots, canvasWidth)
+  const addSlotX = childPositions[childIssues.length] ?? canvasWidth / 2
+  const rootNodeId = `work:${rootIssue.id}`
+  const nodes = useMemo<FlowNode[]>(
+    () => [
+      {
+        id: 'ceo',
+        type: 'ceo',
+        position: { x: canvasWidth / 2 - CEO_NODE_WIDTH / 2, y: 42 },
+        data: { label: '메인 에이전트' },
+        style: { width: CEO_NODE_WIDTH },
+        draggable: false,
+      },
+      {
+        id: rootNodeId,
+        type: 'work',
+        position: { x: canvasWidth / 2 - WORK_NODE_WIDTH / 2, y: FLOW_ROOT_Y },
+        data: {
+          assigneeName: assigneeLabel(rootIssue.assigneeAgentId, assignees),
+          issue: rootIssue,
+          onOpen: () => onOpenIssue(rootIssue.id),
+          primary: true,
+          toolMode,
+        },
+        style: { width: WORK_NODE_WIDTH },
+        draggable: false,
+      },
+      ...childIssues.map((issue, index) => ({
+        id: `work:${issue.id}`,
+        type: 'work',
+        position: {
+          x: (childPositions[index] ?? canvasWidth / 2) - WORK_NODE_WIDTH / 2,
+          y: FLOW_CHILD_Y,
+        },
+        data: {
+          assigneeName: assigneeLabel(issue.assigneeAgentId, assignees),
+          issue,
+          onConnectSelect: () => onSelectConnectIssue(issue.id),
+          onOpen: () => onOpenIssue(issue.id),
+          selectedForConnection: selectedConnectSourceId === issue.id,
+          toolMode,
+        },
+        style: { width: WORK_NODE_WIDTH },
+        draggable: true,
+      })),
+      {
+        id: 'add-child',
+        type: 'add',
+        position: { x: addSlotX - WORK_NODE_WIDTH / 2, y: FLOW_CHILD_Y },
+        data: { onRequestAddAgent },
+        style: { width: WORK_NODE_WIDTH },
+        draggable: false,
+      },
+    ],
+    [
+      addSlotX,
+      assignees,
+      canvasWidth,
+      childIssues,
+      childPositions,
+      onOpenIssue,
+      onRequestAddAgent,
+      onSelectConnectIssue,
+      rootIssue,
+      rootNodeId,
+      selectedConnectSourceId,
+      toolMode,
+    ],
+  )
+  const edges = useMemo<Edge[]>(
+    () => [
+      {
+        id: 'ceo-root',
+        source: 'ceo',
+        target: rootNodeId,
+        type: 'smoothstep',
+        style: { strokeWidth: 2 },
+      },
+      ...childIssues.map((issue) => ({
+        id: `${rootNodeId}:work:${issue.id}`,
+        source: rootNodeId,
+        target: `work:${issue.id}`,
+        type: 'smoothstep',
+        style: { strokeWidth: 2 },
+      })),
+      ...childIssues
+        .flatMap((targetIssue) =>
+          targetIssue.blockedBy
+            .filter((sourceIssue) => childIssues.some((child) => child.id === sourceIssue.id))
+            .map((sourceIssue) => ({ sourceIssue, targetIssue })),
+        )
+        .map(({ sourceIssue, targetIssue }, laneIndex) => {
+          const sourceIndex = childIssues.findIndex((child) => child.id === sourceIssue.id)
+          const targetIndex = childIssues.findIndex((child) => child.id === targetIssue.id)
+          const movesRight = sourceIndex <= targetIndex
+          return {
+            id: `order:${sourceIssue.id}:${targetIssue.id}`,
+            source: `work:${sourceIssue.id}`,
+            sourceHandle: movesRight ? 'order-bottom-right-source' : 'order-bottom-left-source',
+            target: `work:${targetIssue.id}`,
+            targetHandle: movesRight ? 'order-bottom-left-target' : 'order-bottom-right-target',
+            type: 'order',
+            markerEnd: {
+              color: 'currentColor',
+              type: MarkerType.ArrowClosed,
+              width: 12,
+              height: 12,
+            },
+            className: 'text-primary',
+            data: { laneIndex },
+            style: { stroke: 'currentColor', strokeWidth: 2 },
+          }
+        }),
+    ],
+    [childIssues, rootNodeId],
+  )
+  const handleNodeDragStop = (_: React.MouseEvent, node: FlowNode) => {
+    if (!node.id.startsWith('work:') || node.id === rootNodeId) return
+    const issueId = node.id.slice('work:'.length)
+    const currentIndex = childIssues.findIndex((issue) => issue.id === issueId)
+    if (currentIndex < 0) return
+    const centerX = node.position.x + WORK_NODE_WIDTH / 2
+    const nextIndex = nearestSlotIndex(centerX, childPositions, childIssues.length)
+    if (nextIndex === currentIndex) return
+    const nextIds = childIssues.map((issue) => issue.id)
+    const [moved] = nextIds.splice(currentIndex, 1)
+    nextIds.splice(nextIndex, 0, moved)
+    onReorderChildWork(rootIssue.id, nextIds)
+  }
   return (
-    <div className="relative h-full min-h-[380px] overflow-hidden px-5 py-4">
-      <svg className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true">
-        <line x1="50%" y1="78" x2="50%" y2="144" className="stroke-border" strokeWidth="2" />
-        {childIssues.map((issue, index) => {
-          const x = childXPercent(index, childSlots)
-          return (
-            <g key={issue.id}>
-              <line
-                x1="50%"
-                y1="236"
-                x2={`${x}%`}
-                y2="292"
-                className="stroke-border"
-                strokeWidth="2"
-              />
-              {issue.blockedBy
-                .filter((blockedBy) => childIssues.some((child) => child.id === blockedBy.id))
-                .map((blockedBy) => {
-                  const sourceIndex = childIssues.findIndex((child) => child.id === blockedBy.id)
-                  const sourceX = childXPercent(sourceIndex, childSlots)
-                  return (
-                    <line
-                      key={`${blockedBy.id}:${issue.id}`}
-                      x1={`${sourceX}%`}
-                      y1="346"
-                      x2={`${x}%`}
-                      y2="346"
-                      className="stroke-primary"
-                      strokeWidth="2"
-                    />
-                  )
-                })}
-            </g>
-          )
-        })}
-        <line
-          x1="50%"
-          y1="236"
-          x2={`${addSlotX}%`}
-          y2="292"
-          className="stroke-primary"
-          strokeDasharray="5 5"
-          strokeWidth="2"
-        />
-      </svg>
-
-      <div className="absolute top-4 left-1/2 w-[168px] -translate-x-1/2">
-        <CeoCard />
-      </div>
-      <div className="absolute top-[144px] left-1/2 w-[210px] -translate-x-1/2">
-        <WorkCard
-          assigneeName={assigneeLabel(rootIssue.assigneeAgentId, assignees)}
-          issue={rootIssue}
-          primary
-          onMoveLeft={() => onMoveRoot(rootIssue.id, -1)}
-          onMoveRight={() => onMoveRoot(rootIssue.id, 1)}
-          onOpen={() => onOpenIssue(rootIssue.id)}
-        />
+    <div
+      className={cn(
+        'relative h-full min-h-[420px] overflow-hidden',
+        toolMode === 'connect' && 'cursor-crosshair',
+      )}
+      style={
+        {
+          '--xy-node-boxshadow-selected': 'none',
+        } as CSSProperties
+      }
+    >
+      <div className="absolute inset-0 overflow-x-auto overflow-y-hidden px-6 py-4">
+        <div
+          className="relative mx-auto h-full"
+          style={{ width: canvasWidth, height: FLOW_CANVAS_HEIGHT }}
+        >
+          <ReactFlow
+            className="[&_.react-flow__node]:!pointer-events-auto [&_.react-flow__node_*]:!pointer-events-auto"
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={FLOW_NODE_TYPES}
+            edgeTypes={FLOW_EDGE_TYPES}
+            nodesDraggable
+            nodesConnectable={false}
+            elementsSelectable={false}
+            panOnDrag={false}
+            paneClickDistance={1000}
+            zoomOnScroll={false}
+            zoomOnPinch={false}
+            zoomOnDoubleClick={false}
+            preventScrolling={false}
+            defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+            minZoom={1}
+            maxZoom={1}
+            proOptions={{ hideAttribution: true }}
+            onNodeDragStop={handleNodeDragStop}
+          >
+            <Background gap={24} size={1} />
+          </ReactFlow>
+        </div>
       </div>
 
-      <div
-        className="absolute top-[292px] right-8 left-8 grid items-start gap-2.5"
-        style={{ gridTemplateColumns: `repeat(${childSlots}, minmax(0, 1fr))` }}
-      >
-        {childIssues.map((issue) => (
-          <WorkCard
-            key={issue.id}
-            assigneeName={assigneeLabel(issue.assigneeAgentId, assignees)}
-            issue={issue}
-            onOpen={() => onOpenIssue(issue.id)}
-          />
-        ))}
-        <AddAgentSlot onRequestAddAgent={onRequestAddAgent} />
-      </div>
+      {toolMode === 'connect' && (
+        <div className="bg-background/95 border-border text-foreground absolute top-3 left-3 z-10 rounded-md border px-3 py-2 text-xs shadow-sm">
+          {selectedConnectSourceId
+            ? '연결할 작업을 하나 더 선택하세요'
+            : '연결할 작업 2개를 선택하세요'}
+        </div>
+      )}
     </div>
   )
 }
 
-function CeoCard() {
+function CeoCard({ label = '메인 에이전트' }: { label?: string }) {
   return (
     <div className="bg-background border-foreground/20 flex h-[52px] items-center gap-2 rounded-md border px-2.5 shadow-sm">
       <div className="bg-accent flex h-8 w-8 shrink-0 items-center justify-center rounded">
@@ -465,42 +659,164 @@ function CeoCard() {
         <div className="text-muted-foreground text-[11px] font-semibold tracking-widest uppercase">
           CEO
         </div>
-        <div className="truncate text-[13px] font-semibold">메인 에이전트</div>
+        <div className="truncate text-[13px] font-semibold">{label}</div>
       </div>
     </div>
+  )
+}
+
+function CeoFlowNode({ data }: NodeProps<FlowNode>) {
+  return (
+    <>
+      <Handle type="source" position={Position.Bottom} className="opacity-0" />
+      <CeoCard label={typeof data.label === 'string' ? data.label : '메인 에이전트'} />
+    </>
+  )
+}
+
+function WorkFlowNode({ data }: NodeProps<FlowNode>) {
+  const issue = data.issue as IssueBoardIssue | undefined
+  if (!issue) return null
+  return (
+    <>
+      <Handle type="target" position={Position.Top} className="opacity-0" />
+      <Handle type="source" position={Position.Bottom} className="opacity-0" />
+      <Handle
+        id="order-bottom-left-target"
+        type="target"
+        position={Position.Bottom}
+        className="opacity-0"
+        style={{ left: '32%' }}
+      />
+      <Handle
+        id="order-bottom-right-target"
+        type="target"
+        position={Position.Bottom}
+        className="opacity-0"
+        style={{ left: '68%' }}
+      />
+      <Handle
+        id="order-bottom-left-source"
+        type="source"
+        position={Position.Bottom}
+        className="opacity-0"
+        style={{ left: '32%' }}
+      />
+      <Handle
+        id="order-bottom-right-source"
+        type="source"
+        position={Position.Bottom}
+        className="opacity-0"
+        style={{ left: '68%' }}
+      />
+      <WorkCard
+        assigneeName={typeof data.assigneeName === 'string' ? data.assigneeName : 'CEO'}
+        issue={issue}
+        onConnectSelect={data.onConnectSelect as (() => void) | undefined}
+        onOpen={(data.onOpen as () => void) ?? (() => undefined)}
+        primary={data.primary === true}
+        selectedForConnection={data.selectedForConnection === true}
+        toolMode={data.toolMode === 'connect' ? 'connect' : 'select'}
+      />
+    </>
+  )
+}
+
+function AddFlowNode({ data }: NodeProps<FlowNode>) {
+  return (
+    <div className="pointer-events-auto" style={{ width: WORK_NODE_WIDTH }}>
+      <Handle type="target" position={Position.Top} className="opacity-0" />
+      <AddAgentSlot
+        onRequestAddAgent={(data.onRequestAddAgent as () => void) ?? (() => undefined)}
+      />
+    </div>
+  )
+}
+
+function OrderLaneEdge({
+  data,
+  id,
+  markerEnd,
+  sourceX,
+  sourceY,
+  style,
+  targetX,
+  targetY,
+}: EdgeProps) {
+  const laneIndex = typeof data?.laneIndex === 'number' ? data.laneIndex : 0
+  const laneY = Math.max(sourceY, targetY) + 30 + laneIndex * 18
+  const direction = targetX >= sourceX ? 1 : -1
+  const radius = Math.min(12, Math.max(4, Math.abs(targetX - sourceX) / 5))
+  const path = [
+    `M ${sourceX} ${sourceY}`,
+    `L ${sourceX} ${laneY - radius}`,
+    `Q ${sourceX} ${laneY} ${sourceX + direction * radius} ${laneY}`,
+    `L ${targetX - direction * radius} ${laneY}`,
+    `Q ${targetX} ${laneY} ${targetX} ${laneY - radius}`,
+    `L ${targetX} ${targetY}`,
+  ].join(' ')
+  return (
+    <path
+      id={id}
+      className="react-flow__edge-path stroke-primary"
+      d={path}
+      fill="none"
+      markerEnd={markerEnd}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={style}
+    />
   )
 }
 
 function WorkCard({
   assigneeName,
   issue,
-  onMoveLeft,
-  onMoveRight,
+  onConnectSelect,
   onOpen,
   primary = false,
+  selectedForConnection = false,
+  toolMode = 'select',
 }: {
   assigneeName: string
   issue: IssueBoardIssue
-  onMoveLeft?: () => void
-  onMoveRight?: () => void
+  onConnectSelect?: () => void
   onOpen: () => void
   primary?: boolean
+  selectedForConnection?: boolean
+  toolMode?: 'select' | 'connect'
 }) {
+  const handleClick = () => {
+    if (toolMode === 'connect' && onConnectSelect) {
+      onConnectSelect()
+      return
+    }
+    onOpen()
+  }
+
   return (
     <div
       id={primary ? ROOT_NODE_ID : `${CHILD_NODE_PREFIX}${issue.id}`}
       className={cn(
-        'bg-background border-border rounded-md border shadow-sm',
+        'bg-background border-border pointer-events-auto relative h-[76px] rounded-md border shadow-sm',
         primary && 'border-foreground/30',
+        selectedForConnection && 'ring-primary ring-2',
       )}
     >
-      <button type="button" onClick={onOpen} className="block w-full px-2 py-1.5 text-left">
-        <div className="mb-1 flex items-center gap-1.5">
+      <button
+        type="button"
+        onClick={handleClick}
+        className={cn(
+          'block h-full w-full px-2 py-1.5 text-left',
+          toolMode === 'connect' && !primary && 'cursor-crosshair',
+        )}
+      >
+        <div className="mb-1 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5">
           <StatusDot status={issue.status} />
-          <span className="text-muted-foreground truncate text-xs">
+          <span className="text-muted-foreground text-xs whitespace-nowrap">
             {issueBoardStatusLabel(issue.status)}
           </span>
-          <span className="text-muted-foreground ml-auto font-mono text-xs">
+          <span className="text-muted-foreground font-mono text-xs whitespace-nowrap">
             {issue.identifier}
           </span>
         </div>
@@ -517,24 +833,6 @@ function WorkCard({
           <span className="truncate">{assigneeName}</span>
         </div>
       </button>
-      {primary && (
-        <div className="border-border/70 flex border-t">
-          <button
-            type="button"
-            onClick={onMoveLeft}
-            className="hover:bg-accent/50 h-6 flex-1 text-xs"
-          >
-            왼쪽
-          </button>
-          <button
-            type="button"
-            onClick={onMoveRight}
-            className="hover:bg-accent/50 h-6 flex-1 border-l text-xs"
-          >
-            오른쪽
-          </button>
-        </div>
-      )}
     </div>
   )
 }
@@ -544,7 +842,7 @@ function AddAgentSlot({ onRequestAddAgent }: { onRequestAddAgent: () => void }) 
     <button
       type="button"
       onClick={onRequestAddAgent}
-      className="border-primary bg-primary/10 text-primary hover:bg-primary/15 flex min-h-[76px] flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed shadow-sm transition-colors"
+      className="nodrag nopan border-primary bg-primary/10 text-primary hover:bg-primary/15 flex h-[76px] w-full flex-col items-center justify-center gap-1 rounded-md border-2 border-dashed shadow-sm transition-colors"
       aria-label="하위 에이전트 작업 추가"
     >
       <span className="bg-primary text-primary-foreground flex h-7 w-7 items-center justify-center rounded">
@@ -635,60 +933,61 @@ function AgentChoiceGroup({
   )
 }
 
-function OrderToolPanel({
-  childIssues,
-  sourceId,
-  targetId,
-  onConnect,
-  onSourceChange,
-  onTargetChange,
+function ConnectionChoiceDialog({
+  firstIssue,
+  secondIssue,
+  onCancel,
+  onChooseFirstBeforeSecond,
+  onChooseSecondBeforeFirst,
 }: {
-  childIssues: IssueBoardIssue[]
-  sourceId: string
-  targetId: string
-  onConnect: () => void
-  onSourceChange: (issueId: string) => void
-  onTargetChange: (issueId: string) => void
+  firstIssue: IssueBoardIssue
+  secondIssue: IssueBoardIssue
+  onCancel: () => void
+  onChooseFirstBeforeSecond: () => void
+  onChooseSecondBeforeFirst: () => void
 }) {
   return (
-    <div className="border-border bg-background absolute top-14 left-3 z-30 w-64 rounded-md border p-3 shadow-xl">
-      <div className="text-muted-foreground mb-2 flex items-center gap-1.5 text-xs font-semibold tracking-widest uppercase">
-        <GitBranch className="h-3.5 w-3.5" />
-        실행 순서
+    <div className="bg-background/80 fixed inset-0 z-40 flex items-center justify-center p-4 backdrop-blur-sm">
+      <div className="border-border bg-background w-[360px] max-w-full rounded-md border p-4 shadow-xl">
+        <div className="mb-1 text-sm font-semibold">작업 순서 선택</div>
+        <p className="text-muted-foreground mb-4 text-xs leading-5">
+          두 작업 중 먼저 끝나야 하는 작업을 고르세요. 선택한 작업에서 다른 작업으로 화살표가
+          연결됩니다.
+        </p>
+        <div className="space-y-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="h-auto w-full justify-start px-3 py-2 text-left"
+            onClick={onChooseFirstBeforeSecond}
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium">{firstIssue.title}</span>
+              <span className="text-muted-foreground block truncate text-xs">
+                이 작업 완료 후 {secondIssue.identifier} 진행
+              </span>
+            </span>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-auto w-full justify-start px-3 py-2 text-left"
+            onClick={onChooseSecondBeforeFirst}
+          >
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium">{secondIssue.title}</span>
+              <span className="text-muted-foreground block truncate text-xs">
+                이 작업 완료 후 {firstIssue.identifier} 진행
+              </span>
+            </span>
+          </Button>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+            취소
+          </Button>
+        </div>
       </div>
-      <select
-        value={sourceId}
-        onChange={(event) => onSourceChange(event.target.value)}
-        className="bg-background border-border mb-2 h-8 w-full rounded-md border px-2 text-xs"
-      >
-        <option value="">먼저 실행</option>
-        {childIssues.map((issue) => (
-          <option key={issue.id} value={issue.id}>
-            {issue.title}
-          </option>
-        ))}
-      </select>
-      <select
-        value={targetId}
-        onChange={(event) => onTargetChange(event.target.value)}
-        className="bg-background border-border mb-2 h-8 w-full rounded-md border px-2 text-xs"
-      >
-        <option value="">다음 실행</option>
-        {childIssues.map((issue) => (
-          <option key={issue.id} value={issue.id}>
-            {issue.title}
-          </option>
-        ))}
-      </select>
-      <Button
-        type="button"
-        size="sm"
-        className="w-full"
-        disabled={!sourceId || !targetId || sourceId === targetId}
-        onClick={onConnect}
-      >
-        연결
-      </Button>
     </div>
   )
 }
@@ -715,9 +1014,34 @@ function StatusDot({ status }: { status: IssueBoardIssue['status'] }) {
   )
 }
 
-function childXPercent(index: number, totalSlots: number) {
-  if (totalSlots <= 1) return 50
-  return 10 + (index * 80) / Math.max(1, totalSlots - 1)
+function flowCanvasWidth(totalSlots: number) {
+  const slotWidth = totalSlots * WORK_NODE_WIDTH
+  const gapWidth = Math.max(0, totalSlots - 1) * NODE_GAP
+  return Math.max(FLOW_CANVAS_MIN_WIDTH, slotWidth + gapWidth + MAP_SIDE_PADDING * 2)
+}
+
+function flowChildPositions(totalSlots: number, canvasWidth: number) {
+  const totalWidth = totalSlots * WORK_NODE_WIDTH + Math.max(0, totalSlots - 1) * NODE_GAP
+  const start = canvasWidth / 2 - totalWidth / 2 + WORK_NODE_WIDTH / 2
+  return Array.from(
+    { length: totalSlots },
+    (_, index) => start + index * (WORK_NODE_WIDTH + NODE_GAP),
+  )
+}
+
+function nearestSlotIndex(x: number, positions: number[], itemCount: number) {
+  const usablePositions = positions.slice(0, itemCount)
+  if (usablePositions.length === 0) return 0
+  let nearestIndex = 0
+  let nearestDistance = Number.POSITIVE_INFINITY
+  usablePositions.forEach((position, index) => {
+    const distance = Math.abs(position - x)
+    if (distance < nearestDistance) {
+      nearestDistance = distance
+      nearestIndex = index
+    }
+  })
+  return nearestIndex
 }
 
 function sortFlowIssues(issues: IssueBoardIssue[]) {

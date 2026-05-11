@@ -40,7 +40,7 @@ import {
   addWorkRelation,
   createChildWork,
   removeWorkRelation,
-  updateSessionWorkFlowOrder,
+  updateWorkFlowOrder,
   updateWorkParent,
 } from '@/apis/work'
 import { cn } from '@/components/ui/utils'
@@ -152,6 +152,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const [draggedIssueId, setDraggedIssueId] = useState<string | null>(null)
   const [dragOverStatus, setDragOverStatus] = useState<IssueBoardStatus | null>(null)
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null)
+  const [workNotice, setWorkNotice] = useState<string | null>(null)
 
   useEffect(() => {
     if (sessionId.startsWith('pending_session_')) return
@@ -362,6 +363,16 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const runIssue = (issueId: string) => {
     const issue = boardIssues.find((item) => item.id === issueId)
     if (!issue) return
+    const unresolvedBlockers = issue.blockedBy.filter((item) => item.status !== 'done')
+    if (unresolvedBlockers.length > 0) {
+      setWorkNotice(
+        `먼저 완료해야 하는 작업이 있습니다: ${unresolvedBlockers
+          .map((item) => item.identifier)
+          .join(', ')}`,
+      )
+      return
+    }
+    setWorkNotice(null)
     const message =
       issue.status === 'blocked'
         ? '차단 해제 정보를 반영해서 이 작업을 이어서 진행해.'
@@ -508,9 +519,9 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
     ]
   }
 
-  const reorderRootFlowWork = (workIds: string[]) => {
+  const reorderChildFlowWork = (parentId: string, workIds: string[]) => {
     if (!sessionId.startsWith('pending_session_')) {
-      void updateSessionWorkFlowOrder(sessionId, workIds)
+      void updateWorkFlowOrder(parentId, workIds)
         .then(() => fetchSessionWork(sessionId))
         .catch((error) => {
           console.error(error)
@@ -556,6 +567,11 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         {workError && (
           <p className="text-destructive text-xs" aria-live="polite">
             {workError}
+          </p>
+        )}
+        {workNotice && (
+          <p className="text-xs text-amber-600" aria-live="polite">
+            {workNotice}
           </p>
         )}
 
@@ -659,7 +675,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
               title: input.title,
               description: input.description,
               assigneeAgentId: input.assigneeAgentId,
-              blockParentUntilDone: true,
+              blockParentUntilDone: false,
               flowOrder: childCount,
             })
               .then(() => fetchSessionWork(sessionId))
@@ -670,7 +686,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
           onCreateRootWork={createRootFlowWork}
           onEnsureDefaultAgents={ensureDefaultFlowAgents}
           onOpenIssue={setSelectedIssueId}
-          onReorderRootWork={reorderRootFlowWork}
+          onReorderChildWork={reorderChildFlowWork}
         />
       ) : viewMode === 'board' ? (
         <TodoKanbanBoard
@@ -733,7 +749,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
             clientRequestId: `child:${parentId}:${Date.now()}`,
             title,
             description,
-            blockParentUntilDone: true,
+            blockParentUntilDone: false,
           })
             .then(() => fetchSessionWork(sessionId))
             .catch((error) => {

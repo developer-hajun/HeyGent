@@ -352,7 +352,7 @@ def test_delegate_task_runtime_returns_worker_handoff_request():
     assert result["child_session"]["metadata"]["profile_key"] == "worker.default"
 
 
-def test_session_agent_task_blocks_parent_by_default():
+def test_session_agent_task_leaves_parent_waiting_by_default():
     work_repository = FakeRuntimeWorkRepository()
     parent = WorkItem(
         work_id="work-parent",
@@ -391,8 +391,51 @@ def test_session_agent_task_blocks_parent_by_default():
 
     child_id = result["child_work"]["workId"]
     assert result["ok"] is True
-    assert work_repository.items[parent.work_id].status == "blocked"
+    assert work_repository.items[parent.work_id].status == "in_progress"
     assert work_repository.items[child_id].assignee_agent_id == "agent-research"
+    assert work_repository.relations == []
+
+
+def test_session_agent_task_can_record_parent_dependency_without_changing_status():
+    work_repository = FakeRuntimeWorkRepository()
+    parent = WorkItem(
+        work_id="work-parent",
+        identifier="TASK-1",
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        title="부모 작업",
+        description="부모",
+        status="todo",
+        assignee_agent_id="CEO",
+    )
+    work_repository.items[parent.work_id] = parent
+    agent_repository = FakeRuntimeAgentRepository(
+        {
+            "profile_id": "agent-research",
+            "session_id": "session-1",
+            "agent_type": "user_subagent",
+            "profile_key": "session.agent",
+            "config_snapshot": {"name": "Research", "role": "research"},
+        }
+    )
+    runtime = LocalToolRuntime(
+        skill_registry=object(),
+        session_store=DummySessionStore(),
+        work_repository=work_repository,
+        agent_repository=agent_repository,
+        runtime_context={"workId": parent.work_id},
+    )
+
+    result = runtime.run_call(
+        name="session_agent_task",
+        args={"title": "자료 조사", "instruction": "자료를 조사해줘", "blockParentUntilDone": True},
+        enabled_toolsets=("work",),
+    )
+
+    child_id = result["child_work"]["workId"]
+    assert result["ok"] is True
+    assert work_repository.items[parent.work_id].status == "todo"
     assert work_repository.relations == [
         WorkRelation(source_work_id=child_id, target_work_id=parent.work_id, relation_type="blocks")
     ]

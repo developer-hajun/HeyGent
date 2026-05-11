@@ -56,7 +56,7 @@ SESSION_AGENT_TASK_SCHEMA = {
             },
             "blockParentUntilDone": {
                 "type": "boolean",
-                "description": "Whether the child work blocks the parent until the child reaches a terminal status. Defaults to true.",
+                "description": "Whether the child work blocks the parent until the child reaches a terminal status. Defaults to false.",
             },
         },
         "required": ["title", "instruction"],
