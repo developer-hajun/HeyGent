@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.clients.backend_memory import BackendMemoryItem
 from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopHandler
@@ -61,6 +62,32 @@ def test_session_agent_task_parent_disposition_is_used_as_task_work_disposition(
         "status": "in_review",
         "summary": "하위 작업 결과를 반영함",
     }
+
+
+def test_dynamic_work_link_updates_tool_runtime_context():
+    task_input = {"prompt": "k-skill 써서 지하철 노선도 알아봐봐"}
+    task = SimpleNamespace(
+        input_payload={
+            **task_input,
+            "workId": "work-skill",
+            "workIdentifier": "TASK-1",
+            "workTitle": "skill-index 스킬 실행",
+            "workContext": {"title": "skill-index 스킬 실행"},
+            "workLinkReason": "skill_use",
+        }
+    )
+    tool_runtime = SimpleNamespace(runtime_context=dict(task_input))
+
+    ToolCallingLoopHandler._sync_dynamic_runtime_context(
+        task=task,
+        task_input=task_input,
+        tool_runtime=tool_runtime,
+    )
+
+    assert task_input["workId"] == "work-skill"
+    assert task_input["workIdentifier"] == "TASK-1"
+    assert tool_runtime.runtime_context["workId"] == "work-skill"
+    assert tool_runtime.runtime_context["workLinkReason"] == "skill_use"
 
 
 def test_prompt_builder_explains_approval_tool_call_boundary():

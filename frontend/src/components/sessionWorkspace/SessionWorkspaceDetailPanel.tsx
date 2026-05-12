@@ -17,7 +17,6 @@ import { Tabs } from '@/components/ui/tabs'
 import {
   AgentDetailHeader,
   type AgentRunItemData,
-  AgentBudgetPanel,
   AgentConfigurationPanel,
   AgentDashboardPanel,
   AgentInstructionsBundlePanel,
@@ -28,10 +27,22 @@ import {
   AgentSkillsLibraryPanel,
   AgentSkillsPanel,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
+import {
+  type AgentRunUsageSummary,
+  buildAgentRunUsageMap,
+  buildAgentUsageSummaryItems,
+  formatAgentRunCostUsage,
+  formatAgentRunTokenUsage,
+} from '@/components/sessionWorkspace/agentUsageDisplay'
 import { WorkBoardPanel } from '@/components/sessionWorkspace/work/board'
 import { SubAgentsPanel } from '@/components/sessionWorkspace/subAgents'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
+import {
+  getCommandUsage,
+  type CommandUsageRecord,
+  type CommandUsageSummary,
+} from '@/apis/aiCommandUsage'
 import { getSessionMainAgent, saveAgentInstructionDocument, type AgentProfile } from '@/apis/agents'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useChatStore } from '@/store/useChatStore'
@@ -180,6 +191,9 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+  const [usageSummary, setUsageSummary] = useState<CommandUsageSummary | null>(null)
+  const [usageRecords, setUsageRecords] = useState<CommandUsageRecord[]>([])
+  const [usageError, setUsageError] = useState<string | null>(null)
 
   const modelGroups = useMemo(() => groupModels(modelOptions), [modelOptions])
   const modelFamilies = useMemo(() => getModelFamilies(modelGroups), [modelGroups])
@@ -215,8 +229,12 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const showConfigActionBar =
     (activeTab === 'configuration' || activeTab === 'instructions') && (isDirty || saving)
   const sessionRuns = useMemo(
-    () => buildSessionRunItems(session, messages, taskRunsById, eventsByTaskRunId),
-    [eventsByTaskRunId, messages, session, taskRunsById],
+    () => buildSessionRunItems(session, messages, taskRunsById, eventsByTaskRunId, usageRecords),
+    [eventsByTaskRunId, messages, session, taskRunsById, usageRecords],
+  )
+  const usageItems = useMemo(
+    () => buildAgentUsageSummaryItems(usageSummary, false, usageError),
+    [usageError, usageSummary],
   )
 
   useEffect(() => {
@@ -267,6 +285,30 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
       cancelled = true
     }
   }, [authenticatedReady, sessionId])
+
+  useEffect(() => {
+    if (!authenticatedReady || commandClient === null || sessionId.startsWith('pending_session_')) {
+      return
+    }
+
+    let active = true
+    void getCommandUsage({ sessionId })
+      .then((result) => {
+        if (!active) return
+        setUsageError(null)
+        setUsageSummary(result.summary)
+        setUsageRecords(result.records)
+      })
+      .catch(() => {
+        if (!active) return
+        setUsageRecords([])
+        setUsageError('사용량을 불러오지 못했습니다.')
+      })
+
+    return () => {
+      active = false
+    }
+  }, [authenticatedReady, commandClient, sessionId])
 
   useEffect(() => {
     if (!authenticatedReady || commandClient === null) {
@@ -445,12 +487,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
 
         {activeTab === 'dashboard' && (
           <AgentDashboardPanel
-            costs={[
-              { label: '입력 토큰', value: '0' },
-              { label: '출력 토큰', value: '0' },
-              { label: '캐시 토큰', value: '0' },
-              { label: '총 비용', value: '$0.00' },
-            ]}
+            costs={usageItems}
             latestRun={sessionRuns[0] ?? null}
             metrics={[
               {
@@ -639,22 +676,6 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
           <AgentRunsPanel emptyText="아직 실행 기록이 없습니다." items={sessionRuns} />
         )}
 
-        {activeTab === 'budget' && (
-          <AgentBudgetPanel
-            summary={{
-              amountLabel: '사용 안 함',
-              observedLabel: '$0.00',
-              remainingLabel: '제한 없음',
-              scopeName: displayName,
-              scopeType: '에이전트',
-              status: 'healthy',
-              utilizationPercent: 0,
-              warnPercent: 80,
-              windowLabel: '월간 예산',
-            }}
-          />
-        )}
-
         {saveError && (
           <p className="text-destructive text-sm" aria-live="polite">
             {saveError}
@@ -694,8 +715,10 @@ function buildSessionRunItems(
   messages: ChatMessageView[],
   taskRunsById: Record<string, RawTaskRun>,
   eventsByTaskRunId: Record<string, RawTaskEventPayload[]>,
+  usageRecords: CommandUsageRecord[],
 ): AgentRunItemData[] {
   const ids = new Set<string>()
+  const usageByTaskRunId = buildAgentRunUsageMap(usageRecords)
 
   messages.forEach((message) => {
     if (message.taskRunId !== undefined) {
@@ -718,7 +741,7 @@ function buildSessionRunItems(
       buildSessionRunItem(taskRunId, session, messages, taskRunsById[taskRunId], eventsByTaskRunId),
     )
     .sort((first, second) => second.sortTime - first.sortTime)
-    .map(toAgentRunItem)
+    .map((item) => toAgentRunItem(item, usageByTaskRunId))
 
   if (runItems.length > 0 || (!session.last_message && !session.last_task_run_status)) {
     return runItems
@@ -731,8 +754,8 @@ function buildSessionRunItems(
       source: 'chat',
       createdAt: formatRunTimestamp(getTime(session.last_message_at)),
       summary: session.last_message || '아직 요약이 없습니다.',
-      tokens: '0 tok',
-      cost: '$0.00',
+      tokens: '-',
+      cost: '-',
       adapter: 'openai',
     },
   ]
@@ -766,23 +789,27 @@ function buildSessionRunItem(
       getCompactRunSummary(answer) ??
       getCompactRunSummary(summary.title) ??
       '아직 요약이 없습니다.',
-    tokens: '0 tok',
-    cost: '$0.00',
+    tokens: '-',
+    cost: '-',
     adapter: 'openai',
     model: getString(toJsonObject(session.settings), 'model') ?? undefined,
     sortTime,
   }
 }
 
-function toAgentRunItem(item: AgentRunItemData & { sortTime: number }): AgentRunItemData {
+function toAgentRunItem(
+  item: AgentRunItemData & { sortTime: number },
+  usageByTaskRunId: Map<string, AgentRunUsageSummary>,
+): AgentRunItemData {
+  const usage = usageByTaskRunId.get(item.id)
   return {
     id: item.id,
     status: item.status,
     source: item.source,
     createdAt: item.createdAt,
     summary: item.summary,
-    tokens: item.tokens,
-    cost: item.cost,
+    tokens: formatAgentRunTokenUsage(usage),
+    cost: formatAgentRunCostUsage(usage),
     adapter: item.adapter,
     model: item.model,
   }
@@ -891,7 +918,6 @@ function getInstructionFilesFromDocuments(value: unknown): Record<string, string
 
 function instructionDisplayName(documentKey: string) {
   if (documentKey === 'AGENTS.md') return '기본 지침'
-  if (documentKey === 'HEARTBEAT.md') return '작업 루프 지침'
   if (documentKey === 'SOUL.md') return '역할 성향 지침'
   if (documentKey === 'TOOLS.md') return '도구 사용 지침'
   return documentKey
@@ -904,7 +930,7 @@ function shallowStringRecordEqual(left: Record<string, string>, right: Record<st
   return leftEntries.every(([key, value]) => right[key] === value)
 }
 
-type MainAgentTab = 'dashboard' | 'instructions' | 'skills' | 'configuration' | 'runs' | 'budget'
+type MainAgentTab = 'dashboard' | 'instructions' | 'skills' | 'configuration' | 'runs'
 
 const MAIN_AGENT_TABS: Array<{ value: MainAgentTab; label: string }> = [
   { value: 'dashboard', label: '대시보드' },
@@ -912,7 +938,6 @@ const MAIN_AGENT_TABS: Array<{ value: MainAgentTab; label: string }> = [
   { value: 'skills', label: '스킬' },
   { value: 'configuration', label: '설정' },
   { value: 'runs', label: '실행 기록' },
-  { value: 'budget', label: '예산' },
 ]
 
 const inputClass =

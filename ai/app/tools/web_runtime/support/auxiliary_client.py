@@ -25,7 +25,6 @@ def _api_key() -> str | None:
 def _base_url() -> str | None:
     value = (
         os.getenv("OPENAI_BASE_URL")
-        or os.getenv("HEYGENT_OPENAI_API_BASE_URL")
         or os.getenv("HEYGENT_OPENAI_REST_API_BASE_URL")
         or os.getenv("OPENROUTER_BASE_URL")
     )
