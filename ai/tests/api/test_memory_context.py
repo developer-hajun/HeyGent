@@ -33,6 +33,16 @@ class EmptyThenMemoryClient(FakeMemoryClient):
         return list(self.memories)
 
 
+class FilteredMemoryClient:
+    def __init__(self, memories_by_store_type: dict[str | None, list[BackendMemoryItem]]) -> None:
+        self.memories_by_store_type = memories_by_store_type
+        self.calls = []
+
+    async def recall(self, **kwargs):
+        self.calls.append(kwargs)
+        return list(self.memories_by_store_type.get(kwargs.get("store_type"), []))
+
+
 class FakeRecallPlannerProvider:
     def __init__(self, payload=None, *, fail: bool = False, delay_seconds: float = 0.0) -> None:
         self.payload = payload or {}
@@ -49,14 +59,21 @@ class FakeRecallPlannerProvider:
         return self.payload
 
 
-def _memory(content: str) -> BackendMemoryItem:
+def _memory(
+    content: str,
+    *,
+    memory_id: int = 1,
+    memory_type: str = "PREFERENCE",
+    store_type: str = "PROFILE",
+    summary: str = "선호 요약",
+) -> BackendMemoryItem:
     return BackendMemoryItem(
-        id=1,
-        memory_type="PREFERENCE",
-        store_type="PROFILE",
+        id=memory_id,
+        memory_type=memory_type,
+        store_type=store_type,
         scope_type="GLOBAL",
         content=content,
-        summary="선호 요약",
+        summary=summary,
         importance=0.8,
         confidence=0.9,
         metadata={"workspaceKey": "team-a", "token": "hidden"},
@@ -67,6 +84,13 @@ def test_select_memory_recall_query_uses_prompt_like_fields():
     assert select_memory_recall_query({"prompt": "  현재 요청  "}) == "현재 요청"
     assert select_memory_recall_query({"count": 1, "message": ""}) is None
     assert select_memory_recall_query({"subject": "회의 정리"}) == "회의 정리"
+
+
+def test_recall_planner_prompt_separates_instructions_from_task_state():
+    from app.api.memory_context import MEMORY_RECALL_PLANNER_SYSTEM_PROMPT
+
+    assert "AGENT_MEMORY/INSTRUCTION/GLOBAL/instruction,procedure" in MEMORY_RECALL_PLANNER_SYSTEM_PROMPT
+    assert "Do not classify saved answer-format instructions" in MEMORY_RECALL_PLANNER_SYSTEM_PROMPT
 
 
 def test_plan_memory_recall_skips_low_value_greeting():
@@ -101,6 +125,14 @@ def test_plan_memory_recall_selects_workspace_task_state_filters():
         "workspace_key": "team-a",
         "metadata_categories": ["task_state", "fact"],
     }
+
+
+def test_rule_fallback_does_not_treat_generic_plan_as_workspace_state():
+    plan = plan_memory_recall("서울 여행 계획 짜줘")
+
+    assert plan.should_recall is True
+    assert plan.reason == "general_semantic_recall"
+    assert plan.filters() == {}
 
 
 @pytest.mark.asyncio
@@ -166,6 +198,52 @@ async def test_llm_memory_recall_planner_handles_personalized_recommendation():
         "memory_type": "PREFERENCE",
         "scope_type": "GLOBAL",
         "metadata_categories": ["preference"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_llm_memory_recall_planner_accepts_additional_recall_plans():
+    provider = FakeRecallPlannerProvider(
+        {
+            "shouldRecall": True,
+            "query": "사용자 선호",
+            "reason": "사용자 선호가 답변에 영향을 줄 수 있음",
+            "filters": {
+                "storeType": "USER_PROFILE",
+                "memoryType": "PREFERENCE",
+                "scopeType": "GLOBAL",
+                "metadataCategories": ["preference"],
+            },
+            "additionalRecallPlans": [
+                {
+                    "query": "재사용 가능한 응답 절차",
+                    "reason": "저장된 절차가 답변 구조를 바꿀 수 있음",
+                    "filters": {
+                        "storeType": "AGENT_MEMORY",
+                        "memoryType": "INSTRUCTION",
+                        "scopeType": "GLOBAL",
+                        "metadataCategories": ["instruction", "procedure"],
+                    },
+                }
+            ],
+        }
+    )
+    planner = LlmMemoryRecallPlanner(provider=provider)
+
+    plan = await planner.plan_recall("부산 여행 계획 짜줘")
+
+    assert plan.filters() == {
+        "store_type": "USER_PROFILE",
+        "memory_type": "PREFERENCE",
+        "scope_type": "GLOBAL",
+        "metadata_categories": ["preference"],
+    }
+    assert len(plan.additional_plans) == 1
+    assert plan.additional_plans[0].filters() == {
+        "store_type": "AGENT_MEMORY",
+        "memory_type": "INSTRUCTION",
+        "scope_type": "GLOBAL",
+        "metadata_categories": ["instruction", "procedure"],
     }
 
 
@@ -299,6 +377,107 @@ async def test_attach_persistent_memory_context_uses_llm_planner_when_available(
         "scope_type": "GLOBAL",
         "metadata_categories": ["preference"],
     }
+
+
+@pytest.mark.asyncio
+async def test_attach_persistent_memory_context_executes_additional_llm_plans():
+    memory_client = FilteredMemoryClient(
+        {
+            "USER_PROFILE": [
+                _memory(
+                    "사용자는 반말로 대화해주길 선호한다.",
+                    memory_id=10,
+                    store_type="USER_PROFILE",
+                    summary="반말 선호",
+                )
+            ],
+            "AGENT_MEMORY": [
+                _memory(
+                    "여행 계획 요청 시 날짜와 예산을 먼저 확인한 뒤 교통편, 숙소, 식당 순서로 계획한다.",
+                    memory_id=11,
+                    memory_type="INSTRUCTION",
+                    store_type="AGENT_MEMORY",
+                    summary="여행 계획 절차",
+                )
+            ],
+        }
+    )
+    planner = LlmMemoryRecallPlanner(
+        provider=FakeRecallPlannerProvider(
+            {
+                "shouldRecall": True,
+                "query": "사용자 선호",
+                "reason": "사용자 선호가 답변에 영향을 줄 수 있음",
+                "filters": {
+                    "storeType": "USER_PROFILE",
+                    "memoryType": "PREFERENCE",
+                    "scopeType": "GLOBAL",
+                    "metadataCategories": ["preference"],
+                },
+                "additionalRecallPlans": [
+                    {
+                        "query": "재사용 가능한 응답 절차",
+                        "reason": "저장된 절차가 답변 구조를 바꿀 수 있음",
+                        "filters": {
+                            "storeType": "AGENT_MEMORY",
+                            "memoryType": "INSTRUCTION",
+                            "scopeType": "GLOBAL",
+                            "metadataCategories": ["instruction", "procedure"],
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    task_input = {"prompt": "부산 여행 계획 짜줘"}
+
+    await attach_persistent_memory_context(
+        app_state=SimpleNamespace(backend_memory_client=memory_client, memory_recall_planner=planner),
+        task_input=task_input,
+        user_id="7",
+        query="부산 여행 계획 짜줘",
+    )
+
+    assert memory_client.calls == [
+        {
+            "user_id": "7",
+            "query": "사용자 선호",
+            "limit": 5,
+            "workspace_key": None,
+            "store_type": "USER_PROFILE",
+            "memory_type": "PREFERENCE",
+            "scope_type": "GLOBAL",
+            "metadata_categories": ["preference"],
+        },
+        {
+            "user_id": "7",
+            "query": "재사용 가능한 응답 절차",
+            "limit": 5,
+            "workspace_key": None,
+            "store_type": "AGENT_MEMORY",
+            "memory_type": "INSTRUCTION",
+            "scope_type": "GLOBAL",
+            "metadata_categories": ["instruction", "procedure"],
+        },
+    ]
+    recall_meta = task_input["memory_context_meta"]["recall"]
+    assert recall_meta["status"] == "injected"
+    assert recall_meta["count"] == 2
+    assert recall_meta["memory_ids"] == [10, 11]
+    assert recall_meta["planner"]["additional_plans"] == [
+        {
+            "reason": "저장된 절차가 답변 구조를 바꿀 수 있음",
+            "source": "llm",
+            "filters": {
+                "store_type": "AGENT_MEMORY",
+                "memory_type": "INSTRUCTION",
+                "scope_type": "GLOBAL",
+                "metadata_categories": ["instruction", "procedure"],
+            },
+            "query_present": True,
+        }
+    ]
+    assert "여행 계획 요청 시 날짜와 예산" in task_input["persistent_memory_context"]
 
 
 @pytest.mark.asyncio
