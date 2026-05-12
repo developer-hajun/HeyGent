@@ -2,7 +2,7 @@ import { X } from 'lucide-react'
 import { useEffect, useMemo, useRef } from 'react'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
-import type { RawStepRun } from '@/types/taskRuns'
+import type { RawStepRun, RawTaskRun } from '@/types/taskRuns'
 import {
   isInternalStepAnchorEvent,
   isInternalStepAnchorStepRun,
@@ -30,6 +30,7 @@ export function StepRunActivityPanelBody({
   onClose: () => void
 }) {
   const loadedTaskRunIdsRef = useRef<Set<string>>(new Set())
+  const memoryObservationRefreshIdsRef = useRef<Set<string>>(new Set())
   const messages = useChatStore((state) =>
     sessionId === '' ? EMPTY_MESSAGES : (state.messagesBySessionId[sessionId] ?? EMPTY_MESSAGES),
   )
@@ -153,6 +154,25 @@ export function StepRunActivityPanelBody({
     selectedTaskRun?.status,
   ])
 
+  useEffect(() => {
+    if (resolvedSelectedTaskRunId === undefined) return
+    if (selectedTaskRun?.status === undefined || isLiveTaskRunStatus(selectedTaskRun.status)) return
+    if (hasMemoryObservation(selectedTaskRun)) return
+    if (memoryObservationRefreshIdsRef.current.has(resolvedSelectedTaskRunId)) return
+
+    memoryObservationRefreshIdsRef.current.add(resolvedSelectedTaskRunId)
+    const delays = [800, 2500, 5000]
+    const timers = delays.map((delay) =>
+      window.setTimeout(() => {
+        void fetchSnapshot(resolvedSelectedTaskRunId).catch(() => undefined)
+      }, delay),
+    )
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer))
+    }
+  }, [fetchSnapshot, resolvedSelectedTaskRunId, selectedTaskRun])
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-border border-b p-4">
@@ -202,6 +222,16 @@ export function StepRunActivityPanelBody({
         )}
       </div>
     </div>
+  )
+}
+
+const hasMemoryObservation = (taskRun?: RawTaskRun) => {
+  const resultPayload = taskRun?.result_payload
+  return (
+    resultPayload !== null &&
+    typeof resultPayload === 'object' &&
+    !Array.isArray(resultPayload) &&
+    'memory_observation' in resultPayload
   )
 }
 
