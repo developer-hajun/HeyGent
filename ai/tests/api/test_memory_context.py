@@ -25,6 +25,14 @@ class FakeMemoryClient:
         return list(self.memories)
 
 
+class EmptyThenMemoryClient(FakeMemoryClient):
+    async def recall(self, **kwargs):
+        self.calls.append(kwargs)
+        if len(self.calls) == 1:
+            return []
+        return list(self.memories)
+
+
 class FakeRecallPlannerProvider:
     def __init__(self, payload=None, *, fail: bool = False, delay_seconds: float = 0.0) -> None:
         self.payload = payload or {}
@@ -128,6 +136,37 @@ async def test_llm_memory_recall_planner_uses_model_structured_filters():
         "metadata_categories": ["preference"],
     }
     assert provider.calls[0]["rule_plan"].should_recall is True
+
+
+@pytest.mark.asyncio
+async def test_llm_memory_recall_planner_handles_personalized_recommendation():
+    provider = FakeRecallPlannerProvider(
+        {
+            "shouldRecall": True,
+            "query": "사용자 점심 메뉴 선호",
+            "reason": "점심 추천은 사용자 음식 선호가 필요함",
+            "filters": {
+                "storeType": "USER_PROFILE",
+                "memoryType": "PREFERENCE",
+                "scopeType": "GLOBAL",
+                "metadataCategories": ["preference"],
+            },
+        }
+    )
+    planner = LlmMemoryRecallPlanner(provider=provider)
+
+    plan = await planner.plan_recall("오늘 점심 뭐 먹을까?", workspace_key="team-a")
+
+    assert plan.should_recall is True
+    assert plan.query == "사용자 점심 메뉴 선호"
+    assert plan.reason == "점심 추천은 사용자 음식 선호가 필요함"
+    assert plan.planner_source == "llm"
+    assert plan.filters() == {
+        "store_type": "USER_PROFILE",
+        "memory_type": "PREFERENCE",
+        "scope_type": "GLOBAL",
+        "metadata_categories": ["preference"],
+    }
 
 
 @pytest.mark.asyncio
@@ -260,6 +299,60 @@ async def test_attach_persistent_memory_context_uses_llm_planner_when_available(
         "scope_type": "GLOBAL",
         "metadata_categories": ["preference"],
     }
+
+
+@pytest.mark.asyncio
+async def test_attach_persistent_memory_context_retries_user_preference_recall_without_query_when_empty():
+    memory_client = EmptyThenMemoryClient([_memory("사용자는 점심 추천에서 샐러드나 생선 메뉴를 우선 선호한다.")])
+    planner = LlmMemoryRecallPlanner(
+        provider=FakeRecallPlannerProvider(
+            {
+                "shouldRecall": True,
+                "query": "오늘 점심 뭐 먹을까?",
+                "reason": "점심 추천은 사용자 음식 선호가 필요함",
+                "filters": {
+                    "storeType": "USER_PROFILE",
+                    "memoryType": "PREFERENCE",
+                    "scopeType": "GLOBAL",
+                    "metadataCategories": ["preference"],
+                },
+            }
+        )
+    )
+    task_input = {"prompt": "오늘 점심 뭐 먹을까?"}
+
+    await attach_persistent_memory_context(
+        app_state=SimpleNamespace(backend_memory_client=memory_client, memory_recall_planner=planner),
+        task_input=task_input,
+        user_id="7",
+        query="오늘 점심 뭐 먹을까?",
+    )
+
+    assert memory_client.calls == [
+        {
+            "user_id": "7",
+            "query": "오늘 점심 뭐 먹을까?",
+            "limit": 5,
+            "workspace_key": None,
+            "store_type": "USER_PROFILE",
+            "memory_type": "PREFERENCE",
+            "scope_type": "GLOBAL",
+            "metadata_categories": ["preference"],
+        },
+        {
+            "user_id": "7",
+            "query": None,
+            "limit": 5,
+            "workspace_key": None,
+            "store_type": "USER_PROFILE",
+            "memory_type": "PREFERENCE",
+            "scope_type": "GLOBAL",
+            "metadata_categories": ["preference"],
+        },
+    ]
+    assert task_input["memory_context_meta"]["recall"]["status"] == "injected"
+    assert task_input["memory_context_meta"]["recall"]["count"] == 1
+    assert "샐러드나 생선" in task_input["persistent_memory_context"]
 
 
 @pytest.mark.asyncio
