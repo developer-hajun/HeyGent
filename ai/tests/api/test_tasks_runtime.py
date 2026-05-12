@@ -62,15 +62,25 @@ def _patch_respond(monkeypatch, responses: list[AgentModelResponse | Exception])
     iterator = iter(responses)
     calls: list[dict] = []
 
-    def fake_respond(self, messages, tools, model, tool_choice=None):
+    def fake_respond(self, messages, tools, model, tool_choice=None, runtime_context=None):
         calls.append({"messages": messages, "tools": tools, "model": model, "tool_choice": tool_choice})
         next_response = next(iterator)
         if isinstance(next_response, Exception):
             raise next_response
         return next_response
 
+    async def fake_respond_async(self, messages, tools, model, tool_choice=None, runtime_context=None):
+        return fake_respond(
+            self,
+            messages=messages,
+            tools=tools,
+            model=model,
+            tool_choice=tool_choice,
+            runtime_context=runtime_context,
+        )
+
     monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond", fake_respond)
-    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.respond", fake_respond)
+    monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond_async", fake_respond_async)
     return calls
 
 
@@ -385,15 +395,25 @@ def test_agent_loop_materializes_only_llm_declared_steps_after_run_scoped_tool_e
 def test_agent_loop_does_not_create_steprun_before_first_provider_call(client, monkeypatch):
     observed_step_counts: list[int] = []
 
-    def fake_respond(self, messages, tools, model, tool_choice=None):
+    def fake_respond(self, messages, tools, model, tool_choice=None, runtime_context=None):
         _ = (self, messages, tools, model, tool_choice)
         tasks = client.app.state.repository.list_tasks(limit=10)
         assert len(tasks) == 1
         observed_step_counts.append(len(client.app.state.repository.list_steps(tasks[0].task_run_id)))
         return _response(text="FIRST_PROVIDER_DONE")
 
+    async def fake_respond_async(self, messages, tools, model, tool_choice=None, runtime_context=None):
+        return fake_respond(
+            self,
+            messages=messages,
+            tools=tools,
+            model=model,
+            tool_choice=tool_choice,
+            runtime_context=runtime_context,
+        )
+
     monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond", fake_respond)
-    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.respond", fake_respond)
+    monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond_async", fake_respond_async)
 
     response = client.post(
         "/ai/api/v1/taskRuns",
@@ -417,7 +437,7 @@ def test_agent_loop_does_not_create_steprun_before_first_provider_call(client, m
     assert len(client.app.state.repository.list_steps(body["task_run_id"])) == 0
 
 
-def test_agent_loop_runs_provider_response_off_event_loop(client, monkeypatch):
+def test_agent_loop_uses_native_async_provider_without_thread_fallback(client, monkeypatch):
     to_thread_calls: list[str] = []
 
     async def fake_to_thread(func, /, *args, **kwargs):
@@ -425,7 +445,7 @@ def test_agent_loop_runs_provider_response_off_event_loop(client, monkeypatch):
         return func(*args, **kwargs)
 
     monkeypatch.setattr("app.domain.orchestration.agent.tool_calling_loop.asyncio.to_thread", fake_to_thread)
-    _patch_respond(monkeypatch, [_response(text="THREAD_PROVIDER_DONE")])
+    _patch_respond(monkeypatch, [_response(text="ASYNC_PROVIDER_DONE")])
 
     response = client.post(
         "/ai/api/v1/taskRuns",
@@ -440,7 +460,7 @@ def test_agent_loop_runs_provider_response_off_event_loop(client, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["status"] == "COMPLETED"
-    assert to_thread_calls == ["fake_respond"]
+    assert to_thread_calls == []
 
 
 def test_step_events_use_llm_declared_step_title_as_realtime_summary(client, monkeypatch):
@@ -1451,7 +1471,9 @@ def test_taskruns_cancel_records_pending_tool_result_without_resuming_loop(clien
     assert canceled_tool_message["tool_name"] == "terminal.run"
 
 
-def test_taskruns_resume_and_cancel_reject_non_waiting_task(client):
+def test_taskruns_resume_and_cancel_reject_non_waiting_task(client, monkeypatch):
+    _patch_respond(monkeypatch, [_response(text="NON_WAITING_DONE")])
+
     create_response = client.post(
         "/ai/api/v1/taskRuns",
         json={

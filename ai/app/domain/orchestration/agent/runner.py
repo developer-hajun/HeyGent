@@ -45,6 +45,21 @@ class AgentLoopRunner:
         )
         return await self.task_engine.run(task=task, handler=handler)
 
+    async def enqueue_start(self, request: OrchestrationRequest) -> TaskRun:
+        handler = self.tool_registry.resolve()
+        task = self.planner.materialize_task(
+            owner_key=request.owner_key,
+            session_key=request.session_key,
+            input_payload=request.input_payload,
+            handler=handler,
+            task_run_id=request.task_run_id,
+        )
+        return await self.task_engine.enqueue_pending(task=task)
+
+    async def execute_claimed(self, task: TaskRun) -> TaskRun:
+        handler = self.tool_registry.resolve()
+        return await self.task_engine.run_claimed(task=task, handler=handler)
+
     async def resume(self, *, task: TaskRun, approval_id: str, payload: dict) -> TaskRun:
         open_approval = self.repository.get_open_approval(task.task_run_id)
         step_run_id = self.resume_target_resolver.resolve(task=task, open_approval=open_approval)

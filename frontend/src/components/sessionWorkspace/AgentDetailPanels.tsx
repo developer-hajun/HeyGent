@@ -10,7 +10,6 @@ import {
   Loader2,
   MoreHorizontal,
   Pause,
-  Play,
   Plus,
   Trash2,
 } from 'lucide-react'
@@ -110,10 +109,6 @@ export function AgentDetailHeader({
           <Plus className="h-3.5 w-3.5 sm:mr-1" />
           <span className="hidden sm:inline">작업 배정</span>
         </Button>
-        <Button variant="outline" size="sm" disabled title="직접 실행 기능은 준비 중입니다.">
-          <Play className="h-3.5 w-3.5 sm:mr-1" />
-          <span className="hidden sm:inline">하트비트 실행</span>
-        </Button>
         <Button variant="outline" size="sm" disabled title="일시정지 기능은 준비 중입니다.">
           <Pause className="h-3.5 w-3.5 sm:mr-1" />
           <span className="hidden sm:inline">일시정지</span>
@@ -192,7 +187,7 @@ export function AgentDashboardPanel({
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-medium">비용</h3>
+        <h3 className="text-sm font-medium">사용량</h3>
         <div className="space-y-4">
           <div className="border-border rounded-lg border p-4">
             <AgentSummaryGrid items={costs} columns="four" />
@@ -211,7 +206,7 @@ export function AgentDashboardPanel({
               <tbody>
                 <tr>
                   <td className="text-muted-foreground px-3 py-4 text-center" colSpan={5}>
-                    아직 비용 기록이 없습니다.
+                    아직 사용량 기록이 없습니다.
                   </td>
                 </tr>
               </tbody>

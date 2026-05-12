@@ -82,6 +82,14 @@ class TaskEngine:
         await self._emit("task.created", task)
         return await self._execute_initial(task=task, handler=handler, resume_payload=None)
 
+    async def enqueue_pending(self, *, task: TaskRun) -> TaskRun:
+        saved = self.repository.create_pending_task(task)
+        await self._emit("task.created", saved)
+        return saved
+
+    async def run_claimed(self, *, task: TaskRun, handler) -> TaskRun:
+        return await self._execute_initial(task=task, handler=handler, resume_payload=None)
+
     async def _execute_initial(self, *, task: TaskRun, handler, resume_payload: dict | None) -> TaskRun:
         ensure_task_transition(task.status, TaskStatus.RUNNING)
         task.status = TaskStatus.RUNNING

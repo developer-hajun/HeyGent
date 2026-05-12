@@ -69,8 +69,6 @@ export function SubAgentDraftForm({
   const [modelOptionsLoading, setModelOptionsLoading] = useState(false)
   const [modelOptionsError, setModelOptionsError] = useState<string | null>(null)
   const [modelOptions, setModelOptions] = useState(getModelOptions(undefined))
-  const heartbeatEnabled = initialAgent?.heartbeatEnabled ?? false
-  const [intervalSec] = useState(initialAgent?.intervalSec ?? 300)
   const [spriteId, setSpriteId] = useState<SubAgentSpriteId>(
     normalizeSubAgentSpriteId(initialAgent?.spriteId),
   )
@@ -145,8 +143,6 @@ export function SubAgentDraftForm({
       command: commandDraft.trim(),
       model: modelDraft.trim(),
       extraArgs: extraArgsDraft.trim(),
-      heartbeatEnabled,
-      intervalSec,
       profileImage,
       spriteId,
       reportsToAgentId: initialAgent?.reportsToAgentId ?? 'main',
