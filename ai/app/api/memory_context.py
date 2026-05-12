@@ -27,13 +27,16 @@ Rules:
 - Use USER_PROFILE/PREFERENCE/GLOBAL/preference for stable user style, format, or preference.
 - Use USER_PROFILE/PROFILE/GLOBAL/profile for user role, identity, or working habit.
 - Do not skip open-ended recommendations, suggestions, choices, or "what should I do/eat/use" questions. These should recall USER_PROFILE/PREFERENCE/GLOBAL/preference because preferences may materially change the answer.
+- Use AGENT_MEMORY/FACT/GLOBAL/event,fact,reason for recent events, temporary constraints, health/diet restrictions, situational limitations, or other non-durable facts that should affect the current recommendation.
 - Use AGENT_MEMORY/FACT/WORKSPACE/task_state,fact for continuing project implementation or current project state.
 - Use AGENT_MEMORY/INSTRUCTION/GLOBAL/instruction,procedure for durable user instructions about how the assistant should answer or what process it should follow.
 - Use AGENT_MEMORY/PROCEDURE/procedure,instruction for reusable workflow or repeated project procedure.
 - Do not classify saved answer-format instructions, response workflows, or assistant behavior procedures as FACT/task_state. FACT/task_state is only for factual project/session state, not for how to respond.
+- Do not classify temporary restrictions, recent events, or situational facts as USER_PROFILE/PROFILE. PROFILE is only for durable identity, role, or habit.
 - Use reason/event categories when the user asks why, history, records, schedule, or previous event context.
 - If multiple memory classes could materially affect the answer, keep the primary plan narrow and add additionalRecallPlans for the other classes. For example, retrieve durable user preferences separately from reusable assistant instructions or procedures when both could matter.
 - When the user asks the assistant to perform a task and a saved response workflow could control the answer structure, include an additional AGENT_MEMORY recall plan with memoryType INSTRUCTION or PROCEDURE and metadataCategories instruction,procedure.
+- When both instruction and procedure memories could apply, avoid narrowing memoryType to only one of them; let metadataCategories instruction,procedure retrieve both.
 - If a request may need both user preference and project state, or both user preference and reusable instructions, avoid over-narrowing; use additionalRecallPlans or omit uncertain filters.
 - Do not use tags, sessionKey, or resourceId in this first implementation.
 - Prefer omitting a filter over adding a weak or uncertain filter.
@@ -487,7 +490,7 @@ def _with_recall_plan(recall_meta: dict[str, Any], recall_plan: MemoryRecallPlan
 def _should_retry_recall_without_query(recall_plan: MemoryRecallPlan) -> bool:
     return (
         recall_plan.store_type in {"USER_PROFILE", "AGENT_MEMORY"}
-        and (recall_plan.memory_type in {"PREFERENCE", "PROFILE", "INSTRUCTION", "PROCEDURE", None})
+        and (recall_plan.memory_type in {"PREFERENCE", "PROFILE", "FACT", "INSTRUCTION", "PROCEDURE", None})
         and recall_plan.scope_type in {"GLOBAL", "WORKSPACE", None}
         and bool(recall_plan.metadata_categories)
     )
@@ -523,6 +526,11 @@ def _normalize_llm_recall_plan(
         scope_type = None
 
     store_type, memory_type = _align_store_and_memory_type(store_type, memory_type)
+    store_type, memory_type, metadata_categories = _align_filters_with_metadata_categories(
+        store_type,
+        memory_type,
+        metadata_categories,
+    )
 
     primary_plan = MemoryRecallPlan(
         should_recall=should_recall,
@@ -582,6 +590,11 @@ def _normalize_additional_llm_recall_plans(
         if scope_type == "WORKSPACE" and not normalized_workspace_key:
             scope_type = None
         store_type, memory_type = _align_store_and_memory_type(store_type, memory_type)
+        store_type, memory_type, metadata_categories = _align_filters_with_metadata_categories(
+            store_type,
+            memory_type,
+            metadata_categories,
+        )
 
         plan = MemoryRecallPlan(
             should_recall=True,
@@ -619,6 +632,35 @@ def _align_store_and_memory_type(store_type: str | None, memory_type: str | None
     if memory_type in {"FACT", "INSTRUCTION", "PROCEDURE"}:
         return "AGENT_MEMORY", memory_type
     return store_type, memory_type
+
+
+def _align_filters_with_metadata_categories(
+    store_type: str | None,
+    memory_type: str | None,
+    metadata_categories: tuple[str, ...],
+) -> tuple[str | None, str | None, tuple[str, ...]]:
+    categories = list(metadata_categories)
+    category_set = set(categories)
+
+    if memory_type in {"INSTRUCTION", "PROCEDURE"} and {"instruction", "procedure"}.issubset(category_set):
+        memory_type = None
+
+    fact_like_categories = {"fact", "event", "reason", "task_state"}
+    if memory_type == "PROFILE" and category_set.intersection(fact_like_categories):
+        store_type = "AGENT_MEMORY"
+        memory_type = "FACT"
+        categories = [category for category in categories if category != "profile"]
+        if not categories:
+            categories = ["fact"]
+    elif memory_type == "FACT" and "profile" in category_set:
+        categories = [category for category in categories if category != "profile"]
+
+    if not memory_type and category_set.intersection({"instruction", "procedure"}):
+        store_type = "AGENT_MEMORY"
+    if not memory_type and category_set.intersection(fact_like_categories) and "profile" not in category_set:
+        store_type = "AGENT_MEMORY"
+
+    return store_type, memory_type, tuple(dict.fromkeys(categories))
 
 
 def _workspace_categories(*, wants_procedure: bool, wants_reason: bool, wants_event: bool) -> tuple[str, ...]:

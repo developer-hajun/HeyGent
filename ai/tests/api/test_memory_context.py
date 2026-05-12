@@ -34,13 +34,23 @@ class EmptyThenMemoryClient(FakeMemoryClient):
 
 
 class FilteredMemoryClient:
-    def __init__(self, memories_by_store_type: dict[str | None, list[BackendMemoryItem]]) -> None:
-        self.memories_by_store_type = memories_by_store_type
+    def __init__(self, memories_by_filter: dict[tuple[str | None, str | None], list[BackendMemoryItem]]) -> None:
+        self.memories_by_filter = memories_by_filter
         self.calls = []
 
     async def recall(self, **kwargs):
         self.calls.append(kwargs)
-        return list(self.memories_by_store_type.get(kwargs.get("store_type"), []))
+        key = (kwargs.get("store_type"), kwargs.get("memory_type"))
+        return list(self.memories_by_filter.get(key, self.memories_by_filter.get((kwargs.get("store_type"), None), [])))
+
+
+class QueryAwareFilteredMemoryClient(FilteredMemoryClient):
+    async def recall(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs.get("query") is not None:
+            return []
+        key = (kwargs.get("store_type"), kwargs.get("memory_type"))
+        return list(self.memories_by_filter.get(key, self.memories_by_filter.get((kwargs.get("store_type"), None), [])))
 
 
 class FakeRecallPlannerProvider:
@@ -241,9 +251,48 @@ async def test_llm_memory_recall_planner_accepts_additional_recall_plans():
     assert len(plan.additional_plans) == 1
     assert plan.additional_plans[0].filters() == {
         "store_type": "AGENT_MEMORY",
-        "memory_type": "INSTRUCTION",
         "scope_type": "GLOBAL",
         "metadata_categories": ["instruction", "procedure"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_llm_memory_recall_planner_normalizes_profile_fact_mix_to_agent_fact():
+    provider = FakeRecallPlannerProvider(
+        {
+            "shouldRecall": True,
+            "query": "저녁 메뉴 추천",
+            "reason": "추천에 사용자 선호가 필요함",
+            "filters": {
+                "storeType": "USER_PROFILE",
+                "memoryType": "PREFERENCE",
+                "scopeType": "GLOBAL",
+                "metadataCategories": ["preference"],
+            },
+            "additionalRecallPlans": [
+                {
+                    "query": "건강 제한",
+                    "reason": "건강 제한이 추천을 바꿀 수 있음",
+                    "filters": {
+                        "storeType": "USER_PROFILE",
+                        "memoryType": "PROFILE",
+                        "scopeType": "GLOBAL",
+                        "metadataCategories": ["profile", "fact"],
+                    },
+                }
+            ],
+        }
+    )
+    planner = LlmMemoryRecallPlanner(provider=provider)
+
+    plan = await planner.plan_recall("나 대창구이 먹고싶다. 오늘 저녁에 먹을까?")
+
+    assert len(plan.additional_plans) == 1
+    assert plan.additional_plans[0].filters() == {
+        "store_type": "AGENT_MEMORY",
+        "memory_type": "FACT",
+        "scope_type": "GLOBAL",
+        "metadata_categories": ["fact"],
     }
 
 
@@ -383,7 +432,7 @@ async def test_attach_persistent_memory_context_uses_llm_planner_when_available(
 async def test_attach_persistent_memory_context_executes_additional_llm_plans():
     memory_client = FilteredMemoryClient(
         {
-            "USER_PROFILE": [
+            ("USER_PROFILE", "PREFERENCE"): [
                 _memory(
                     "사용자는 반말로 대화해주길 선호한다.",
                     memory_id=10,
@@ -391,13 +440,20 @@ async def test_attach_persistent_memory_context_executes_additional_llm_plans():
                     summary="반말 선호",
                 )
             ],
-            "AGENT_MEMORY": [
+            ("AGENT_MEMORY", None): [
                 _memory(
                     "여행 계획 요청 시 날짜와 예산을 먼저 확인한 뒤 교통편, 숙소, 식당 순서로 계획한다.",
                     memory_id=11,
                     memory_type="INSTRUCTION",
                     store_type="AGENT_MEMORY",
                     summary="여행 계획 절차",
+                ),
+                _memory(
+                    "사용자가 여행 계획을 부탁하면 먼저 날짜와 예산을 확인한 뒤, 교통편, 숙소, 식당 순서로 계획을 짠다.",
+                    memory_id=12,
+                    memory_type="PROCEDURE",
+                    store_type="AGENT_MEMORY",
+                    summary="여행 계획 절차 프로시저",
                 )
             ],
         }
@@ -455,22 +511,21 @@ async def test_attach_persistent_memory_context_executes_additional_llm_plans():
             "limit": 5,
             "workspace_key": None,
             "store_type": "AGENT_MEMORY",
-            "memory_type": "INSTRUCTION",
+            "memory_type": None,
             "scope_type": "GLOBAL",
             "metadata_categories": ["instruction", "procedure"],
         },
     ]
     recall_meta = task_input["memory_context_meta"]["recall"]
     assert recall_meta["status"] == "injected"
-    assert recall_meta["count"] == 2
-    assert recall_meta["memory_ids"] == [10, 11]
+    assert recall_meta["count"] == 3
+    assert recall_meta["memory_ids"] == [10, 11, 12]
     assert recall_meta["planner"]["additional_plans"] == [
         {
             "reason": "저장된 절차가 답변 구조를 바꿀 수 있음",
             "source": "llm",
             "filters": {
                 "store_type": "AGENT_MEMORY",
-                "memory_type": "INSTRUCTION",
                 "scope_type": "GLOBAL",
                 "metadata_categories": ["instruction", "procedure"],
             },
@@ -478,6 +533,7 @@ async def test_attach_persistent_memory_context_executes_additional_llm_plans():
         }
     ]
     assert "여행 계획 요청 시 날짜와 예산" in task_input["persistent_memory_context"]
+    assert "사용자가 여행 계획을 부탁하면 먼저 날짜와 예산" in task_input["persistent_memory_context"]
 
 
 @pytest.mark.asyncio
@@ -532,6 +588,73 @@ async def test_attach_persistent_memory_context_retries_user_preference_recall_w
     assert task_input["memory_context_meta"]["recall"]["status"] == "injected"
     assert task_input["memory_context_meta"]["recall"]["count"] == 1
     assert "샐러드나 생선" in task_input["persistent_memory_context"]
+
+
+@pytest.mark.asyncio
+async def test_attach_persistent_memory_context_retries_agent_fact_recall_without_query_when_empty():
+    memory_client = QueryAwareFilteredMemoryClient(
+        {
+            ("AGENT_MEMORY", "FACT"): [
+                _memory(
+                    "지난주 금요일에 건강검진을 받았고, 당분간 식단 추천 시 기름진 음식을 줄여야 한다.",
+                    memory_id=13,
+                    memory_type="FACT",
+                    store_type="AGENT_MEMORY",
+                    summary="건강검진 후 당분간 기름진 음식 제한",
+                )
+            ]
+        }
+    )
+    planner = LlmMemoryRecallPlanner(
+        provider=FakeRecallPlannerProvider(
+            {
+                "shouldRecall": True,
+                "query": "오늘 저녁 뭐먹지? 나 기름진 전골 먹고싶다",
+                "reason": "건강 제한이 추천을 바꿀 수 있음",
+                "filters": {
+                    "storeType": "AGENT_MEMORY",
+                    "memoryType": "FACT",
+                    "scopeType": "GLOBAL",
+                    "metadataCategories": ["event", "fact", "reason"],
+                },
+            }
+        )
+    )
+    task_input = {"prompt": "오늘 저녁 뭐먹지? 나 기름진 전골 먹고싶다"}
+
+    await attach_persistent_memory_context(
+        app_state=SimpleNamespace(backend_memory_client=memory_client, memory_recall_planner=planner),
+        task_input=task_input,
+        user_id="7",
+        query="오늘 저녁 뭐먹지? 나 기름진 전골 먹고싶다",
+    )
+
+    assert memory_client.calls == [
+        {
+            "user_id": "7",
+            "query": "오늘 저녁 뭐먹지? 나 기름진 전골 먹고싶다",
+            "limit": 5,
+            "workspace_key": None,
+            "store_type": "AGENT_MEMORY",
+            "memory_type": "FACT",
+            "scope_type": "GLOBAL",
+            "metadata_categories": ["event", "fact", "reason"],
+        },
+        {
+            "user_id": "7",
+            "query": None,
+            "limit": 5,
+            "workspace_key": None,
+            "store_type": "AGENT_MEMORY",
+            "memory_type": "FACT",
+            "scope_type": "GLOBAL",
+            "metadata_categories": ["event", "fact", "reason"],
+        },
+    ]
+    assert task_input["memory_context_meta"]["recall"]["status"] == "injected"
+    assert task_input["memory_context_meta"]["recall"]["count"] == 1
+    assert task_input["memory_context_meta"]["recall"]["memory_ids"] == [13]
+    assert "기름진 음식을 줄여야" in task_input["persistent_memory_context"]
 
 
 @pytest.mark.asyncio
