@@ -3,7 +3,6 @@ package com.ssafy.heygent.domain.ai.openai.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -19,6 +18,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 
 import com.ssafy.heygent.domain.ai.dto.request.AiCommandUsageRecordRequest;
 import com.ssafy.heygent.domain.ai.dto.response.AiCommandUsageListResponse;
@@ -94,17 +96,13 @@ class AiCommandUsageServiceTest {
 
     @Test
     void getMyUsagesReturnsSummary() {
-        when(aiCommandUsageRecordRepository.findUsageRecords(
-            eq(1L),
-            eq("task-1"),
-            eq(null),
-            eq(null),
-            eq(null),
-            any()
-        )).thenReturn(List.of(
+        when(aiCommandUsageRecordRepository.findAll(
+            org.mockito.ArgumentMatchers.<Specification<AiCommandUsageRecord>>any(),
+            any(Pageable.class)
+        )).thenReturn(new PageImpl<>(List.of(
             usage("openai_api_key", 100L, 20L, 120L, "0.0010"),
             usage("claude_api_key", 200L, 30L, 230L, "0.0020")
-        ));
+        )));
 
         AiCommandUsageListResponse response = aiCommandUsageService.getMyUsages(
             1L,
@@ -121,6 +119,28 @@ class AiCommandUsageServiceTest {
         assertThat(response.getSummary().getTotalTokens()).isEqualTo(350);
         assertThat(response.getSummary().getEstimatedCostUsd()).isEqualByComparingTo("0.0030");
         assertThat(response.getSummary().getRecordCount()).isEqualTo(2);
+    }
+
+    @Test
+    void getMyUsagesAllowsSessionFilterWithoutTaskRunId() {
+        when(aiCommandUsageRecordRepository.findAll(
+            org.mockito.ArgumentMatchers.<Specification<AiCommandUsageRecord>>any(),
+            any(Pageable.class)
+        )).thenReturn(new PageImpl<>(List.of(
+            usage("openai_api_key", 100L, 20L, 120L, "0.0010")
+        )));
+
+        AiCommandUsageListResponse response = aiCommandUsageService.getMyUsages(
+            1L,
+            null,
+            null,
+            null,
+            "session-1",
+            50
+        );
+
+        assertThat(response.getRecords()).hasSize(1);
+        assertThat(response.getSummary().getTotalTokens()).isEqualTo(120);
     }
 
     private AiCommandUsageRecord usage(
