@@ -378,5 +378,6 @@ class BaseProvider(ABC):
         tools: list[dict[str, Any]] | None,
         model: str,
         tool_choice: dict[str, Any] | str | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> AgentModelResponse:
         """agent.loop용 message/tool 기반 응답을 반환한다."""

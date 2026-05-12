@@ -204,6 +204,82 @@ def test_openai_api_provider_respond_preserves_native_tool_call(monkeypatch):
     assert response.metadata["raw_metadata"] == {"trace": "abc"}
 
 
+def test_openai_api_provider_uses_backend_credential_and_records_usage(monkeypatch):
+    settings = Settings(
+        openai_api_key="",
+        openai_rest_api_base_url="https://api.openai.test/v1",
+        openai_response_model="gpt-fallback",
+    )
+    provider = OpenAIAPIProvider(settings)
+    issued: list[dict] = []
+    recorded: list[dict] = []
+    captured: dict = {}
+
+    class FakeBackendAiClient:
+        async def issue_credential(self, **kwargs):
+            issued.append(kwargs)
+
+            class Credential:
+                provider_name = "openai_api_key"
+                model = "gpt-agent"
+                credential = "sk-issued"
+
+            return Credential()
+
+        async def record_command_usage(self, **kwargs):
+            recorded.append(kwargs)
+
+    provider.backend_ai_client = FakeBackendAiClient()
+
+    def fake_post(url, headers=None, json=None, timeout=None, data=None):
+        captured["headers"] = headers
+        return DummyHTTPResponse(
+            {
+                "id": "resp_usage",
+                "model": "gpt-agent",
+                "status": "completed",
+                "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
+                "usage": {"input_tokens": 12, "output_tokens": 4, "total_tokens": 16},
+            }
+        )
+
+    monkeypatch.setattr("app.domain.providers.model.openai_api.httpx.post", fake_post)
+
+    response = provider.respond(
+        messages=[{"role": "user", "content": "hello"}],
+        tools=[],
+        model="gpt-agent",
+        runtime_context={
+            "user_id": "10",
+            "provider_name": "openai_api_key",
+            "task_run_id": "task-1",
+            "step_run_id": "step-1",
+            "session_id": "session-1",
+        },
+    )
+
+    assert issued == [{"user_id": "10", "provider_name": "openai_api_key", "model": "gpt-agent"}]
+    assert captured["headers"]["Authorization"] == "Bearer sk-issued"
+    assert recorded == [
+        {
+            "user_id": "10",
+            "provider_name": "openai_api_key",
+            "model": "gpt-agent",
+            "task_run_id": "task-1",
+            "step_run_id": "step-1",
+            "session_id": "session-1",
+            "request_id": "resp_usage",
+            "usage": {"input_tokens": 12, "output_tokens": 4, "total_tokens": 16},
+            "metadata": {
+                "command": "agent_loop",
+                "provider": "openai_api",
+                "response_id": "resp_usage",
+            },
+        }
+    ]
+    assert response.output_text == "ok"
+
+
 def test_openai_oauth_provider_respond_streams_agent_contract(monkeypatch, tmp_path):
     repository = InMemoryTaskRepository()
     auth_path = tmp_path / "auth.json"

@@ -187,7 +187,7 @@ export function AgentDashboardPanel({
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-medium">비용</h3>
+        <h3 className="text-sm font-medium">사용량</h3>
         <div className="space-y-4">
           <div className="border-border rounded-lg border p-4">
             <AgentSummaryGrid items={costs} columns="four" />
@@ -206,7 +206,7 @@ export function AgentDashboardPanel({
               <tbody>
                 <tr>
                   <td className="text-muted-foreground px-3 py-4 text-center" colSpan={5}>
-                    아직 비용 기록이 없습니다.
+                    아직 사용량 기록이 없습니다.
                   </td>
                 </tr>
               </tbody>
