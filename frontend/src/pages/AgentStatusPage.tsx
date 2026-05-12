@@ -17,6 +17,7 @@ import type {
   TaskStatus,
 } from '@/components/office/types'
 import { useVisualizationSync } from '@/hooks/useVisualizationSync'
+import { useAgentInfoSync } from '@/hooks/useAgentInfoSync'
 
 const ACTIVITY_STATUS_LABEL: Record<AgentActivityStatus, string> = {
   spawning: '진입 중',
@@ -913,6 +914,12 @@ export function AgentStatusPage() {
       } else {
         internalDest = destination
         destPoint = { ...agent.config.destinations[internalDest] }
+
+        // 책상 자리가 점유된 경우 대기 줄 대신 회의 목적지로 바로 전환
+        if (internalDest === 'desk' && isSpotOccupied(destPoint, prev, agentId)) {
+          internalDest = 'meeting'
+          destPoint = { ...agent.config.destinations.meeting }
+        }
       }
 
       const destConfig = agent.config.destinations[internalDest]
@@ -923,7 +930,7 @@ export function AgentStatusPage() {
           ? 'sitting_sofa'
           : internalDest === 'floorLean'
             ? 'sitting_floor_lean'
-            : DESTINATION_MAP[destination].targetState
+            : DESTINATION_MAP[internalDest as UIDestination].targetState
 
       // 목적지 자리가 이미 점유 중이면 옆에 서 있는 상태로 전환
       const targetState: SittingState = isSpotOccupied(destPoint, prev, agentId)
@@ -1024,6 +1031,7 @@ export function AgentStatusPage() {
   }
 
   useVisualizationSync(handleMove)
+  useAgentInfoSync()
 
   const handleAgentArrived = (agentId: string) => {
     setAgents((prev) => {

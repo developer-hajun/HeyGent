@@ -3,24 +3,22 @@ import { useTaskRunStore } from '@/store/useTaskRunStore'
 import type { UIDestination } from '@/components/office/types'
 import type { RawTaskRun } from '@/types/taskRuns'
 
-const TERMINAL_STATUSES = new Set(['COMPLETED', 'FAILED', 'CANCELED', 'CANCELLED'])
-
 // 목적지 우선순위 — 같은 에이전트에 여러 task run이 있을 때 더 낮은 값이 우선
+// meeting 전환은 handleMove 내부 책상 점유 감지로 처리하므로 여기서는 desk/calling/rest만 반환
 const DEST_PRIORITY: Record<UIDestination, number> = {
-  meeting: 0,
-  desk: 1,
-  work: 1,
+  desk: 0,
+  work: 0,
   calling: 1,
+  meeting: 1,
   rest: 2,
 }
 
 function resolveDestination(taskRun: RawTaskRun): UIDestination | null {
   const status = taskRun.status?.toUpperCase()
-  const delegatedAgents = taskRun.displayContext?.delegatedAgents ?? []
 
-  if (TERMINAL_STATUSES.has(status ?? '')) return 'rest'
   if (status === 'PENDING') return null
-  if (delegatedAgents.length > 0) return 'meeting'
+  if (status === 'FAILED') return 'calling'
+  if (status === 'COMPLETED' || status === 'CANCELED' || status === 'CANCELLED') return 'rest'
   if (status === 'RUNNING' || status === 'WAITING' || status === 'BLOCKED') return 'desk'
 
   return null
