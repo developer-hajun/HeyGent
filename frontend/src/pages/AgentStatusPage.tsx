@@ -1,9 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { OfficeMap } from '@/components/office/OfficeMap'
-import {
-  useAgentVisualizationStore,
-  createMockAgentInfoMap,
-} from '@/store/useAgentVisualizationStore'
+import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
 import { getCommandUsage } from '@/apis/aiCommandUsage'
 import type { CommandUsageSummary } from '@/apis/aiCommandUsage'
 import type {
@@ -16,6 +13,8 @@ import type {
   AgentActivityStatus,
   TaskStatus,
 } from '@/components/office/types'
+import { useVisualizationSync } from '@/hooks/useVisualizationSync'
+import { useAgentInfoSync } from '@/hooks/useAgentInfoSync'
 
 const ACTIVITY_STATUS_LABEL: Record<AgentActivityStatus, string> = {
   spawning: '진입 중',
@@ -162,6 +161,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1545, y: 285 },
       meeting: { x: 415, y: 130 },
       calling: { x: 1110, y: 660 },
+      work: { x: 470, y: 395 },
     },
   },
   {
@@ -176,6 +176,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1070, y: 285 },
       meeting: { x: 925, y: 90 },
       calling: { x: 840, y: 350 },
+      work: { x: 650, y: 458 },
     },
   },
   {
@@ -190,6 +191,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1215, y: 370 },
       meeting: { x: 715, y: 215 },
       calling: { x: 990, y: 750 },
+      work: { x: 470, y: 395 },
     },
   },
   {
@@ -205,6 +207,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1415, y: 360 },
       meeting: { x: 920, y: 220 },
       calling: { x: 1110, y: 655 },
+      work: { x: 465, y: 595 },
     },
   },
   {
@@ -224,6 +227,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1535, y: 425 },
       meeting: { x: 415, y: 130 },
       calling: { x: 1334, y: 665 },
+      work: { x: 825, y: 520 },
     },
   },
   {
@@ -243,6 +247,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1290, y: 260 },
       meeting: { x: 925, y: 90 },
       calling: { x: 1070, y: 658 },
+      work: { x: 825, y: 520 },
     },
   },
   {
@@ -262,6 +267,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1340, y: 280 },
       meeting: { x: 850, y: 75 },
       calling: { x: 1430, y: 840 },
+      work: { x: 465, y: 595 },
     },
   },
   {
@@ -277,6 +283,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 995, y: 340 },
       meeting: { x: 670, y: 105 },
       calling: { x: 240, y: 710 },
+      work: { x: 650, y: 458 },
     },
   },
   {
@@ -292,6 +299,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1380, y: 490 },
       meeting: { x: 785, y: 245 },
       calling: { x: 1200, y: 658 },
+      work: { x: 650, y: 685 },
     },
   },
   {
@@ -306,6 +314,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1310, y: 460 },
       meeting: { x: 920, y: 220 },
       calling: { x: 1250, y: 660 },
+      work: { x: 650, y: 685 },
     },
   },
   {
@@ -313,17 +322,20 @@ const AGENT_CONFIGS: AgentConfig[] = [
     name: 'CEO',
     spritePath: '/assets/agents/ceo',
     scale: 1.05,
+    stateScales: { walking: 0.85, standing_wait: 0.85, sitting_work: 0.7 },
     sittingSprites: {
       sitting_desk: 'ceo_desk',
       sitting_meeting: 'ceo_explain',
+      sitting_work: 'ceo_work',
       standing_wait: 'walk_side_stand',
     },
-    allowedUIDestinations: ['desk', 'meeting'],
-    destinationLabels: { meeting: '화이트보드' },
+    allowedUIDestinations: ['desk', 'meeting', 'work'],
+    destinationLabels: { meeting: '화이트보드', work: '작업' },
     initialPosition: { x: 1460, y: 700 },
     destinations: {
       desk: { x: 310, y: 215 },
       meeting: { x: 383, y: 493 },
+      work: { x: 275, y: 195 },
       sofa: { x: 310, y: 215 },
       floorLean: { x: 310, y: 215 },
       calling: { x: 310, y: 215 },
@@ -654,6 +666,7 @@ const DESTINATION_MAP: Record<UIDestination, { targetState: SittingState; label:
   rest: { targetState: 'sitting_sofa', label: '휴식' }, // 런타임에 sofa/floorLean 으로 오버라이드
   meeting: { targetState: 'sitting_meeting', label: '회의' },
   calling: { targetState: 'sitting_calling', label: '전화' },
+  work: { targetState: 'sitting_work', label: '작업' },
 }
 
 const STATE_LABELS: Record<string, string> = {
@@ -664,6 +677,7 @@ const STATE_LABELS: Record<string, string> = {
   sitting_floor_lean: '휴식 중',
   sitting_meeting: '회의 중',
   sitting_calling: '통화 중',
+  sitting_work: '작업 중',
   standing_wait: '대기 중',
 }
 
@@ -757,21 +771,6 @@ function isSpotOccupied(
   })
 }
 
-function initAgents(): AgentRuntime[] {
-  return AGENT_CONFIGS.map((config) => ({
-    config,
-    position: { ...config.initialPosition },
-    state: 'idle' as const,
-    targetState: 'sitting_desk' as const,
-    walkFrame: 0 as const,
-    transitionDuration: 3,
-    pendingWaypoints: [],
-    targetPosition: null,
-    standWaitTarget: null,
-    facingRight: false,
-  }))
-}
-
 const DESTINATIONS: UIDestination[] = ['desk', 'rest', 'meeting', 'calling']
 
 function playSpawnSound() {
@@ -801,7 +800,7 @@ function playSpawnSound() {
 }
 
 export function AgentStatusPage() {
-  const [agents, setAgents] = useState<AgentRuntime[]>(initAgents)
+  const [agents, setAgents] = useState<AgentRuntime[]>([])
   const [selectedId, setSelectedId] = useState('agent01')
   const [panelTop, setPanelTop] = useState(false)
   const [navmeshGrid, setNavmeshGrid] = useState<boolean[][] | null>(null)
@@ -828,25 +827,8 @@ export function AgentStatusPage() {
   const runtimeGridRef = useRef<boolean[][]>(OBSTACLE_GRID)
   const walkTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({})
 
-  const { agentInfoMap, selectedAgentId, setAgentInfoMap, selectAgent } =
-    useAgentVisualizationStore()
-
-  useEffect(() => {
-    const map = createMockAgentInfoMap()
-    setAgentInfoMap(map)
-
-    // 초기 mock 스폰 — API 연동 시 에이전트별 spawnAgent() 개별 호출로 교체
-    // setTimeout(0): 린터 규칙(effect 내 동기 setState 금지)을 피하기 위해 한 프레임 뒤에 실행
-    const spawnTimer = setTimeout(() => {
-      setSpawningIds(new Set(Object.keys(map)))
-      playSpawnSound()
-    }, 0)
-    const clearTimer = setTimeout(() => setSpawningIds(new Set()), 2500)
-    return () => {
-      clearTimeout(spawnTimer)
-      clearTimeout(clearTimer)
-    }
-  }, [setAgentInfoMap])
+  const { agentInfoMap, selectedAgentId, selectAgent } = useAgentVisualizationStore()
+  const spawnedKeysRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     let cancelled = false
@@ -878,7 +860,43 @@ export function AgentStatusPage() {
   }
 
   const handleMove = (agentId: string, destination: UIDestination) => {
-    setAgents((prev) => {
+    // 미등록 에이전트 자동 스폰 — task run에서 처음 등장하는 경우
+    if (!spawnedKeysRef.current.has(agentId) && AGENT_CONFIGS.some((c) => c.id === agentId)) {
+      spawnedKeysRef.current.add(agentId)
+      setSpawningIds((s) => new Set([...s, agentId]))
+      playSpawnSound()
+      setTimeout(() => {
+        setSpawningIds((s) => {
+          const n = new Set(s)
+          n.delete(agentId)
+          return n
+        })
+      }, 2500)
+    }
+
+    setAgents((prevAgents) => {
+      // 아직 agents 배열에 없으면 initialPosition에 추가
+      let prev = prevAgents
+      if (!prev.some((a) => a.config.id === agentId)) {
+        const config = AGENT_CONFIGS.find((c) => c.id === agentId)
+        if (!config) return prev
+        prev = [
+          ...prev,
+          {
+            config,
+            position: { ...config.initialPosition },
+            state: 'idle' as const,
+            targetState: 'sitting_desk' as const,
+            walkFrame: 0 as const,
+            transitionDuration: 3,
+            pendingWaypoints: [],
+            targetPosition: null,
+            standWaitTarget: null,
+            facingRight: false,
+          },
+        ]
+      }
+
       const agent = prev.find((a) => a.config.id === agentId)
       if (!agent || agent.state === 'walking') return prev
 
@@ -897,6 +915,12 @@ export function AgentStatusPage() {
       } else {
         internalDest = destination
         destPoint = { ...agent.config.destinations[internalDest] }
+
+        // 책상 자리가 점유된 경우 대기 줄 대신 회의 목적지로 바로 전환
+        if (internalDest === 'desk' && isSpotOccupied(destPoint, prev, agentId)) {
+          internalDest = 'meeting'
+          destPoint = { ...agent.config.destinations.meeting }
+        }
       }
 
       const destConfig = agent.config.destinations[internalDest]
@@ -907,7 +931,7 @@ export function AgentStatusPage() {
           ? 'sitting_sofa'
           : internalDest === 'floorLean'
             ? 'sitting_floor_lean'
-            : DESTINATION_MAP[destination].targetState
+            : DESTINATION_MAP[internalDest as UIDestination].targetState
 
       // 목적지 자리가 이미 점유 중이면 옆에 서 있는 상태로 전환
       const targetState: SittingState = isSpotOccupied(destPoint, prev, agentId)
@@ -1006,6 +1030,9 @@ export function AgentStatusPage() {
       )
     })
   }
+
+  useVisualizationSync(handleMove)
+  useAgentInfoSync()
 
   const handleAgentArrived = (agentId: string) => {
     setAgents((prev) => {

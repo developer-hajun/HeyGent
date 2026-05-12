@@ -29,6 +29,7 @@ import { motion, AnimatePresence } from 'motion/react'
 import { useChatStore } from '@/store/useChatStore'
 import { getOpenAiModels, type OpenAiModelsResponse } from '@/apis/openaiModels'
 import { saveOpenAiApiKey, deleteOpenAiApiKey, type ProviderName } from '@/apis/openaiApiKey'
+import { getOpenAiProviders } from '@/apis/openaiProviders'
 
 interface SettingsDialogProps {
   open: boolean
@@ -604,6 +605,16 @@ function ApiKeysContent() {
     { id: 'gemini_api_key' as const, name: 'Gemini API', value: '', visible: false },
     { id: 'claude_api_key' as const, name: 'Claude API', value: '', visible: false },
   ])
+  const [connectedProviders, setConnectedProviders] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    void getOpenAiProviders()
+      .then((res) => {
+        const map = Object.fromEntries(res.providers.map((p) => [p.providerName, p.connected]))
+        setConnectedProviders(map)
+      })
+      .catch(() => {})
+  }, [])
 
   // ── 토큰 사용량 ──────────────────────────────────────────────────────────────
   const today = new Date().toISOString().slice(0, 10)
@@ -644,6 +655,7 @@ function ApiKeysContent() {
     setDeleteStatuses((prev) => ({ ...prev, [id]: 'saving' }))
     try {
       await deleteOpenAiApiKey(id)
+      setConnectedProviders((prev) => ({ ...prev, [id]: false }))
       setApiKeys((prev) => prev.map((k) => (k.id === id ? { ...k, value: '' } : k)))
       setDeleteStatuses((prev) => ({ ...prev, [id]: 'saved' }))
       setTimeout(() => setDeleteStatuses((prev) => ({ ...prev, [id]: 'idle' })), 2000)
@@ -659,6 +671,7 @@ function ApiKeysContent() {
     setSaveErrors((prev) => ({ ...prev, [id]: null }))
     try {
       await saveOpenAiApiKey(id, { apiKey: key.value.trim() })
+      setConnectedProviders((prev) => ({ ...prev, [id]: true }))
       setSaveStatuses((prev) => ({ ...prev, [id]: 'saved' }))
       setTimeout(() => setSaveStatuses((prev) => ({ ...prev, [id]: 'idle' })), 2000)
     } catch (e) {
@@ -695,7 +708,15 @@ function ApiKeysContent() {
               >
                 {/* 레이블 + 버튼 행 */}
                 <div className="flex items-center justify-between gap-4">
-                  <label className="text-foreground shrink-0 text-sm font-medium">{key.name}</label>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <label className="text-foreground text-sm font-medium">{key.name}</label>
+                    {connectedProviders[key.id] && (
+                      <span className="flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle2 className="h-3 w-3" />
+                        등록됨
+                      </span>
+                    )}
+                  </div>
                   <div className="flex shrink-0 items-center gap-2">
                     <button
                       type="button"
@@ -752,28 +773,32 @@ function ApiKeysContent() {
                     <span />
                   )}
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={deleteStatuses[key.id] === 'saving'}
-                      onClick={() => void handleDelete(key.id)}
-                      className="flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-500 transition-colors hover:bg-red-50 disabled:opacity-40 dark:border-red-800 dark:hover:bg-red-950"
-                    >
-                      {deleteStatuses[key.id] === 'saving' ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : null}
-                      {deleteStatuses[key.id] === 'saving' ? '삭제 중...' : '삭제'}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!key.value.trim() || saveStatuses[key.id] === 'saving'}
-                      onClick={() => void handleSave(key.id)}
-                      className="bg-foreground text-background hover:bg-foreground/85 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40"
-                    >
-                      {saveStatuses[key.id] === 'saving' ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : null}
-                      {saveStatuses[key.id] === 'saving' ? '저장 중...' : '저장'}
-                    </button>
+                    {connectedProviders[key.id] && (
+                      <button
+                        type="button"
+                        disabled={deleteStatuses[key.id] === 'saving'}
+                        onClick={() => void handleDelete(key.id)}
+                        className="flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-500 transition-colors hover:bg-red-50 disabled:opacity-40 dark:border-red-800 dark:hover:bg-red-950"
+                      >
+                        {deleteStatuses[key.id] === 'saving' ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : null}
+                        {deleteStatuses[key.id] === 'saving' ? '삭제 중...' : '삭제'}
+                      </button>
+                    )}
+                    {key.value.trim() && (
+                      <button
+                        type="button"
+                        disabled={saveStatuses[key.id] === 'saving'}
+                        onClick={() => void handleSave(key.id)}
+                        className="bg-foreground text-background hover:bg-foreground/85 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-40"
+                      >
+                        {saveStatuses[key.id] === 'saving' ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : null}
+                        {saveStatuses[key.id] === 'saving' ? '저장 중...' : '저장'}
+                      </button>
+                    )}
                   </div>
                 </div>
 
