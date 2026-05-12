@@ -3,7 +3,7 @@ import { Monitor, Copy, Check, Loader2, Trash2, RefreshCw, X, Download } from 'l
 
 // 브릿지 .exe 다운로드 경로 — frontend/public/downloads/ 아래 정적 파일.
 // 빌드 명령: pyinstaller --onefile --windowed --name HeyGentBridge --collect-all customtkinter --collect-all pystray --paths . bridge/tray.py
-const BRIDGE_INSTALLER_PATH = '/downloads/HeyGentBridgeSetup.exe'
+const BRIDGE_EXE_PATH = '/downloads/HeyGentBridge.exe'
 import {
   issueBridgePairingCode,
   listBridgeDevices,
@@ -43,7 +43,8 @@ export function BridgeSettingsPage() {
 
   useEffect(() => {
     let cancelled = false
-    void (async () => {
+
+    const fetchOnce = async () => {
       try {
         const list = await listBridgeDevices()
         if (cancelled) return
@@ -58,9 +59,16 @@ export function BridgeSettingsPage() {
           setIsLoadingDevices(false)
         }
       }
-    })()
+    }
+
+    void fetchOnce()
+    // 10초마다 자동 갱신: 사용자가 브릿지 PC 의 프로그램을 켜고 끄는 동안 online/offline 상태를 따라가게 한다.
+    const handle = window.setInterval(() => {
+      void fetchOnce()
+    }, 10000)
     return () => {
       cancelled = true
+      window.clearInterval(handle)
     }
   }, [])
 
@@ -122,8 +130,8 @@ export function BridgeSettingsPage() {
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <a
-              href={BRIDGE_INSTALLER_PATH}
-              download="HeyGentBridgeSetup.exe"
+              href={BRIDGE_EXE_PATH}
+              download="HeyGentBridge.exe"
               className="border-border text-foreground hover:bg-muted inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium"
             >
               <Download className="h-4 w-4" />
@@ -170,15 +178,23 @@ export function BridgeSettingsPage() {
             <ul className="divide-border divide-y">
               {devices.map((device) => {
                 const isActive = !device.revokedAt
+                const isOnline = device.online
+                const statusLabel = !isActive ? '해제됨' : isOnline ? '온라인' : '오프라인'
+                const statusColor = !isActive
+                  ? 'text-muted-foreground'
+                  : isOnline
+                    ? 'text-emerald-500'
+                    : 'text-amber-500'
+                const iconWrapColor = !isActive
+                  ? 'bg-muted text-muted-foreground'
+                  : isOnline
+                    ? 'bg-emerald-500/10 text-emerald-500'
+                    : 'bg-amber-500/10 text-amber-500'
                 return (
                   <li key={device.id} className="flex items-center justify-between py-3">
                     <div className="flex items-center gap-3">
                       <div
-                        className={`flex h-9 w-9 items-center justify-center rounded-md ${
-                          isActive
-                            ? 'bg-emerald-500/10 text-emerald-500'
-                            : 'bg-muted text-muted-foreground'
-                        }`}
+                        className={`flex h-9 w-9 items-center justify-center rounded-md ${iconWrapColor}`}
                       >
                         <Monitor className="h-5 w-5" />
                       </div>
@@ -187,7 +203,7 @@ export function BridgeSettingsPage() {
                           {device.deviceName}
                         </div>
                         <div className="text-muted-foreground text-xs">
-                          {isActive ? '활성' : '해제됨'} · 마지막 접속:{' '}
+                          <span className={statusColor}>{statusLabel}</span> · 마지막 접속:{' '}
                           {formatRelative(device.lastSeenAt)}
                         </div>
                       </div>
@@ -349,8 +365,8 @@ function PairingCodeModal({ onClose, onDeviceAppeared, deviceCount }: PairingCod
         </p>
 
         <a
-          href={BRIDGE_INSTALLER_PATH}
-          download="HeyGentBridgeSetup.exe"
+          href={BRIDGE_EXE_PATH}
+          download="HeyGentBridge.exe"
           className="border-border text-muted-foreground hover:bg-muted mt-3 inline-flex w-full items-center justify-center gap-1 rounded-md border px-3 py-2 text-xs"
         >
           <Download className="h-3.5 w-3.5" /> 브릿지 프로그램이 없으면 먼저 다운로드

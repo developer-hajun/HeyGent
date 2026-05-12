@@ -58,7 +58,8 @@ class BridgeSettings:
     device_name: str | None
     user_id: str | None
     # 브릿지가 다룰 사용자 PC 워크스페이스 폴더. 절대경로.
-    workspace_root: Path
+    # None 이면 사용자가 GUI 에서 아직 선택하지 않은 상태. main 의 연결 전에 반드시 채워져야 한다.
+    workspace_root: Path | None
     # heartbeat ping 주기(초).
     ping_interval_seconds: float = 20.0
     # 연결 끊겼을 때 재시도까지 기다리는 시간(초).
@@ -66,7 +67,8 @@ class BridgeSettings:
 
     @property
     def is_paired(self) -> bool:
-        return bool(self.token)
+        # 페어링이 끝나려면 토큰뿐 아니라 워크스페이스도 정해져 있어야 한다.
+        return bool(self.token) and self.workspace_root is not None
 
 
 def load_settings() -> BridgeSettings:
@@ -95,12 +97,21 @@ def load_settings() -> BridgeSettings:
         raw_token = _read("BRIDGE_TOKEN", None, dotenv_values)
     token = raw_token.strip() if isinstance(raw_token, str) and raw_token.strip() else None
 
-    workspace_raw = (_read("BRIDGE_WORKSPACE_ROOT", str(Path.cwd()), dotenv_values) or "").strip()
+    # 워크스페이스 우선순위: storage 파일 > 환경변수 > .env. 세 군데 모두 비어있으면 None.
+    # (이전엔 Path.cwd() 로 폴백했는데, 그러면 .exe 실행 폴더(설치 경로) 가 잡혀버려서 의도와 다름)
+    workspace_raw = (
+        stored.workspace_root
+        or _read("BRIDGE_WORKSPACE_ROOT", "", dotenv_values)
+        or ""
+    ).strip()
     ping_interval = float(_read("BRIDGE_PING_INTERVAL_SECONDS", "20", dotenv_values) or 20)
     reconnect_delay = float(_read("BRIDGE_RECONNECT_DELAY_SECONDS", "3", dotenv_values) or 3)
 
-    workspace_root = Path(workspace_raw).expanduser().resolve()
-    workspace_root.mkdir(parents=True, exist_ok=True)
+    if workspace_raw:
+        workspace_root: Path | None = Path(workspace_raw).expanduser().resolve()
+        workspace_root.mkdir(parents=True, exist_ok=True)
+    else:
+        workspace_root = None
 
     return BridgeSettings(
         environment_key=env.key,
