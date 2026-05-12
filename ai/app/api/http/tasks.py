@@ -626,8 +626,10 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
         user_id=str(owner_key),
         query=select_memory_recall_query(task_input),
         workspace_key=user.workspace_key if user is not None else None,
+        force_workspace_key=user is not None and bool(user.workspace_key),
     )
     orchestrator = request.app.state.orchestrator
+    task_execution_supervisor = getattr(request.app.state, "task_execution_supervisor", None)
     active_lock_task_id = None
     if payload.session_key:
         if _has_active_task_for_owner_session(context, owner_key=owner_key, session_key=payload.session_key):
@@ -639,28 +641,31 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
             if not projection.acquire_active_session_lock(payload.session_key, active_lock_task_id, owner_key=owner_key):
                 raise HTTPException(status_code=409, detail="active task already exists in this session")
     try:
-        task = await orchestrator.start(
-            OrchestrationRequest(
-                owner_key=owner_key,
-                session_key=payload.session_key,
-                input_payload=task_input,
-            )
+        orchestration_request = OrchestrationRequest(
+            owner_key=owner_key,
+            session_key=payload.session_key,
+            input_payload=task_input,
         )
+        if task_execution_supervisor is not None:
+            task = await task_execution_supervisor.submit(orchestration_request)
+        else:
+            task = await orchestrator.start(orchestration_request)
         if payload.session_key and active_lock_task_id and context.task_projection_store is not None:
             context.task_projection_store.release_active_session_lock(payload.session_key, active_lock_task_id, owner_key=owner_key)
             context.task_projection_store.acquire_active_session_lock(payload.session_key, task.task_run_id, owner_key=owner_key)
-        mark_used_observation = await mark_used_recalled_memories(
-            app_state=request.app.state,
-            task_input=dict(task.input_payload or {}),
-            user_id=str(owner_key),
-            assistant_message=_assistant_content_from_task_result(task),
-            task_run_id=task.task_run_id,
-        )
-        attach_memory_observation_to_task(
-            task=task,
-            repository=context.repository,
-            mark_used=mark_used_observation,
-        )
+        if task_execution_supervisor is None:
+            mark_used_observation = await mark_used_recalled_memories(
+                app_state=request.app.state,
+                task_input=dict(task.input_payload or {}),
+                user_id=str(owner_key),
+                assistant_message=_assistant_content_from_task_result(task),
+                task_run_id=task.task_run_id,
+            )
+            attach_memory_observation_to_task(
+                task=task,
+                repository=context.repository,
+                mark_used=mark_used_observation,
+            )
     except KeyError as error:
         if payload.session_key and active_lock_task_id and context.task_projection_store is not None:
             context.task_projection_store.release_active_session_lock(payload.session_key, active_lock_task_id, owner_key=owner_key)

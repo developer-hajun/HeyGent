@@ -45,10 +45,26 @@ export interface CommandUsageData {
 }
 
 export async function getCommandUsage(params: CommandUsageParams = {}): Promise<CommandUsageData> {
+  const normalizedParams = withDefaultDateRange(params)
   const { data } = await axiosInstance.get<{
     status: number
     message: string
     data: CommandUsageData
-  }>('/api/v1/ai/usages/me/commands', { params })
+  }>('/api/v1/ai/usages/me/commands', { params: normalizedParams })
   return data.data
+}
+
+function withDefaultDateRange(params: CommandUsageParams): CommandUsageParams {
+  return {
+    ...params,
+    from: params.from ?? '1970-01-01',
+    to: params.to ?? formatLocalDate(new Date()),
+  }
+}
+
+function formatLocalDate(date: Date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }

@@ -173,8 +173,6 @@ export function agentProfileToAgent(profile: AgentProfile): Agent {
     command: '',
     model: profile.model ?? undefined,
     extraArgs: '',
-    heartbeatEnabled: false,
-    intervalSec: 300,
     profileImage: profile.profileImage ?? undefined,
     reportsToAgentId: 'main',
     skills: profile.skills,

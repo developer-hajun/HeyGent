@@ -46,6 +46,31 @@ def test_postgres_task_repository_satisfies_runtime_repository_protocols():
     assert isinstance(repository, TaskRepository)
 
 
+def test_in_memory_task_repository_claims_pending_tasks_atomically_by_state():
+    repository = InMemoryTaskRepository()
+    repository.create_pending_task(
+        TaskRun(
+            task_run_id="task-queue-1",
+            task_type="agent.loop",
+            owner_key="42",
+            session_key="session-1",
+            status="PENDING",
+        )
+    )
+
+    claimed = repository.claim_next_task(claim_owner="worker-a", lease_seconds=30)
+    claimed_again = repository.claim_next_task(claim_owner="worker-b", lease_seconds=30)
+
+    assert claimed is not None
+    assert claimed.task_run_id == "task-queue-1"
+    assert claimed.status == "RUNNING"
+    assert claimed.queue_status == "claimed"
+    assert claimed.claim_owner == "worker-a"
+    assert claimed.attempts == 1
+    assert claimed.lease_expires_at is not None
+    assert claimed_again is None
+
+
 def test_postgres_schema_contains_required_durable_tables():
     schema_sql = "\n".join(POSTGRES_SCHEMA_STATEMENTS)
 
@@ -96,6 +121,12 @@ def test_postgres_schema_contains_anchor_profile_and_worker_linkage_columns():
         "revision BIGINT NOT NULL DEFAULT 0",
         "event_epoch BIGINT NOT NULL DEFAULT 1",
         "last_durable_sequence BIGINT NOT NULL DEFAULT 0",
+        "queue_status TEXT NOT NULL DEFAULT 'queued'",
+        "claim_owner TEXT",
+        "lease_expires_at TIMESTAMPTZ",
+        "attempts INTEGER NOT NULL DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS idx_run_anchors_queue_claim",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_run_anchors_one_active_per_owner_session",
         "parent_step_run_id TEXT",
         "worker_session_id TEXT",
         "agent_profile_version INTEGER",
@@ -202,6 +233,7 @@ def test_postgres_work_schema_contains_wake_recovery_contract():
         assert expected in schema_sql
 
     assert "0013_work_recovery_actions" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "0014_task_run_queue_claims" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
     assert "DROP CONSTRAINT IF EXISTS work_wake_requests_status_check" in migration_sql
 
 
@@ -451,6 +483,15 @@ class _FakeDurableConnection:
                 session_key,
                 current_step_run_id,
                 durable_status,
+                queue_status,
+                claim_owner,
+                queued_at,
+                claimed_at,
+                lease_expires_at,
+                heartbeat_at,
+                next_attempt_at,
+                attempts,
+                last_claim_error,
                 agent_profile_id,
                 agent_profile_version,
                 agent_config_snapshot,
@@ -464,6 +505,15 @@ class _FakeDurableConnection:
                 "session_key": session_key,
                 "current_step_run_id": current_step_run_id,
                 "durable_status": durable_status,
+                "queue_status": queue_status,
+                "claim_owner": claim_owner,
+                "queued_at": queued_at,
+                "claimed_at": claimed_at,
+                "lease_expires_at": lease_expires_at,
+                "heartbeat_at": heartbeat_at,
+                "next_attempt_at": next_attempt_at,
+                "attempts": attempts,
+                "last_claim_error": last_claim_error,
                 "agent_profile_id": agent_profile_id,
                 "agent_profile_version": agent_profile_version,
                 "agent_config_snapshot": agent_config_snapshot,
@@ -597,6 +647,32 @@ def test_postgres_task_repository_copies_task_settings_to_run_anchor_config_snap
         "toolsets": ["session", "planning"],
         "delegationPolicy": {"canDelegate": False},
     }
+
+
+def test_postgres_task_repository_marks_completed_claim_as_terminal():
+    connection = _FakeDurableConnection()
+    repository = PostgresTaskRepository(lambda: connection)
+    task = TaskRun(
+        task_run_id="task_pg_claim_complete",
+        task_type="agent.loop",
+        owner_key="42",
+        session_key="session_pg_claim",
+        status="RUNNING",
+        queue_status="claimed",
+        claim_owner="worker-a",
+    )
+    repository.create_task(task)
+
+    task.status = "COMPLETED"
+    repository.update_task(task)
+
+    anchor = repository.get_run_anchor("task_pg_claim_complete")
+    assert anchor is not None
+    assert anchor["queue_status"] == "terminal"
+    assert anchor["claim_owner"] is None
+    assert anchor["lease_expires_at"] is None
+    assert anchor["heartbeat_at"] is None
+    assert anchor["anchor_payload"]["task"]["queue_status"] == "terminal"
 
 
 def test_postgres_task_repository_reads_agent_profile_by_key():

@@ -209,7 +209,6 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
 
 function instructionDisplayName(documentKey: string) {
   if (documentKey === 'AGENTS.md') return '기본 지침'
-  if (documentKey === 'HEARTBEAT.md') return '작업 루프 지침'
   if (documentKey === 'SOUL.md') return '역할 성향 지침'
   if (documentKey === 'TOOLS.md') return '도구 사용 지침'
   return documentKey

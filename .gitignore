@@ -21,3 +21,11 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# PyInstaller 빌드 산출물 (커밋 대상 아님)
+/dist/
+/build/
+/HeyGentBridge.spec
+
+# frontend/public/downloads/ 는 의도적으로 포함 — 빌드한 .exe 를 git 으로 같이 배포한다.
+# 사용자가 웹에서 받을 수 있게 하려면 frontend 와 같이 따라가야 한다.

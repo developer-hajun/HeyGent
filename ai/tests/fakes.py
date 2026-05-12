@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import timedelta
 from typing import Any
 
 from app.contracts.event.task_events import TaskEventEnvelope
@@ -30,6 +31,67 @@ class InMemoryTaskRepository:
         task.updated_at = saved.updated_at
         self.tasks[saved.task_run_id] = saved
         return deepcopy(saved)
+
+    def create_pending_task(self, task: TaskRun) -> TaskRun:
+        now = utc_now()
+        task.status = "PENDING"
+        task.queue_status = "queued"
+        task.queued_at = task.queued_at or now
+        task.next_attempt_at = task.next_attempt_at or now
+        task.claim_owner = None
+        task.claimed_at = None
+        task.lease_expires_at = None
+        task.heartbeat_at = None
+        return self.create_task(task)
+
+    def claim_next_task(self, *, claim_owner: str, lease_seconds: int = 300) -> TaskRun | None:
+        now = utc_now()
+        candidates = [
+            task
+            for task in self.tasks.values()
+            if task.queue_status in {"queued", "failed_retry"} and (task.next_attempt_at is None or task.next_attempt_at <= now)
+        ]
+        candidates.sort(key=lambda task: task.queued_at or task.created_at or now)
+        if not candidates:
+            return None
+        task = deepcopy(candidates[0])
+        task.status = "RUNNING"
+        task.queue_status = "claimed"
+        task.claim_owner = claim_owner
+        task.claimed_at = now
+        task.heartbeat_at = now
+        task.lease_expires_at = now + timedelta(seconds=max(1, int(lease_seconds)))
+        task.attempts = int(task.attempts or 0) + 1
+        self.tasks[task.task_run_id] = deepcopy(task)
+        return deepcopy(task)
+
+    def heartbeat_task_claim(self, task_run_id: str, *, claim_owner: str, lease_seconds: int = 300) -> TaskRun | None:
+        task = self.tasks.get(task_run_id)
+        if task is None or task.claim_owner != claim_owner:
+            return None
+        now = utc_now()
+        task.queue_status = "running"
+        task.heartbeat_at = now
+        task.lease_expires_at = now + timedelta(seconds=max(1, int(lease_seconds)))
+        task.updated_at = now
+        return deepcopy(task)
+
+    def fail_task_claim(self, task_run_id: str, *, claim_owner: str, error_message: str, retry: bool = False) -> TaskRun | None:
+        task = self.tasks.get(task_run_id)
+        if task is None or task.claim_owner != claim_owner:
+            return None
+        task.status = "PENDING" if retry else "FAILED"
+        task.queue_status = "failed_retry" if retry else "terminal"
+        task.error_message = error_message
+        task.last_claim_error = error_message
+        task.claim_owner = None
+        task.lease_expires_at = None
+        task.heartbeat_at = None
+        task.next_attempt_at = utc_now() + timedelta(seconds=10) if retry else None
+        task.updated_at = utc_now()
+        if not retry:
+            task.ended_at = task.ended_at or task.updated_at
+        return deepcopy(task)
 
     def update_task(self, task: TaskRun) -> TaskRun:
         saved = deepcopy(task)

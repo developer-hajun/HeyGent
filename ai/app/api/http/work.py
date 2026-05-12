@@ -245,10 +245,7 @@ async def _generate_work_payload(request: Request, *, session: dict[str, Any], r
         AgentMessage(role="user", content=raw_user_input[:4000]),
     ]
     try:
-        response = await asyncio.wait_for(
-            asyncio.to_thread(provider.respond, messages=messages, tools=[], model=model),
-            timeout=10,
-        )
+        response = await asyncio.wait_for(_respond_provider_async(provider, messages=messages, tools=[], model=model), timeout=10)
     except Exception:
         return {}
     return _sanitize_generated_work_payload(response.output_text)
@@ -288,10 +285,7 @@ async def _generate_work_title(request: Request, *, session: dict[str, Any], raw
         AgentMessage(role="user", content=raw_user_input[:4000]),
     ]
     try:
-        response = await asyncio.wait_for(
-            asyncio.to_thread(provider.respond, messages=messages, tools=[], model=model),
-            timeout=8,
-        )
+        response = await asyncio.wait_for(_respond_provider_async(provider, messages=messages, tools=[], model=model), timeout=8)
     except Exception:
         return None
     return _sanitize_generated_work_title(response.output_text)
@@ -300,6 +294,13 @@ async def _generate_work_title(request: Request, *, session: dict[str, Any], raw
 def _work_title_model(request: Request, *, session: dict[str, Any]) -> str:
     settings_snapshot = dict(session.get("settings") or {})
     return str(settings_snapshot.get("model") or getattr(request.app.state.settings, "openai_response_model", "") or "gpt-5.4")
+
+
+async def _respond_provider_async(provider, **kwargs):
+    respond_async = getattr(provider, "respond_async", None)
+    if callable(respond_async):
+        return await respond_async(**kwargs)
+    return await asyncio.to_thread(provider.respond, **kwargs)
 
 
 def _sanitize_generated_work_title(value: str) -> str | None:

@@ -5,7 +5,7 @@
 """
 
 COMMAND_PARSERS_ATTR = "_command_parsers"
-OPENAI_PROVIDER_NAME = "openai_oauth"
+OPENAI_PROVIDER_NAME = "openai_api"
 DEFAULT_MODEL_CHECK_PROMPT = "안녕하세요. 지금 연결 상태와 사용 가능한 모델 작업 여부를 짧게 알려줘"
 
 SHELL_SLASH_COMMANDS: dict[str, str] = {

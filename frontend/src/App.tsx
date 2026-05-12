@@ -8,6 +8,7 @@ import { getWorkspacePanelFromPath } from '@/components/sessionWorkspace/session
 import { DashboardPage } from '@/pages/DashboardPage'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
 import { BuildingOverviewPage } from '@/pages/BuildingOverviewPage'
+import { BridgeSettingsPage } from '@/pages/BridgeSettingsPage'
 import { NewChatPage } from '@/pages/NewChatPage'
 import { ChatSessionPage } from '@/pages/ChatSessionPage'
 import { LoginPage } from '@/pages/LoginPage'
@@ -112,6 +113,7 @@ function WorkspaceRoutes() {
       <Route path="/reminders" element={<Navigate to="/" replace />} />
       <Route path="/wellness" element={<Navigate to="/" replace />} />
       <Route path="/devices" element={<Navigate to="/" replace />} />
+      <Route path="/settings/bridge" element={<BridgeSettingsPage />} />
       <Route path="/settings" element={<Navigate to="/" replace />} />
     </Routes>
   )
