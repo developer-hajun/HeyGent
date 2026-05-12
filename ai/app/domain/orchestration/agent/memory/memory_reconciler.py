@@ -10,6 +10,24 @@ from app.clients.backend_memory import BackendMemoryClientError
 logger = logging.getLogger(__name__)
 
 
+MEMORY_OPERATION_RECONCILIATION_SYSTEM_PROMPT = """
+You decide how a new long-term memory candidate should be reconciled with existing memories.
+Return strict JSON only, with this shape:
+{"operationType":"ADD|UPDATE|MERGE|INVALIDATE","targetMemoryId":123|null,"reason":"short Korean reason"}
+
+Rules:
+- Use ADD when the candidate is genuinely new and does not replace or refine an existing memory.
+- Use UPDATE when the candidate changes the current value of an existing preference, profile, or instruction.
+- Use MERGE when the candidate adds compatible detail to an existing memory without replacing it.
+- Use INVALIDATE when the user says an existing memory is no longer true or should be forgotten.
+- Choose targetMemoryId only from the provided existingMemories.
+- If operationType is UPDATE, MERGE, or INVALIDATE, targetMemoryId is required.
+- Do not infer from keyword rules alone. Compare the candidate meaning, the user message, and existing memories.
+- Prefer the user's most recent explicit statement when preferences conflict.
+- If uncertain, return ADD with targetMemoryId null.
+""".strip()
+
+
 class MemoryRecallClient(Protocol):
     async def recall(
         self,
@@ -28,6 +46,19 @@ class MemoryRecallClient(Protocol):
         """Return recalled memories from backend."""
 
 
+class MemoryOperationDecisionProvider(Protocol):
+    async def reconcile_memory_operation_json(
+        self,
+        *,
+        system_prompt: str,
+        user_message: str,
+        candidate: dict[str, Any],
+        existing_memories: list[dict[str, Any]],
+        context: "MemoryReconciliationContext",
+    ) -> dict[str, Any]:
+        """Return model-produced operation reconciliation JSON."""
+
+
 @dataclass(slots=True)
 class MemoryReconciliationContext:
     user_id: str
@@ -38,8 +69,15 @@ class MemoryReconciliationContext:
 class MemoryOperationReconciler:
     """기존 장기기억과 새 후보를 비교해 backend operation payload를 보강한다."""
 
-    def __init__(self, memory_client: MemoryRecallClient, *, recall_limit: int = 5) -> None:
+    def __init__(
+        self,
+        memory_client: MemoryRecallClient,
+        *,
+        operation_provider: MemoryOperationDecisionProvider | None = None,
+        recall_limit: int = 5,
+    ) -> None:
         self._memory_client = memory_client
+        self._operation_provider = operation_provider
         self._recall_limit = max(1, min(recall_limit, 10))
 
     async def reconcile_candidates(
@@ -96,15 +134,36 @@ class MemoryOperationReconciler:
         if target is None:
             return dict(candidate)
 
-        operation = _decide_operation(candidate, target, user_message=context.user_message)
-        if operation == "ADD":
-            return dict(candidate)
+        llm_decision = await self._decide_with_llm(candidate, memories=memories, context=context)
+        if llm_decision is not None:
+            return llm_decision
 
-        result = dict(candidate)
-        result["operationType"] = operation
-        result["targetMemoryId"] = getattr(target, "id")
-        result["updateReason"] = _update_reason(operation, candidate, target, context.user_message)
-        return result
+        return _apply_heuristic_decision(candidate, target, user_message=context.user_message)
+
+    async def _decide_with_llm(
+        self,
+        candidate: dict[str, Any],
+        *,
+        memories: list[Any],
+        context: MemoryReconciliationContext,
+    ) -> dict[str, Any] | None:
+        if self._operation_provider is None:
+            return None
+        memory_items = [_memory_item_payload(memory) for memory in memories if _same_contract(candidate, memory)]
+        if not memory_items:
+            return None
+        try:
+            decision = await self._operation_provider.reconcile_memory_operation_json(
+                system_prompt=MEMORY_OPERATION_RECONCILIATION_SYSTEM_PROMPT,
+                user_message=context.user_message,
+                candidate=candidate,
+                existing_memories=memory_items,
+                context=context,
+            )
+        except Exception:
+            logger.warning("LLM 장기기억 operation 판단에 실패했습니다.", exc_info=True)
+            return None
+        return _apply_llm_decision(candidate, memories=memories, decision=decision)
 
 
 def _recall_query(candidate: dict[str, Any]) -> str | None:
@@ -172,6 +231,49 @@ def _decide_operation(candidate: dict[str, Any], memory: Any, *, user_message: s
     return "MERGE"
 
 
+def _apply_llm_decision(candidate: dict[str, Any], *, memories: list[Any], decision: Any) -> dict[str, Any] | None:
+    if not isinstance(decision, dict):
+        return None
+    operation = _operation(decision.get("operationType", decision.get("operation_type")))
+    if operation == "ADD":
+        return dict(candidate)
+
+    target = _target_memory_from_decision(decision, memories=memories)
+    if target is None or not _same_contract(candidate, target):
+        return None
+
+    result = dict(candidate)
+    result["operationType"] = operation
+    result["targetMemoryId"] = getattr(target, "id")
+    reason = _string(decision.get("reason")) or _update_reason(operation, candidate, target, "")
+    result["updateReason"] = _trim(reason)
+    return result
+
+
+def _apply_heuristic_decision(candidate: dict[str, Any], memory: Any, *, user_message: str) -> dict[str, Any]:
+    operation = _decide_operation(candidate, memory, user_message=user_message)
+    if operation == "ADD":
+        return dict(candidate)
+
+    result = dict(candidate)
+    result["operationType"] = operation
+    result["targetMemoryId"] = getattr(memory, "id")
+    result["updateReason"] = _update_reason(operation, candidate, memory, user_message)
+    return result
+
+
+def _target_memory_from_decision(decision: dict[str, Any], *, memories: list[Any]) -> Any | None:
+    target_id = decision.get("targetMemoryId", decision.get("target_memory_id"))
+    try:
+        normalized_target_id = int(target_id)
+    except (TypeError, ValueError):
+        return None
+    for memory in memories:
+        if getattr(memory, "id", None) == normalized_target_id:
+            return memory
+    return None
+
+
 def _has_update_signal(text: str) -> bool:
     return any(signal in text for signal in _UPDATE_SIGNALS)
 
@@ -217,6 +319,18 @@ def _should_retry_recall_by_filter(candidate: dict[str, Any]) -> bool:
     store_type = _string(candidate.get("storeType"))
     has_metadata_filter = bool(_tags(candidate) or _metadata_categories(candidate))
     return memory_type in {"PREFERENCE", "PROFILE", "INSTRUCTION"} and store_type == "USER_PROFILE" and has_metadata_filter
+
+
+def _memory_item_payload(memory: Any) -> dict[str, Any]:
+    return {
+        "id": getattr(memory, "id", None),
+        "memoryType": getattr(memory, "memory_type", None),
+        "storeType": getattr(memory, "store_type", None),
+        "scopeType": getattr(memory, "scope_type", None),
+        "summary": getattr(memory, "summary", None),
+        "content": getattr(memory, "content", None),
+        "metadata": getattr(memory, "metadata", None) or {},
+    }
 
 
 def _operation(value: Any) -> str:
