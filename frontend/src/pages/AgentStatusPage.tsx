@@ -16,6 +16,7 @@ import type {
   AgentActivityStatus,
   TaskStatus,
 } from '@/components/office/types'
+import { useVisualizationSync } from '@/hooks/useVisualizationSync'
 
 const ACTIVITY_STATUS_LABEL: Record<AgentActivityStatus, string> = {
   spawning: '진입 중',
@@ -1021,6 +1022,8 @@ export function AgentStatusPage() {
       )
     })
   }
+
+  useVisualizationSync(handleMove)
 
   const handleAgentArrived = (agentId: string) => {
     setAgents((prev) => {
