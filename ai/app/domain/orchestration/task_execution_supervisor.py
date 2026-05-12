@@ -103,9 +103,6 @@ class TaskExecutionSupervisor:
     async def _execute_claimed_task(self, *, task: TaskRun, claim_owner: str) -> None:
         try:
             completed_task = await self.orchestrator.execute_claimed(task)
-            callback = self._completion_callbacks.pop(task.task_run_id, None)
-            if callback is not None:
-                await callback(completed_task)
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -118,3 +115,13 @@ class TaskExecutionSupervisor:
                 error_message=str(error)[:1000],
                 retry=False,
             )
+            return
+        callback = self._completion_callbacks.pop(task.task_run_id, None)
+        if callback is None:
+            return
+        try:
+            await callback(completed_task)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("TaskRun completion callback 실행 중 오류가 발생했습니다. task_run_id=%s", task.task_run_id)

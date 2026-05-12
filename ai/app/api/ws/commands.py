@@ -16,6 +16,7 @@ from app.api.memory_writeback import writeback_persistent_memory_candidates
 from app.contracts.task.task_status import TaskStatus
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
+from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
@@ -433,8 +434,31 @@ class WebSocketCommandRouter:
             "after_user_message_version": user_append["after_user_message_version"],
             "completion_expected_version": user_append["completion_expected_version"],
         }
+        task_execution_supervisor = getattr(context.websocket.app.state, "task_execution_supervisor", None)
         try:
-            context.websocket.app.state.repository.create_task(task)
+            if task_execution_supervisor is not None:
+                background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
+
+                async def finish_supervised_task(completed_task: Any) -> None:
+                    await self._finish_created_message_task(
+                        context=background_context,
+                        session_id=session_id,
+                        user_message_id=int(user_append["message_id"]),
+                        task=task,
+                        completed_task=completed_task,
+                    )
+
+                task = await task_execution_supervisor.submit(
+                    OrchestrationRequest(
+                        task_run_id=task.task_run_id,
+                        owner_key=context.auth.user_id,
+                        session_key=session_id,
+                        input_payload=dict(task.input_payload or {}),
+                    ),
+                    on_complete=finish_supervised_task,
+                )
+            else:
+                context.websocket.app.state.repository.create_task(task)
             if work_id is not None:
                 WorkService(context.websocket.app.state.work_repository).mark_run_started(
                     work_id=work_id,
@@ -464,22 +488,23 @@ class WebSocketCommandRouter:
         }
         self._accepted_messages[idempotency_key] = accepted
 
-        def start_background_task() -> None:
-            background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
-            background_task = asyncio.create_task(
-                self._run_created_message_task(
-                    context=background_context,
-                    session_id=session_id,
-                    user_message_id=int(user_append["message_id"]),
-                    task=task,
-                    handler=handler,
+        if task_execution_supervisor is None:
+            def start_background_task() -> None:
+                background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
+                background_task = asyncio.create_task(
+                    self._run_created_message_task(
+                        context=background_context,
+                        session_id=session_id,
+                        user_message_id=int(user_append["message_id"]),
+                        task=task,
+                        handler=handler,
+                    )
                 )
-            )
-            context.background_tasks.add(background_task)
-            background_task.add_done_callback(context.background_tasks.discard)
+                context.background_tasks.add(background_task)
+                background_task.add_done_callback(context.background_tasks.discard)
 
-        # accepted frame을 먼저 보낸 뒤 agent.loop/task.event fan-out을 시작한다.
-        context.after_response_callbacks.append(start_background_task)
+            # accepted frame을 먼저 보낸 뒤 agent.loop/task.event fan-out을 시작한다.
+            context.after_response_callbacks.append(start_background_task)
         return "session.message.accepted", dict(accepted)
 
     async def _session_message_retry(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
@@ -540,7 +565,30 @@ class WebSocketCommandRouter:
                 handler=handler,
                 task_run_id=retry_state["task_run_id"],
             )
-            context.websocket.app.state.repository.create_task(task)
+            task_execution_supervisor = getattr(context.websocket.app.state, "task_execution_supervisor", None)
+            if task_execution_supervisor is not None:
+                background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
+
+                async def finish_supervised_retry(completed_task: Any) -> None:
+                    await self._finish_created_message_task(
+                        context=background_context,
+                        session_id=session_id,
+                        user_message_id=int(retry_state["user_message_id"]),
+                        task=task,
+                        completed_task=completed_task,
+                    )
+
+                task = await task_execution_supervisor.submit(
+                    OrchestrationRequest(
+                        task_run_id=task.task_run_id,
+                        owner_key=context.auth.user_id,
+                        session_key=session_id,
+                        input_payload=dict(task.input_payload or {}),
+                    ),
+                    on_complete=finish_supervised_retry,
+                )
+            else:
+                context.websocket.app.state.repository.create_task(task)
             context.session_service.subscribe_task(
                 session_id=context.gateway_session_id,
                 websocket=context.websocket,
@@ -563,21 +611,22 @@ class WebSocketCommandRouter:
             "history_version": retry_state["completion_expected_version"],
         }
 
-        def start_background_task() -> None:
-            background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
-            background_task = asyncio.create_task(
-                self._run_created_message_task(
-                    context=background_context,
-                    session_id=session_id,
-                    user_message_id=int(retry_state["user_message_id"]),
-                    task=task,
-                    handler=handler,
+        if task_execution_supervisor is None:
+            def start_background_task() -> None:
+                background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
+                background_task = asyncio.create_task(
+                    self._run_created_message_task(
+                        context=background_context,
+                        session_id=session_id,
+                        user_message_id=int(retry_state["user_message_id"]),
+                        task=task,
+                        handler=handler,
+                    )
                 )
-            )
-            context.background_tasks.add(background_task)
-            background_task.add_done_callback(context.background_tasks.discard)
+                context.background_tasks.add(background_task)
+                background_task.add_done_callback(context.background_tasks.discard)
 
-        context.after_response_callbacks.append(start_background_task)
+            context.after_response_callbacks.append(start_background_task)
         return "session.message.accepted", accepted
 
     async def _session_message_undo(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
@@ -1035,6 +1084,56 @@ class WebSocketCommandRouter:
                 handler=handler,
                 resume_payload=None,
             )
+            await self._finish_created_message_task(
+                context=context,
+                session_id=session_id,
+                user_message_id=user_message_id,
+                task=task,
+                completed_task=completed_task,
+            )
+        except Exception:
+            logger.exception("session.message.create background 실행에 실패했습니다.")
+            _mark_ws_linked_work_run_failed(context, task=task)
+            try:
+                context.websocket.app.state.session_store.clear_stale_running_task(
+                    owner_key=task.owner_key,
+                    session_id=session_id,
+                    task_run_id=task.task_run_id,
+                )
+            except Exception:
+                logger.exception("session.message.create 실패 후 running guard 정리에 실패했습니다.")
+            # accepted 이후 background 실행이 실패해도 client가 placeholder를 무기한 기다리면 안 된다.
+            # 실패 frame은 durable TaskRun event와 별개로 현재 대화 UI의 pending assistant 상태를 닫는 역할을 한다.
+            try:
+                await context.send_json(
+                    _event_frame(
+                        "session.message.failed",
+                        {
+                            "session_id": session_id,
+                            "message_id": f"failed:{task.task_run_id}",
+                            "user_message_id": str(user_message_id),
+                            "task_run_id": task.task_run_id,
+                            "status": "FAILED",
+                            "error": {
+                                "code": "background_task_failed",
+                                "message": "AI 응답 생성 중 오류가 발생했습니다.",
+                                "retryable": True,
+                            },
+                        },
+                    )
+                )
+            except Exception:
+                logger.exception("session.message.failed frame 전송에 실패했습니다.")
+
+    async def _finish_created_message_task(
+        self,
+        *,
+        context: WebSocketBackgroundContext,
+        session_id: str,
+        user_message_id: int,
+        task: Any,
+        completed_task: Any,
+    ) -> None:
             completed_status = str(completed_task.status)
             completion_expected_version = int((task.input_payload or {}).get("completion_expected_version") or 0)
             if completed_status == TaskStatus.WAITING.value:
@@ -1142,39 +1241,6 @@ class WebSocketCommandRouter:
                 writeback=writeback_observation,
                 mark_used=mark_used_observation,
             )
-        except Exception:
-            logger.exception("session.message.create background 실행에 실패했습니다.")
-            _mark_ws_linked_work_run_failed(context, task=task)
-            try:
-                context.websocket.app.state.session_store.clear_stale_running_task(
-                    owner_key=task.owner_key,
-                    session_id=session_id,
-                    task_run_id=task.task_run_id,
-                )
-            except Exception:
-                logger.exception("session.message.create 실패 후 running guard 정리에 실패했습니다.")
-            # accepted 이후 background 실행이 실패해도 client가 placeholder를 무기한 기다리면 안 된다.
-            # 실패 frame은 durable TaskRun event와 별개로 현재 대화 UI의 pending assistant 상태를 닫는 역할을 한다.
-            try:
-                await context.send_json(
-                    _event_frame(
-                        "session.message.failed",
-                        {
-                            "session_id": session_id,
-                            "message_id": f"failed:{task.task_run_id}",
-                            "user_message_id": str(user_message_id),
-                            "task_run_id": task.task_run_id,
-                            "status": "FAILED",
-                            "error": {
-                                "code": "background_task_failed",
-                                "message": "AI 응답 생성 중 오류가 발생했습니다.",
-                                "retryable": True,
-                            },
-                        },
-                    )
-                )
-            except Exception:
-                logger.exception("session.message.failed frame 전송에 실패했습니다.")
 
     async def _run_resume_task(self, *, context: WebSocketBackgroundContext, task_run_id: str, approval_id: str, payload: dict[str, Any]) -> None:
         try:
