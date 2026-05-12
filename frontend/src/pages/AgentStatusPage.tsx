@@ -162,7 +162,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1545, y: 285 },
       meeting: { x: 415, y: 130 },
       calling: { x: 1110, y: 660 },
-      work: { x: 470, y: 395 },
     },
   },
   {
@@ -177,7 +176,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1070, y: 285 },
       meeting: { x: 925, y: 90 },
       calling: { x: 840, y: 350 },
-      work: { x: 650, y: 458 },
     },
   },
   {
@@ -192,7 +190,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1215, y: 370 },
       meeting: { x: 715, y: 215 },
       calling: { x: 990, y: 750 },
-      work: { x: 470, y: 395 },
     },
   },
   {
@@ -208,7 +205,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1415, y: 360 },
       meeting: { x: 920, y: 220 },
       calling: { x: 1110, y: 655 },
-      work: { x: 465, y: 595 },
     },
   },
   {
@@ -228,7 +224,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1535, y: 425 },
       meeting: { x: 415, y: 130 },
       calling: { x: 1334, y: 665 },
-      work: { x: 825, y: 520 },
     },
   },
   {
@@ -248,7 +243,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1290, y: 260 },
       meeting: { x: 925, y: 90 },
       calling: { x: 1070, y: 658 },
-      work: { x: 825, y: 520 },
     },
   },
   {
@@ -268,7 +262,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1340, y: 280 },
       meeting: { x: 850, y: 75 },
       calling: { x: 1430, y: 840 },
-      work: { x: 465, y: 595 },
     },
   },
   {
@@ -284,7 +277,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 995, y: 340 },
       meeting: { x: 670, y: 105 },
       calling: { x: 240, y: 710 },
-      work: { x: 650, y: 458 },
     },
   },
   {
@@ -300,7 +292,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1380, y: 490 },
       meeting: { x: 785, y: 245 },
       calling: { x: 1200, y: 658 },
-      work: { x: 650, y: 685 },
     },
   },
   {
@@ -315,7 +306,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1310, y: 460 },
       meeting: { x: 920, y: 220 },
       calling: { x: 1250, y: 660 },
-      work: { x: 650, y: 685 },
     },
   },
   {
@@ -971,7 +961,7 @@ export function AgentStatusPage() {
           a.config.id === 'ceo'
             ? {
                 ...a,
-                position: { ...a.config.destinations[destination as Destination] },
+                position: { ...a.config.destinations[destination as Destination]! },
                 state: newTargetState,
                 targetState: newTargetState,
                 walkFrame: 0,
@@ -993,20 +983,22 @@ export function AgentStatusPage() {
           destPoint = { ...freeSofaSpot }
         } else {
           internalDest = 'floorLean'
-          destPoint = { ...agent.config.destinations.floorLean }
+          destPoint = { ...agent.config.destinations.floorLean! }
         }
       } else {
         internalDest = destination
-        destPoint = { ...agent.config.destinations[internalDest] }
+        const rawPoint = agent.config.destinations[internalDest]
+        if (!rawPoint) return prev
+        destPoint = { ...rawPoint }
 
         // 책상 자리가 점유된 경우 대기 줄 대신 회의 목적지로 바로 전환
         if (internalDest === 'desk' && isSpotOccupied(destPoint, prev, agentId)) {
           internalDest = 'meeting'
-          destPoint = { ...agent.config.destinations.meeting }
+          destPoint = { ...agent.config.destinations.meeting! }
         }
       }
 
-      const destConfig = agent.config.destinations[internalDest]
+      const destConfig = agent.config.destinations[internalDest]!
 
       // internalDest 에 맞는 실제 앉기 상태
       const resolvedTargetState: SittingState =
