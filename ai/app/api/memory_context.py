@@ -337,6 +337,17 @@ async def attach_persistent_memory_context(
             scope_type=recall_plan.scope_type,
             metadata_categories=list(recall_plan.metadata_categories) or None,
         )
+        if not memories and _should_retry_recall_without_query(recall_plan):
+            memories = await memory_client.recall(
+                user_id=str(user_id),
+                query=None,
+                limit=recall_plan.limit,
+                workspace_key=recall_plan.workspace_key,
+                store_type=recall_plan.store_type,
+                memory_type=recall_plan.memory_type,
+                scope_type=recall_plan.scope_type,
+                metadata_categories=list(recall_plan.metadata_categories) or None,
+            )
     except BackendMemoryClientError:
         logger.warning("backend memory recall failed; continuing without persistent memory context", exc_info=True)
         _set_recall_meta(
@@ -388,6 +399,15 @@ def _with_recall_plan(recall_meta: dict[str, Any], recall_plan: MemoryRecallPlan
     if recall_plan.planner_latency_ms is not None:
         enriched["planner"]["latency_ms"] = recall_plan.planner_latency_ms
     return enriched
+
+
+def _should_retry_recall_without_query(recall_plan: MemoryRecallPlan) -> bool:
+    return (
+        recall_plan.store_type == "USER_PROFILE"
+        and recall_plan.memory_type in {"PREFERENCE", "PROFILE"}
+        and recall_plan.scope_type in {"GLOBAL", "WORKSPACE", None}
+        and bool(recall_plan.metadata_categories)
+    )
 
 
 def _normalize_llm_recall_plan(
