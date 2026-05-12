@@ -126,7 +126,7 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
         width="wide"
       >
         <SubAgentDetailView
-          key={detailItem.id}
+          key={`${sessionId}:${detailItem.id}`}
           item={detailItem}
           onDelete={async () => {
             await deleteSessionAgent(sessionId, detailItem.id)

@@ -38,6 +38,12 @@ import {
 import { Tabs } from '@/components/ui/tabs'
 import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
 import { listTaskRuns } from '@/apis/taskRuns'
+import {
+  getCachedTaskRuns,
+  getCachedUsageRecords,
+  setCachedTaskRuns,
+  setCachedUsageRecords,
+} from '@/components/sessionWorkspace/sessionWorkspaceDashboardCache'
 import type { AgentPanelItem } from '@/store/useSessionStore'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
@@ -83,7 +89,9 @@ export function SubAgentDetailView({
   const eventsByTaskRunId = useTaskRunStore((state) => state.eventsByTaskRunId)
   const fetchActiveTaskRuns = useTaskRunStore((state) => state.fetchActiveTaskRuns)
   const [tab, setTab] = useState<SubAgentDetailTab>(getDetailTab(requestedTab))
-  const [loadedTaskRuns, setLoadedTaskRuns] = useState<RawTaskRun[]>([])
+  const [loadedTaskRuns, setLoadedTaskRuns] = useState<RawTaskRun[]>(
+    () => getCachedTaskRuns(sessionId) ?? [],
+  )
   const [instructionsDraft, setInstructionsDraft] = useState(item.agent.instructions ?? '')
   const [instructionsEntryFile, setInstructionsEntryFile] = useState(
     item.agent.instructionsEntryFile ?? 'AGENTS.md',
@@ -100,7 +108,9 @@ export function SubAgentDetailView({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
-  const [usageRecords, setUsageRecords] = useState<CommandUsageRecord[]>([])
+  const [usageRecords, setUsageRecords] = useState<CommandUsageRecord[]>(
+    () => getCachedUsageRecords(sessionId) ?? [],
+  )
   const [usageError, setUsageError] = useState<string | null>(null)
   const selectedSkills = SUB_AGENT_SKILLS.filter((skill) => item.agent.skills?.includes(skill.id))
   const profileId = item.agent.profileId ?? item.id
@@ -155,6 +165,7 @@ export function SubAgentDetailView({
       .then(([, taskRuns]) => {
         if (!alive) return
         setLoadedTaskRuns(taskRuns)
+        setCachedTaskRuns(sessionId, taskRuns)
       })
       .catch((error) => {
         if (alive) console.error(error)
@@ -176,10 +187,10 @@ export function SubAgentDetailView({
         if (!alive) return
         setUsageError(null)
         setUsageRecords(result.records)
+        setCachedUsageRecords(sessionId, result.records)
       })
       .catch(() => {
         if (!alive) return
-        setUsageRecords([])
         setUsageError('사용량을 불러오지 못했습니다.')
       })
 
@@ -333,7 +344,7 @@ export function SubAgentDetailView({
           ]}
           recentTitle="최근 작업"
           recentEmptyText="최근 작업이 없습니다."
-          recentItems={runItems.slice(0, 5).map((run) => ({
+          recentItems={runItems.map((run) => ({
             label: run.summary ?? run.id,
             value: `${formatRunStatus(run.status)}${run.createdAt ? ` · ${run.createdAt}` : ''}`,
           }))}

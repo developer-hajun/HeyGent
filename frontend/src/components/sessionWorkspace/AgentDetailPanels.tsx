@@ -143,6 +143,10 @@ export function AgentDashboardPanel({
   recentItems: AgentSummaryItemData[]
   recentTitle: string
 }) {
+  const recentLimit = 10
+  const visibleRecentItems = recentItems.slice(0, recentLimit)
+  const hiddenRecentCount = Math.max(0, recentItems.length - visibleRecentItems.length)
+
   return (
     <div className="space-y-8 pt-2">
       <section className="space-y-3">
@@ -177,11 +181,16 @@ export function AgentDashboardPanel({
           <p className="text-muted-foreground text-sm">{recentEmptyText}</p>
         ) : (
           <div className="divide-border divide-y rounded-md border">
-            {recentItems.map((item) => (
+            {visibleRecentItems.map((item) => (
               <div key={item.label} className="px-4 py-3">
-                <AgentSummaryItem label={item.label} value={item.value} />
+                <AgentRecentSummaryItem label={item.label} value={item.value} />
               </div>
             ))}
+            {hiddenRecentCount > 0 ? (
+              <div className="text-muted-foreground px-4 py-2 text-center text-xs">
+                +{hiddenRecentCount}개 더 있음
+              </div>
+            ) : null}
           </div>
         )}
       </section>
@@ -916,6 +925,17 @@ export function AgentSummaryItem({ label, value }: AgentSummaryItemData) {
   )
 }
 
+function AgentRecentSummaryItem({ label, value }: AgentSummaryItemData) {
+  return (
+    <div className="grid min-w-0 gap-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-3">
+      <div className="min-w-0 truncate text-sm font-medium" title={label}>
+        {label}
+      </div>
+      <div className="text-muted-foreground min-w-0 truncate text-xs sm:text-right">{value}</div>
+    </div>
+  )
+}
+
 function AgentMetricCard({ metric }: { metric: AgentMetricItem }) {
   const Icon = metric.icon
 
@@ -934,6 +954,8 @@ function AgentMetricCard({ metric }: { metric: AgentMetricItem }) {
 }
 
 function AgentRunSummaryCard({ run }: { run: AgentRunItemData }) {
+  const summary = getRunSummaryExcerpt(run.summary)
+
   return (
     <div className="border-border overflow-hidden rounded-lg border">
       <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
@@ -947,8 +969,10 @@ function AgentRunSummaryCard({ run }: { run: AgentRunItemData }) {
               </span>
             ) : null}
           </div>
-          {run.summary ? (
-            <p className="text-muted-foreground text-sm">{run.summary}</p>
+          {summary ? (
+            <p className="text-muted-foreground max-h-16 overflow-hidden text-sm leading-5">
+              {summary}
+            </p>
           ) : (
             <p className="text-muted-foreground text-sm">아직 요약이 없습니다.</p>
           )}
@@ -957,6 +981,31 @@ function AgentRunSummaryCard({ run }: { run: AgentRunItemData }) {
       </div>
     </div>
   )
+}
+
+function getRunSummaryExcerpt(summary: string | undefined) {
+  if (!summary) return ''
+  const lines = summary
+    .replace(/^#{1,6}\s+/gm, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line.length > 0 &&
+        !line.startsWith('---') &&
+        !line.startsWith('|') &&
+        !line.startsWith('```') &&
+        !/^[-*>]/.test(line) &&
+        !/^\d+\./.test(line),
+    )
+  const excerpt: string[] = []
+  let chars = 0
+  for (const line of lines) {
+    if (excerpt.length >= 3 || chars + line.length > 280) break
+    excerpt.push(line)
+    chars += line.length
+  }
+  return excerpt.join(' ')
 }
 
 function AgentRunListItem({

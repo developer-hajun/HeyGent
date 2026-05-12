@@ -42,6 +42,12 @@ import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPane
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
 import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
 import { getSessionMainAgent, updateSessionAgent, type AgentProfile } from '@/apis/agents'
+import {
+  getCachedMainAgentProfile,
+  getCachedUsageRecords,
+  setCachedMainAgentProfile,
+  setCachedUsageRecords,
+} from '@/components/sessionWorkspace/sessionWorkspaceDashboardCache'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
@@ -101,7 +107,7 @@ export function SessionWorkspaceDetailPanel({
   }
 
   if (activePanel === 'ceo') {
-    return <MainAgentPage session={session} />
+    return <MainAgentPage key={session.session_id} session={session} />
   }
 
   return null
@@ -117,11 +123,14 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const updateSession = useChatStore((state) => state.updateSession)
   const updateSessionSettings = useChatStore((state) => state.updateSessionSettings)
   const fetchModelOptions = useChatStore((state) => state.fetchModelOptions)
+  const cachedModelOptions = useChatStore((state) => state.modelOptions)
   const taskRunsById = useTaskRunStore((state) => state.taskRunsById)
   const eventsByTaskRunId = useTaskRunStore((state) => state.eventsByTaskRunId)
   const fetchActiveTaskRuns = useTaskRunStore((state) => state.fetchActiveTaskRuns)
   const [searchParams, setSearchParams] = useSearchParams()
-  const [mainAgentProfile, setMainAgentProfile] = useState<AgentProfile | null>(null)
+  const [mainAgentProfile, setMainAgentProfile] = useState<AgentProfile | null>(() =>
+    getCachedMainAgentProfile(session.session_id),
+  )
 
   const metadata = useMemo(() => toJsonObject(session.metadata), [session.metadata])
   const uiMetadata = useMemo(() => toJsonObject(metadata.ui), [metadata])
@@ -183,15 +192,21 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const [selectedModel, setSelectedModel] = useState(currentModel)
   const [canDelegate, setCanDelegate] = useState(currentCanDelegate)
   const [profileImage, setProfileImage] = useState(currentProfileImage)
-  const [modelOptionsLoading, setModelOptionsLoading] = useState(authenticatedReady)
+  const [modelOptionsLoading, setModelOptionsLoading] = useState(
+    authenticatedReady && cachedModelOptions === null,
+  )
   const [modelOptionsError, setModelOptionsError] = useState<string | null>(null)
-  const [modelOptions, setModelOptions] = useState(getModelOptions(undefined))
+  const [modelOptions, setModelOptions] = useState(() =>
+    getModelOptions(cachedModelOptions?.models),
+  )
   const [selectedFamily, setSelectedFamily] = useState<ModelFamily>(inferModelFamily(currentModel))
   const [modelBaseline, setModelBaseline] = useState(currentModel)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
-  const [usageRecords, setUsageRecords] = useState<CommandUsageRecord[]>([])
+  const [usageRecords, setUsageRecords] = useState<CommandUsageRecord[]>(
+    () => getCachedUsageRecords(session.session_id) ?? [],
+  )
   const [usageError, setUsageError] = useState<string | null>(null)
 
   const modelGroups = useMemo(() => groupModels(modelOptions), [modelOptions])
@@ -273,23 +288,43 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
       .then((profile) => {
         if (cancelled) return
         setMainAgentProfile(profile)
+        setCachedMainAgentProfile(sessionId, profile)
         const config = toJsonObject(profile.configSnapshot)
         const files = getInstructionFilesFromDocuments(config.documents)
-        setAgentName(getString(config, 'name') ?? 'CEO')
-        setCallName(getString(config, 'title') ?? 'CEO')
-        setCapabilities(getString(config, 'description') ?? '')
-        setSelectedSkillIds(normalizeMainAgentSkillIds(config.skills))
+        setAgentName(getString(uiMetadata, 'agentName') ?? getString(config, 'name') ?? 'CEO')
+        setCallName(getString(uiMetadata, 'callName') ?? getString(config, 'title') ?? 'CEO')
+        setCapabilities(
+          getString(uiMetadata, 'agentCapabilities') ?? getString(config, 'description') ?? '',
+        )
+        setSelectedSkillIds(normalizeMainAgentSkillIds(uiMetadata.agentSkills ?? config.skills))
         const entryDocumentKey = getString(config, 'entryDocumentKey') ?? 'AGENTS.md'
-        setInstructionsEntryFile(entryDocumentKey)
-        setInstructionsFiles(files)
-        setPersona(files[entryDocumentKey] ?? '')
-        setInstructionsMode('managed')
-        setInstructionsRootPath('')
+        const nextEntryFile = getString(uiMetadata, 'instructionsEntryFile') ?? entryDocumentKey
+        const nextFiles = {
+          ...files,
+          ...getInstructionsFiles(uiMetadata.instructionsFiles),
+        }
+        setInstructionsEntryFile(nextEntryFile)
+        setInstructionsFiles(nextFiles)
+        setPersona(
+          currentSettingsPrompt.trim() !== ''
+            ? currentSettingsPrompt
+            : (nextFiles[nextEntryFile] ?? ''),
+        )
+        setInstructionsMode(
+          getString(uiMetadata, 'instructionsMode') === 'external' ? 'external' : 'managed',
+        )
+        setInstructionsRootPath(getString(uiMetadata, 'instructionsRootPath') ?? '')
         const profileModel = getString(config, 'model') ?? ''
         setSelectedModel(profileModel)
         setModelBaseline(profileModel)
         setSelectedFamily(inferModelFamily(profileModel))
-        setProfileImage(normalizeAgentProfileImage(getString(config, 'profileImage') ?? undefined))
+        setProfileImage(
+          normalizeAgentProfileImage(
+            getString(uiMetadata, 'agentProfileImage') ??
+              getString(config, 'profileImage') ??
+              undefined,
+          ),
+        )
       })
       .catch(() => {
         if (!cancelled) setMainAgentProfile(null)
@@ -298,7 +333,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     return () => {
       cancelled = true
     }
-  }, [authenticatedReady, sessionId])
+  }, [authenticatedReady, currentSettingsPrompt, sessionId, uiMetadata])
 
   useEffect(() => {
     if (!authenticatedReady || commandClient === null || sessionId.startsWith('pending_session_')) {
@@ -311,10 +346,10 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
         if (!active) return
         setUsageError(null)
         setUsageRecords(result.records)
+        setCachedUsageRecords(sessionId, result.records)
       })
       .catch(() => {
         if (!active) return
-        setUsageRecords([])
         setUsageError('사용량을 불러오지 못했습니다.')
       })
 
@@ -356,7 +391,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   }, [authenticatedReady, commandClient, currentModel, fetchModelOptions, sessionId])
 
   useEffect(() => {
-    if (!isDirty) return
+    if (!showConfigActionBar) return
 
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault()
@@ -365,7 +400,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
 
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [isDirty])
+  }, [showConfigActionBar])
 
   const markDirty = () => {
     setSaved(false)
@@ -517,25 +552,35 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
               {
                 icon: FileText,
                 label: '담당 작업',
-                value: '0',
+                value: String(mainAgentTaskRunIds.length),
                 description: '최근 14일',
               },
               {
                 icon: BarChart3,
                 label: '상태별 작업',
-                value: '0',
+                value: String(
+                  sessionRuns.filter((run) => run.status === 'failed' || run.status === 'blocked')
+                    .length,
+                ),
                 description: '최근 14일',
               },
               {
                 icon: Play,
                 label: '완료 횟수',
-                value: session.last_message_at ? '1+' : '0',
+                value: String(
+                  sessionRuns.filter(
+                    (run) => run.status === 'succeeded' || run.status === 'completed',
+                  ).length,
+                ),
                 description: '최근 14일',
               },
             ]}
             recentTitle="최근 작업"
             recentEmptyText="최근 작업이 없습니다."
-            recentItems={[]}
+            recentItems={sessionRuns.map((run) => ({
+              label: run.summary ?? run.id,
+              value: `${formatSessionRunStatus(run.status)}${run.createdAt ? ` · ${run.createdAt}` : ''}`,
+            }))}
           />
         )}
 
@@ -699,7 +744,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
             {saveError}
           </p>
         )}
-        {(isDirty || saving) && (
+        {showConfigActionBar && (
           <div className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-sm sm:hidden">
             <div className="flex items-center justify-end gap-2 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
               <Button variant="ghost" size="sm" onClick={resetDraft} disabled={saving}>
@@ -711,7 +756,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
             </div>
           </div>
         )}
-        {(isDirty || saving) && (
+        {showConfigActionBar && (
           <div className="fixed right-6 bottom-6 z-30 hidden sm:block">
             <div className="bg-background/90 border-border flex items-center gap-2 rounded-lg border px-3 py-1.5 shadow-lg backdrop-blur-sm">
               <Button variant="ghost" size="sm" onClick={resetDraft} disabled={saving}>
