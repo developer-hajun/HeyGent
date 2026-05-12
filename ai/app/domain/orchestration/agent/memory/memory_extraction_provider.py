@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from app.domain.orchestration.agent.memory.memory_extractor import MemoryExtractionContext
+from app.domain.orchestration.agent.memory.memory_reconciler import MemoryReconciliationContext
 from app.domain.providers.model.base import AgentMessage
 from app.domain.providers.registry import ProviderRegistry
 
@@ -34,6 +35,38 @@ class ProviderMemoryExtractionClient:
                 "sessionId": context.session_id,
                 "workspaceKey": context.workspace_key,
                 "taskRunId": context.task_run_id,
+            },
+        }
+        response = await asyncio.to_thread(
+            provider.respond,
+            messages=[
+                AgentMessage(role="system", content=system_prompt),
+                AgentMessage(role="user", content=json.dumps(payload, ensure_ascii=False)),
+            ],
+            tools=None,
+            model=model,
+            tool_choice=None,
+        )
+        return _parse_json_object(response.output_text)
+
+    async def reconcile_memory_operation_json(
+        self,
+        *,
+        system_prompt: str,
+        user_message: str,
+        candidate: dict[str, Any],
+        existing_memories: list[dict[str, Any]],
+        context: MemoryReconciliationContext,
+    ) -> dict[str, Any]:
+        provider = self._provider_registry.preferred_model_provider()
+        model = self._model or str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
+        payload = {
+            "userMessage": user_message,
+            "candidate": candidate,
+            "existingMemories": existing_memories,
+            "context": {
+                "userId": context.user_id,
+                "workspaceKey": context.workspace_key,
             },
         }
         response = await asyncio.to_thread(

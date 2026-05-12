@@ -27,6 +27,7 @@ from app.domain.orchestration.agent.runner import AgentLoopRunner
 from app.domain.orchestration.agent.loop import TaskEngine
 from app.domain.orchestration.agent.memory.memory_extraction_provider import ProviderMemoryExtractionClient
 from app.domain.orchestration.agent.memory.memory_extractor import LlmMemoryExtractor
+from app.domain.orchestration.agent.memory.memory_reconciler import MemoryOperationReconciler
 from app.domain.orchestration.agent.memory.memory_recall_planner_provider import ProviderMemoryRecallPlannerClient
 from app.domain.orchestration.agent.memory.memory_usage_attribution_provider import (
     ProviderMemoryUsageAttributionClient,
@@ -114,6 +115,10 @@ async def lifespan(app: FastAPI):
     )
     memory_extraction_provider = ProviderMemoryExtractionClient(provider_registry=provider_registry)
     memory_extractor = LlmMemoryExtractor(provider=memory_extraction_provider)
+    memory_operation_reconciler = MemoryOperationReconciler(
+        backend_memory_client,
+        operation_provider=memory_extraction_provider,
+    )
     memory_recall_planner_provider = ProviderMemoryRecallPlannerClient(provider_registry=provider_registry)
     memory_recall_planner = LlmMemoryRecallPlanner(provider=memory_recall_planner_provider)
     memory_usage_attribution_provider = ProviderMemoryUsageAttributionClient(provider_registry=provider_registry)
@@ -181,6 +186,8 @@ async def lifespan(app: FastAPI):
     app.state.backend_auth_client = backend_auth_client
     app.state.backend_memory_client = backend_memory_client
     app.state.memory_extractor = memory_extractor
+    app.state.memory_operation_provider = memory_extraction_provider
+    app.state.memory_operation_reconciler = memory_operation_reconciler
     app.state.memory_recall_planner = memory_recall_planner
     app.state.memory_usage_attribution_verifier = memory_usage_attribution_verifier
     app.state.provider_registry = provider_registry
