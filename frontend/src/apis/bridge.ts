@@ -6,6 +6,7 @@ export interface BridgeDevice {
   createdAt: string | null
   lastSeenAt: string | null
   revokedAt: string | null
+  online: boolean
 }
 
 export interface BridgePairingCode {

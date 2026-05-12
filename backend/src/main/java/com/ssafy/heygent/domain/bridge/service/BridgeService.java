@@ -1,5 +1,6 @@
 package com.ssafy.heygent.domain.bridge.service;
 
+import com.ssafy.heygent.domain.bridge.client.AiBridgeStatusClient;
 import com.ssafy.heygent.domain.bridge.dto.BridgeDeviceResponse;
 import com.ssafy.heygent.domain.bridge.dto.BridgeInternalAuthValidateResponse;
 import com.ssafy.heygent.domain.bridge.dto.BridgePairRequest;
@@ -11,6 +12,7 @@ import com.ssafy.heygent.domain.bridge.repository.BridgeDeviceRepository;
 import com.ssafy.heygent.domain.bridge.repository.BridgePairingRedisRepository;
 import com.ssafy.heygent.domain.user.entity.User;
 import com.ssafy.heygent.domain.user.repository.UserRepository;
+import java.util.Set;
 import com.ssafy.heygent.global.exception.CustomException;
 import com.ssafy.heygent.global.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
@@ -39,6 +41,7 @@ public class BridgeService {
     private final BridgeDeviceRepository bridgeDeviceRepository;
     private final BridgePairingRedisRepository bridgePairingRedisRepository;
     private final UserRepository userRepository;
+    private final AiBridgeStatusClient aiBridgeStatusClient;
 
     @Transactional
     public BridgePairingCodeResponse issuePairingCode(Long userId) {
@@ -61,6 +64,17 @@ public class BridgeService {
 
         User user = userRepository.findById(pairing.userId())
             .orElseThrow(() -> new CustomException(ErrorCode.RESOURCE_NOT_FOUND));
+
+        // 같은 user 의 활성(미폐기) 디바이스 중 이름이 같은 것이 있으면 거절한다.
+        // 사용자가 옛 PC 의 브릿지를 끄지 않고 새 PC 에 같은 이름으로 페어링하려는 케이스 방지.
+        String trimmedName = request.deviceName().trim();
+        boolean nameInUse = bridgeDeviceRepository
+            .findAllByUserIdAndRevokedAtIsNullOrderByCreatedAtDesc(user.getId())
+            .stream()
+            .anyMatch(device -> device.getDeviceName().equalsIgnoreCase(trimmedName));
+        if (nameInUse) {
+            throw new CustomException(ErrorCode.BRIDGE_DEVICE_NAME_DUPLICATE);
+        }
 
         // 1슬롯 정책: 이 user 의 기존 활성 디바이스를 모두 폐기한다.
         // 컨테이너 TZ 와 무관하게 UTC 기준으로 시각을 기록해 두면 응답 매핑에서 'Z' 마커가 안정적으로 붙는다.
@@ -87,8 +101,12 @@ public class BridgeService {
 
     @Transactional(readOnly = true)
     public List<BridgeDeviceResponse> listDevices(Long userId) {
+        Set<Long> onlineUserIds = aiBridgeStatusClient.fetchOnlineUserIds();
+        boolean userOnline = onlineUserIds.contains(userId);
+        // user 가 AI 서버에 현재 붙어있다면 그 user 의 디바이스 중 활성(미폐기) 인 것이 online.
+        // 폐기된 디바이스는 무조건 offline.
         return bridgeDeviceRepository.findAllByUserIdOrderByCreatedAtDesc(userId).stream()
-            .map(BridgeDeviceResponse::from)
+            .map(device -> BridgeDeviceResponse.from(device, userOnline && device.isActive()))
             .toList();
     }
 
