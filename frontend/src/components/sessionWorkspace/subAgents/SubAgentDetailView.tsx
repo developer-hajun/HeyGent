@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Activity, BarChart3, Clock, FileText, Loader2, MoreHorizontal, Trash2 } from 'lucide-react'
 import { PageTabBar } from '@/components/PageTabBar'
 import {
@@ -29,8 +29,15 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tabs } from '@/components/ui/tabs'
+import { listTaskRuns } from '@/apis/taskRuns'
 import type { AgentPanelItem } from '@/store/useSessionStore'
+import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
+import { useTaskRunStore } from '@/store/useTaskRunStore'
 import type { Agent } from '@/types/agent'
+import type { RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
+import type { RawTaskRun, TaskRunAgentRef } from '@/types/taskRuns'
+import { isInternalStepAnchorEvent, toTaskRunSummaryView } from '@/utils/taskRunStatusView'
+import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { SubAgentDraftForm } from './SubAgentDraftForm'
 import { SubAgentProfileImage } from './SubAgentProfileImage'
 import { SUB_AGENT_SKILLS } from './subAgentOptions'
@@ -59,6 +66,7 @@ export function SubAgentDetailView({
   onTabChange,
   reservedNames,
   requestedTab,
+  sessionId,
 }: {
   item: AgentPanelItem
   onDelete: () => Promise<void>
@@ -66,8 +74,15 @@ export function SubAgentDetailView({
   onTabChange?: (tab: SubAgentDetailTab) => void
   requestedTab?: string | null
   reservedNames: string[]
+  sessionId: string
 }) {
+  const authenticatedReady = useAiRealtimeStore((state) => state.authenticatedReady)
+  const commandClient = useAiRealtimeStore((state) => state.commandClient)
+  const taskRunsById = useTaskRunStore((state) => state.taskRunsById)
+  const eventsByTaskRunId = useTaskRunStore((state) => state.eventsByTaskRunId)
+  const fetchActiveTaskRuns = useTaskRunStore((state) => state.fetchActiveTaskRuns)
   const [tab, setTab] = useState<SubAgentDetailTab>(getDetailTab(requestedTab))
+  const [loadedTaskRuns, setLoadedTaskRuns] = useState<RawTaskRun[]>([])
   const [instructionsDraft, setInstructionsDraft] = useState(item.agent.instructions ?? '')
   const [instructionsEntryFile, setInstructionsEntryFile] = useState(
     item.agent.instructionsEntryFile ?? 'AGENTS.md',
@@ -85,12 +100,51 @@ export function SubAgentDetailView({
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const selectedSkills = SUB_AGENT_SKILLS.filter((skill) => item.agent.skills?.includes(skill.id))
+  const profileId = item.agent.profileId ?? item.id
+  const agentTaskRuns = useMemo(
+    () => buildAgentTaskRuns(sessionId, profileId, loadedTaskRuns, taskRunsById),
+    [loadedTaskRuns, profileId, sessionId, taskRunsById],
+  )
+  const runItems = useMemo(
+    () => buildAgentRunItems(agentTaskRuns, eventsByTaskRunId),
+    [agentTaskRuns, eventsByTaskRunId],
+  )
+  const latestRun = runItems[0] ?? null
+  const blockedRunCount = agentTaskRuns.filter(
+    (taskRun) => normalizeRunStatus(taskRun.status) === 'failed',
+  ).length
+  const completedRunCount = agentTaskRuns.filter(
+    (taskRun) => normalizeRunStatus(taskRun.status) === 'succeeded',
+  ).length
   const instructionsDirty =
     instructionsDraft.trim() !== (item.agent.instructions ?? '') ||
     instructionsEntryFile.trim() !== (item.agent.instructionsEntryFile ?? 'AGENTS.md') ||
     !shallowStringRecordEqual(instructionsFiles, item.agent.instructionsFiles ?? {}) ||
     instructionsMode !== (item.agent.instructionsMode ?? 'managed') ||
     instructionsRootPath.trim() !== (item.agent.instructionsRootPath ?? '')
+
+  useEffect(() => {
+    if (!authenticatedReady || commandClient === null || sessionId.startsWith('pending_session_')) {
+      return
+    }
+
+    let alive = true
+    void Promise.all([
+      fetchActiveTaskRuns(sessionId),
+      listTaskRuns({ sessionId, pageSize: 20, status: 'ALL' }),
+    ])
+      .then(([, taskRuns]) => {
+        if (!alive) return
+        setLoadedTaskRuns(taskRuns)
+      })
+      .catch((error) => {
+        if (alive) console.error(error)
+      })
+
+    return () => {
+      alive = false
+    }
+  }, [authenticatedReady, commandClient, fetchActiveTaskRuns, sessionId])
 
   const selectTab = (nextTab: SubAgentDetailTab) => {
     setTab(nextTab)
@@ -213,36 +267,39 @@ export function SubAgentDetailView({
             { label: '캐시 토큰', value: '0' },
             { label: '총 비용', value: '$0.00' },
           ]}
-          latestRun={null}
+          latestRun={latestRun}
           metrics={[
             {
               icon: Activity,
               label: '실행 현황',
-              value: '초안',
+              value: latestRun ? formatRunStatus(latestRun.status) : '준비 중',
               description: '최근 14일',
             },
             {
               icon: FileText,
               label: '담당 작업',
-              value: '0',
+              value: String(agentTaskRuns.length),
               description: '최근 14일',
             },
             {
               icon: BarChart3,
-              label: '상태별 작업',
-              value: '0',
+              label: '차단됨',
+              value: String(blockedRunCount),
               description: '최근 14일',
             },
             {
               icon: Clock,
               label: '완료 횟수',
-              value: '0',
+              value: String(completedRunCount),
               description: '최근 14일',
             },
           ]}
           recentTitle="최근 작업"
           recentEmptyText="최근 작업이 없습니다."
-          recentItems={[]}
+          recentItems={runItems.slice(0, 5).map((run) => ({
+            label: run.summary ?? run.id,
+            value: `${formatRunStatus(run.status)}${run.createdAt ? ` · ${run.createdAt}` : ''}`,
+          }))}
         />
       )}
 
@@ -309,7 +366,7 @@ export function SubAgentDetailView({
         </AgentSkillsPanel>
       )}
 
-      {tab === 'runs' && <AgentRunsPanel emptyText="아직 실행 기록이 없습니다." items={[]} />}
+      {tab === 'runs' && <AgentRunsPanel emptyText="아직 실행 기록이 없습니다." items={runItems} />}
 
       {tab === 'budget' && (
         <AgentBudgetPanel
@@ -387,6 +444,166 @@ export function SubAgentDetailView({
 
 function getDetailTab(value: string | null | undefined): SubAgentDetailTab {
   return DETAIL_TABS.some((tab) => tab.value === value) ? (value as SubAgentDetailTab) : 'dashboard'
+}
+
+function buildAgentTaskRuns(
+  sessionId: string,
+  profileId: string,
+  loadedTaskRuns: RawTaskRun[],
+  taskRunsById: Record<string, RawTaskRun>,
+) {
+  const byId = new Map<string, RawTaskRun>()
+  for (const taskRun of loadedTaskRuns) {
+    if (taskRunBelongsToSession(taskRun, sessionId)) byId.set(taskRun.task_run_id, taskRun)
+  }
+  for (const taskRun of Object.values(taskRunsById)) {
+    if (taskRunBelongsToSession(taskRun, sessionId)) byId.set(taskRun.task_run_id, taskRun)
+  }
+  return [...byId.values()].filter((taskRun) => taskRunMatchesProfile(taskRun, profileId))
+}
+
+function buildAgentRunItems(
+  taskRuns: RawTaskRun[],
+  eventsByTaskRunId: Record<string, RawTaskEventPayload[]>,
+) {
+  return taskRuns
+    .map((taskRun) => buildAgentRunItem(taskRun, eventsByTaskRunId[taskRun.task_run_id] ?? []))
+    .sort((first, second) => second.sortTime - first.sortTime)
+    .map((item) => ({
+      id: item.id,
+      status: item.status,
+      source: item.source,
+      createdAt: item.createdAt,
+      summary: item.summary,
+      tokens: item.tokens,
+      cost: item.cost,
+      adapter: item.adapter,
+    }))
+}
+
+function buildAgentRunItem(taskRun: RawTaskRun, rawEvents: RawTaskEventPayload[]) {
+  const events = rawEvents.filter((event) => !isInternalStepAnchorEvent(event))
+  const summary = toTaskRunSummaryView(taskRun, events)
+  const inputSummary = typeof taskRun.input_summary === 'string' ? taskRun.input_summary : undefined
+  const progressSummary =
+    typeof taskRun.progress_summary === 'string' ? taskRun.progress_summary : undefined
+  const sortTime = getRunSortTime(taskRun, events)
+
+  return {
+    id: taskRun.task_run_id,
+    status: normalizeRunStatus(taskRun.status),
+    source: agentDisplayName(taskRun) ?? 'subagent',
+    createdAt: formatRunTimestamp(sortTime),
+    summary:
+      compactText(inputSummary) ??
+      compactText(progressSummary) ??
+      compactText(summary.title) ??
+      '아직 요약이 없습니다.',
+    tokens: '0 tok',
+    cost: '$0.00',
+    adapter: 'openai',
+    sortTime,
+  }
+}
+
+function taskRunBelongsToSession(taskRun: RawTaskRun, sessionId: string) {
+  const taskSessionId =
+    typeof taskRun.session_id === 'string'
+      ? taskRun.session_id
+      : typeof taskRun.session_key === 'string'
+        ? taskRun.session_key
+        : taskRun.displayContext?.sessionId
+  return taskSessionId === sessionId
+}
+
+function taskRunMatchesProfile(taskRun: RawTaskRun, profileId: string) {
+  const context = taskRun.displayContext
+  if (matchesAgentRef(context?.assigneeAgent, profileId)) return true
+  if (matchesAgentRef(context?.actorAgent, profileId)) return true
+  if (context?.delegatedAgents?.some((agent) => matchesAgentRef(agent, profileId))) return true
+  return typeof taskRun.agent_profile_id === 'string' && taskRun.agent_profile_id === profileId
+}
+
+function matchesAgentRef(agent: TaskRunAgentRef | undefined, profileId: string) {
+  return agent?.profileId === profileId || agent?.id === profileId
+}
+
+function agentDisplayName(taskRun: RawTaskRun) {
+  return (
+    taskRun.displayContext?.actorAgent.displayName ??
+    taskRun.displayContext?.assigneeAgent.displayName
+  )
+}
+
+function getRunSortTime(taskRun: RawTaskRun, events: RawTaskEventPayload[]) {
+  return Math.max(
+    getTime(taskRun.completed_at),
+    getTime(taskRun.updated_at),
+    getTime(taskRun.created_at),
+    ...events.map((event) => getTime(event.occurred_at)),
+    0,
+  )
+}
+
+function formatRunTimestamp(time: number) {
+  if (time <= 0) return undefined
+  return new Intl.DateTimeFormat('ko-KR', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(time))
+}
+
+function compactText(value?: string | null) {
+  const text = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : ''
+  if (!text) return undefined
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text
+}
+
+function normalizeRunStatus(status?: string | null) {
+  switch (status) {
+    case 'completed':
+    case 'COMPLETED':
+    case 'succeeded':
+      return 'succeeded'
+    case 'failed':
+    case 'FAILED':
+    case 'blocked':
+    case 'BLOCKED':
+    case 'CANCELLED':
+    case 'CANCELED':
+      return 'failed'
+    case 'in_review':
+    case 'IN_REVIEW':
+      return 'in_review'
+    case 'running':
+    case 'RUNNING':
+      return 'running'
+    case 'waiting':
+    case 'WAITING':
+    case 'PENDING':
+      return 'waiting'
+    default:
+      return 'pending'
+  }
+}
+
+function formatRunStatus(status?: string | null) {
+  switch (normalizeRunStatus(status)) {
+    case 'succeeded':
+      return '완료'
+    case 'running':
+      return '실행 중'
+    case 'waiting':
+      return '대기 중'
+    case 'failed':
+      return '차단/오류'
+    case 'in_review':
+      return '검토 중'
+    default:
+      return '준비 중'
+  }
 }
 
 function shallowStringRecordEqual(left: Record<string, string>, right: Record<string, string>) {

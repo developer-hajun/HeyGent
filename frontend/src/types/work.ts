@@ -16,6 +16,7 @@ export interface WorkItem {
   status: WorkStatus
   assigneeAgentId: string | null
   parentId: string | null
+  flowOrder: number | null
   source: string
   rawUserInput: string | null
   executionInstruction: string | null
@@ -61,6 +62,7 @@ export interface CreateWorkRequest {
   labelNames?: string[]
   initialComment?: string | null
   metadata?: Record<string, unknown>
+  flowOrder?: number | null
 }
 
 export interface WorkCreateResponse {
@@ -91,6 +93,37 @@ export interface WorkRun {
   updatedAt: string | null
 }
 
+export interface WorkWake {
+  wakeId: string
+  workId: string
+  rootWorkId: string | null
+  reason: string
+  status: string
+  requestedByTaskRunId: string | null
+  taskRunId: string | null
+  attempts: number
+  lastError: string | null
+  createdAt: string | null
+  updatedAt: string | null
+  claimedAt: string | null
+  nextAttemptAt: string | null
+  completedAt: string | null
+}
+
+export interface WorkRecoveryAction {
+  actionId: string
+  workId: string
+  actionType: string
+  status: string
+  reason: string
+  idempotencyKey: string
+  taskRunId: string | null
+  payload: Record<string, unknown>
+  createdAt: string | null
+  updatedAt: string | null
+  resolvedAt: string | null
+}
+
 export interface WorkLabel {
   labelId: string
   sessionId: string
@@ -105,6 +138,12 @@ export interface WorkRelation {
   targetWorkId: string
   relationType: 'blocks' | 'related'
   createdAt: string | null
+}
+
+export interface WorkFlowResponse {
+  root: WorkItem
+  items: WorkItem[]
+  relations: WorkRelation[]
 }
 
 export interface WorkContextPreview {
@@ -122,6 +161,11 @@ export interface CreateChildWorkRequest {
   assigneeAgentId?: string | null
   acceptanceCriteria?: string[]
   blockParentUntilDone?: boolean
+  flowOrder?: number | null
+}
+
+export interface UpdateWorkFlowOrderRequest {
+  workIds: string[]
 }
 
 export interface WorkDocument {

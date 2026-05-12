@@ -76,7 +76,8 @@ public class AiInternalMemoryController {
         return ApiResponse.success(userMemoryService.markUsed(
             request.getUserId(),
             memoryId,
-            request.getUsefulnessScore()
+            request.getUsefulnessScore(),
+            request.getSourceTaskRunId()
         ));
     }
 }

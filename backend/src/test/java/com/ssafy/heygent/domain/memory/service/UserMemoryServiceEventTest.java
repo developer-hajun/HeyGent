@@ -147,7 +147,19 @@ class UserMemoryServiceEventTest {
 
         assertThat(response.getUsedCount()).isEqualTo(1L);
         assertThat(response.getUsefulnessScore()).isEqualTo(0.8);
-        verify(userMemoryEventService).record(memory, MemoryEventType.USED, 0.8, Map.of());
+        verify(userMemoryEventService).record(memory, MemoryEventType.USED, 0.8, Map.of(), null, null);
+    }
+
+    @Test
+    void markUsedWithTaskRunIdIsIdempotent() {
+        UserMemory memory = memory(41L);
+        when(userMemoryRepository.findById(41L)).thenReturn(Optional.of(memory));
+        when(userMemoryEventService.existsEvent(memory, MemoryEventType.USED, "task_1")).thenReturn(true);
+
+        UserMemoryResponse response = userMemoryService.markUsed(USER_ID, 41L, 0.8, "task_1");
+
+        assertThat(response.getUsedCount()).isZero();
+        verify(userMemoryEventService).existsEvent(memory, MemoryEventType.USED, "task_1");
     }
 
     @Test

@@ -16,6 +16,7 @@ export function ActivityEventItem({
   // 과거 started/running 이벤트 아이콘이 계속 도는 것처럼 보이지 않게 고정 아이콘으로 바꾼다.
   const tone = taskRunFinished && activity.tone === 'running' ? 'completed' : activity.tone
   const detailSections = buildActivityDetailSections(activity.raw)
+  const actorName = activity.displayContext?.actorAgent?.displayName
 
   return (
     <li
@@ -41,7 +42,9 @@ export function ActivityEventItem({
               {toUserFacingTaskTitle(activity.title)}
             </span>
             <span className="text-muted-foreground mt-0.5 line-clamp-1 block text-xs leading-5 [overflow-wrap:anywhere] break-words">
-              {activity.statusText}
+              {actorName === undefined
+                ? activity.statusText
+                : `${activity.statusText} · ${actorName}`}
             </span>
           </span>
           <ChevronDown className="text-muted-foreground h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />

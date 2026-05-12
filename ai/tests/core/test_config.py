@@ -80,6 +80,15 @@ def test_cors_settings_read_environment(monkeypatch, tmp_path):
     assert settings.cors_max_age_seconds == 1200
 
 
+def test_cors_settings_default_methods_include_write_methods(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HEYGENT_CORS_ALLOWED_METHODS", raising=False)
+
+    settings = get_settings()
+
+    assert settings.cors_allowed_methods == ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+
+
 def test_agent_loop_timeout_defaults_are_tolerant(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("HEYGENT_AGENT_MODEL_REQUEST_TIMEOUT_SECONDS", raising=False)

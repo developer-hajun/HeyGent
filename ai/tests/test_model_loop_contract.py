@@ -3,7 +3,12 @@ from pathlib import Path
 from app.clients.backend_memory import BackendMemoryItem
 from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopHandler
 from app.domain.orchestration.prompts.persistent_memory_prompt import build_persistent_memory_prompt
-from app.domain.orchestration.prompts.prompt_builder import PromptBuilder, assemble_agent_loop_messages, render_single_prompt_fallback
+from app.domain.orchestration.prompts.prompt_builder import (
+    PromptBuilder,
+    assemble_agent_loop_messages,
+    build_work_context_prompt,
+    render_single_prompt_fallback,
+)
 from app.domain.orchestration.prompts.skill_prompt import SkillLoader, SkillPromptBuilder, SkillRegistry
 
 
@@ -24,14 +29,38 @@ def test_prompt_builder_includes_native_tool_call_and_termination_guidance():
     assert "이미 충분한 정보가 있으면 더 이상 도구를 부르지 말고 일반 답변으로 종료하세요." in prompt
     assert "직전에 같은 도구를 같은 인자로 실행했다면 반복하지 말고 답변 종료를 우선하세요." in prompt
     assert "사용자에게 보일 큰 작업 단계는 step 도구로 선언하고, 세부 체크리스트는 todo 도구로 갱신하세요." in prompt
-    assert "서브에이전트, 하위 에이전트로 나누어 처리하라고 명시하면 직접 처리로 대체하지 말고 delegate_task 를 호출하세요." in prompt
-    assert "관점/영역별로 독립된 delegate_task 를 호출" in prompt
-    assert "명시된 worker 대상이 아직 남아 있으면 parent 가 web_search" in prompt
-    assert "하나의 delegate_task 로 전부 합치지 말고" in prompt
+    assert "세션 에이전트 후보가 있으면 명확한 위임 단위는 직접 처리보다 가장 적합한 후보에게 session_agent_task 로 맡기는 쪽을 우선하세요." in prompt
+    assert "session_agent_task 는 작업 보드에 보이는 하위 작업과 실제 세션 에이전트 실행을 묶는 도구입니다." in prompt
+    assert "세션 에이전트 후보의 이름, 역할, 설명을 비교하세요." in prompt
+    assert "적합한 세션 에이전트가 없으면 임의로 배정하지 말고" in prompt
     assert "폴더 경로 자체를 파일명으로 바꾸지 말고 폴더 안에 의미 있는 파일명을 만들어 저장하세요." in prompt
     assert "근거/자료를 찾아 이해하는 단계와, 그 근거로 파일/문서/코드를 작성해 저장하는 단계는 서로 다른 단계입니다." in prompt
     assert "앞 단계는 completed 로 닫고 뒤 단계를 in_progress 로 전환하세요." in prompt
     assert "단계 이름은 반드시 대상/주제/산출물과 작업 행위를 함께 포함하세요." in prompt
+
+
+def test_session_agent_task_parent_disposition_is_used_as_task_work_disposition():
+    disposition = ToolCallingLoopHandler._work_disposition_from_tool_results(
+        [
+            {
+                "name": "session_agent_task",
+                "result": {
+                    "ok": True,
+                    "parentWorkDisposition": {
+                        "workId": "work-parent",
+                        "status": "in_review",
+                        "summary": "하위 작업 결과를 반영함",
+                    },
+                },
+            }
+        ]
+    )
+
+    assert disposition == {
+        "workId": "work-parent",
+        "status": "in_review",
+        "summary": "하위 작업 결과를 반영함",
+    }
 
 
 def test_prompt_builder_explains_approval_tool_call_boundary():
@@ -93,6 +122,87 @@ def test_prompt_builder_includes_work_assignment_context_before_current_prompt()
     assert "agent-researcher" in prompt
     assert "담당 작업 실행 자체를 worker delegate로 다시 위임하지 마세요." in prompt
     assert prompt.index("연결된 작업 컨텍스트") < prompt.index("결과를 파일로 저장해줘")
+
+
+def test_prompt_builder_promotes_session_agent_task_from_candidate_profiles():
+    prompt_builder = PromptBuilder(SkillPromptBuilder(SkillRegistry()))
+
+    prompt = prompt_builder.build_agent_loop_prompt(
+        input_payload={
+            "prompt": "이번 주 금요일 부산 출발 수서역 도착 SRT 오후 4시에서 6시 사이 열차 예약 가능 여부를 확인해줘.",
+            "workId": "work-ceo-1",
+            "workIdentifier": "TASK-31",
+            "workAssigneeAgentId": "CEO",
+            "workContext": {"title": "SRT 예약 가능 여부 확인"},
+            "sessionAgentProfiles": [
+                {
+                    "profileId": "agent-travel",
+                    "configSnapshot": {
+                        "name": "교통 예약 에이전트",
+                        "role": "travel",
+                        "title": "열차 예약 확인",
+                        "description": "열차 시간표와 예약 가능 여부를 확인한다.",
+                    },
+                },
+                {
+                    "profileId": "agent-report",
+                    "configSnapshot": {
+                        "name": "보고서 에이전트",
+                        "role": "writer",
+                        "description": "확인 결과를 사용자에게 전달할 문장으로 정리한다.",
+                    },
+                },
+            ],
+        },
+        available_tools=[
+            {"name": "session_agent_task", "summary": "세션 에이전트에게 하위 작업 위임", "toolset": "work"},
+            {"name": "web_search", "summary": "웹 검색", "toolset": "web"},
+        ],
+        tool_results=[],
+        task_todo_state=None,
+        resume_payload=None,
+        turn_index=1,
+        max_iterations=4,
+    )
+
+    assert "세션 에이전트 후보:" in prompt
+    assert "agent-travel: 교통 예약 에이전트 / travel / 열차 예약 확인 / 열차 시간표와 예약 가능 여부를 확인한다." in prompt
+    assert "agent-report: 보고서 에이전트 / writer / 확인 결과를 사용자에게 전달할 문장으로 정리한다." in prompt
+    assert "연결된 작업의 담당자가 CEO이고 사용자가 세션 에이전트에게 맡기라고 하거나 후보 에이전트의 전문성이 더 맞으면 session_agent_task" in prompt
+    assert "세션 에이전트 후보가 있으면 명확한 위임 단위는 직접 처리보다 가장 적합한 후보에게 session_agent_task 로 맡기는 쪽을 우선하세요." in prompt
+    assert "세션 에이전트에게 맡기기 전 세션 에이전트 후보의 이름, 역할, 설명을 비교하세요." in prompt
+    assert "관점/영역별로 독립된 delegate_task" not in prompt
+
+
+def test_work_context_prompt_does_not_infer_session_agents_from_user_text():
+    prompt = build_work_context_prompt(
+        input_payload={
+            "prompt": "서브에이전트 써서 확인해줘. 여러 명 불러도 돼.",
+        }
+    )
+
+    assert prompt == ""
+
+
+def test_work_context_prompt_can_show_explicit_session_agent_candidates_without_work():
+    prompt = build_work_context_prompt(
+        input_payload={
+            "prompt": "서브에이전트 써서 확인해줘.",
+            "sessionAgentProfiles": [
+                {
+                    "profileId": "agent-travel",
+                    "configSnapshot": {
+                        "name": "교통 예약 에이전트",
+                        "role": "travel",
+                        "description": "열차 시간표와 예매 조건을 확인한다.",
+                    },
+                }
+            ],
+        }
+    )
+
+    assert "세션 에이전트 후보:" in prompt
+    assert "agent-travel: 교통 예약 에이전트 / travel / 열차 시간표와 예매 조건을 확인한다." in prompt
 
 
 def test_persistent_memory_prompt_sanitizes_metadata():

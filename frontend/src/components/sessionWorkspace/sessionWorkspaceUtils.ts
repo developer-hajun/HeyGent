@@ -30,11 +30,11 @@ export function getCurrentWorkspaceSessionId(pathname: string) {
 export function getWorkspacePanelFromPath(pathname: string): WorkspacePanelId | null {
   const match = pathname.match(/^\/session\/[^/]+\/workspace\/([^/]+)/)
   const panelSlug = match?.[1]
-  if (panelSlug === 'goal') {
-    return 'purpose'
-  }
   if (panelSlug === 'settings' || panelSlug === 'model') {
-    return 'purpose'
+    return 'ceo'
+  }
+  if (panelSlug === 'ceo') {
+    return 'ceo'
   }
   if (panelSlug === 'sub-agents') {
     return 'subAgents'
@@ -49,8 +49,8 @@ export function getWorkspacePanelFromPath(pathname: string): WorkspacePanelId | 
 }
 
 export function getWorkspacePanelPath(sessionId: string, panelId: WorkspacePanelId) {
-  if (panelId === 'purpose') {
-    return `/session/${sessionId}/workspace/goal`
+  if (panelId === 'ceo') {
+    return `/session/${sessionId}/workspace/ceo`
   }
   if (panelId === 'subAgents') {
     return `/session/${sessionId}/workspace/sub-agents`

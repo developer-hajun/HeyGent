@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
@@ -9,10 +12,12 @@ from pydantic import BaseModel
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
 from app.api.deps.openapi_auth import document_bearer_auth
 from app.api.memory_context import attach_persistent_memory_context
+from app.api.memory_mark_used import mark_used_recalled_memories
 from app.api.memory_observation import attach_memory_observation_to_task
 from app.api.memory_writeback import writeback_persistent_memory_candidates
 from app.contracts.session import (
     ArchiveSessionRequest,
+    CreateSessionRequest,
     CreateSessionMessageRequest,
     CreateSessionMessageResponse,
     SessionListResponse,
@@ -29,13 +34,18 @@ from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
-from app.domain.work import WorkItem, WorkService
+from app.domain.work import WorkItem, WorkRunClaimConflict, WorkService
+from app.domain.work.wake import MAX_WAKE_ATTEMPTS, WorkWakeService
 
 router = APIRouter(prefix="/sessions", tags=["sessions"], dependencies=[Depends(document_bearer_auth)])
+logger = logging.getLogger(__name__)
 
 _PUBLIC_SESSION_SOURCE = "api.session"
 _TASK_TRANSCRIPT_SOURCE = "agent.loop"
 _ACTIVE_TASK_STATUSES = {status.value for status in (TaskStatus.PENDING, TaskStatus.RUNNING, TaskStatus.WAITING, TaskStatus.BLOCKED)}
+_WORK_WAKE_DEFAULT_LIMIT = 10
+_WORK_WAKE_LOOP_INTERVAL_SECONDS = 5
+_WORK_WAKE_STALE_RUN_SECONDS = 1800
 _PROTECTED_SESSION_METADATA_KEYS = {
     "owner_key",
     "ownerUserId",
@@ -86,6 +96,41 @@ async def create_message_in_new_session(
     else:
         session = _create_public_session_for_message(request, owner_key=user.user_id, payload=payload, workspace_key=user.workspace_key)
     return await _create_message_in_session(request, payload, session=session, user=user)
+
+
+@router.post(
+    "",
+    response_model=SessionResponse,
+    summary="빈 AI 대화 세션 생성",
+    description="첫 메시지 없이 세션만 먼저 만들고, 이후 에이전트나 작업 구성을 연결할 때 사용합니다.",
+)
+async def create_session(
+    request: Request,
+    payload: CreateSessionRequest,
+) -> SessionResponse:
+    user = await authenticate_http_user(request)
+    settings = _normalize_session_settings(payload.settings)
+    if payload.metadata_patch:
+        _validate_metadata_patch(payload.metadata_patch)
+
+    session = _create_public_session(
+        request,
+        owner_key=user.user_id,
+        title=payload.title or "새 AI 대화",
+        model=payload.model or settings.get("model"),
+        settings=settings,
+        workspace_key=user.workspace_key,
+    )
+    session_id = str(session["id"])
+    if payload.metadata_patch:
+        _patch_public_session_metadata(
+            request.app.state.session_store,
+            owner_key=user.user_id,
+            session_id=session_id,
+            metadata_patch=payload.metadata_patch,
+        )
+        session = _get_public_session_or_404(request, session_id)
+    return _session_response(session)
 
 
 @router.get(
@@ -290,6 +335,7 @@ async def _create_message_in_session(
     *,
     session: dict[str, Any],
     user,
+    run_in_background: bool = False,
 ) -> CreateSessionMessageResponse:
     sessionId = str(session["id"])
     owner_key = str(session.get("user_id") or user.user_id)
@@ -310,6 +356,23 @@ async def _create_message_in_session(
         model=effective_model,
     )
     task_input = dict(payload.input_payload)
+    task_input["sessionId"] = sessionId
+    task_input["ownerKey"] = owner_key
+    task_input["ownerUserId"] = _owner_user_id(owner_key)
+    _seed_default_session_agents_if_requested(
+        request.app.state,
+        task_input=task_input,
+        session_id=sessionId,
+        owner_key=owner_key,
+    )
+    session_agent_profiles = _attach_session_agent_candidates(
+        request.app.state,
+        task_input=task_input,
+        session_id=sessionId,
+        owner_key=owner_key,
+    )
+    if session_agent_profiles:
+        task_input["allowSessionAgentRootWork"] = True
     if effective_model and not task_input.get("model"):
         task_input["model"] = effective_model
     task_input["prompt"] = payload.content
@@ -362,10 +425,18 @@ async def _create_message_in_session(
     task_input["completion_expected_version"] = user_append["completion_expected_version"]
     task_input["client_message_id"] = client_message_id
     if work_id is not None:
-        WorkService(request.app.state.work_repository).mark_run_started(
-            work_id=work_id,
-            task_run_id=task_run_id,
-        )
+        try:
+            WorkService(request.app.state.work_repository).mark_run_started(
+                work_id=work_id,
+                task_run_id=task_run_id,
+            )
+        except WorkRunClaimConflict as error:
+            session_store.clear_stale_running_task(
+                owner_key=owner_key,
+                session_id=sessionId,
+                task_run_id=task_run_id,
+            )
+            raise HTTPException(status_code=409, detail="work already has an active run") from error
     await attach_persistent_memory_context(
         app_state=request.app.state,
         task_input=task_input,
@@ -374,26 +445,84 @@ async def _create_message_in_session(
         workspace_key=user.workspace_key or session.get("workspace_key"),
     )
 
+    if run_in_background:
+        asyncio.create_task(
+            _run_created_session_message_background(
+                request,
+                payload=payload,
+                session=session,
+                user=user,
+                session_id=sessionId,
+                owner_key=owner_key,
+                task_run_id=task_run_id,
+                task_input=task_input,
+                user_append=user_append,
+            )
+        )
+        messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
+        return CreateSessionMessageResponse(
+            session_id=sessionId,
+            task_run_id=task_run_id,
+            status=TaskStatus.RUNNING.value,
+            user_message=_message_response(messages_by_id[user_append["message_id"]]),
+            assistant_message=None,
+        )
+
+    task, assistant_message_id = await _run_created_session_message(
+        request,
+        payload=payload,
+        session=session,
+        user=user,
+        session_id=sessionId,
+        owner_key=owner_key,
+        task_run_id=task_run_id,
+        task_input=task_input,
+        user_append=user_append,
+    )
+    messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
+    return CreateSessionMessageResponse(
+        session_id=sessionId,
+        task_run_id=task.task_run_id,
+        status=task.status,
+        user_message=_message_response(messages_by_id[user_append["message_id"]]),
+        assistant_message=_message_response(messages_by_id[assistant_message_id]) if assistant_message_id is not None else None,
+    )
+
+
+async def _run_created_session_message(
+    request: Request,
+    *,
+    payload: CreateSessionMessageRequest,
+    session: dict[str, Any],
+    user,
+    session_id: str,
+    owner_key: str,
+    task_run_id: str,
+    task_input: dict[str, Any],
+    user_append: dict[str, Any],
+):
+    session_store = request.app.state.session_store
     try:
         task = await request.app.state.orchestrator.start(
             OrchestrationRequest(
                 task_run_id=task_run_id,
                 owner_key=owner_key,
-                session_key=sessionId,
+                session_key=session_id,
                 input_payload=task_input,
             )
         )
     except KeyError as error:
         _mark_linked_work_run_failed(request, task_input=task_input, task_run_id=task_run_id)
-        session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
+        session_store.clear_stale_running_task(owner_key=owner_key, session_id=session_id, task_run_id=task_run_id)
         raise HTTPException(status_code=404, detail=f"unknown execution route: {error.args[0]}") from error
     except ValueError as error:
         _mark_linked_work_run_failed(request, task_input=task_input, task_run_id=task_run_id)
-        session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
+        session_store.clear_stale_running_task(owner_key=owner_key, session_id=session_id, task_run_id=task_run_id)
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception:
         _mark_linked_work_run_failed(request, task_input=task_input, task_run_id=task_run_id)
-        session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task_run_id)
+        session_store.clear_stale_running_task(owner_key=owner_key, session_id=session_id, task_run_id=task_run_id)
+        logger.exception("session message orchestration failed", extra={"task_run_id": task_run_id, "session_id": session_id})
         raise
 
     _apply_linked_work_result(request, task_input=task_input, task=task)
@@ -403,7 +532,7 @@ async def _create_message_in_session(
         assistant_content = _assistant_content_from_task(task)
         assistant_append = session_store.append_assistant_message_and_finish_task(
             owner_key=owner_key,
-            session_id=sessionId,
+            session_id=session_id,
             task_run_id=task.task_run_id,
             content=assistant_content,
             completion_expected_version=task_input["completion_expected_version"],
@@ -415,27 +544,39 @@ async def _create_message_in_session(
             user_id=str(user.user_id),
             user_message=payload.content,
             assistant_message=assistant_content,
-            session_id=sessionId,
+            session_id=session_id,
             workspace_key=user.workspace_key or session.get("workspace_key"),
             task_run_id=task.task_run_id,
             user_message_id=str(user_append["message_id"]),
             assistant_message_id=str(assistant_message_id),
         )
+        mark_used_observation = await mark_used_recalled_memories(
+            app_state=request.app.state,
+            task_input=dict(task.input_payload or {}),
+            user_id=str(user.user_id),
+            assistant_message=assistant_content,
+            task_run_id=task.task_run_id,
+        )
         attach_memory_observation_to_task(
             task=task,
             repository=request.app.state.repository,
             writeback=writeback_observation,
+            mark_used=mark_used_observation,
         )
     elif task.status != "WAITING":
-        session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task.task_run_id)
-    messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
-    return CreateSessionMessageResponse(
-        session_id=sessionId,
-        task_run_id=task.task_run_id,
-        status=task.status,
-        user_message=_message_response(messages_by_id[user_append["message_id"]]),
-        assistant_message=_message_response(messages_by_id[assistant_message_id]) if assistant_message_id is not None else None,
-    )
+        session_store.clear_stale_running_task(owner_key=owner_key, session_id=session_id, task_run_id=task.task_run_id)
+    if task.status != "WAITING":
+        await _drain_work_wake_queue(request, user=user)
+    return task, assistant_message_id
+
+
+async def _run_created_session_message_background(request: Request, **kwargs: Any) -> None:
+    try:
+        await _run_created_session_message(request, **kwargs)
+    except Exception:
+        task_run_id = str(kwargs.get("task_run_id") or "")
+        session_id = str(kwargs.get("session_id") or "")
+        logger.exception("background session message orchestration failed", extra={"task_run_id": task_run_id, "session_id": session_id})
 
 
 @router.get(
@@ -540,13 +681,49 @@ def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work
     task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
     profile_id = str(profile.get("profile_id") or assignee_agent_id)
     if not assignee_agent_id or assignee_agent_id == "CEO":
-        task_input["sessionAgentProfiles"] = [
-            _agent_profile_prompt_payload(item)
-            for item in agent_repository.list_session_agents(session_id=work.session_id, owner_key=str(work.owner_key))
-        ]
+        _attach_session_agent_candidates(state, task_input=task_input, session_id=work.session_id, owner_key=str(work.owner_key))
     bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
     if bundle is not None:
         task_input["targetAgentInstructions"] = _instruction_bundle_prompt_payload(bundle)
+
+
+def _seed_default_session_agents_if_requested(
+    state: Any,
+    *,
+    task_input: dict[str, Any],
+    session_id: str,
+    owner_key: str,
+) -> None:
+    snapshot = task_input.get("sessionConfigSnapshot") or task_input.get("session_config_snapshot")
+    if not isinstance(snapshot, dict) or snapshot.get("seedDefaultAgents") is not True:
+        return
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return
+    agent_repository.create_default_session_agents(
+        session_id=session_id,
+        owner_key=str(owner_key),
+        owner_user_id=_owner_user_id(owner_key),
+    )
+
+
+def _attach_session_agent_candidates(
+    state: Any,
+    *,
+    task_input: dict[str, Any],
+    session_id: str,
+    owner_key: str,
+) -> list[dict[str, Any]]:
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return []
+    profiles = [
+        _agent_profile_prompt_payload(item)
+        for item in agent_repository.list_session_agents(session_id=session_id, owner_key=str(owner_key))
+    ]
+    if profiles:
+        task_input["sessionAgentProfiles"] = profiles
+    return profiles
 
 
 def _agent_profile_prompt_payload(profile: dict[str, Any]) -> dict[str, Any]:
@@ -592,10 +769,8 @@ def _apply_work_execution_defaults(task_input: dict[str, Any], *, settings: Any)
 
 
 def _apply_linked_work_result(request: Request, *, task_input: dict[str, Any], task) -> None:
-    work_id = _work_id_from_task_input(task_input)
-    if work_id is None:
-        return
-    WorkService(request.app.state.work_repository).apply_task_result(work_id=work_id, task=task)
+    task.input_payload = {**dict(getattr(task, "input_payload", {}) or {}), **task_input}
+    WorkService(request.app.state.work_repository).apply_linked_task_result(task=task)
 
 
 def _mark_linked_work_run_failed(request: Request, *, task_input: dict[str, Any], task_run_id: str) -> None:
@@ -608,11 +783,175 @@ def _mark_linked_work_run_failed(request: Request, *, task_input: dict[str, Any]
         return
 
 
-def _create_public_session_for_message(
+async def enqueue_work_graph_wake(
+    request: Request,
+    *,
+    user,
+    work: WorkItem,
+    reason: str,
+    drain: bool = True,
+) -> list:
+    wakes = WorkWakeService(request.app.state.work_repository).enqueue_plan(root_work_id=work.work_id, reason=reason)
+    if drain:
+        dispatched = await _drain_work_wake_queue(request, user=user)
+        return dispatched or wakes
+    return wakes
+
+
+async def enqueue_unblocked_target_wakes(
+    request: Request,
+    *,
+    user,
+    work: WorkItem,
+    drain: bool = True,
+) -> list:
+    wakes = WorkWakeService(request.app.state.work_repository).enqueue_after_blocker_update(
+        blocker_work_id=work.work_id,
+        requested_by_task_run_id=None,
+    )
+    if drain:
+        dispatched = await _drain_work_wake_queue(request, user=user)
+        return dispatched or wakes
+    return wakes
+
+
+async def enqueue_parent_wakes_after_child_terminal(
+    request: Request,
+    *,
+    user,
+    work: WorkItem,
+    drain: bool = True,
+) -> list:
+    wakes = WorkWakeService(request.app.state.work_repository).enqueue_after_child_terminal_update(
+        child_work_id=work.work_id,
+        requested_by_task_run_id=None,
+    )
+    if drain:
+        dispatched = await _drain_work_wake_queue(request, user=user)
+        return dispatched or wakes
+    return wakes
+
+
+async def run_work_wake_loop(app) -> None:
+    while True:
+        try:
+            request = SimpleNamespace(app=app)
+            await _recover_stale_work_runs(request)
+            await _drain_work_wake_queue(request, user=None)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("work wake loop failed")
+        await asyncio.sleep(_WORK_WAKE_LOOP_INTERVAL_SECONDS)
+
+
+async def _recover_stale_work_runs(request: Request) -> None:
+    repository = request.app.state.work_repository
+    service = WorkWakeService(repository)
+    release_stale = getattr(repository, "release_stale_active_work_runs", None)
+    if callable(release_stale):
+        for work in release_stale(stale_after_seconds=_WORK_WAKE_STALE_RUN_SECONDS, limit=50):
+            service.enqueue_recovered_work(
+                work=work,
+                reason="active_run_recovered",
+                action_type="active_run_recovered",
+                idempotency_key=f"active_run_recovered:{work.work_id}:{work.latest_run_id or 'unknown'}",
+                task_run_id=work.latest_run_id,
+                payload={"staleAfterSeconds": _WORK_WAKE_STALE_RUN_SECONDS},
+            )
+    service.recover_stranded_assigned_work(limit=50)
+
+
+async def _drain_work_wake_queue(request: Request, *, user, limit: int = _WORK_WAKE_DEFAULT_LIMIT) -> list:
+    repository = request.app.state.work_repository
+    claim_wakes = getattr(repository, "claim_work_wakes", None)
+    if not callable(claim_wakes):
+        return []
+    wakes = claim_wakes(limit=limit)
+    completed = []
+    for wake in wakes:
+        completed.append(await _dispatch_work_wake(request, user=user, wake=wake))
+    return completed
+
+
+async def _dispatch_work_wake(request: Request, *, user, wake):
+    repository = request.app.state.work_repository
+    service = WorkWakeService(repository)
+    work = repository.get_work(wake.work_id)
+    if work is None:
+        return repository.complete_work_wake(wake.wake_id, status="skipped", last_error="work not found")
+    if work.active_run_id:
+        if int(getattr(wake, "attempts", 0) or 0) < MAX_WAKE_ATTEMPTS:
+            return repository.complete_work_wake(
+                wake.wake_id,
+                status="scheduled_retry",
+                last_error="work already has an active run",
+                retry_delay_seconds=30,
+            )
+        return repository.complete_work_wake(wake.wake_id, status="skipped", last_error="work already has an active run")
+    if work.status not in {"todo", "in_progress", "in_review", "blocked"}:
+        return repository.complete_work_wake(wake.wake_id, status="skipped", last_error=f"work status is {work.status}")
+    unresolved = service.unresolved_blocker_work_ids(work.work_id)
+    if unresolved:
+        return repository.complete_work_wake(wake.wake_id, status="skipped", last_error=f"unresolved blockers: {', '.join(unresolved)}")
+    session = request.app.state.session_store.get_session(work.session_id)
+    if session is None:
+        return repository.complete_work_wake(wake.wake_id, status="failed", last_error="session not found")
+    effective_user = user if user is not None and str(getattr(user, "user_id", "")) == str(work.owner_key) else _user_for_work_wake(work, session)
+    try:
+        message = await _create_message_in_session(
+            request,
+            CreateSessionMessageRequest(
+                content=_wake_message_for_work(work, wake.reason),
+                clientMessageId=f"work-wake:{wake.wake_id}",
+                inputPayload={"workId": work.work_id},
+            ),
+            session=session,
+            user=effective_user,
+            run_in_background=True,
+        )
+    except Exception as error:
+        if int(getattr(wake, "attempts", 0) or 0) < MAX_WAKE_ATTEMPTS:
+            work_for_action = repository.get_work(wake.work_id)
+            if work_for_action is not None:
+                service.record_recovery_action(
+                    work=work_for_action,
+                    action_type="wake_retry",
+                    reason="wake_retry",
+                    idempotency_key=f"wake_retry:{wake.wake_id}:{getattr(wake, 'attempts', 0)}",
+                    payload={"wakeId": wake.wake_id, "error": str(error)},
+                )
+            return repository.complete_work_wake(wake.wake_id, status="scheduled_retry", last_error=str(error), retry_delay_seconds=30)
+        return repository.complete_work_wake(wake.wake_id, status="failed", last_error=str(error))
+    # wake는 실행 요청을 만든 뒤 끝난다. 실제 완료/실패 판정은 연결된 WorkRun이 담당한다.
+    return repository.complete_work_wake(wake.wake_id, status="dispatched", task_run_id=message.task_run_id)
+
+
+def _user_for_work_wake(work: WorkItem, session: dict[str, Any]):
+    return SimpleNamespace(user_id=work.owner_key, workspace_key=session.get("workspace_key"))
+
+
+def _wake_message_for_work(work: WorkItem, reason: str) -> str:
+    if reason == "blockers_resolved":
+        return "선행 작업이 완료되었습니다. 이 작업을 이어서 진행해."
+    if reason == "children_completed":
+        return "하위 작업이 모두 종료되었습니다. 부모 작업을 이어서 진행해."
+    if reason == "issue_commented":
+        return "새 댓글을 반영해서 이 작업을 이어서 진행해."
+    if reason == "issue_reopened_via_comment":
+        return "새 댓글로 작업이 다시 열렸습니다. 댓글 내용을 반영해서 이어서 진행해."
+    if reason == "active_run_recovered":
+        return "이전 실행이 중단되었습니다. 진행 가능한 지점부터 이 작업을 복구해서 이어서 진행해."
+    return "이 작업을 이어서 진행해."
+
+
+def _create_public_session(
     request: Request,
     *,
     owner_key: str,
-    payload: CreateSessionMessageRequest,
+    title: str,
+    model: str | None,
+    settings: dict[str, Any] | None = None,
     workspace_key: str | None = None,
 ) -> dict[str, Any]:
     session_store = request.app.state.session_store
@@ -633,14 +972,31 @@ def _create_public_session_for_message(
         session_key=session_id,
         source=_PUBLIC_SESSION_SOURCE,
         user_id=owner_key,
-        model=payload.model,
-        title=_derive_session_title(payload.content),
+        model=model,
+        title=title,
         metadata=metadata,
+        settings=settings or {},
     )
     session = session_store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=500, detail="session was not created")
     return session
+
+
+def _create_public_session_for_message(
+    request: Request,
+    *,
+    owner_key: str,
+    payload: CreateSessionMessageRequest,
+    workspace_key: str | None = None,
+) -> dict[str, Any]:
+    return _create_public_session(
+        request,
+        owner_key=owner_key,
+        title=_derive_session_title(payload.content),
+        model=payload.model,
+        workspace_key=workspace_key,
+    )
 
 
 def _derive_session_title(content: str) -> str:

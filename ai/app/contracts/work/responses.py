@@ -17,6 +17,7 @@ class WorkItemResponse(BaseModel):
     status: str
     assignee_agent_id: str | None = Field(default=None, alias="assigneeAgentId")
     parent_id: str | None = Field(default=None, alias="parentId")
+    flow_order: int | None = Field(default=None, alias="flowOrder")
     source: str
     raw_user_input: str | None = Field(default=None, alias="rawUserInput")
     execution_instruction: str | None = Field(default=None, alias="executionInstruction")
@@ -91,6 +92,14 @@ class WorkRelationsResponse(BaseModel):
     total_count: int = Field(alias="totalCount")
 
 
+class WorkFlowResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    root: WorkItemResponse
+    items: list[WorkItemResponse] = Field(default_factory=list)
+    relations: list[WorkRelationResponse] = Field(default_factory=list)
+
+
 class WorkCommentResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -128,6 +137,55 @@ class WorkRunsResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     items: list[WorkRunResponse] = Field(default_factory=list)
+    total_count: int = Field(alias="totalCount")
+
+
+class WorkWakeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    wake_id: str = Field(alias="wakeId")
+    work_id: str = Field(alias="workId")
+    root_work_id: str | None = Field(default=None, alias="rootWorkId")
+    reason: str
+    status: str
+    requested_by_task_run_id: str | None = Field(default=None, alias="requestedByTaskRunId")
+    task_run_id: str | None = Field(default=None, alias="taskRunId")
+    attempts: int
+    last_error: str | None = Field(default=None, alias="lastError")
+    created_at: datetime | None = Field(default=None, alias="createdAt")
+    updated_at: datetime | None = Field(default=None, alias="updatedAt")
+    claimed_at: datetime | None = Field(default=None, alias="claimedAt")
+    next_attempt_at: datetime | None = Field(default=None, alias="nextAttemptAt")
+    completed_at: datetime | None = Field(default=None, alias="completedAt")
+
+
+class WorkWakesResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[WorkWakeResponse] = Field(default_factory=list)
+    total_count: int = Field(alias="totalCount")
+
+
+class WorkRecoveryActionResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    action_id: str = Field(alias="actionId")
+    work_id: str = Field(alias="workId")
+    action_type: str = Field(alias="actionType")
+    status: str
+    reason: str
+    idempotency_key: str = Field(alias="idempotencyKey")
+    task_run_id: str | None = Field(default=None, alias="taskRunId")
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = Field(default=None, alias="createdAt")
+    updated_at: datetime | None = Field(default=None, alias="updatedAt")
+    resolved_at: datetime | None = Field(default=None, alias="resolvedAt")
+
+
+class WorkRecoveryActionsResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[WorkRecoveryActionResponse] = Field(default_factory=list)
     total_count: int = Field(alias="totalCount")
 
 

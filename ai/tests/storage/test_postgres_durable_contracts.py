@@ -7,12 +7,15 @@ from app.domain.tasks.repository import (
     TaskRunRepository,
 )
 from app.domain.tasks.models import TaskRun
+from app.contracts.event.task_events import TaskEventEnvelope
 from app.storage.queries.approval_queries import CREATE_APPROVAL_REQUESTS
 from app.storage.queries.task_queries import CREATE_TASK_RUNS
 from app.storage.postgres.schema import POSTGRES_SCHEMA_STATEMENTS, render_postgres_schema
 from app.storage.postgres.connection import apply_configured_postgres_migrations
 from app.storage.postgres.durable_repository import PostgresDurableRepository, PostgresTaskRepository
 from app.storage.postgres.migrations import POSTGRES_MIGRATIONS, apply_postgres_migrations
+from app.contracts.work.responses import WorkItemResponse
+from app.domain.work.models import WorkItem
 from tests.fakes import InMemoryTaskRepository
 from app.storage.postgres.session_store import PostgresSessionStore, _owner_filter_params, _owner_filter_sql
 
@@ -65,6 +68,8 @@ def test_postgres_schema_contains_required_durable_tables():
         "work_comments",
         "work_relations",
         "work_runs",
+        "work_wake_requests",
+        "work_recovery_actions",
         "work_read_states",
     }
 
@@ -167,6 +172,57 @@ def test_postgres_work_schema_contains_board_execution_fields():
         "CREATE INDEX IF NOT EXISTS idx_work_items_session_status_updated",
     ]:
         assert expected in schema_sql
+
+
+def test_postgres_work_schema_contains_flow_order_contract():
+    schema_sql = render_postgres_schema()
+    migration_sql = "\n".join(statement for migration in POSTGRES_MIGRATIONS for statement in migration.statements)
+
+    assert "flow_order INTEGER" in schema_sql
+    assert "CREATE INDEX IF NOT EXISTS idx_work_items_parent_flow_order" in schema_sql
+    assert "0011_work_flow_order" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "ADD COLUMN IF NOT EXISTS flow_order INTEGER" in migration_sql
+    assert "idx_work_items_parent_flow_order" in migration_sql
+
+
+def test_postgres_work_schema_contains_wake_recovery_contract():
+    schema_sql = render_postgres_schema()
+    migration_sql = "\n".join(statement for migration in POSTGRES_MIGRATIONS for statement in migration.statements)
+
+    for expected in [
+        "CREATE TABLE IF NOT EXISTS work_wake_requests",
+        "scheduled_retry",
+        "next_attempt_at TIMESTAMPTZ",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_work_wake_requests_work_active",
+        "CREATE TABLE IF NOT EXISTS work_recovery_actions",
+        "idempotency_key TEXT NOT NULL UNIQUE",
+        "payload JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "CREATE INDEX IF NOT EXISTS idx_work_recovery_actions_work_created",
+    ]:
+        assert expected in schema_sql
+
+    assert "0013_work_recovery_actions" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "DROP CONSTRAINT IF EXISTS work_wake_requests_status_check" in migration_sql
+
+
+def test_work_item_response_exposes_flow_order_for_diagram_layout():
+    response = WorkItemResponse.model_validate(
+        WorkItem(
+            work_id="work-flow-child",
+            identifier="TASK-2",
+            session_id="session-flow",
+            owner_key="user-flow",
+            owner_user_id=7,
+            title="시장 분석",
+            description=None,
+            status="todo",
+            parent_id="work-flow-root",
+            flow_order=2,
+        ),
+        from_attributes=True,
+    )
+
+    assert response.model_dump(by_alias=True)["flowOrder"] == 2
 
 
 def test_sqlite_task_and_approval_contracts_keep_owner_user_columns():
@@ -395,6 +451,8 @@ class _FakeDurableConnection:
                 session_key,
                 current_step_run_id,
                 durable_status,
+                agent_profile_id,
+                agent_profile_version,
                 agent_config_snapshot,
                 anchor_payload,
             ) = params
@@ -406,6 +464,8 @@ class _FakeDurableConnection:
                 "session_key": session_key,
                 "current_step_run_id": current_step_run_id,
                 "durable_status": durable_status,
+                "agent_profile_id": agent_profile_id,
+                "agent_profile_version": agent_profile_version,
                 "agent_config_snapshot": agent_config_snapshot,
                 "anchor_payload": anchor_payload,
             }
@@ -447,6 +507,8 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
             "session_key": "session_pg",
             "current_step_run_id": "step_pg_anchor",
             "durable_status": "WAITING",
+            "agent_profile_id": "agent_profile_pg",
+            "agent_profile_version": 3,
             "agent_config_snapshot": {"model": "gpt-session", "enabled_toolsets": ["session"]},
             "anchor_payload": {"reason": "approval"},
         },
@@ -463,11 +525,47 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
     )
 
     assert run_anchor["owner_key"] == "user_pg"
+    assert run_anchor["agent_profile_id"] == "agent_profile_pg"
+    assert run_anchor["agent_profile_version"] == 3
     assert run_anchor["agent_config_snapshot"] == {"model": "gpt-session", "enabled_toolsets": ["session"]}
     assert run_anchor["anchor_payload"] == {"reason": "approval"}
     assert step_anchor["step_order"] == 3
     assert step_anchor["anchor_payload"] == {"tool": "terminal.run"}
     assert connection.commits == 2
+
+
+def test_postgres_durable_repository_preserves_agent_profile_columns_when_appending_events():
+    connection = _FakeDurableConnection()
+    repository = PostgresTaskRepository(lambda: connection)
+
+    repository.upsert_run_anchor(
+        "task_pg_agent_anchor",
+        {
+            "owner_key": "user_pg",
+            "session_key": "session_pg",
+            "agent_profile_id": "agent_profile_pg",
+            "agent_profile_version": 2,
+            "agent_config_snapshot": {"model": "gpt-session"},
+            "anchor_payload": {"task": {"task_run_id": "task_pg_agent_anchor"}},
+        },
+    )
+
+    repository.append_event(
+        TaskEventEnvelope(
+            event_id="event-1",
+            event_type="task.started",
+            task_run_id="task_pg_agent_anchor",
+            producer="test",
+            occurred_at="2026-05-11T00:00:00+00:00",
+            status="RUNNING",
+        )
+    )
+
+    anchor = repository.get_run_anchor("task_pg_agent_anchor")
+    assert anchor is not None
+    assert anchor["agent_profile_id"] == "agent_profile_pg"
+    assert anchor["agent_profile_version"] == 2
+    assert anchor["agent_config_snapshot"] == {"model": "gpt-session"}
 
 
 def test_postgres_task_repository_copies_task_settings_to_run_anchor_config_snapshot():
@@ -484,12 +582,15 @@ def test_postgres_task_repository_copies_task_settings_to_run_anchor_config_snap
                 "settings_snapshot": {"model": "gpt-session", "systemPrompt": "세션 프롬프트"},
                 "enabled_toolsets": ["session", "planning"],
                 "delegation_policy": {"canDelegate": False},
+                "targetAgentProfile": {"profileId": "agent_profile_42", "profileVersion": 2},
             },
         )
     )
 
     anchor = repository.get_run_anchor("task_pg_settings_anchor")
     assert anchor is not None
+    assert anchor["agent_profile_id"] == "agent_profile_42"
+    assert anchor["agent_profile_version"] == 2
     assert anchor["agent_config_snapshot"] == {
         "model": "gpt-session",
         "systemPrompt": "세션 프롬프트",
