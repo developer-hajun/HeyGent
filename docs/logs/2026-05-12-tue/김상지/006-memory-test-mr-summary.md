@@ -10,7 +10,7 @@
 
 ## 대상 브랜치
 
-- source: `AI-refactor/memory-test`
+- source: `AI-rafactor/memory-develop`
 - target: `develop` 또는 팀 기준 통합 브랜치
 
 ## MR 제목 제안
@@ -66,6 +66,7 @@ c100b51 BE-fix : 장기기억 다중 supersede target 처리
 8ff1f5c AI-fix : LLM reconciliation 다중 target 전달
 7ea1e77 AI-fix : 장기기억 recall multi-plan 분류 보강
 db1ff3f AI-fix : instruction 절차 적용과 mark_used 보정
+b8b02ae AI-fix : fact recall 재조회와 procedure 적용 보강
 ```
 
 ## 검증
@@ -83,6 +84,13 @@ cd ai
 ```
 
 결과: 44 passed
+
+```bash
+cd ai
+.\.venv\Scripts\python.exe -m pytest tests\api\test_memory_context.py tests\test_model_loop_contract.py tests\api\test_memory_mark_used.py
+```
+
+결과: 47 passed
 
 ```bash
 cd backend
@@ -105,6 +113,8 @@ npm run build
 - 새 채팅방에서 "오늘 점심 뭐 먹을까?" 입력 시 `Recall.status=injected`와 `persistent_memory_context` 주입 여부를 확인한다.
 - 충돌 선호가 여러 개 있을 때 신규 선호 writeback payload에 `additionalTargetMemoryIds`가 포함되고, backend에서 기존 row들이 `INACTIVE` 처리되는지 확인한다.
 - "여행 계획 짜줘" 같은 절차 적용 요청에서 `planner.additional_plans`에 `AGENT_MEMORY / INSTRUCTION`이 포함되고, 저장된 절차 memory id가 prompt에 주입되는지 확인한다.
+- 여행 절차가 `PROCEDURE`로 저장된 경우에도 `instruction,procedure` 범위로 함께 recall되는지 확인한다.
+- 건강검진 이후 기름진 음식 제한 같은 `AGENT_MEMORY / FACT / event` memory가 추천 질문에서 query 없는 filter-only retry로 회수되는지 확인한다.
 - 절차 memory가 먼저 확인할 조건을 요구할 때 assistant가 바로 상세 계획을 만들지 않고 날짜/예산 같은 필수 조건을 먼저 묻는지 확인한다.
 - 절차를 실제로 따르지 않은 답변에서는 `mark_used.usedMemoryIds`에 해당 instruction memory가 들어가지 않는지 확인한다.
 
@@ -114,3 +124,4 @@ npm run build
 - LLM이 `additionalTargetMemoryIds`를 충분히 반환하려면 reconciliation recall 후보 목록에 오래된 충돌 memory가 포함되어야 한다.
 - 운영 반영 후 AI/backend/frontend 재시작이 필요하다.
 - LLM planner timeout이 반복되면 planner timeout, prompt 길이, 모델 응답 지연을 추가 점검해야 한다.
+- 추천 질문에서 제약 fact memory가 회수돼도, 최종 생성 모델이 해당 제약을 실제 답변에 반영하는지는 별도 채팅 검증이 계속 필요하다.
