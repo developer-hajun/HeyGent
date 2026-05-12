@@ -22,11 +22,10 @@ interface SessionSettingsFormProps {
   onOpenChange: (open: boolean) => void
 }
 
-type ModelFamily = 'gpt' | 'claude' | 'other'
+type ModelFamily = 'gpt' | 'other'
 
 const MODEL_FAMILIES: Array<{ id: ModelFamily; label: string }> = [
   { id: 'gpt', label: 'GPT' },
-  { id: 'claude', label: 'Claude' },
   { id: 'other', label: '기타' },
 ]
 
@@ -431,9 +430,6 @@ function groupModels(models: AiModelOption[]) {
     gpt: models.filter(
       (model) => inferModelFamily(model.id, model.label, model.provider) === 'gpt',
     ),
-    claude: models.filter(
-      (model) => inferModelFamily(model.id, model.label, model.provider) === 'claude',
-    ),
     other: models.filter(
       (model) => inferModelFamily(model.id, model.label, model.provider) === 'other',
     ),
@@ -449,9 +445,6 @@ function getModelFamilies(modelGroups: Record<ModelFamily, AiModelOption[]>) {
 
 function inferModelFamily(...values: Array<string | null | undefined>): ModelFamily {
   const text = values.filter(Boolean).join(' ').toLowerCase()
-  if (text.includes('claude') || text.includes('anthropic')) {
-    return 'claude'
-  }
   if (text.includes('gpt') || text.includes('openai')) {
     return 'gpt'
   }

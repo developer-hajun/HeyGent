@@ -31,6 +31,8 @@ import {
   type AgentRunUsageSummary,
   buildAgentRunUsageMap,
   buildAgentUsageSummaryItems,
+  buildUsageSummaryFromRecords,
+  filterUsageRecordsByTaskRunIds,
   formatAgentRunCostUsage,
   formatAgentRunTokenUsage,
 } from '@/components/sessionWorkspace/agentUsageDisplay'
@@ -38,18 +40,14 @@ import { WorkBoardPanel } from '@/components/sessionWorkspace/work/board'
 import { SubAgentsPanel } from '@/components/sessionWorkspace/subAgents'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
-import {
-  getCommandUsage,
-  type CommandUsageRecord,
-  type CommandUsageSummary,
-} from '@/apis/aiCommandUsage'
-import { getSessionMainAgent, saveAgentInstructionDocument, type AgentProfile } from '@/apis/agents'
+import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
+import { getSessionMainAgent, updateSessionAgent, type AgentProfile } from '@/apis/agents'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import type { JsonObject, RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
 import type { AiSessionSettingsPatch, ChatMessageView, RawAiSession } from '@/types/aiChat'
-import type { RawTaskRun } from '@/types/taskRuns'
+import type { RawTaskRun, TaskRunAgentRef } from '@/types/taskRuns'
 import { isInternalStepAnchorEvent, toTaskRunSummaryView } from '@/utils/taskRunStatusView'
 import {
   getModelFamilies,
@@ -163,11 +161,13 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const currentInstructionsMode =
     getString(uiMetadata, 'instructionsMode') === 'external' ? 'external' : 'managed'
   const currentInstructionsRootPath = getString(uiMetadata, 'instructionsRootPath') ?? ''
-  const currentModel = getString(settings, 'model') ?? ''
+  const currentModel = getString(mainAgentConfig, 'model') ?? getString(settings, 'model') ?? ''
   const currentDelegationPolicy = toJsonObject(settings.delegationPolicy)
   const currentCanDelegate = currentDelegationPolicy.canDelegate === true
   const currentProfileImage = normalizeAgentProfileImage(
-    getString(uiMetadata, 'agentProfileImage') ?? undefined,
+    getString(uiMetadata, 'agentProfileImage') ??
+      getString(mainAgentConfig, 'profileImage') ??
+      undefined,
   )
   const [agentName, setAgentName] = useState(currentAgentName)
   const [callName, setCallName] = useState(currentCallName)
@@ -191,7 +191,6 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
-  const [usageSummary, setUsageSummary] = useState<CommandUsageSummary | null>(null)
   const [usageRecords, setUsageRecords] = useState<CommandUsageRecord[]>([])
   const [usageError, setUsageError] = useState<string | null>(null)
 
@@ -232,9 +231,20 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     () => buildSessionRunItems(session, messages, taskRunsById, eventsByTaskRunId, usageRecords),
     [eventsByTaskRunId, messages, session, taskRunsById, usageRecords],
   )
+  const mainAgentTaskRunIds = useMemo(
+    () => buildMainAgentTaskRunIds(session, messages, taskRunsById, mainAgentProfile?.profileId),
+    [mainAgentProfile?.profileId, messages, session, taskRunsById],
+  )
+  const mainAgentUsageSummary = useMemo(
+    () =>
+      buildUsageSummaryFromRecords(
+        filterUsageRecordsByTaskRunIds(usageRecords, mainAgentTaskRunIds),
+      ),
+    [mainAgentTaskRunIds, usageRecords],
+  )
   const usageItems = useMemo(
-    () => buildAgentUsageSummaryItems(usageSummary, false, usageError),
-    [usageError, usageSummary],
+    () => buildAgentUsageSummaryItems(mainAgentUsageSummary, false, usageError),
+    [mainAgentUsageSummary, usageError],
   )
 
   useEffect(() => {
@@ -275,6 +285,10 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
         setPersona(files[entryDocumentKey] ?? '')
         setInstructionsMode('managed')
         setInstructionsRootPath('')
+        const profileModel = getString(config, 'model') ?? ''
+        setSelectedModel(profileModel)
+        setModelBaseline(profileModel)
+        setSelectedFamily(inferModelFamily(profileModel))
         setProfileImage(normalizeAgentProfileImage(getString(config, 'profileImage') ?? undefined))
       })
       .catch(() => {
@@ -296,7 +310,6 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
       .then((result) => {
         if (!active) return
         setUsageError(null)
-        setUsageSummary(result.summary)
         setUsageRecords(result.records)
       })
       .catch(() => {
@@ -412,7 +425,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     if (mainAgentProfile === null && nextPersona !== currentPersona) {
       settingsPatch.systemPrompt = nextPersona
     }
-    if (selectedModel !== '' && selectedModel !== modelBaseline) {
+    if (mainAgentProfile === null && selectedModel !== '' && selectedModel !== modelBaseline) {
       settingsPatch.model = selectedModel
     }
     if (canDelegate !== currentCanDelegate) {
@@ -430,22 +443,27 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
       if (Object.keys(settingsPatch).length > 0) {
         await updateSessionSettings({ sessionId, settingsPatch })
       }
-      if (
-        mainAgentProfile !== null &&
-        (persona.trim() !== currentPersona ||
-          !shallowStringRecordEqual(instructionsFiles, currentInstructionsFiles))
-      ) {
+      if (mainAgentProfile !== null) {
         const documentKey = instructionsEntryFile.trim() || 'AGENTS.md'
-        await saveAgentInstructionDocument(mainAgentProfile.profileId, {
-          documentKey,
-          displayName: instructionDisplayName(documentKey),
-          content:
-            documentKey === instructionsEntryFile.trim()
-              ? persona.trim()
-              : (instructionsFiles[documentKey] ?? ''),
+        const nextInstructionsFiles = {
+          ...instructionsFiles,
+          [documentKey]: persona.trim(),
+        }
+        const profile = await updateSessionAgent(sessionId, mainAgentProfile.profileId, {
+          name: agentName.trim() || 'CEO',
+          role: 'ceo',
+          title: callName.trim() || 'CEO',
+          description: capabilities.trim(),
+          adapterType: 'openai',
+          model: selectedModel,
+          profileImage,
+          skills: selectedSkillIds,
+          entryDocumentKey: documentKey,
+          instructionsFiles: nextInstructionsFiles,
         })
+        setMainAgentProfile(profile)
       }
-      if (settingsPatch.model !== undefined) {
+      if (settingsPatch.model !== undefined || mainAgentProfile !== null) {
         setModelBaseline(selectedModel)
       }
       setAgentName(agentName.trim())
@@ -761,6 +779,52 @@ function buildSessionRunItems(
   ]
 }
 
+function buildMainAgentTaskRunIds(
+  session: RawAiSession,
+  messages: ChatMessageView[],
+  taskRunsById: Record<string, RawTaskRun>,
+  mainProfileId?: string,
+) {
+  const ids = new Set<string>()
+  for (const taskRun of Object.values(taskRunsById)) {
+    if (
+      taskRun.session_id === session.session_id &&
+      taskRunMatchesMainAgent(taskRun, mainProfileId)
+    ) {
+      ids.add(taskRun.task_run_id)
+    }
+  }
+  for (const message of messages) {
+    if (!message.taskRunId) continue
+    const taskRun = taskRunsById[message.taskRunId]
+    if (taskRun === undefined || taskRunMatchesMainAgent(taskRun, mainProfileId)) {
+      ids.add(message.taskRunId)
+    }
+  }
+  if (ids.size === 0 && typeof session.active_task_run_id === 'string') {
+    ids.add(session.active_task_run_id)
+  }
+  return [...ids]
+}
+
+function taskRunMatchesMainAgent(taskRun: RawTaskRun, mainProfileId?: string) {
+  const context = taskRun.displayContext
+  if (mainProfileId) {
+    if (matchesMainAgentRef(context?.assigneeAgent, mainProfileId)) return true
+    if (matchesMainAgentRef(context?.actorAgent, mainProfileId)) return true
+    if (taskRun.agent_profile_id === mainProfileId) return true
+  }
+  const agentType = String(
+    context?.assigneeAgent?.kind ?? context?.actorAgent?.kind ?? '',
+  ).toLowerCase()
+  if (agentType === 'main') return true
+  return context === undefined || context === null
+}
+
+function matchesMainAgentRef(agent: TaskRunAgentRef | undefined, mainProfileId: string) {
+  return agent?.profileId === mainProfileId || agent?.id === mainProfileId || agent?.kind === 'main'
+}
+
 function buildSessionRunItem(
   taskRunId: string,
   session: RawAiSession,
@@ -914,13 +978,6 @@ function getInstructionFilesFromDocuments(value: unknown): Record<string, string
       return key ? [[key, content] as const] : []
     }),
   )
-}
-
-function instructionDisplayName(documentKey: string) {
-  if (documentKey === 'AGENTS.md') return '기본 지침'
-  if (documentKey === 'SOUL.md') return '역할 성향 지침'
-  if (documentKey === 'TOOLS.md') return '도구 사용 지침'
-  return documentKey
 }
 
 function shallowStringRecordEqual(left: Record<string, string>, right: Record<string, string>) {

@@ -14,6 +14,8 @@ import {
 import {
   buildAgentRunUsageMap,
   buildAgentUsageSummaryItems,
+  buildUsageSummaryFromRecords,
+  filterUsageRecordsByTaskRunIds,
   formatAgentRunCostUsage,
   formatAgentRunTokenUsage,
 } from '@/components/sessionWorkspace/agentUsageDisplay'
@@ -34,11 +36,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tabs } from '@/components/ui/tabs'
-import {
-  getCommandUsage,
-  type CommandUsageRecord,
-  type CommandUsageSummary,
-} from '@/apis/aiCommandUsage'
+import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
 import { listTaskRuns } from '@/apis/taskRuns'
 import type { AgentPanelItem } from '@/store/useSessionStore'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
@@ -102,7 +100,6 @@ export function SubAgentDetailView({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
-  const [usageSummary, setUsageSummary] = useState<CommandUsageSummary | null>(null)
   const [usageRecords, setUsageRecords] = useState<CommandUsageRecord[]>([])
   const [usageError, setUsageError] = useState<string | null>(null)
   const selectedSkills = SUB_AGENT_SKILLS.filter((skill) => item.agent.skills?.includes(skill.id))
@@ -122,9 +119,21 @@ export function SubAgentDetailView({
   const completedRunCount = agentTaskRuns.filter(
     (taskRun) => normalizeRunStatus(taskRun.status) === 'succeeded',
   ).length
+  const agentUsageRecords = useMemo(
+    () =>
+      filterUsageRecordsByTaskRunIds(
+        usageRecords,
+        agentTaskRuns.map((taskRun) => taskRun.task_run_id),
+      ),
+    [agentTaskRuns, usageRecords],
+  )
+  const agentUsageSummary = useMemo(
+    () => buildUsageSummaryFromRecords(agentUsageRecords),
+    [agentUsageRecords],
+  )
   const usageItems = useMemo(
-    () => buildAgentUsageSummaryItems(usageSummary, false, usageError),
-    [usageError, usageSummary],
+    () => buildAgentUsageSummaryItems(agentUsageSummary, false, usageError),
+    [agentUsageSummary, usageError],
   )
   const instructionsDirty =
     instructionsDraft.trim() !== (item.agent.instructions ?? '') ||
@@ -166,7 +175,6 @@ export function SubAgentDetailView({
       .then((result) => {
         if (!alive) return
         setUsageError(null)
-        setUsageSummary(result.summary)
         setUsageRecords(result.records)
       })
       .catch(() => {

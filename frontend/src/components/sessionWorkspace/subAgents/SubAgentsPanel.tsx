@@ -6,10 +6,11 @@ import {
   createSessionAgent,
   createSessionAgentFromTemplate,
   deleteSessionAgent,
+  updateSessionAgent,
   listAgentTemplates,
   listSessionAgents,
-  saveAgentInstructionDocument,
   type AgentTemplate,
+  agentProfileToAgent,
 } from '@/apis/agents'
 import { useSessionStore } from '@/store/useSessionStore'
 import { SubAgentCreateDialog } from './SubAgentCreateDialog'
@@ -133,19 +134,29 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
             resetDraft()
           }}
           onSave={(agent) => {
-            updateAgentPanelInSession(sessionId, detailItem.id, agent)
-            if (agent.profileId) {
-              const documentKey = agent.instructionsEntryFile ?? 'AGENTS.md'
-              void saveAgentInstructionDocument(agent.profileId, {
-                documentKey,
-                displayName: instructionDisplayName(documentKey),
-                content: agent.instructionsFiles?.[documentKey] ?? agent.instructions ?? '',
-              }).catch((error) => {
+            const documentKey = agent.instructionsEntryFile ?? 'AGENTS.md'
+            void updateSessionAgent(sessionId, detailItem.id, {
+              name: agent.name,
+              role: agent.role ?? 'general',
+              title: agent.title,
+              description: agent.description,
+              adapterType: agent.adapterType,
+              model: agent.model,
+              profileImage: agent.profileImage,
+              skills: agent.skills,
+              entryDocumentKey: documentKey,
+              instructionsFiles: agent.instructionsFiles ?? {
+                [documentKey]: agent.instructions ?? '',
+              },
+            })
+              .then((profile) => {
+                updateAgentPanelInSession(sessionId, detailItem.id, agentProfileToAgent(profile))
+              })
+              .catch((error) => {
                 setLoadError(
-                  error instanceof Error ? error.message : '지침 문서를 저장하지 못했습니다.',
+                  error instanceof Error ? error.message : '에이전트를 저장하지 못했습니다.',
                 )
               })
-            }
           }}
           onTabChange={(tab) => openDetailTab(detailItem.id, tab)}
           requestedTab={searchParams.get('subAgentTab')}
@@ -205,11 +216,4 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
       />
     </SubAgentsPanelShell>
   )
-}
-
-function instructionDisplayName(documentKey: string) {
-  if (documentKey === 'AGENTS.md') return '기본 지침'
-  if (documentKey === 'SOUL.md') return '역할 성향 지침'
-  if (documentKey === 'TOOLS.md') return '도구 사용 지침'
-  return documentKey
 }

@@ -28,6 +28,39 @@ export function buildAgentRunUsageMap(records: CommandUsageRecord[]) {
   return usageByTaskRunId
 }
 
+export function buildUsageSummaryFromRecords(records: CommandUsageRecord[]): CommandUsageSummary {
+  return records.reduce<CommandUsageSummary>(
+    (summary, record) => ({
+      inputTokens: summary.inputTokens + (record.inputTokens ?? 0),
+      outputTokens: summary.outputTokens + (record.outputTokens ?? 0),
+      totalTokens: summary.totalTokens + (record.totalTokens ?? 0),
+      cachedInputTokens: summary.cachedInputTokens + (record.cachedInputTokens ?? 0),
+      reasoningTokens: summary.reasoningTokens + (record.reasoningTokens ?? 0),
+      estimatedCostUsd: summary.estimatedCostUsd + (record.estimatedCostUsd ?? 0),
+      currency: record.currency ?? summary.currency,
+      recordCount: summary.recordCount + 1,
+    }),
+    {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      cachedInputTokens: 0,
+      reasoningTokens: 0,
+      estimatedCostUsd: 0,
+      currency: 'USD',
+      recordCount: 0,
+    },
+  )
+}
+
+export function filterUsageRecordsByTaskRunIds(
+  records: CommandUsageRecord[],
+  taskRunIds: Iterable<string>,
+) {
+  const allowed = new Set([...taskRunIds].map((id) => id.trim()).filter(Boolean))
+  return records.filter((record) => allowed.has(record.taskRunId?.trim() ?? ''))
+}
+
 export function formatAgentRunTokenUsage(usage: AgentRunUsageSummary | undefined) {
   if (usage === undefined) return '-'
   return `${formatUsageNumber(usage.totalTokens)} tok`
