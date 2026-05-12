@@ -51,7 +51,7 @@ export interface AgentConfig {
   name: string
   spritePath: string
   initialPosition: { x: number; y: number }
-  destinations: Record<Destination, { x: number; y: number; waypoints?: Waypoint[] }>
+  destinations: Partial<Record<Destination, { x: number; y: number; waypoints?: Waypoint[] }>>
   scale?: number
   stateScales?: Partial<Record<AgentState, number>>
   walkFrames?: readonly string[]
