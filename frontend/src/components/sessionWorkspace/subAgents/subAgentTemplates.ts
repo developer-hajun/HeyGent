@@ -109,8 +109,6 @@ export function createSubAgentFromTemplate(
     command: getDefaultCommand(template.adapterType),
     model: getDefaultModel(template.adapterType),
     extraArgs: '',
-    heartbeatEnabled: false,
-    intervalSec: 300,
     profileImage: getSubAgentImageBySpriteId(spriteId).src,
     spriteId,
     reportsToAgentId: 'main',
