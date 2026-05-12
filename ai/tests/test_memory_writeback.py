@@ -322,6 +322,15 @@ async def test_writeback_uses_llm_operation_reconciliation_decision():
                 content="사용자는 점심 메뉴로 고기를 가장 좋아한다.",
                 summary="점심에 고기 선호",
                 metadata={"source": "ai.writeback", "category": "preference", "tags": ["food", "lunch", "meat"]},
+            ),
+            SimpleNamespace(
+                id=8,
+                memory_type="PREFERENCE",
+                store_type="USER_PROFILE",
+                scope_type="GLOBAL",
+                content="사용자는 점심 메뉴로 돼지고기나 소고기처럼 든든한 고기 메뉴를 선호한다.",
+                summary="점심에 돼지고기/소고기 선호",
+                metadata={"source": "ai.writeback", "category": "preference", "tags": ["food", "lunch", "meat", "beef"]},
             )
         ]
     )
@@ -329,6 +338,7 @@ async def test_writeback_uses_llm_operation_reconciliation_decision():
         {
             "operationType": "UPDATE",
             "targetMemoryId": 3,
+            "additionalTargetMemoryIds": [8, 999, 3, 8],
             "reason": "사용자가 최근 점심 선호를 샐러드/생선 우선으로 바꿨다.",
         }
     )
@@ -353,6 +363,7 @@ async def test_writeback_uses_llm_operation_reconciliation_decision():
     assert operation_provider.calls[0]["existing_memories"][0]["id"] == 3
     assert saved_candidate["operationType"] == "UPDATE"
     assert saved_candidate["targetMemoryId"] == 3
+    assert saved_candidate["additionalTargetMemoryIds"] == [8]
     assert saved_candidate["updateReason"] == "사용자가 최근 점심 선호를 샐러드/생선 우선으로 바꿨다."
     assert observation["operation_types"] == ["UPDATE"]
 

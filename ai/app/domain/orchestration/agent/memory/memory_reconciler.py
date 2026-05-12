@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 MEMORY_OPERATION_RECONCILIATION_SYSTEM_PROMPT = """
 You decide how a new long-term memory candidate should be reconciled with existing memories.
 Return strict JSON only, with this shape:
-{"operationType":"ADD|UPDATE|MERGE|INVALIDATE","targetMemoryId":123|null,"reason":"short Korean reason"}
+{"operationType":"ADD|UPDATE|MERGE|INVALIDATE","targetMemoryId":123|null,"additionalTargetMemoryIds":[456,789],"reason":"short Korean reason"}
 
 Rules:
 - Use ADD when the candidate is genuinely new and does not replace or refine an existing memory.
@@ -21,6 +21,7 @@ Rules:
 - Use MERGE when the candidate adds compatible detail to an existing memory without replacing it.
 - Use INVALIDATE when the user says an existing memory is no longer true or should be forgotten.
 - Choose targetMemoryId only from the provided existingMemories.
+- Use additionalTargetMemoryIds for other provided memories that also conflict with, are replaced by, or should be superseded by the same new candidate.
 - If operationType is UPDATE, MERGE, or INVALIDATE, targetMemoryId is required.
 - Do not infer from keyword rules alone. Compare the candidate meaning, the user message, and existing memories.
 - Prefer the user's most recent explicit statement when preferences conflict.
@@ -245,6 +246,9 @@ def _apply_llm_decision(candidate: dict[str, Any], *, memories: list[Any], decis
     result = dict(candidate)
     result["operationType"] = operation
     result["targetMemoryId"] = getattr(target, "id")
+    additional_target_ids = _additional_target_ids_from_decision(decision, memories=memories, primary_target_id=getattr(target, "id"))
+    if additional_target_ids:
+        result["additionalTargetMemoryIds"] = additional_target_ids
     reason = _string(decision.get("reason")) or _update_reason(operation, candidate, target, "")
     result["updateReason"] = _trim(reason)
     return result
@@ -259,6 +263,36 @@ def _apply_heuristic_decision(candidate: dict[str, Any], memory: Any, *, user_me
     result["operationType"] = operation
     result["targetMemoryId"] = getattr(memory, "id")
     result["updateReason"] = _update_reason(operation, candidate, memory, user_message)
+    return result
+
+
+def _additional_target_ids_from_decision(
+    decision: dict[str, Any],
+    *,
+    memories: list[Any],
+    primary_target_id: Any,
+) -> list[int]:
+    raw_ids = decision.get("additionalTargetMemoryIds", decision.get("additional_target_memory_ids"))
+    if not isinstance(raw_ids, list):
+        return []
+    valid_ids = {
+        int(getattr(memory, "id"))
+        for memory in memories
+        if isinstance(getattr(memory, "id", None), int)
+    }
+    result: list[int] = []
+    try:
+        normalized_primary_target_id = int(primary_target_id)
+    except (TypeError, ValueError):
+        normalized_primary_target_id = None
+    for raw_id in raw_ids:
+        try:
+            memory_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if memory_id == normalized_primary_target_id or memory_id not in valid_ids or memory_id in result:
+            continue
+        result.append(memory_id)
     return result
 
 
