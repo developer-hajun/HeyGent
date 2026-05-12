@@ -31,6 +31,20 @@ class MemorySafetyValidatorTest {
     }
 
     @Test
+    void validateAllowsSessionTtlMetadata() {
+        assertThatCode(() -> validator.validate(
+            "사용자가 이번 세션에서만 기억할 작업 상태를 남겼다.",
+            "세션 범위 작업 상태",
+            Map.of(
+                "source", "ai.writeback",
+                "category", "task_state",
+                "sensitivity", "low",
+                "ttl", "session"
+            )
+        )).doesNotThrowAnyException();
+    }
+
+    @Test
     void validateRejectsUnknownMemoryCategory() {
         assertThatThrownBy(() -> validator.validate(
             "장기기억 구현은 후보 분류 작업이 남아 있다.",
