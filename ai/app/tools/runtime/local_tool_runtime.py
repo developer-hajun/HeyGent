@@ -220,14 +220,15 @@ class LocalToolRuntime:
         return entry.handler(dict(args))
 
     def _maybe_route_via_bridge(self, *, tool_name: str, args: dict[str, Any]) -> dict[str, Any] | None:
-        """브릿지가 연결돼 있으면 도구 호출을 위임하고 결과 dict를 그대로 반환한다.
+        """현재 요청 user 의 브릿지가 연결돼 있으면 도구 호출을 위임하고 결과 dict를 그대로 반환한다.
 
         결과 형식은 기존 로컬 실행과 동일해야 한다 (브릿지 executor가 맞춤).
         브릿지 미연결·타임아웃 등은 _tool_error 형식으로 변환.
         """
 
         manager = self.bridge_session_manager
-        if manager is None or not manager.is_alive():
+        user_id = self.owner_key
+        if manager is None or not user_id or not manager.is_alive(user_id):
             return self._tool_error(
                 code="bridge_not_connected",
                 message="로컬 브릿지가 연결되어 있지 않습니다",
@@ -238,7 +239,7 @@ class LocalToolRuntime:
         from app.bridge import BridgeDisconnected, BridgeError, BridgeTimeout
 
         try:
-            return manager.execute_sync(name=tool_name, args=args)
+            return manager.execute_sync(user_id=user_id, name=tool_name, args=args)
         except BridgeTimeout as error:
             return self._tool_error(code="bridge_timeout", message=str(error), tool_name=tool_name)
         except BridgeDisconnected as error:

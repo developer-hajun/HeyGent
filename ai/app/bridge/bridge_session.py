@@ -14,19 +14,18 @@ logger = logging.getLogger(__name__)
 
 
 # 브릿지가 도구 실행 결과를 보내기까지 기다릴 기본 시간(초).
-# 단계 2에서는 짧은 명령(whoami, hostname 등)만 다루므로 충분히 짧게 둔다.
+# PoC 단계 2에서는 짧은 명령(whoami, hostname 등)만 다루므로 충분히 짧게 둔다.
 DEFAULT_TOOL_INVOKE_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass(slots=True)
 class BridgeSession:
-    """현재 연결된 로컬 브릿지 한 개의 상태이다.
-
-    PoC 단계 2에서는 hello/ack 외에 tool.invoke / tool.result 흐름을 추가한다.
-    pending_calls는 브릿지에 보낸 도구 호출 중 결과를 기다리는 Future를 보관한다.
-    """
+    """현재 연결된 한 user 의 로컬 브릿지 세션 상태이다."""
 
     session_id: str
+    user_id: str
+    device_id: str
+    device_name: str
     websocket: WebSocket
     workspace_root: str | None = None
     connected_at: float = 0.0
@@ -36,17 +35,19 @@ class BridgeSession:
 
 
 class BridgeSessionManager:
-    """AI 서버 프로세스 안에서 현재 연결된 로컬 브릿지를 추적하고,
-    도구 호출을 그 브릿지로 위임한다.
+    """AI 서버 프로세스 안에서 현재 연결된 로컬 브릿지를 user 별로 추적한다.
 
-    PoC 범위에서는 동시에 1대의 브릿지만 허용한다 (단일 유저 가정).
-    이벤트 루프 참조를 lifespan에서 주입받아, run_call 같은 동기 컨텍스트에서도
+    한 user 당 브릿지 1슬롯 정책: 동일 user 의 새 연결이 들어오면 기존 세션을 끊고 교체한다.
+    이벤트 루프 참조를 lifespan 에서 주입받아, run_call 같은 동기 컨텍스트에서도
     브릿지로 위임할 수 있게 한다.
     """
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
-        self._session: BridgeSession | None = None
+        # user_id (str) -> BridgeSession. user 별 단일 슬롯.
+        self._sessions_by_user: dict[str, BridgeSession] = {}
+        # session_id -> user_id. unregister 시 어떤 user 슬롯을 비울지 빠르게 찾기 위함.
+        self._user_by_session: dict[str, str] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def bind_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -54,22 +55,37 @@ class BridgeSessionManager:
 
         self._loop = loop
 
-    async def register(self, websocket: WebSocket, *, workspace_root: str | None) -> BridgeSession:
-        """새 브릿지 연결을 단일 슬롯에 등록한다.
+    async def register(
+        self,
+        websocket: WebSocket,
+        *,
+        user_id: str,
+        device_id: str,
+        device_name: str,
+        workspace_root: str | None,
+    ) -> BridgeSession:
+        """user_id 슬롯에 새 브릿지 연결을 등록한다.
 
-        이미 다른 브릿지가 연결돼 있으면 기존 연결을 정리하고 새 것을 받는다.
-        PoC 단계에서는 "마지막에 들어온 브릿지가 우선"이라는 단순 정책으로 시작한다.
+        이미 같은 user 의 다른 브릿지가 연결돼 있으면 기존 연결을 정리하고 새 것을 받는다.
+        다른 user 의 브릿지는 그대로 둔다.
         """
 
+        normalized_user_id = str(user_id)
         async with self._lock:
-            previous = self._session
+            previous = self._sessions_by_user.get(normalized_user_id)
             session = BridgeSession(
                 session_id=token_urlsafe(16),
+                user_id=normalized_user_id,
+                device_id=str(device_id),
+                device_name=device_name,
                 websocket=websocket,
                 workspace_root=workspace_root,
                 connected_at=asyncio.get_event_loop().time(),
             )
-            self._session = session
+            self._sessions_by_user[normalized_user_id] = session
+            self._user_by_session[session.session_id] = normalized_user_id
+            if previous is not None:
+                self._user_by_session.pop(previous.session_id, None)
 
         if previous is not None:
             # 기존 세션이 가진 pending Future들도 같이 실패 처리한다.
@@ -81,51 +97,68 @@ class BridgeSessionManager:
             except Exception:
                 logger.exception("이전 브릿지 WebSocket 정리에 실패했습니다.")
 
-        logger.info("브릿지 연결됨: session_id=%s, workspace_root=%s", session.session_id, workspace_root)
+        logger.info(
+            "브릿지 연결됨: user_id=%s session_id=%s device=%s workspace_root=%s",
+            normalized_user_id,
+            session.session_id,
+            device_name,
+            workspace_root,
+        )
         return session
 
     async def unregister(self, session_id: str) -> None:
-        """브릿지 연결이 끊겼을 때 등록 슬롯을 비운다.
+        """브릿지 연결이 끊겼을 때 해당 user 의 슬롯을 비운다.
 
         다른 브릿지가 이미 들어와서 슬롯을 차지한 경우에는 그대로 둔다.
         끊긴 세션의 pending Future는 모두 실패 처리한다.
         """
 
         async with self._lock:
-            if self._session is None or self._session.session_id != session_id:
+            user_id = self._user_by_session.pop(session_id, None)
+            if user_id is None:
                 return
-            session = self._session
-            self._session = None
+            current = self._sessions_by_user.get(user_id)
+            if current is None or current.session_id != session_id:
+                return
+            session = current
+            self._sessions_by_user.pop(user_id, None)
 
         for call_id, future in list(session.pending_calls.items()):
             if not future.done():
                 future.set_exception(BridgeDisconnected(f"브릿지 연결이 끊겨 호출 {call_id}가 취소됐습니다"))
         session.pending_calls.clear()
-        logger.info("브릿지 연결 해제됨: session_id=%s", session_id)
+        logger.info("브릿지 연결 해제됨: user_id=%s session_id=%s", session.user_id, session_id)
 
-    def is_alive(self) -> bool:
-        """현재 살아있는 브릿지 연결이 있는지 빠르게 확인한다.
+    def is_alive(self, user_id: str | None = None) -> bool:
+        """특정 user 의 살아있는 브릿지 연결이 있는지 확인한다.
 
-        run_call 분기에서 이 값으로 위임 가능 여부를 판정한다.
+        user_id 가 None 이면 호환을 위해 어떤 브릿지든 살아있으면 True 를 반환하지만,
+        실제 도구 위임 분기에서는 반드시 user_id 를 넘겨야 다른 사용자의 PC 로 잘못 보내는 일을 막을 수 있다.
         """
 
-        return self._session is not None
+        if user_id is None:
+            return bool(self._sessions_by_user)
+        return str(user_id) in self._sessions_by_user
 
-    def current_session(self) -> BridgeSession | None:
-        return self._session
+    def current_session(self, user_id: str) -> BridgeSession | None:
+        return self._sessions_by_user.get(str(user_id))
 
-    def deliver_tool_result(self, *, call_id: str, result: dict[str, Any]) -> None:
+    def deliver_tool_result(self, *, session_id: str, call_id: str, result: dict[str, Any]) -> None:
         """브릿지가 보낸 tool.result를 기다리고 있던 Future에 전달한다.
 
-        WebSocket 수신 루프(브릿지 gateway)에서 호출한다.
+        WebSocket 수신 루프(브릿지 gateway)에서 호출한다. session_id 로 어떤 user 의 호출인지 식별한다.
         """
 
-        session = self._session
-        if session is None:
+        user_id = self._user_by_session.get(session_id)
+        if user_id is None:
+            logger.warning("알 수 없는 session_id 의 tool.result: %s", session_id)
+            return
+        session = self._sessions_by_user.get(user_id)
+        if session is None or session.session_id != session_id:
             return
         future = session.pending_calls.pop(call_id, None)
         if future is None:
-            logger.warning("브릿지 응답에 대응하는 pending 호출이 없습니다: call_id=%s", call_id)
+            logger.warning("브릿지 응답에 대응하는 pending 호출이 없습니다: user_id=%s call_id=%s", user_id, call_id)
             return
         if not future.done():
             future.set_result(result)
@@ -133,22 +166,19 @@ class BridgeSessionManager:
     def execute_sync(
         self,
         *,
+        user_id: str,
         name: str,
         args: dict[str, Any],
         timeout_seconds: float = DEFAULT_TOOL_INVOKE_TIMEOUT_SECONDS,
     ) -> dict[str, Any]:
-        """동기 컨텍스트(LocalToolRuntime.run_call)에서 브릿지로 도구 호출을 위임한다.
-
-        내부적으로 메인 이벤트 루프에 코루틴을 던지고 결과를 기다린다.
-        타임아웃이나 미연결은 예외 대신 호출자에게 명확한 dict로 돌려주도록 상위에서 처리한다.
-        """
+        """동기 컨텍스트(LocalToolRuntime.run_call)에서 user 의 브릿지로 도구 호출을 위임한다."""
 
         loop = self._loop
         if loop is None:
             raise BridgeNotReady("브릿지 이벤트 루프가 아직 바인딩되지 않았습니다")
 
         future = asyncio.run_coroutine_threadsafe(
-            self._invoke(name=name, args=args, timeout_seconds=timeout_seconds),
+            self._invoke(user_id=user_id, name=name, args=args, timeout_seconds=timeout_seconds),
             loop,
         )
         return future.result(timeout=timeout_seconds + 5.0)
@@ -156,15 +186,16 @@ class BridgeSessionManager:
     async def _invoke(
         self,
         *,
+        user_id: str,
         name: str,
         args: dict[str, Any],
         timeout_seconds: float,
     ) -> dict[str, Any]:
-        """브릿지에 tool.invoke를 보내고 tool.result를 기다린다 (이벤트 루프 안에서 실행)."""
+        """user 의 브릿지에 tool.invoke를 보내고 tool.result를 기다린다 (이벤트 루프 안에서 실행)."""
 
-        session = self._session
+        session = self._sessions_by_user.get(str(user_id))
         if session is None:
-            raise BridgeDisconnected("브릿지가 연결돼 있지 않습니다")
+            raise BridgeDisconnected(f"user_id={user_id} 의 브릿지가 연결돼 있지 않습니다")
 
         call_id = token_urlsafe(12)
         future: asyncio.Future = asyncio.get_event_loop().create_future()
