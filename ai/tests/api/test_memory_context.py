@@ -131,6 +131,37 @@ async def test_llm_memory_recall_planner_uses_model_structured_filters():
 
 
 @pytest.mark.asyncio
+async def test_llm_memory_recall_planner_handles_personalized_recommendation():
+    provider = FakeRecallPlannerProvider(
+        {
+            "shouldRecall": True,
+            "query": "사용자 점심 메뉴 선호",
+            "reason": "점심 추천은 사용자 음식 선호가 필요함",
+            "filters": {
+                "storeType": "USER_PROFILE",
+                "memoryType": "PREFERENCE",
+                "scopeType": "GLOBAL",
+                "metadataCategories": ["preference"],
+            },
+        }
+    )
+    planner = LlmMemoryRecallPlanner(provider=provider)
+
+    plan = await planner.plan_recall("오늘 점심 뭐 먹을까?", workspace_key="team-a")
+
+    assert plan.should_recall is True
+    assert plan.query == "사용자 점심 메뉴 선호"
+    assert plan.reason == "점심 추천은 사용자 음식 선호가 필요함"
+    assert plan.planner_source == "llm"
+    assert plan.filters() == {
+        "store_type": "USER_PROFILE",
+        "memory_type": "PREFERENCE",
+        "scope_type": "GLOBAL",
+        "metadata_categories": ["preference"],
+    }
+
+
+@pytest.mark.asyncio
 async def test_llm_memory_recall_planner_falls_back_to_rules_on_error():
     planner = LlmMemoryRecallPlanner(provider=FakeRecallPlannerProvider(fail=True))
 
