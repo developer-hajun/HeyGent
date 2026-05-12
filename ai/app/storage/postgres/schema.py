@@ -88,6 +88,15 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
         session_key TEXT,
         current_step_run_id TEXT,
         durable_status TEXT NOT NULL DEFAULT 'OPEN' CHECK (durable_status IN ('OPEN', 'WAITING', 'TERMINAL')),
+        queue_status TEXT NOT NULL DEFAULT 'queued' CHECK (queue_status IN ('queued', 'claimed', 'running', 'waiting', 'terminal', 'failed_retry', 'canceled')),
+        claim_owner TEXT,
+        queued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        claimed_at TIMESTAMPTZ,
+        lease_expires_at TIMESTAMPTZ,
+        heartbeat_at TIMESTAMPTZ,
+        next_attempt_at TIMESTAMPTZ,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_claim_error TEXT,
         anchor_generation BIGINT NOT NULL DEFAULT 1,
         revision BIGINT NOT NULL DEFAULT 0,
         event_epoch BIGINT NOT NULL DEFAULT 1,
@@ -453,6 +462,21 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_run_anchors_owner_session
     ON run_anchors(owner_key, session_key);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_run_anchors_queue_claim
+    ON run_anchors(queue_status, next_attempt_at, queued_at ASC)
+    WHERE queue_status IN ('queued', 'failed_retry');
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_run_anchors_lease_expiry
+    ON run_anchors(lease_expires_at)
+    WHERE queue_status IN ('claimed', 'running') AND lease_expires_at IS NOT NULL;
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_run_anchors_one_active_per_owner_session
+    ON run_anchors(owner_key, session_key)
+    WHERE session_key IS NOT NULL AND queue_status IN ('queued', 'claimed', 'running', 'waiting', 'failed_retry');
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_approval_requests_task_pending

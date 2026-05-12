@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router'
 import { devLogin } from '@/apis/auth'
+import { saveOpenAiApiKey } from '@/apis/openaiApiKey'
 import { getMyInfo } from '@/apis/users'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useEffect, useRef, useCallback, useState } from 'react'
@@ -24,6 +25,7 @@ const KAKAO_AUTH_URL =
   `?client_id=${import.meta.env.VITE_KAKAO_CLIENT_ID}` +
   `&redirect_uri=${import.meta.env.VITE_KAKAO_REDIRECT_URI}` +
   `&response_type=code`
+const DEV_OPENAI_API_KEY = import.meta.env.VITE_DEV_OPENAI_API_KEY?.trim()
 
 // ─── 클러스터 정의 ───────────────────────────────────────────
 
@@ -1107,6 +1109,7 @@ export function LoginPage() {
     try {
       const res = await devLogin()
       setTokens(res.data.accessToken, res.data.refreshToken)
+      await saveDevOpenAiApiKey()
       try {
         const userRes = await getMyInfo()
         setUserInfo(userRes.data)
@@ -1122,6 +1125,15 @@ export function LoginPage() {
       )
     } finally {
       setDevLoginLoading(false)
+    }
+  }
+
+  const saveDevOpenAiApiKey = async () => {
+    if (!DEV_OPENAI_API_KEY) return
+    try {
+      await saveOpenAiApiKey('openai_api_key', { apiKey: DEV_OPENAI_API_KEY })
+    } catch (error) {
+      console.warn('개발용 API key 자동 저장에 실패했습니다.', error)
     }
   }
 

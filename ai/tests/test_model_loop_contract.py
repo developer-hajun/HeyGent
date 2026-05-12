@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.clients.backend_memory import BackendMemoryItem
 from app.domain.orchestration.agent.tool_calling_loop import ToolCallingLoopHandler
@@ -63,6 +64,32 @@ def test_session_agent_task_parent_disposition_is_used_as_task_work_disposition(
     }
 
 
+def test_dynamic_work_link_updates_tool_runtime_context():
+    task_input = {"prompt": "k-skill 써서 지하철 노선도 알아봐봐"}
+    task = SimpleNamespace(
+        input_payload={
+            **task_input,
+            "workId": "work-skill",
+            "workIdentifier": "TASK-1",
+            "workTitle": "skill-index 스킬 실행",
+            "workContext": {"title": "skill-index 스킬 실행"},
+            "workLinkReason": "skill_use",
+        }
+    )
+    tool_runtime = SimpleNamespace(runtime_context=dict(task_input))
+
+    ToolCallingLoopHandler._sync_dynamic_runtime_context(
+        task=task,
+        task_input=task_input,
+        tool_runtime=tool_runtime,
+    )
+
+    assert task_input["workId"] == "work-skill"
+    assert task_input["workIdentifier"] == "TASK-1"
+    assert tool_runtime.runtime_context["workId"] == "work-skill"
+    assert tool_runtime.runtime_context["workLinkReason"] == "skill_use"
+
+
 def test_prompt_builder_explains_approval_tool_call_boundary():
     prompt_builder = PromptBuilder(SkillPromptBuilder(SkillRegistry()))
 
@@ -85,7 +112,7 @@ def test_prompt_builder_explains_approval_tool_call_boundary():
     assert "같은 tool_call_id" in prompt
 
 
-def test_prompt_builder_places_persistent_memory_before_current_prompt():
+def test_prompt_builder_places_persistent_memory_after_current_prompt_for_turn_application():
     prompt_builder = PromptBuilder(SkillPromptBuilder(SkillRegistry()))
     memory_context = "<memory-context>\ncontent: 사용자는 짧은 답변을 선호한다.\n</memory-context>"
 
@@ -97,7 +124,36 @@ def test_prompt_builder_places_persistent_memory_before_current_prompt():
     )
 
     assert memory_context in prompt
-    assert prompt.index("<memory-context>") < prompt.index("오늘 회의 정리해줘")
+    assert prompt.index("오늘 회의 정리해줘") < prompt.index("<memory-context>")
+
+
+def test_build_agent_loop_prompt_repeats_memory_application_instructions_at_end():
+    prompt_builder = PromptBuilder(SkillPromptBuilder(SkillRegistry()))
+    memory_context = """
+<memory-context>
+content: 사용자는 짧은 답변을 선호한다.
+</memory-context>
+
+<memory-application-instructions>
+현재 턴 답변 직전에 반드시 확인하세요.
+</memory-application-instructions>
+""".strip()
+
+    prompt = prompt_builder.build_agent_loop_prompt(
+        input_payload={
+            "prompt": "서울 여행 계획 짜줘",
+            "persistent_memory_context": memory_context,
+        },
+        available_tools=[],
+        tool_results=[],
+        task_todo_state=None,
+        resume_payload=None,
+        turn_index=1,
+        max_iterations=4,
+    )
+
+    assert prompt.count("<memory-application-instructions>") == 2
+    assert prompt.rfind("<memory-application-instructions>") > prompt.rfind("최종 답변은 내부 상태 문구처럼 쓰지 말고")
 
 
 def test_prompt_builder_includes_work_assignment_context_before_current_prompt():
@@ -239,6 +295,32 @@ def test_persistent_memory_prompt_sanitizes_metadata():
     assert "발표 응답 톤" in prompt
     assert "secret-token" not in prompt
     assert "sensitivity" not in prompt
+
+
+def test_persistent_memory_prompt_applies_relevant_instructions():
+    prompt = build_persistent_memory_prompt(
+        [
+            BackendMemoryItem(
+                id=11,
+                memory_type="INSTRUCTION",
+                store_type="AGENT_MEMORY",
+                scope_type="GLOBAL",
+                content="여행 계획 요청 시 날짜와 예산을 먼저 확인한 뒤 교통편, 숙소, 식당 순서로 계획한다.",
+                summary="여행 계획 절차",
+                metadata={"category": "instruction", "tags": ["travel", "planning"]},
+            )
+        ]
+    )
+
+    assert "INSTRUCTION/PROCEDURE 기억은 관련 요청의 답변 방식이나 진행 절차에 적용하세요." in prompt
+    assert "필요한 조건을 먼저 짧게 물어보세요." in prompt
+    assert "작업 수행을 요청하는 말은 선확인 절차와 충돌하는 지시가 아닙니다." in prompt
+    assert "여행 계획 요청 시 날짜와 예산" in prompt
+    assert "<memory-application-instructions>" in prompt
+    assert prompt.index("</memory-context>") < prompt.index("<memory-application-instructions>")
+    assert "현재 턴 답변 직전에 반드시 확인하세요." in prompt
+    assert "현재 요청과 관련 있는 INSTRUCTION/PROCEDURE가 있으면, 그 절차를 답변 구조와 순서에 적용하세요." in prompt
+    assert "세부 결과를 만들지 말고 필요한 조건만 먼저 짧게 물어보세요." in prompt
 
 
 def test_prompt_builder_includes_skill_catalog_before_web_tool_choice():

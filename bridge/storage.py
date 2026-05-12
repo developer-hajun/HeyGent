@@ -44,6 +44,8 @@ class BridgeStoredState:
     environment: str | None = None
     api_base_url: str | None = None
     ws_url: str | None = None
+    # 워크스페이스 폴더. .env 가 PyInstaller .exe 옆에 없는 환경(설치본)을 고려해 storage 에도 둔다.
+    workspace_root: str | None = None
 
 
 def storage_path() -> Path:
@@ -68,6 +70,7 @@ def load_state() -> BridgeStoredState:
         environment=_str_or_none(raw.get("environment")),
         api_base_url=_str_or_none(raw.get("api_base_url")),
         ws_url=_str_or_none(raw.get("ws_url")),
+        workspace_root=_str_or_none(raw.get("workspace_root")),
     )
 
 
@@ -88,6 +91,7 @@ def clear_pairing(state: BridgeStoredState) -> BridgeStoredState:
         environment=state.environment,
         api_base_url=state.api_base_url,
         ws_url=state.ws_url,
+        workspace_root=state.workspace_root,
     )
 
 

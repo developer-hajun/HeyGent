@@ -129,6 +129,12 @@ def print_openai_onboarding_intro(response_json: dict[str, Any], settings: Setti
 
     if response_json.get("status") == "configuration_required":
         print("OpenAI 연결 전에 설정이 더 필요합니다.")
+        detail = str(response_json.get("detail") or "").strip()
+        if detail:
+            print(f"- 사유: {detail}")
+        missing_env = [str(item) for item in response_json.get("missing_env") or [] if str(item).strip()]
+        if missing_env:
+            print(f"- 필요한 환경 변수: {', '.join(missing_env)}")
         print("- 문서: tmp/openai-onboarding-dev.md")
         print("- 다시 시도: py -3.11 -m app.cli onboard-openai")
         return

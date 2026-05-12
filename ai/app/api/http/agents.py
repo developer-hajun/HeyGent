@@ -20,6 +20,8 @@ from app.contracts.agents import (
 
 router = APIRouter(tags=["agents"], dependencies=[Depends(document_bearer_auth)])
 
+REMOVED_INSTRUCTION_DOCUMENT_KEYS = {"HEARTBEAT.md"}
+
 
 @router.get("/agent-templates", response_model=AgentTemplateListResponse, summary="에이전트 예시 목록 조회")
 async def list_agent_templates(request: Request) -> AgentTemplateListResponse:
@@ -223,7 +225,7 @@ def _template_response(item: dict[str, Any]) -> AgentTemplateResponse:
             }
         )
         for document in list(config.get("documents") or [])
-        if isinstance(document, dict)
+        if isinstance(document, dict) and _is_active_instruction_document(document.get("documentKey"))
     ]
     return AgentTemplateResponse(
         templateId=str(item.get("template_id") or ""),
@@ -245,7 +247,14 @@ def _template_response(item: dict[str, Any]) -> AgentTemplateResponse:
 
 def _custom_agent_config_snapshot(payload: CreateSessionAgentRequest) -> dict[str, Any]:
     entry_document_key = payload.entry_document_key or "AGENTS.md"
+    if not _is_active_instruction_document(entry_document_key):
+        entry_document_key = "AGENTS.md"
     instructions_files = dict(payload.instructions_files or {})
+    instructions_files = {
+        key: content
+        for key, content in instructions_files.items()
+        if _is_active_instruction_document(key)
+    }
     if entry_document_key not in instructions_files:
         instructions_files[entry_document_key] = ""
     return {
@@ -293,12 +302,19 @@ def _profile_response(item: dict[str, Any]) -> AgentProfileResponse:
 
 
 def _bundle_response(item: dict[str, Any]) -> AgentInstructionBundleResponse:
+    entry_document_key = str(item.get("entry_document_key") or "AGENTS.md")
+    if not _is_active_instruction_document(entry_document_key):
+        entry_document_key = "AGENTS.md"
     return AgentInstructionBundleResponse(
         bundleId=str(item.get("bundle_id") or ""),
         profileId=str(item.get("profile_id") or ""),
         mode=str(item.get("mode") or "managed"),
-        entryDocumentKey=str(item.get("entry_document_key") or "AGENTS.md"),
-        documents=[_document_response(document) for document in list(item.get("documents") or [])],
+        entryDocumentKey=entry_document_key,
+        documents=[
+            _document_response(document)
+            for document in list(item.get("documents") or [])
+            if _is_active_instruction_document(document.get("document_key"))
+        ],
     )
 
 
@@ -316,13 +332,15 @@ def _document_response(item: dict[str, Any]) -> AgentInstructionDocumentResponse
 def _instruction_display_name(document_key: str) -> str:
     if document_key == "AGENTS.md":
         return "기본 지침"
-    if document_key == "HEARTBEAT.md":
-        return "작업 루프 지침"
     if document_key == "SOUL.md":
         return "역할 성향 지침"
     if document_key == "TOOLS.md":
         return "도구 사용 지침"
     return document_key
+
+
+def _is_active_instruction_document(document_key: Any) -> bool:
+    return str(document_key or "").strip() not in REMOVED_INSTRUCTION_DOCUMENT_KEYS
 
 
 def _int_or_none(value: Any) -> int | None:

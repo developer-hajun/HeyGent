@@ -138,31 +138,85 @@ class BridgeTrayApp:
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(
             pystray.MenuItem(self._status_label, None, enabled=False),
-            pystray.MenuItem(self._user_label, None, enabled=False),
             pystray.MenuItem(self._workspace_label, None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("워크스페이스 열기", self._open_workspace),
+            pystray.MenuItem("워크스페이스 변경…", self._change_workspace),
             pystray.MenuItem("이 디바이스 페어링 해제", self._unpair_local),
             pystray.MenuItem("종료", self._quit),
         )
+
+    def _change_workspace(self, _icon: pystray.Icon, _item: pystray.MenuItem) -> None:
+        """실행 중에 워크스페이스 폴더를 변경한다.
+
+        pystray 콜백은 메인 스레드가 아니므로, 폴더 다이얼로그는 별도 스레드에서 hidden tkinter root 로 띄운다.
+        선택된 폴더는 storage + 현재 settings 양쪽 모두에 즉시 반영해서 다음 도구 호출부터 적용된다.
+        """
+
+        def _picker_thread() -> None:
+            import tkinter as tk
+            from tkinter import filedialog
+
+            try:
+                hidden = tk.Tk()
+                hidden.withdraw()
+                hidden.attributes("-topmost", True)
+                initial = str(self.settings.workspace_root) if self.settings.workspace_root else str(Path.home())
+                chosen = filedialog.askdirectory(
+                    title="새 워크스페이스 폴더 선택",
+                    initialdir=initial,
+                    parent=hidden,
+                )
+                hidden.destroy()
+            except Exception:
+                logger.exception("워크스페이스 다이얼로그 실패")
+                return
+
+            if not chosen:
+                return
+            new_path = Path(chosen).resolve()
+            if not new_path.exists() or not new_path.is_dir():
+                logger.warning("선택된 워크스페이스가 유효하지 않습니다: %s", new_path)
+                return
+
+            # storage 와 현재 settings 양쪽 모두 갱신. 다음 tool.invoke 부터 새 폴더가 사용된다.
+            state = load_state()
+            state.workspace_root = str(new_path)
+            save_state(state)
+            self.settings.workspace_root = new_path
+            try:
+                _update_env_workspace_root(new_path)
+            except Exception:
+                logger.exception(".env 갱신 실패 (storage 는 정상)")
+
+            try:
+                self.icon.update_menu()
+            except Exception:
+                pass
+            try:
+                self.icon.notify(f"워크스페이스가 변경되었습니다: {new_path.name}", "HeyGent 브릿지")
+            except Exception:
+                pass
+            logger.info("워크스페이스 변경됨: %s", new_path)
+
+        threading.Thread(target=_picker_thread, name="bridge-workspace-picker", daemon=True).start()
 
     def _status_label(self, _icon: pystray.Icon) -> str:
         env = environments.find(self.settings.environment_key)
         suffix = f" ({env.label})"
         return ("상태: 연결됨" if self.connected else "상태: 끊김") + suffix
 
-    def _user_label(self, _icon: pystray.Icon) -> str:
-        if self.settings.device_name and self.settings.user_id:
-            return f"사용자: {self.settings.user_id} / {self.settings.device_name}"
-        return "사용자: 페어링 안 됨"
-
     def _workspace_label(self, _icon: pystray.Icon) -> str:
+        if self.settings.workspace_root is None:
+            return "폴더: (선택되지 않음)"
         path = str(self.settings.workspace_root)
         if len(path) > 50:
             path = "…" + path[-47:]
         return f"폴더: {path}"
 
     def _open_workspace(self, _icon: pystray.Icon, _item: pystray.MenuItem) -> None:
+        if self.settings.workspace_root is None:
+            return
         try:
             os.startfile(str(self.settings.workspace_root))  # type: ignore[attr-defined]
         except Exception:
@@ -280,7 +334,7 @@ def _show_startup_dialog(settings: BridgeSettings) -> BridgeSettings | None:
     """
 
     import customtkinter as ctk
-    from tkinter import filedialog, messagebox
+    from tkinter import filedialog
 
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("dark-blue")
@@ -362,6 +416,12 @@ def _show_startup_dialog(settings: BridgeSettings) -> BridgeSettings | None:
     pair_message.pack(padx=24, fill="x")
 
     def _on_pair_click() -> None:
+        # 워크스페이스 폴더 먼저 검증해서, 페어링 후 별도 [시작] 클릭 없이 바로 트레이로 갈 수 있게 한다.
+        path = Path(path_var.get()).resolve()
+        if not path.exists() or not path.is_dir():
+            pair_message_var.set(f"워크스페이스 폴더가 없거나 디렉터리가 아닙니다: {path}")
+            return
+
         env = environments.find(env_var.get())
         api_base_url = env.api_base_url
         code = code_var.get().strip()
@@ -379,7 +439,10 @@ def _show_startup_dialog(settings: BridgeSettings) -> BridgeSettings | None:
         except BridgePairingError as exc:
             pair_message_var.set(str(exc))
             return
-        # 저장 후 status 갱신.
+
+        # 페어링 성공: 토큰·환경·워크스페이스를 모두 저장하고 즉시 창을 닫아 트레이로 진입한다.
+        # messagebox.showinfo 는 PyInstaller + customtkinter 조합에서 메인 윈도우 destroy 와
+        # 충돌해 창이 안 닫히는 케이스가 보고되어, 별도 안내 모달 없이 진행한다.
         state = load_state()
         state.bridge_token = result.bridge_token
         state.device_id = result.device_id
@@ -388,20 +451,28 @@ def _show_startup_dialog(settings: BridgeSettings) -> BridgeSettings | None:
         state.environment = env.key
         state.api_base_url = env.api_base_url
         state.ws_url = env.ws_url
+        # PyInstaller 빌드본은 .env 파일을 못 찾는 환경이라 storage 에 워크스페이스도 같이 저장한다.
+        state.workspace_root = str(path)
         save_state(state)
+
+        # 개발 실행(.env 가 옆에 있는 경우)을 위해 .env 도 같이 갱신해 둔다.
+        try:
+            _update_env_workspace_root(path)
+        except Exception:
+            logger.exception(".env 의 워크스페이스 갱신 실패 (storage 는 정상 저장됨)")
+
         current["settings"] = load_settings()
-        pair_message_var.set("")
-        pair_status_var.set(_paired_status_text(current["settings"]))
-        pair_status_label.configure(text_color="#22c55e")
-        messagebox.showinfo("페어링 성공", f"디바이스 '{result.device_name}' 가 연결되었습니다.")
+        current["confirmed"] = True
+        root.destroy()
 
     pair_btn = ctk.CTkButton(
         pair_inputs,
-        text="페어링 요청",
+        text="페어링하고 시작",
         command=_on_pair_click,
-        height=32,
-        fg_color="#2563eb",
-        hover_color="#1d4ed8",
+        height=36,
+        font=ctk.CTkFont(family="맑은 고딕", size=13, weight="bold"),
+        fg_color="#22c55e",
+        hover_color="#16a34a",
     )
     pair_btn.pack(padx=12, pady=(0, 12))
 
@@ -409,7 +480,7 @@ def _show_startup_dialog(settings: BridgeSettings) -> BridgeSettings | None:
     workspace_frame = ctk.CTkFrame(root, fg_color="transparent")
     workspace_frame.pack(padx=24, fill="x")
     ctk.CTkLabel(workspace_frame, text="워크스페이스 폴더", width=110, anchor="w").pack(side="left")
-    path_var = ctk.StringVar(value=str(settings.workspace_root))
+    path_var = ctk.StringVar(value=str(settings.workspace_root) if settings.workspace_root else "")
     path_entry = ctk.CTkEntry(workspace_frame, textvariable=path_var, font=ctk.CTkFont(family="Consolas", size=10), height=30)
     path_entry.pack(side="left", padx=(6, 6), fill="x", expand=True)
 
@@ -420,43 +491,24 @@ def _show_startup_dialog(settings: BridgeSettings) -> BridgeSettings | None:
 
     ctk.CTkButton(workspace_frame, text="찾기", command=_browse, width=70, height=30, fg_color="#374151", hover_color="#4b5563").pack(side="left")
 
-    # ── 시작/취소 ──
-    def _confirm() -> None:
-        path = Path(path_var.get()).resolve()
-        if not path.exists() or not path.is_dir():
-            messagebox.showerror("폴더 없음", f"폴더가 없거나 디렉터리가 아닙니다.\n\n{path}")
-            return
-        latest = current["settings"]
-        if not latest.is_paired:
-            messagebox.showerror("페어링 필요", "먼저 페어링 코드를 입력해 토큰을 발급받으세요.")
-            return
-        # 환경 변경이 있으면 storage 에 반영.
-        state = load_state()
-        chosen_env = environments.find(env_var.get())
-        if state.environment != chosen_env.key or state.api_base_url != chosen_env.api_base_url or state.ws_url != chosen_env.ws_url:
-            state.environment = chosen_env.key
-            state.api_base_url = chosen_env.api_base_url
-            state.ws_url = chosen_env.ws_url
-            save_state(state)
-        if path != latest.workspace_root:
-            _update_env_workspace_root(path)
-        current["settings"] = load_settings()
-        current["confirmed"] = True
-        root.destroy()
-
+    # ── 취소 (페어링은 위 '페어링하고 시작' 버튼이 곧 시작 동작을 겸한다) ──
     def _cancel() -> None:
         current["confirmed"] = False
         root.destroy()
 
     button_frame = ctk.CTkFrame(root, fg_color="transparent")
-    button_frame.pack(pady=20)
+    button_frame.pack(pady=14)
 
-    ctk.CTkButton(button_frame, text="시작", command=_confirm, width=132, height=40,
-                  font=ctk.CTkFont(family="맑은 고딕", size=13, weight="bold"),
-                  fg_color="#22c55e", hover_color="#16a34a").pack(side="left", padx=6)
-    ctk.CTkButton(button_frame, text="취소", command=_cancel, width=132, height=40,
-                  font=ctk.CTkFont(family="맑은 고딕", size=13),
-                  fg_color="#374151", hover_color="#4b5563").pack(side="left", padx=6)
+    ctk.CTkButton(
+        button_frame,
+        text="취소",
+        command=_cancel,
+        width=132,
+        height=36,
+        font=ctk.CTkFont(family="맑은 고딕", size=13),
+        fg_color="#374151",
+        hover_color="#4b5563",
+    ).pack()
 
     root.protocol("WM_DELETE_WINDOW", _cancel)
     root.mainloop()

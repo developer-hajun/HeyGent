@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import type { UIDestination } from '@/components/office/types'
-import type { RawTaskRun } from '@/types/taskRuns'
+import type { RawTaskRun, TaskRunAgentRef } from '@/types/taskRuns'
 import type { RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
 
 // 목적지 우선순위 — 같은 에이전트에 여러 task run이 있을 때 더 낮은 값이 우선
@@ -16,6 +16,16 @@ const DEST_PRIORITY: Record<UIDestination, number> = {
 
 // step.started 계열 — 에이전트가 실제로 무언가 시작했음을 나타내는 event_type
 const RUNNING_EVENT_TYPES = new Set(['step.started', 'tool.started', 'search.started'])
+
+// actorAgent.profileKey가 없을 때 kind/id로 AGENT_CONFIGS id를 유추한다.
+// 백엔드가 main 에이전트(CEO)의 profileKey를 내려주지 않아 kind 기반 매핑이 필요하다.
+function resolveProfileKey(agent?: TaskRunAgentRef | null): string | undefined {
+  if (!agent) return undefined
+  if (agent.profileKey) return agent.profileKey
+  if (agent.kind === 'main') return 'ceo'
+  if (agent.id) return agent.id
+  return undefined
+}
 
 // step 단위 종료 event_type — 태스크 전체가 끝난 건 아님 (다음 step이 올 수 있음)
 const STEP_TERMINAL_EVENT_TYPES = new Set([
@@ -34,8 +44,13 @@ function resolveDestination(
   taskRun: RawTaskRun,
   latestEvent?: RawTaskEventPayload,
 ): UIDestination | null {
-  // 이벤트에 task 레벨 status가 있으면 taskRun.status보다 우선
-  const status = (latestEvent?.status ?? taskRun.status)?.toUpperCase()
+  // step 단위 종료 이벤트(step.completed 등)의 status는 task 완료를 의미하지 않음
+  // — step event가 아닌 경우에만 event status를 task 상태 판단에 사용
+  const eventStatus =
+    latestEvent != null && !STEP_TERMINAL_EVENT_TYPES.has(latestEvent.event_type)
+      ? latestEvent.status
+      : undefined
+  const status = (eventStatus ?? taskRun.status)?.toUpperCase()
 
   if (!status || status === 'PENDING') return null
   if (status === 'FAILED') return 'calling'
@@ -70,7 +85,7 @@ export function useVisualizationSync(handleMove: (agentId: string, dest: UIDesti
     const pendingMoves: Record<string, UIDestination> = {}
 
     for (const taskRun of Object.values(taskRunsById)) {
-      const profileKey = taskRun.displayContext?.actorAgent?.profileKey
+      const profileKey = resolveProfileKey(taskRun.displayContext?.actorAgent)
       if (!profileKey) continue
 
       // 해당 task run의 최신 이벤트 (sequence 순 정렬된 배열의 마지막)

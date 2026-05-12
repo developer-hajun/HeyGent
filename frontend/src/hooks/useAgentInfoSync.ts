@@ -116,13 +116,15 @@ export function useAgentInfoSync() {
 
       void getSessionMainAgent(sessionId)
         .then((profile) => {
-          if (!profile.profileKey) return
-          updateAgentInfo(profile.profileKey, {
+          const profileData = {
             name: profile.name,
             role: profile.role,
             skills: profile.skills,
             ...(profile.profileImage ? { profileImage: profile.profileImage } : {}),
-          })
+          }
+          // REST API profileKey와 시각화 키('ceo') 양쪽에 동기화
+          if (profile.profileKey) updateAgentInfo(profile.profileKey, profileData)
+          updateAgentInfo('ceo', profileData)
         })
         .catch(() => {})
     }
@@ -131,7 +133,9 @@ export function useAgentInfoSync() {
   // task run 상태·스텝 변화 → agentInfoMap 갱신 (동적 필드만 덮어씀)
   useEffect(() => {
     for (const taskRun of Object.values(taskRunsById)) {
-      const profileKey = taskRun.displayContext?.actorAgent?.profileKey
+      const actorAgent = taskRun.displayContext?.actorAgent
+      // CEO(kind='main')는 profileKey가 null이므로 'ceo'로 대체
+      const profileKey = actorAgent?.profileKey ?? (actorAgent?.kind === 'main' ? 'ceo' : null)
       if (!profileKey) continue
 
       const agentStepRuns = Object.values(stepRunsById).filter(
@@ -151,9 +155,11 @@ export function useAgentInfoSync() {
   useEffect(() => {
     if (!selectedAgentId) return
 
-    const taskRun = Object.values(taskRunsById).find(
-      (tr) => tr.displayContext?.actorAgent?.profileKey === selectedAgentId,
-    )
+    const taskRun = Object.values(taskRunsById).find((tr) => {
+      const agent = tr.displayContext?.actorAgent
+      const key = agent?.profileKey ?? (agent?.kind === 'main' ? 'ceo' : null)
+      return key === selectedAgentId
+    })
     if (!taskRun) return
     if (fetchedTaskRunIds.current.has(taskRun.task_run_id)) return
 

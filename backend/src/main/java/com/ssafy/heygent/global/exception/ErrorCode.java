@@ -35,6 +35,7 @@ public enum ErrorCode {
     DEVICE_INACTIVE(HttpStatus.CONFLICT, "비활성화된 IoT 디바이스입니다."),
     DEVICE_ALREADY_PAIRED(HttpStatus.CONFLICT, "이미 등록된 IoT 디바이스입니다."),
     USER_DEVICE_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "이미 연결된 IoT 디바이스가 있습니다."),
+    BRIDGE_DEVICE_NAME_DUPLICATE(HttpStatus.CONFLICT, "같은 이름의 디바이스가 이미 연결되어 있습니다. 먼저 해제하거나 다른 이름을 사용하세요."),
 
     // 410 GONE
     PAIR_CODE_EXPIRED(HttpStatus.GONE, "만료된 IoT pairing code입니다."),

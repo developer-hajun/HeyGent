@@ -15,7 +15,7 @@ class FakeBackendAuthClient:
 
 
 def _patch_respond(monkeypatch, text: str = "WS_COMMAND_DONE") -> None:
-    def fake_respond(self, messages, tools, model, tool_choice=None):
+    def fake_respond(self, messages, tools, model, tool_choice=None, runtime_context=None):
         return AgentModelResponse(
             provider_name="openai_api",
             model=model,
@@ -26,8 +26,18 @@ def _patch_respond(monkeypatch, text: str = "WS_COMMAND_DONE") -> None:
             metadata={"model": model},
         )
 
+    async def fake_respond_async(self, messages, tools, model, tool_choice=None, runtime_context=None):
+        return fake_respond(
+            self,
+            messages=messages,
+            tools=tools,
+            model=model,
+            tool_choice=tool_choice,
+            runtime_context=runtime_context,
+        )
+
     monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond", fake_respond)
-    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.respond", fake_respond)
+    monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond_async", fake_respond_async)
 
 
 def _patch_respond_failure(monkeypatch) -> None:
@@ -161,7 +171,7 @@ def test_ws_session_message_create_attaches_backend_memory_context(client, monke
 def test_ws_followup_message_passes_previous_public_messages_without_current_user(client, monkeypatch):
     provider_calls: list[dict] = []
 
-    def fake_respond(self, messages, tools, model, tool_choice=None):
+    def fake_respond(self, messages, tools, model, tool_choice=None, runtime_context=None):
         provider_calls.append({"messages": messages, "tools": tools, "model": model, "tool_choice": tool_choice})
         return AgentModelResponse(
             provider_name="openai_api",
@@ -173,8 +183,18 @@ def test_ws_followup_message_passes_previous_public_messages_without_current_use
             metadata={"model": model},
         )
 
+    async def fake_respond_async(self, messages, tools, model, tool_choice=None, runtime_context=None):
+        return fake_respond(
+            self,
+            messages=messages,
+            tools=tools,
+            model=model,
+            tool_choice=tool_choice,
+            runtime_context=runtime_context,
+        )
+
     monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond", fake_respond)
-    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.respond", fake_respond)
+    monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond_async", fake_respond_async)
     context, websocket = _authenticated_socket(client, user_id="ws-followup-owner")
     try:
         session_store = client.app.state.session_store

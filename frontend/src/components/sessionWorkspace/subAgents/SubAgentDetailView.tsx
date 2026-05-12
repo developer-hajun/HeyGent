@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { Activity, BarChart3, Clock, FileText, Loader2, MoreHorizontal, Trash2 } from 'lucide-react'
 import { PageTabBar } from '@/components/PageTabBar'
 import {
-  AgentBudgetPanel,
   AgentConfigurationPanel,
   AgentDashboardPanel,
   AgentDetailHeader,
@@ -12,6 +11,12 @@ import {
   AgentSkillsLibraryPanel,
   AgentSkillsPanel,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
+import {
+  buildAgentRunUsageMap,
+  buildAgentUsageSummaryItems,
+  formatAgentRunCostUsage,
+  formatAgentRunTokenUsage,
+} from '@/components/sessionWorkspace/agentUsageDisplay'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -29,6 +34,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tabs } from '@/components/ui/tabs'
+import {
+  getCommandUsage,
+  type CommandUsageRecord,
+  type CommandUsageSummary,
+} from '@/apis/aiCommandUsage'
 import { listTaskRuns } from '@/apis/taskRuns'
 import type { AgentPanelItem } from '@/store/useSessionStore'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
@@ -42,13 +52,7 @@ import { SubAgentDraftForm } from './SubAgentDraftForm'
 import { SubAgentProfileImage } from './SubAgentProfileImage'
 import { SUB_AGENT_SKILLS } from './subAgentOptions'
 
-type SubAgentDetailTab =
-  | 'dashboard'
-  | 'instructions'
-  | 'skills'
-  | 'configuration'
-  | 'runs'
-  | 'budget'
+type SubAgentDetailTab = 'dashboard' | 'instructions' | 'skills' | 'configuration' | 'runs'
 
 const DETAIL_TABS: Array<{ value: SubAgentDetailTab; label: string }> = [
   { value: 'dashboard', label: '대시보드' },
@@ -56,7 +60,6 @@ const DETAIL_TABS: Array<{ value: SubAgentDetailTab; label: string }> = [
   { value: 'skills', label: '스킬' },
   { value: 'configuration', label: '설정' },
   { value: 'runs', label: '실행 기록' },
-  { value: 'budget', label: '예산' },
 ]
 
 export function SubAgentDetailView({
@@ -99,6 +102,9 @@ export function SubAgentDetailView({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [usageSummary, setUsageSummary] = useState<CommandUsageSummary | null>(null)
+  const [usageRecords, setUsageRecords] = useState<CommandUsageRecord[]>([])
+  const [usageError, setUsageError] = useState<string | null>(null)
   const selectedSkills = SUB_AGENT_SKILLS.filter((skill) => item.agent.skills?.includes(skill.id))
   const profileId = item.agent.profileId ?? item.id
   const agentTaskRuns = useMemo(
@@ -106,8 +112,8 @@ export function SubAgentDetailView({
     [loadedTaskRuns, profileId, sessionId, taskRunsById],
   )
   const runItems = useMemo(
-    () => buildAgentRunItems(agentTaskRuns, eventsByTaskRunId),
-    [agentTaskRuns, eventsByTaskRunId],
+    () => buildAgentRunItems(agentTaskRuns, eventsByTaskRunId, usageRecords),
+    [agentTaskRuns, eventsByTaskRunId, usageRecords],
   )
   const latestRun = runItems[0] ?? null
   const blockedRunCount = agentTaskRuns.filter(
@@ -116,6 +122,10 @@ export function SubAgentDetailView({
   const completedRunCount = agentTaskRuns.filter(
     (taskRun) => normalizeRunStatus(taskRun.status) === 'succeeded',
   ).length
+  const usageItems = useMemo(
+    () => buildAgentUsageSummaryItems(usageSummary, false, usageError),
+    [usageError, usageSummary],
+  )
   const instructionsDirty =
     instructionsDraft.trim() !== (item.agent.instructions ?? '') ||
     instructionsEntryFile.trim() !== (item.agent.instructionsEntryFile ?? 'AGENTS.md') ||
@@ -145,6 +155,30 @@ export function SubAgentDetailView({
       alive = false
     }
   }, [authenticatedReady, commandClient, fetchActiveTaskRuns, sessionId])
+
+  useEffect(() => {
+    if (!authenticatedReady || commandClient === null || sessionId.startsWith('pending_session_')) {
+      return
+    }
+
+    let alive = true
+    void getCommandUsage({ sessionId })
+      .then((result) => {
+        if (!alive) return
+        setUsageError(null)
+        setUsageSummary(result.summary)
+        setUsageRecords(result.records)
+      })
+      .catch(() => {
+        if (!alive) return
+        setUsageRecords([])
+        setUsageError('사용량을 불러오지 못했습니다.')
+      })
+
+    return () => {
+      alive = false
+    }
+  }, [authenticatedReady, commandClient, sessionId])
 
   const selectTab = (nextTab: SubAgentDetailTab) => {
     setTab(nextTab)
@@ -261,12 +295,7 @@ export function SubAgentDetailView({
 
       {tab === 'dashboard' && (
         <AgentDashboardPanel
-          costs={[
-            { label: '입력 토큰', value: '0' },
-            { label: '출력 토큰', value: '0' },
-            { label: '캐시 토큰', value: '0' },
-            { label: '총 비용', value: '$0.00' },
-          ]}
+          costs={usageItems}
           latestRun={latestRun}
           metrics={[
             {
@@ -368,22 +397,6 @@ export function SubAgentDetailView({
 
       {tab === 'runs' && <AgentRunsPanel emptyText="아직 실행 기록이 없습니다." items={runItems} />}
 
-      {tab === 'budget' && (
-        <AgentBudgetPanel
-          summary={{
-            amountLabel: '사용 안 함',
-            observedLabel: '$0.00',
-            remainingLabel: '제한 없음',
-            scopeName: item.agent.name,
-            scopeType: '에이전트',
-            status: 'healthy',
-            utilizationPercent: 0,
-            warnPercent: 80,
-            windowLabel: '월간 예산',
-          }}
-        />
-      )}
-
       {instructionsDirty && (
         <div className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-sm sm:hidden">
           <div className="flex items-center justify-end gap-2 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
@@ -465,7 +478,9 @@ function buildAgentTaskRuns(
 function buildAgentRunItems(
   taskRuns: RawTaskRun[],
   eventsByTaskRunId: Record<string, RawTaskEventPayload[]>,
+  usageRecords: CommandUsageRecord[],
 ) {
+  const usageByTaskRunId = buildAgentRunUsageMap(usageRecords)
   return taskRuns
     .map((taskRun) => buildAgentRunItem(taskRun, eventsByTaskRunId[taskRun.task_run_id] ?? []))
     .sort((first, second) => second.sortTime - first.sortTime)
@@ -475,8 +490,8 @@ function buildAgentRunItems(
       source: item.source,
       createdAt: item.createdAt,
       summary: item.summary,
-      tokens: item.tokens,
-      cost: item.cost,
+      tokens: formatAgentRunTokenUsage(usageByTaskRunId.get(item.id)),
+      cost: formatAgentRunCostUsage(usageByTaskRunId.get(item.id)),
       adapter: item.adapter,
     }))
 }
@@ -499,8 +514,6 @@ function buildAgentRunItem(taskRun: RawTaskRun, rawEvents: RawTaskEventPayload[]
       compactText(progressSummary) ??
       compactText(summary.title) ??
       '아직 요약이 없습니다.',
-    tokens: '0 tok',
-    cost: '$0.00',
     adapter: 'openai',
     sortTime,
   }
