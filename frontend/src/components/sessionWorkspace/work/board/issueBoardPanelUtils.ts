@@ -2,7 +2,6 @@ import type { WorkComment, WorkItem, WorkLabel } from '@/types/work'
 import {
   ISSUE_BOARD_LABELS,
   ISSUE_BOARD_STATUSES,
-  createIssueBoardFixtures,
   type IssueBoardIssue,
   type IssueBoardLabel,
   type IssueBoardStatus,
@@ -22,6 +21,7 @@ export function toIssueBoardIssue(item: WorkItem, allItems: WorkItem[] = []): Is
     status: item.status,
     assigneeAgentId: item.assigneeAgentId,
     parentId: item.parentId,
+    flowOrder: item.flowOrder,
     labels: item.labelIds ?? [],
     comments: [],
     runs:
@@ -197,9 +197,9 @@ export function arraysEqual(left: readonly string[], right: readonly string[]) {
   return leftSorted.every((value, index) => value === rightSorted[index])
 }
 
-export function loadTodoBoardState(storageKey: string, sessionId: string): PersistedTodoBoardState {
+export function loadTodoBoardState(storageKey: string): PersistedTodoBoardState {
   const fallback: PersistedTodoBoardState = {
-    issues: createIssueBoardFixtures(sessionId),
+    issues: [],
     labels: [...ISSUE_BOARD_LABELS],
     query: '',
     viewMode: 'list',
@@ -216,11 +216,11 @@ export function loadTodoBoardState(storageKey: string, sessionId: string): Persi
     if (raw === null) return fallback
     const parsed = JSON.parse(raw) as Partial<PersistedTodoBoardState>
     return {
-      issues: normalizeIssues(parsed.issues, fallback.issues),
+      issues: [],
       labels: normalizeLabels(parsed.labels, fallback.labels),
       query: typeof parsed.query === 'string' ? parsed.query : fallback.query,
       viewMode:
-        parsed.viewMode === 'list' || parsed.viewMode === 'board'
+        parsed.viewMode === 'list' || parsed.viewMode === 'board' || parsed.viewMode === 'flow'
           ? parsed.viewMode
           : fallback.viewMode,
       sortField: normalizeSortField(parsed.sortField, fallback.sortField),
@@ -295,12 +295,6 @@ function createFallbackLabel(labelId: string): IssueBoardLabel {
   }
 }
 
-function normalizeIssues(value: unknown, fallback: IssueBoardIssue[]) {
-  if (!Array.isArray(value)) return fallback
-  const issues = value.filter((item): item is IssueBoardIssue => isIssueBoardIssue(item))
-  return issues.length > 0 ? issues : fallback
-}
-
 function normalizeLabels(value: unknown, fallback: IssueBoardLabel[]) {
   if (!Array.isArray(value)) return fallback
   const labels = value.filter((item): item is IssueBoardLabel => isIssueBoardLabel(item))
@@ -315,92 +309,6 @@ function isIssueBoardLabel(value: unknown): value is IssueBoardLabel {
     typeof label.name === 'string' &&
     typeof label.color === 'string' &&
     isHexColor(label.color)
-  )
-}
-
-function isIssueBoardIssue(value: unknown): value is IssueBoardIssue {
-  if (typeof value !== 'object' || value === null) return false
-  const issue = value as Record<string, unknown>
-  return (
-    typeof issue.id === 'string' &&
-    typeof issue.identifier === 'string' &&
-    typeof issue.title === 'string' &&
-    typeof issue.description === 'string' &&
-    isIssueBoardStatus(issue.status) &&
-    isKnownAssigneeId(issue.assigneeAgentId) &&
-    (issue.parentId === null || typeof issue.parentId === 'string') &&
-    Array.isArray(issue.labels) &&
-    issue.labels.every((label) => typeof label === 'string') &&
-    Array.isArray(issue.comments) &&
-    issue.comments.every(isIssueBoardComment) &&
-    Array.isArray(issue.runs) &&
-    issue.runs.every(isIssueBoardRun) &&
-    Array.isArray(issue.documents) &&
-    issue.documents.every(isIssueBoardDocument) &&
-    Array.isArray(issue.childItems) &&
-    issue.childItems.every(isIssueBoardRelatedItem) &&
-    Array.isArray(issue.relatedItems) &&
-    issue.relatedItems.every(isIssueBoardRelatedItem) &&
-    Array.isArray(issue.blockedBy) &&
-    issue.blockedBy.every(isIssueBoardRelatedItem) &&
-    typeof issue.createdAt === 'string' &&
-    typeof issue.updatedAt === 'string' &&
-    (issue.startedAt === null || typeof issue.startedAt === 'string') &&
-    (issue.completedAt === null || typeof issue.completedAt === 'string') &&
-    typeof issue.live === 'boolean'
-  )
-}
-
-function isIssueBoardComment(value: unknown): value is IssueBoardIssue['comments'][number] {
-  if (typeof value !== 'object' || value === null) return false
-  const comment = value as Record<string, unknown>
-  return (
-    typeof comment.id === 'string' &&
-    (comment.authorType === 'user' ||
-      comment.authorType === 'agent' ||
-      comment.authorType === 'system') &&
-    typeof comment.authorName === 'string' &&
-    typeof comment.body === 'string' &&
-    typeof comment.createdAt === 'string'
-  )
-}
-
-function isIssueBoardRun(value: unknown): value is IssueBoardIssue['runs'][number] {
-  if (typeof value !== 'object' || value === null) return false
-  const run = value as Record<string, unknown>
-  return (
-    typeof run.id === 'string' &&
-    (run.status === 'queued' ||
-      run.status === 'running' ||
-      run.status === 'waiting' ||
-      run.status === 'completed' ||
-      run.status === 'failed') &&
-    typeof run.title === 'string' &&
-    typeof run.summary === 'string' &&
-    typeof run.startedAt === 'string' &&
-    (run.finishedAt === null || typeof run.finishedAt === 'string')
-  )
-}
-
-function isIssueBoardDocument(value: unknown): value is IssueBoardIssue['documents'][number] {
-  if (typeof value !== 'object' || value === null) return false
-  const document = value as Record<string, unknown>
-  return (
-    typeof document.id === 'string' &&
-    typeof document.title === 'string' &&
-    typeof document.summary === 'string' &&
-    typeof document.updatedAt === 'string'
-  )
-}
-
-function isIssueBoardRelatedItem(value: unknown): value is IssueBoardIssue['relatedItems'][number] {
-  if (typeof value !== 'object' || value === null) return false
-  const item = value as Record<string, unknown>
-  return (
-    typeof item.id === 'string' &&
-    typeof item.identifier === 'string' &&
-    typeof item.title === 'string' &&
-    isIssueBoardStatus(item.status)
   )
 }
 
@@ -426,9 +334,4 @@ function normalizeStringArray(value: unknown): string[] {
 
 function isIssueBoardStatus(value: unknown): value is IssueBoardStatus {
   return typeof value === 'string' && ISSUE_BOARD_STATUSES.includes(value as IssueBoardStatus)
-}
-
-function isKnownAssigneeId(value: unknown): value is IssueBoardIssue['assigneeAgentId'] {
-  if (value === null) return true
-  return typeof value === 'string'
 }

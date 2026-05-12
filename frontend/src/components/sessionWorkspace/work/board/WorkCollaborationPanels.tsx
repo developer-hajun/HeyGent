@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Check, FileText, MessageSquare, Plus, Trash2, X } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Check, FileText, MessageSquare, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import {
   createWorkInteraction,
   createWorkProduct,
@@ -9,12 +9,20 @@ import {
   listWorkDocuments,
   listWorkInteractions,
   listWorkProducts,
+  listWorkRecoveryActions,
+  listWorkWakes,
   respondWorkInteraction,
   upsertWorkDocument,
 } from '@/apis/work'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import type { WorkDocument, WorkInteraction, WorkProduct } from '@/types/work'
+import type {
+  WorkDocument,
+  WorkInteraction,
+  WorkProduct,
+  WorkRecoveryAction,
+  WorkWake,
+} from '@/types/work'
 import { formatRelativeTime } from './issueBoardPanelUtils'
 
 export function WorkDocumentsPanel({ workId }: { workId: string }) {
@@ -24,11 +32,14 @@ export function WorkDocumentsPanel({ workId }: { workId: string }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [revisionCountByKey, setRevisionCountByKey] = useState<Record<string, number>>({})
 
-  const refresh = () =>
-    listWorkDocuments(workId).then((response) => {
-      setItems(response.items)
-      return response.items
-    })
+  const refresh = useCallback(
+    () =>
+      listWorkDocuments(workId).then((response) => {
+        setItems(response.items)
+        return response.items
+      }),
+    [workId],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -50,7 +61,7 @@ export function WorkDocumentsPanel({ workId }: { workId: string }) {
     return () => {
       cancelled = true
     }
-  }, [workId])
+  }, [refresh, workId])
 
   const edit = (document: WorkDocument) => {
     setSelectedKey(document.documentKey)
@@ -142,10 +153,13 @@ export function WorkProductsPanel({ workId }: { workId: string }) {
   const [title, setTitle] = useState('')
   const [summary, setSummary] = useState('')
 
-  const refresh = () => listWorkProducts(workId).then((response) => setItems(response.items))
+  const refresh = useCallback(
+    () => listWorkProducts(workId).then((response) => setItems(response.items)),
+    [workId],
+  )
   useEffect(() => {
     void refresh().catch(console.error)
-  }, [workId])
+  }, [refresh])
 
   const add = () => {
     const nextTitle = title.trim()
@@ -217,10 +231,13 @@ export function WorkInteractionsPanel({ workId }: { workId: string }) {
   const [items, setItems] = useState<WorkInteraction[]>([])
   const [body, setBody] = useState('')
 
-  const refresh = () => listWorkInteractions(workId).then((response) => setItems(response.items))
+  const refresh = useCallback(
+    () => listWorkInteractions(workId).then((response) => setItems(response.items)),
+    [workId],
+  )
   useEffect(() => {
     void refresh().catch(console.error)
-  }, [workId])
+  }, [refresh])
 
   const addQuestion = () => {
     const nextBody = body.trim()
@@ -296,6 +313,91 @@ export function WorkInteractionsPanel({ workId }: { workId: string }) {
       )}
     </div>
   )
+}
+
+export function WorkRecoveryPanel({ workId }: { workId: string }) {
+  const [wakes, setWakes] = useState<WorkWake[]>([])
+  const [actions, setActions] = useState<WorkRecoveryAction[]>([])
+
+  const refresh = useCallback(
+    () =>
+      Promise.all([
+        listWorkWakes(workId).then((response) => setWakes(response.items)),
+        listWorkRecoveryActions(workId).then((response) => setActions(response.items)),
+      ]),
+    [workId],
+  )
+
+  useEffect(() => {
+    void refresh().catch(console.error)
+  }, [refresh])
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-medium">실행 복구</span>
+        <Button type="button" size="icon" variant="ghost" className="h-8 w-8" onClick={refresh}>
+          <RefreshCw className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+      <div className="space-y-2">
+        <SectionLabel label="Wake" count={wakes.length} />
+        {wakes.length === 0 ? (
+          <EmptyBox>wake 기록 없음</EmptyBox>
+        ) : (
+          wakes.map((wake) => (
+            <div key={wake.wakeId} className="rounded-md border p-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{wake.reason}</span>
+                <span className="rounded-full border px-2 py-0.5 text-xs">{wake.status}</span>
+              </div>
+              <div className="text-muted-foreground mt-2 space-y-1 text-xs">
+                <p>시도 {wake.attempts}회</p>
+                {wake.taskRunId && <p className="truncate">TaskRun {wake.taskRunId}</p>}
+                {wake.lastError && <p className="line-clamp-2">오류 {wake.lastError}</p>}
+                <p>{formatOptionalTime(wake.updatedAt || wake.createdAt)}</p>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+      <div className="space-y-2">
+        <SectionLabel label="복구 조치" count={actions.length} />
+        {actions.length === 0 ? (
+          <EmptyBox>복구 조치 없음</EmptyBox>
+        ) : (
+          actions.map((action) => (
+            <div key={action.actionId} className="rounded-md border p-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                  {action.actionType}
+                </span>
+                <span className="rounded-full border px-2 py-0.5 text-xs">{action.status}</span>
+              </div>
+              <div className="text-muted-foreground mt-2 space-y-1 text-xs">
+                <p>{action.reason}</p>
+                {action.taskRunId && <p className="truncate">TaskRun {action.taskRunId}</p>}
+                <p>{formatOptionalTime(action.updatedAt || action.createdAt)}</p>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SectionLabel({ label, count }: { label: string; count: number }) {
+  return (
+    <div className="flex items-center justify-between text-xs">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="rounded-full border px-2 py-0.5">{count}</span>
+    </div>
+  )
+}
+
+function formatOptionalTime(value: string | null) {
+  return value ? formatRelativeTime(value) : '-'
 }
 
 function EmptyBox({ children }: { children: string }) {

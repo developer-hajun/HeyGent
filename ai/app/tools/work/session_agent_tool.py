@@ -54,6 +54,10 @@ SESSION_AGENT_TASK_SCHEMA = {
                 "items": {"type": "string"},
                 "description": "Existing label names to attach. Parent labels are inherited automatically.",
             },
+            "blockParentUntilDone": {
+                "type": "boolean",
+                "description": "Whether the child work blocks the parent until the child reaches a terminal status. Defaults to false.",
+            },
         },
         "required": ["title", "instruction"],
     },
@@ -81,7 +85,7 @@ WORK_DISPOSITION_SCHEMA = {
             "status": {
                 "type": "string",
                 "enum": ["todo", "in_progress", "in_review", "blocked", "done", "cancelled"],
-                "description": "Final work status after this run.",
+                "description": "Final work status after this run. Use blocked only when required input, permission, tools, or prerequisite work prevents progress.",
             },
             "summary": {
                 "type": "string",

@@ -25,9 +25,10 @@ class PostgresDurableRepository:
             """
             INSERT INTO run_anchors (
                 task_run_id, session_id, owner_key, owner_user_id, session_key,
-                current_step_run_id, durable_status, agent_config_snapshot, anchor_payload
+                current_step_run_id, durable_status, agent_profile_id, agent_profile_version,
+                agent_config_snapshot, anchor_payload
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
             ON CONFLICT (task_run_id) DO UPDATE SET
                 session_id = EXCLUDED.session_id,
                 owner_key = EXCLUDED.owner_key,
@@ -35,6 +36,8 @@ class PostgresDurableRepository:
                 session_key = EXCLUDED.session_key,
                 current_step_run_id = EXCLUDED.current_step_run_id,
                 durable_status = EXCLUDED.durable_status,
+                agent_profile_id = EXCLUDED.agent_profile_id,
+                agent_profile_version = EXCLUDED.agent_profile_version,
                 agent_config_snapshot = EXCLUDED.agent_config_snapshot,
                 anchor_payload = EXCLUDED.anchor_payload,
                 revision = run_anchors.revision + 1,
@@ -48,6 +51,8 @@ class PostgresDurableRepository:
                 payload.get("session_key"),
                 payload.get("current_step_run_id"),
                 payload.get("durable_status", "OPEN"),
+                payload.get("agent_profile_id"),
+                payload.get("agent_profile_version"),
                 _json(payload.get("agent_config_snapshot", {})),
                 _json(payload.get("anchor_payload", {})),
             ),
@@ -241,6 +246,9 @@ class PostgresTaskRepository(PostgresDurableRepository):
                 "session_key": anchor.get("session_key"),
                 "current_step_run_id": anchor.get("current_step_run_id"),
                 "durable_status": anchor.get("durable_status", "OPEN"),
+                "agent_profile_id": anchor.get("agent_profile_id"),
+                "agent_profile_version": anchor.get("agent_profile_version"),
+                "agent_config_snapshot": anchor.get("agent_config_snapshot", {}),
                 "anchor_payload": payload,
             },
         )
@@ -469,6 +477,7 @@ class PostgresTaskRepository(PostgresDurableRepository):
         payload = dict(existing.get("anchor_payload") or {})
         payload["task"] = _task_payload(task)
         agent_config_snapshot = _agent_config_snapshot_from_task(task)
+        agent_profile_id, agent_profile_version = _agent_profile_ref_from_task(task)
         # anchor_payload의 events는 append_event가 관리하므로 TaskRun 저장 때 지우지 않는다.
         # agent_config_snapshot은 TaskRun input과 별도 컬럼에도 남겨 재시작 시
         # 설정 원본을 anchor JSON 파싱 없이 확인할 수 있게 한다.
@@ -481,6 +490,8 @@ class PostgresTaskRepository(PostgresDurableRepository):
                 "session_key": task.session_key,
                 "current_step_run_id": task.current_step_run_id,
                 "durable_status": _durable_status(task.status),
+                "agent_profile_id": agent_profile_id,
+                "agent_profile_version": agent_profile_version,
                 "agent_config_snapshot": agent_config_snapshot,
                 "anchor_payload": payload,
             },
@@ -619,6 +630,24 @@ def _agent_config_snapshot_from_task(task: TaskRun) -> dict[str, Any]:
         if value is not None and target_key not in snapshot:
             snapshot[target_key] = value
     return snapshot
+
+
+def _agent_profile_ref_from_task(task: TaskRun) -> tuple[str | None, int | None]:
+    input_payload = dict(task.input_payload or {})
+    profile = input_payload.get("targetAgentProfile")
+    if not isinstance(profile, dict):
+        profile = input_payload.get("target_agent_profile")
+    if not isinstance(profile, dict):
+        return None, None
+    profile_id = str(profile.get("profileId") or profile.get("profile_id") or "").strip()
+    if not profile_id:
+        return None, None
+    raw_version = profile.get("profileVersion") or profile.get("profile_version")
+    try:
+        profile_version = int(raw_version) if raw_version is not None else None
+    except (TypeError, ValueError):
+        profile_version = None
+    return profile_id, profile_version
 
 
 def _task_from_payload(payload: dict[str, Any] | None) -> TaskRun | None:

@@ -3,10 +3,13 @@ package com.ssafy.heygent.domain.ai.openai.service;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -21,6 +24,7 @@ import com.ssafy.heygent.domain.ai.openai.repository.AiCommandUsageRecordReposit
 import com.ssafy.heygent.global.exception.CustomException;
 import com.ssafy.heygent.global.exception.ErrorCode;
 
+import jakarta.persistence.criteria.Predicate;
 import lombok.RequiredArgsConstructor;
 
 @Service
@@ -58,14 +62,16 @@ public class AiCommandUsageService {
         String sessionId,
         Integer limit
     ) {
-        List<AiCommandUsageRecord> records = aiCommandUsageRecordRepository.findUsageRecords(
-            userId,
-            trimToNull(taskRunId),
-            trimToNull(sessionId),
-            startOfDay(from),
-            endExclusive(to),
-            PageRequest.of(0, normalizeLimit(limit))
-        );
+        List<AiCommandUsageRecord> records = aiCommandUsageRecordRepository.findAll(
+            usageFilter(
+                userId,
+                trimToNull(taskRunId),
+                trimToNull(sessionId),
+                startOfDay(from),
+                endExclusive(to)
+            ),
+            PageRequest.of(0, normalizeLimit(limit), Sort.by(Sort.Direction.DESC, "createdAt"))
+        ).getContent();
 
         return AiCommandUsageListResponse.builder()
             .summary(summary(records))
@@ -154,6 +160,32 @@ public class AiCommandUsageService {
 
     private LocalDateTime endExclusive(LocalDate date) {
         return date == null ? null : date.plusDays(1).atStartOfDay();
+    }
+
+    private Specification<AiCommandUsageRecord> usageFilter(
+        Long userId,
+        String taskRunId,
+        String sessionId,
+        LocalDateTime fromDateTime,
+        LocalDateTime toDateTime
+    ) {
+        return (root, query, criteriaBuilder) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            predicates.add(criteriaBuilder.equal(root.get("userId"), userId));
+            if (taskRunId != null) {
+                predicates.add(criteriaBuilder.equal(root.get("taskRunId"), taskRunId));
+            }
+            if (sessionId != null) {
+                predicates.add(criteriaBuilder.equal(root.get("sessionId"), sessionId));
+            }
+            if (fromDateTime != null) {
+                predicates.add(criteriaBuilder.greaterThanOrEqualTo(root.<LocalDateTime>get("createdAt"), fromDateTime));
+            }
+            if (toDateTime != null) {
+                predicates.add(criteriaBuilder.lessThan(root.<LocalDateTime>get("createdAt"), toDateTime));
+            }
+            return criteriaBuilder.and(predicates.toArray(Predicate[]::new));
+        };
     }
 
     private Map<String, Object> normalizeMetadata(Map<String, Object> metadata) {

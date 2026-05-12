@@ -29,7 +29,8 @@ async def test_recall_sends_internal_header_and_user_id_params():
         assert str(request.url) == (
             "http://backend/internal/ai/memories/recall"
             "?userId=1&limit=5&query=%ED%9A%8C%EC%9D%98%EB%A1%9D+%EC%9A%94%EC%95%BD"
-            "&workspaceKey=workspace-a&scopeType=WORKSPACE&tags=project"
+            "&workspaceKey=workspace-a&scopeType=WORKSPACE&tags=project&metadataCategories=task_state"
+            "&metadataCategories=procedure"
         )
         return httpx.Response(200, json={"status": 200, "data": [memory_payload()]})
 
@@ -47,6 +48,7 @@ async def test_recall_sends_internal_header_and_user_id_params():
             workspace_key="workspace-a",
             scope_type="WORKSPACE",
             tags=["project"],
+            metadata_categories=["task_state", "procedure"],
         )
 
     assert len(memories) == 1
@@ -101,6 +103,28 @@ async def test_mark_used_posts_user_id_and_score():
         client = BackendMemoryClient(settings=settings, http_client=http_client)
 
         memory = await client.mark_used(user_id="1", memory_id=10, usefulness_score=0.75)
+
+    assert memory.id == 10
+
+
+@pytest.mark.asyncio
+async def test_mark_used_posts_source_task_run_id_for_idempotency():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert str(request.url) == "http://backend/internal/ai/memories/10/used"
+        assert request.read() == b'{"userId":1,"usefulnessScore":0.75,"sourceTaskRunId":"task_1"}'
+        return httpx.Response(200, json={"status": 200, "data": memory_payload(10)})
+
+    settings = Settings(backend_base_url="http://backend", internal_service_token="service-token")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = BackendMemoryClient(settings=settings, http_client=http_client)
+
+        memory = await client.mark_used(
+            user_id="1",
+            memory_id=10,
+            usefulness_score=0.75,
+            source_task_run_id="task_1",
+        )
 
     assert memory.id == 10
 
