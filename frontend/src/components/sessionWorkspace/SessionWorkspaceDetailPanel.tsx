@@ -16,6 +16,10 @@ import { Button } from '@/components/ui/button'
 import { Tabs } from '@/components/ui/tabs'
 import {
   AgentDetailHeader,
+  AgentRunActivityChart,
+  AgentRunStatusChart,
+  AgentRunSuccessRateChart,
+  AgentUsageActivityChart,
   type AgentRunItemData,
   AgentConfigurationPanel,
   AgentDashboardPanel,
@@ -554,34 +558,31 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
             metrics={[
               {
                 icon: Activity,
-                label: '실행 현황',
-                value: formatSessionRunStatus(session.last_task_run_status),
+                label: '실행 활동',
+                value: `${sessionRuns.length}회`,
                 description: '최근 14일',
+                chart: <AgentRunActivityChart runs={sessionRuns} />,
               },
               {
                 icon: FileText,
                 label: '담당 작업',
-                value: String(mainAgentTaskRunIds.length),
+                value: `${mainAgentTaskRunIds.length}개`,
                 description: '최근 14일',
+                chart: <AgentRunStatusChart runs={sessionRuns} />,
               },
               {
                 icon: BarChart3,
-                label: '상태별 작업',
-                value: String(
-                  sessionRuns.filter((run) => run.status === 'failed' || run.status === 'blocked')
-                    .length,
-                ),
+                label: '토큰 사용',
+                value: mainAgentUsageSummary.totalTokens.toLocaleString('ko-KR'),
                 description: '최근 14일',
+                chart: <AgentUsageActivityChart records={mainAgentUsageRecords} />,
               },
               {
                 icon: Play,
-                label: '완료 횟수',
-                value: String(
-                  sessionRuns.filter(
-                    (run) => run.status === 'succeeded' || run.status === 'completed',
-                  ).length,
-                ),
+                label: '성공률',
+                value: getRunSuccessRateLabel(sessionRuns),
                 description: '최근 14일',
+                chart: <AgentRunSuccessRateChart runs={sessionRuns} />,
               },
             ]}
             recentTitle="최근 작업"
@@ -833,6 +834,7 @@ function buildSessionRunItems(
       tokens: '-',
       cost: '-',
       adapter: 'openai',
+      sortTime: getTime(session.last_message_at),
     },
   ]
 }
@@ -934,7 +936,27 @@ function toAgentRunItem(
     cost: formatAgentRunCostUsage(usage),
     adapter: item.adapter,
     model: item.model,
+    sortTime: item.sortTime,
   }
+}
+
+function getRunSuccessRateLabel(runs: AgentRunItemData[]) {
+  const finished = runs.filter(
+    (run) => isRunSuccessStatus(run.status) || isRunFailureStatus(run.status),
+  )
+  if (finished.length === 0) return '0%'
+  const succeeded = finished.filter((run) => isRunSuccessStatus(run.status)).length
+  return `${Math.round((succeeded / finished.length) * 100)}%`
+}
+
+function isRunSuccessStatus(status?: string | null) {
+  return status === 'succeeded' || status === 'completed'
+}
+
+function isRunFailureStatus(status?: string | null) {
+  return (
+    status === 'failed' || status === 'blocked' || status === 'cancelled' || status === 'canceled'
+  )
 }
 
 function getRunSortTime(

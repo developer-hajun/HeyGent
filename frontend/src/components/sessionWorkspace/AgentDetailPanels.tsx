@@ -27,6 +27,7 @@ export interface AgentMetricItem {
   label: string
   value: ReactNode
   description?: ReactNode
+  chart?: ReactNode
 }
 
 export interface AgentRunItemData {
@@ -34,11 +35,18 @@ export interface AgentRunItemData {
   status: string
   source?: string
   createdAt?: string
+  sortTime?: number
   summary?: string
   tokens?: string
   cost?: string
   adapter?: string
   model?: string
+}
+
+export interface AgentUsageMetricRecord {
+  createdAt?: string
+  totalTokens?: number
+  estimatedCostUsd?: number
 }
 
 export interface AgentUsageRowData {
@@ -1004,8 +1012,283 @@ function AgentRecentSummaryItem({ label, onSelect, value }: AgentSummaryItemData
   )
 }
 
+const CHART_COLORS = ['#06b6d4', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b']
+const DAY_MS = 24 * 60 * 60 * 1000
+
+export function AgentRunActivityChart({ runs }: { runs: AgentRunItemData[] }) {
+  const activity = buildRunActivityData(runs)
+  return <AgentStackedDayChart activity={activity} emptyLabel="실행 기록 없음" />
+}
+
+export function AgentRunStatusChart({ runs }: { runs: AgentRunItemData[] }) {
+  const activity = buildRunActivityData(runs)
+  return (
+    <AgentStackedDayChart
+      activity={activity}
+      emptyLabel="상태 기록 없음"
+      legend={[
+        { color: CHART_COLORS[1], label: '완료' },
+        { color: CHART_COLORS[3], label: '실패' },
+        { color: CHART_COLORS[5], label: '기타' },
+      ]}
+    />
+  )
+}
+
+export function AgentRunSuccessRateChart({ runs }: { runs: AgentRunItemData[] }) {
+  const activity = buildRunActivityData(runs)
+  const hasData = activity.some((day) => day.total > 0)
+  if (!hasData) return <p className="text-muted-foreground text-xs">실행 기록 없음</p>
+
+  return (
+    <div>
+      <div className="flex h-20 items-end gap-[3px]">
+        {activity.map((day) => {
+          const rate = day.total > 0 ? day.succeeded / day.total : 0
+          const color =
+            day.total === 0
+              ? undefined
+              : rate >= 0.8
+                ? CHART_COLORS[1]
+                : rate >= 0.5
+                  ? CHART_COLORS[2]
+                  : CHART_COLORS[3]
+          return (
+            <div
+              key={day.date}
+              className="flex h-full flex-1 flex-col justify-end"
+              title={`${day.label}: ${day.total > 0 ? Math.round(rate * 100) : 0}%`}
+            >
+              {day.total > 0 ? (
+                <div style={{ height: `${rate * 100}%`, minHeight: 2, backgroundColor: color }} />
+              ) : (
+                <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+              )}
+            </div>
+          )
+        })}
+      </div>
+      <AgentDateLabels days={activity} />
+    </div>
+  )
+}
+
+export function AgentUsageActivityChart({ records }: { records: AgentUsageMetricRecord[] }) {
+  const data = buildLast14DayUsageData(records)
+  const maxValue = Math.max(...data.map((day) => day.tokens), 1)
+  const hasData = data.some((day) => day.tokens > 0)
+
+  if (!hasData) return <p className="text-muted-foreground text-xs">사용량 기록 없음</p>
+  return (
+    <div>
+      <div className="flex h-20 items-end gap-[3px]">
+        {data.map((day) => {
+          const heightPct = (day.tokens / maxValue) * 100
+          return (
+            <div
+              key={day.date}
+              className="flex h-full flex-1 flex-col justify-end"
+              title={`${day.label}: ${day.tokens.toLocaleString('ko-KR')} tokens`}
+            >
+              {day.tokens > 0 ? (
+                <div className="bg-violet-500" style={{ height: `${heightPct}%`, minHeight: 2 }} />
+              ) : (
+                <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+              )}
+            </div>
+          )
+        })}
+      </div>
+      <AgentDateLabels days={data} />
+    </div>
+  )
+}
+
+function AgentStackedDayChart({
+  activity,
+  emptyLabel,
+  legend,
+}: {
+  activity: AgentRunActivityDay[]
+  emptyLabel: string
+  legend?: Array<{ color: string; label: string }>
+}) {
+  const maxValue = Math.max(...activity.map((day) => day.total), 1)
+  const hasData = activity.some((day) => day.total > 0)
+
+  if (!hasData) return <p className="text-muted-foreground text-xs">{emptyLabel}</p>
+
+  return (
+    <div>
+      <div className="flex h-20 items-end gap-[3px]">
+        {activity.map((day) => {
+          const heightPct = (day.total / maxValue) * 100
+          return (
+            <div
+              key={day.date}
+              className="flex h-full flex-1 flex-col justify-end"
+              title={`${day.label}: ${day.total}회`}
+            >
+              {day.total > 0 ? (
+                <div
+                  className="flex flex-col-reverse gap-px overflow-hidden"
+                  style={{ height: `${heightPct}%`, minHeight: 2 }}
+                >
+                  {day.succeeded > 0 ? (
+                    <div className="bg-emerald-500" style={{ flex: day.succeeded }} />
+                  ) : null}
+                  {day.failed > 0 ? (
+                    <div className="bg-red-500" style={{ flex: day.failed }} />
+                  ) : null}
+                  {day.other > 0 ? (
+                    <div className="bg-neutral-500" style={{ flex: day.other }} />
+                  ) : null}
+                </div>
+              ) : (
+                <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+              )}
+            </div>
+          )
+        })}
+      </div>
+      <AgentDateLabels days={activity} />
+      {legend ? <AgentChartLegend items={legend} /> : null}
+    </div>
+  )
+}
+
+function AgentDateLabels({ days }: { days: Array<{ date: string; label: string }> }) {
+  return (
+    <div className="mt-1.5 flex gap-[3px]">
+      {days.map((day, index) => (
+        <div key={day.date} className="flex-1 text-center">
+          {index === 0 || index === 6 || index === 13 ? (
+            <span className="text-muted-foreground text-[9px] tabular-nums">{day.label}</span>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function AgentChartLegend({ items }: { items: Array<{ color: string; label: string }> }) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-x-2.5 gap-y-0.5">
+      {items.map((item) => (
+        <span key={item.label} className="text-muted-foreground flex items-center gap-1 text-[9px]">
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{ backgroundColor: item.color }}
+          />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+interface AgentRunActivityDay {
+  date: string
+  label: string
+  succeeded: number
+  failed: number
+  other: number
+  total: number
+}
+
+function buildRunActivityData(runs: AgentRunItemData[]): AgentRunActivityDay[] {
+  const days = buildLast14Days()
+  const grouped = new Map(
+    days.map((day) => [
+      day.key,
+      { date: day.key, label: day.label, succeeded: 0, failed: 0, other: 0, total: 0 },
+    ]),
+  )
+  for (const run of runs) {
+    const key = getDayKey(run.sortTime)
+    const entry = key !== null ? grouped.get(key) : undefined
+    if (!entry) continue
+    if (isSuccessStatus(run.status)) entry.succeeded += 1
+    else if (isFailureStatus(run.status)) entry.failed += 1
+    else entry.other += 1
+    entry.total += 1
+  }
+  return [...grouped.values()]
+}
+
+function buildLast14DayUsageData(records: AgentUsageMetricRecord[]) {
+  const days = buildLast14Days()
+  const grouped = new Map(
+    days.map((day) => [day.key, { date: day.key, label: day.label, tokens: 0 }]),
+  )
+  for (const record of records) {
+    const time = record.createdAt ? new Date(record.createdAt).getTime() : Number.NaN
+    const key = getDayKey(time)
+    const entry = key !== null ? grouped.get(key) : undefined
+    if (entry) {
+      entry.tokens += Math.max(0, record.totalTokens ?? 0)
+    }
+  }
+  return [...grouped.values()]
+}
+
+function buildLast14Days() {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return Array.from({ length: 14 }, (_, index) => {
+    const date = new Date(today.getTime() - (13 - index) * DAY_MS)
+    return {
+      key: getDayKey(date.getTime()) ?? '',
+      label: `${date.getMonth() + 1}/${date.getDate()}`,
+    }
+  })
+}
+
+function getDayKey(time: number | undefined) {
+  if (time === undefined || !Number.isFinite(time) || time <= 0) return null
+  const date = new Date(time)
+  date.setHours(0, 0, 0, 0)
+  return date.toISOString().slice(0, 10)
+}
+
+function isSuccessStatus(status?: string | null) {
+  return (
+    status === 'succeeded' ||
+    status === 'completed' ||
+    status === 'SUCCEEDED' ||
+    status === 'COMPLETED'
+  )
+}
+
+function isFailureStatus(status?: string | null) {
+  return (
+    status === 'failed' ||
+    status === 'blocked' ||
+    status === 'cancelled' ||
+    status === 'canceled' ||
+    status === 'FAILED' ||
+    status === 'BLOCKED' ||
+    status === 'CANCELLED' ||
+    status === 'CANCELED'
+  )
+}
+
 function AgentMetricCard({ metric }: { metric: AgentMetricItem }) {
   const Icon = metric.icon
+
+  if (metric.chart) {
+    return (
+      <div className="border-border space-y-3 rounded-lg border p-4">
+        <div>
+          <h3 className="text-muted-foreground text-xs font-medium">{metric.label}</h3>
+          {metric.description ? (
+            <span className="text-muted-foreground/60 text-[10px]">{metric.description}</span>
+          ) : null}
+        </div>
+        {metric.chart}
+      </div>
+    )
+  }
 
   return (
     <div className="border-border min-h-28 rounded-lg border p-4">

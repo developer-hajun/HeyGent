@@ -5,6 +5,10 @@ import {
   AgentConfigurationPanel,
   AgentDashboardPanel,
   AgentDetailHeader,
+  AgentRunActivityChart,
+  AgentRunStatusChart,
+  AgentRunSuccessRateChart,
+  AgentUsageActivityChart,
   AgentInstructionsBundlePanel,
   AgentInstructionsPanel,
   AgentRunsPanel,
@@ -124,12 +128,6 @@ export function SubAgentDetailView({
     [agentTaskRuns, eventsByTaskRunId, usageRecords],
   )
   const latestRun = runItems[0] ?? null
-  const blockedRunCount = agentTaskRuns.filter(
-    (taskRun) => normalizeRunStatus(taskRun.status) === 'failed',
-  ).length
-  const completedRunCount = agentTaskRuns.filter(
-    (taskRun) => normalizeRunStatus(taskRun.status) === 'succeeded',
-  ).length
   const agentUsageRecords = useMemo(
     () =>
       filterUsageRecordsByTaskRunIds(
@@ -321,27 +319,31 @@ export function SubAgentDetailView({
           metrics={[
             {
               icon: Activity,
-              label: '실행 현황',
-              value: latestRun ? formatRunStatus(latestRun.status) : '준비 중',
+              label: '실행 활동',
+              value: `${runItems.length}회`,
               description: '최근 14일',
+              chart: <AgentRunActivityChart runs={runItems} />,
             },
             {
               icon: FileText,
               label: '담당 작업',
-              value: String(agentTaskRuns.length),
+              value: `${agentTaskRuns.length}개`,
               description: '최근 14일',
+              chart: <AgentRunStatusChart runs={runItems} />,
             },
             {
               icon: BarChart3,
-              label: '차단됨',
-              value: String(blockedRunCount),
+              label: '토큰 사용',
+              value: agentUsageSummary.totalTokens.toLocaleString('ko-KR'),
               description: '최근 14일',
+              chart: <AgentUsageActivityChart records={agentUsageRecords} />,
             },
             {
               icon: Clock,
-              label: '완료 횟수',
-              value: String(completedRunCount),
+              label: '성공률',
+              value: getRunSuccessRateLabel(runItems),
               description: '최근 14일',
+              chart: <AgentRunSuccessRateChart runs={runItems} />,
             },
           ]}
           recentTitle="최근 작업"
@@ -422,7 +424,7 @@ export function SubAgentDetailView({
 
       {tab === 'runs' && <AgentRunsPanel emptyText="아직 실행 기록이 없습니다." items={runItems} />}
 
-      {instructionsDirty && (
+      {tab === 'instructions' && instructionsDirty && (
         <div className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-sm sm:hidden">
           <div className="flex items-center justify-end gap-2 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
             <Button variant="ghost" size="sm" onClick={resetInstructionsDraft}>
@@ -434,7 +436,7 @@ export function SubAgentDetailView({
           </div>
         </div>
       )}
-      {instructionsDirty && (
+      {tab === 'instructions' && instructionsDirty && (
         <div className="fixed right-6 bottom-6 z-30 hidden sm:block">
           <div className="bg-background/90 border-border flex items-center gap-2 rounded-lg border px-3 py-1.5 shadow-lg backdrop-blur-sm">
             <Button variant="ghost" size="sm" onClick={resetInstructionsDraft}>
@@ -518,7 +520,27 @@ function buildAgentRunItems(
       tokens: formatAgentRunTokenUsage(usageByTaskRunId.get(item.id)),
       cost: formatAgentRunCostUsage(usageByTaskRunId.get(item.id)),
       adapter: item.adapter,
+      sortTime: item.sortTime,
     }))
+}
+
+function getRunSuccessRateLabel(runs: Array<{ status: string }>) {
+  const finished = runs.filter(
+    (run) => isRunSuccessStatus(run.status) || isRunFailureStatus(run.status),
+  )
+  if (finished.length === 0) return '0%'
+  const succeeded = finished.filter((run) => isRunSuccessStatus(run.status)).length
+  return `${Math.round((succeeded / finished.length) * 100)}%`
+}
+
+function isRunSuccessStatus(status?: string | null) {
+  return status === 'succeeded' || status === 'completed'
+}
+
+function isRunFailureStatus(status?: string | null) {
+  return (
+    status === 'failed' || status === 'blocked' || status === 'cancelled' || status === 'canceled'
+  )
 }
 
 function buildAgentRunItem(taskRun: RawTaskRun, rawEvents: RawTaskEventPayload[]) {
