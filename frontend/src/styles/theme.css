@@ -170,6 +170,14 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    user-select: none;
+  }
+
+  /* 텍스트 입력이 필요한 요소에서는 선택 허용 */
+  input,
+  textarea,
+  [contenteditable='true'] {
+    user-select: text;
   }
 
   body {

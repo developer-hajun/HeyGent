@@ -1117,6 +1117,53 @@ export function AgentStatusPage() {
   useVisualizationSync(handleMove)
   useAgentInfoSync()
 
+  // handleMove는 매 렌더마다 새로 생성되므로 타이머 콜백에서는 항상 최신 버전을 참조
+  const handleMoveRef = useRef(handleMove)
+  useEffect(() => {
+    handleMoveRef.current = handleMove
+  })
+
+  // CEO가 sitting_work 상태이고 서브에이전트가 있으면 주기적으로 explain(화이트보드) 좌표로 이동
+  const ceoState = useAgentVisualizationStore(
+    (s) => s.agentRuntimes.find((a) => a.config.id === 'ceo')?.state,
+  )
+  const hasSubAgents = useAgentVisualizationStore((s) =>
+    s.agentRuntimes.some((a) => a.config.id !== 'ceo'),
+  )
+
+  useEffect(() => {
+    if (!hasSubAgents || ceoState !== 'sitting_work') return
+    // 40~80초 사이 랜덤 간격으로 explain 좌표로 이동
+    const delay = 40_000 + Math.random() * 40_000
+    const timer = setTimeout(() => {
+      const ceo = useAgentVisualizationStore
+        .getState()
+        .agentRuntimes.find((a) => a.config.id === 'ceo')
+      const subs = useAgentVisualizationStore
+        .getState()
+        .agentRuntimes.filter((a) => a.config.id !== 'ceo')
+      if (ceo?.state === 'sitting_work' && subs.length > 0) {
+        handleMoveRef.current('ceo', 'meeting')
+      }
+    }, delay)
+    return () => clearTimeout(timer)
+  }, [ceoState, hasSubAgents])
+
+  // CEO가 explain(sitting_meeting) 도착 후 15~25초 뒤 work로 복귀
+  useEffect(() => {
+    if (ceoState !== 'sitting_meeting') return
+    const delay = 15_000 + Math.random() * 10_000
+    const timer = setTimeout(() => {
+      const ceo = useAgentVisualizationStore
+        .getState()
+        .agentRuntimes.find((a) => a.config.id === 'ceo')
+      if (ceo?.state === 'sitting_meeting') {
+        handleMoveRef.current('ceo', 'desk') // CEO 매핑: 'desk' → work 좌표
+      }
+    }, delay)
+    return () => clearTimeout(timer)
+  }, [ceoState])
+
   const handleAgentArrived = (agentId: string) => {
     setAgents((prev) => {
       const agent = prev.find((a) => a.config.id === agentId)

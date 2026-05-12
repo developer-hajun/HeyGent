@@ -44,8 +44,13 @@ function resolveDestination(
   taskRun: RawTaskRun,
   latestEvent?: RawTaskEventPayload,
 ): UIDestination | null {
-  // 이벤트에 task 레벨 status가 있으면 taskRun.status보다 우선
-  const status = (latestEvent?.status ?? taskRun.status)?.toUpperCase()
+  // step 단위 종료 이벤트(step.completed 등)의 status는 task 완료를 의미하지 않음
+  // — step event가 아닌 경우에만 event status를 task 상태 판단에 사용
+  const eventStatus =
+    latestEvent != null && !STEP_TERMINAL_EVENT_TYPES.has(latestEvent.event_type)
+      ? latestEvent.status
+      : undefined
+  const status = (eventStatus ?? taskRun.status)?.toUpperCase()
 
   if (!status || status === 'PENDING') return null
   if (status === 'FAILED') return 'calling'
