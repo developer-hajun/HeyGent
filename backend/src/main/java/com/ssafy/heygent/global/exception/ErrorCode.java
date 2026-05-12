@@ -19,6 +19,7 @@ public enum ErrorCode {
 
     // 401 UNAUTHORIZED
     INVALID_TOKEN(HttpStatus.UNAUTHORIZED, "유효하지 않은 토큰입니다."),
+    BRIDGE_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "유효하지 않은 브릿지 토큰입니다."),
 
     // 403 FORBIDDEN
     ACCESS_DENIED(HttpStatus.FORBIDDEN, "접근 권한이 없습니다."),
@@ -26,6 +27,8 @@ public enum ErrorCode {
     // 404 NOT_FOUND
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "요청한 대상을 찾을 수 없습니다."),
     PAIR_CODE_NOT_FOUND(HttpStatus.NOT_FOUND, "유효한 IoT pairing code를 찾을 수 없습니다."),
+    BRIDGE_PAIRING_NOT_FOUND(HttpStatus.NOT_FOUND, "유효한 브릿지 페어링 코드를 찾을 수 없습니다."),
+    BRIDGE_DEVICE_NOT_FOUND(HttpStatus.NOT_FOUND, "해당 브릿지 디바이스를 찾을 수 없습니다."),
 
     // 409 CONFLICT
     CONFLICT(HttpStatus.CONFLICT, "요청을 처리하는 중 충돌이 발생했습니다."),
@@ -35,6 +38,8 @@ public enum ErrorCode {
 
     // 410 GONE
     PAIR_CODE_EXPIRED(HttpStatus.GONE, "만료된 IoT pairing code입니다."),
+    BRIDGE_PAIRING_EXPIRED(HttpStatus.GONE, "만료된 브릿지 페어링 코드입니다."),
+    BRIDGE_TOKEN_REVOKED(HttpStatus.GONE, "해당 브릿지 토큰은 해제되었습니다."),
 
     // 502 BAD_GATEWAY
     EXTERNAL_AUTH_FAILED(HttpStatus.BAD_GATEWAY, "외부 인증 처리 중 오류가 발생했습니다."),

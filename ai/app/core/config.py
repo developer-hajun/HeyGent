@@ -40,6 +40,7 @@ class Settings:
     openai_embedding_model: str = "text-embedding-3-small"
     backend_base_url: str = "http://127.0.0.1:8080"
     backend_auth_verify_url: str = "http://127.0.0.1:8080/internal/ai/auth/validate"
+    backend_bridge_auth_verify_url: str = "http://127.0.0.1:8080/internal/bridge/auth/validate"
     backend_memory_timeout_seconds: float = 5.0
     internal_service_token: str | None = None
     redis_url: str | None = None
@@ -64,6 +65,7 @@ class Settings:
     agent_loop_worker_default_max_iterations: int = 80
     agent_loop_max_iterations: int = 120
     work_execution_max_iterations: int = 24
+    # DEPRECATED: 단일 공유 토큰 시절 잔재. 현재는 backend /internal/bridge/auth/validate 로 검증.
     bridge_token: str | None = None
 
     def resolved_api_base_url(self) -> str:
@@ -185,6 +187,11 @@ def get_settings() -> Settings:
         backend_auth_verify_url=_read_env(
             "HEYGENT_BACKEND_AUTH_VERIFY_URL",
             "http://127.0.0.1:8080/internal/ai/auth/validate",
+            dotenv_values,
+        ),
+        backend_bridge_auth_verify_url=_read_env(
+            "HEYGENT_BACKEND_BRIDGE_AUTH_VERIFY_URL",
+            "http://127.0.0.1:8080/internal/bridge/auth/validate",
             dotenv_values,
         ),
         backend_memory_timeout_seconds=_parse_float(

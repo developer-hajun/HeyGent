@@ -1,4 +1,10 @@
-import { useMemo, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react'
+import {
+  isValidElement,
+  useMemo,
+  useState,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Check, Copy } from 'lucide-react'
@@ -69,12 +75,15 @@ function CodeRenderer({
   children,
   className,
 }: ComponentPropsWithoutRef<'code'> & { inline?: boolean }) {
-  const language = /language-(\w+)/.exec(className ?? '')?.[1]
+  const language = getLanguageFromClassName(className)
   return (
     <code
       className={
-        language ? 'font-mono text-xs' : 'bg-muted rounded px-1.5 py-0.5 font-mono text-[0.85em]'
+        language
+          ? 'font-mono text-xs'
+          : 'bg-muted text-foreground border-border dark:bg-muted/80 rounded border px-1.5 py-0.5 font-mono text-[0.85em]'
       }
+      data-language={language}
     >
       {children}
     </code>
@@ -86,6 +95,8 @@ function CodeRenderer({
 function CodeBlock({ children }: { children: ReactNode }) {
   const [copied, setCopied] = useState(false)
   const text = useMemo(() => extractText(children), [children])
+  const language = useMemo(() => extractLanguage(children), [children])
+  const highlightedCode = useMemo(() => highlightCode(text, language), [language, text])
 
   const handleCopy = async () => {
     if (!text) return
@@ -100,8 +111,17 @@ function CodeBlock({ children }: { children: ReactNode }) {
 
   return (
     <div className="group relative my-3">
-      <pre className="bg-muted border-border max-w-full overflow-x-auto rounded-md border px-3 py-2 pr-14 text-xs leading-5 dark:border-white/10 dark:bg-white/4">
-        {children}
+      {language && (
+        <div className="border-border absolute top-0 right-0 left-0 flex h-8 items-center justify-between border-b px-3">
+          <span className="text-muted-foreground font-mono text-[10px] font-medium tracking-wide uppercase">
+            {language}
+          </span>
+        </div>
+      )}
+      <pre className="max-w-full overflow-x-auto rounded-md border [border-color:var(--syntax-border)] px-3 py-2 pr-14 text-xs leading-5 [color:var(--syntax-foreground)] [background:var(--syntax-background)]">
+        <code className={`block min-w-max font-mono ${language ? 'pt-8' : ''}`}>
+          {highlightedCode}
+        </code>
       </pre>
       <button
         type="button"
@@ -125,6 +145,164 @@ function CodeBlock({ children }: { children: ReactNode }) {
       </button>
     </div>
   )
+}
+
+function getLanguageFromClassName(className?: string) {
+  return /language-([\w-]+)/.exec(className ?? '')?.[1]?.toLowerCase()
+}
+
+function extractLanguage(node: ReactNode): string | undefined {
+  if (Array.isArray(node)) {
+    return node.map(extractLanguage).find(Boolean)
+  }
+  if (!isValidElement(node)) return undefined
+  const props = node.props as { className?: string; 'data-language'?: string; children?: ReactNode }
+  return (
+    props['data-language'] ??
+    getLanguageFromClassName(props.className) ??
+    extractLanguage(props.children)
+  )
+}
+
+const KEYWORDS = new Set([
+  'abstract',
+  'and',
+  'as',
+  'async',
+  'await',
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'def',
+  'default',
+  'do',
+  'else',
+  'enum',
+  'export',
+  'extends',
+  'false',
+  'finally',
+  'for',
+  'from',
+  'fun',
+  'function',
+  'if',
+  'implements',
+  'import',
+  'in',
+  'interface',
+  'is',
+  'let',
+  'new',
+  'null',
+  'object',
+  'of',
+  'or',
+  'package',
+  'private',
+  'protected',
+  'public',
+  'return',
+  'static',
+  'super',
+  'switch',
+  'this',
+  'throw',
+  'true',
+  'try',
+  'type',
+  'val',
+  'var',
+  'void',
+  'when',
+  'while',
+])
+
+const TOKEN_PATTERN =
+  /(\/\*[\s\S]*?\*\/|\/\/[^\n]*|#[^\n]*|<!--[\s\S]*?-->|(["'`])(?:\\.|(?!\2)[\s\S])*?\2|<\/?[A-Za-z][\w:.-]*|[A-Za-z_$][\w$]*(?=\s*\()|\b[A-Za-z_$][\w$]*\b|\b\d+(?:\.\d+)?\b|[{}()[\].,;:+\-*/%=<>!&|?]+)/g
+
+function highlightCode(code: string, language?: string): ReactNode[] {
+  if (!code) return []
+
+  const normalizedLanguage = normalizeLanguage(language)
+  const nodes: ReactNode[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  TOKEN_PATTERN.lastIndex = 0
+  while ((match = TOKEN_PATTERN.exec(code)) !== null) {
+    const token = match[0]
+    if (match.index > lastIndex) {
+      nodes.push(code.slice(lastIndex, match.index))
+    }
+    nodes.push(
+      <span key={`${match.index}-${token}`} className={getTokenClass(token, normalizedLanguage)}>
+        {token}
+      </span>,
+    )
+    lastIndex = match.index + token.length
+  }
+
+  if (lastIndex < code.length) {
+    nodes.push(code.slice(lastIndex))
+  }
+
+  return nodes
+}
+
+function normalizeLanguage(language?: string) {
+  if (!language) return undefined
+  const aliases: Record<string, string> = {
+    shell: 'bash',
+    sh: 'bash',
+    zsh: 'bash',
+    javascript: 'js',
+    typescript: 'ts',
+    py: 'python',
+    kt: 'kotlin',
+    yml: 'yaml',
+  }
+  return aliases[language] ?? language
+}
+
+function getTokenClass(token: string, language?: string) {
+  if (
+    token.startsWith('//') ||
+    token.startsWith('/*') ||
+    token.startsWith('<!--') ||
+    (token.startsWith('#') && language !== 'css')
+  ) {
+    return '[color:var(--syntax-muted)]'
+  }
+
+  if (
+    (token.startsWith('"') && token.endsWith('"')) ||
+    (token.startsWith("'") && token.endsWith("'")) ||
+    (token.startsWith('`') && token.endsWith('`'))
+  ) {
+    return '[color:var(--syntax-string)]'
+  }
+
+  if (token.startsWith('<')) {
+    return '[color:var(--syntax-keyword)]'
+  }
+
+  if (/^\d/.test(token)) {
+    return '[color:var(--syntax-number)]'
+  }
+
+  if (KEYWORDS.has(token)) {
+    return 'font-semibold [color:var(--syntax-keyword)]'
+  }
+
+  if (/^[A-Za-z_$][\w$]*$/.test(token)) {
+    return '[color:var(--syntax-function)]'
+  }
+
+  return '[color:var(--syntax-operator)]'
 }
 
 /** React children 트리에서 순수 텍스트만 재귀적으로 추출 */

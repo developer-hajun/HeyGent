@@ -5,6 +5,7 @@ import {
   Loader2,
   LayoutDashboard,
   MessageSquare,
+  Monitor,
   Moon,
   Plus,
   Sun,
@@ -735,6 +736,7 @@ function ProfileMenu({ onSettingsClick }: { onSettingsClick: () => void }) {
   const menuItems = [
     { icon: UserCircle, label: '프로필', action: () => setView('profile') },
     { icon: Settings, label: '설정', action: onSettingsClick },
+    { icon: Monitor, label: '내 PC 브릿지', action: () => navigate('/settings/bridge') },
   ]
 
   return (

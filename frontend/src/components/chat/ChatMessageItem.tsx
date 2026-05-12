@@ -56,7 +56,7 @@ export function ChatMessageItem({
           <div
             className={
               isUser
-                ? 'text-foreground rounded-2xl bg-zinc-200 px-4 py-3 text-sm leading-6 wrap-anywhere dark:bg-white/[0.07]'
+                ? 'rounded-2xl border [border-color:var(--chat-user-border)] px-4 py-3 text-sm leading-6 wrap-anywhere [color:var(--chat-user-foreground)] shadow-sm [background:var(--chat-user-bubble)] dark:shadow-black/10'
                 : 'text-foreground rounded-2xl py-2 text-sm leading-7 [overflow-wrap:anywhere] break-words'
             }
           >
