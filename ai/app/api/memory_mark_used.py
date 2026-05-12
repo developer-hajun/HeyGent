@@ -19,7 +19,7 @@ _MAX_USEFULNESS_SCORE = 0.95
 _DEFAULT_ATTRIBUTION_TIMEOUT_SECONDS = 3.0
 _TOKEN_PATTERN = re.compile(r"[A-Za-z0-9가-힣]{2,}")
 _MEMORY_BLOCK_PATTERN = re.compile(r"(?ms)^- id: (?P<id>\d+)\n(?P<body>.*?)(?=^- id: |\Z)")
-_FIELD_PATTERN = re.compile(r"(?m)^  (?P<key>summary|content): (?P<value>.+)$")
+_FIELD_PATTERN = re.compile(r"(?m)^  (?P<key>type|summary|content): (?P<value>.+)$")
 _ATTRIBUTION_QUERY_KEYS = ("prompt", "message", "query", "content", "text", "subject", "title")
 _STOPWORDS = {
     "사용자는",
@@ -55,6 +55,7 @@ Rules:
 @dataclass(frozen=True, slots=True)
 class _RecalledMemoryText:
     memory_id: int
+    memory_type: str
     summary: str
     content: str
 
@@ -250,11 +251,21 @@ def _attribute_used_memories(
         source_text = f"{memory_text.summary} {memory_text.content}".strip()
         source_tokens = _tokens(source_text)
         overlap = source_tokens.intersection(answer_tokens)
+        if _is_instruction_or_procedure(memory_text):
+            if not _has_direct_phrase(source_text, assistant_message):
+                continue
+            score = _DEFAULT_USEFULNESS_SCORE
+            attributions[memory_id] = round(score, 2)
+            continue
         if len(overlap) < _MIN_OVERLAP_TOKENS and not _has_direct_phrase(source_text, assistant_message):
             continue
         score = min(_MAX_USEFULNESS_SCORE, _DEFAULT_USEFULNESS_SCORE + len(overlap) * 0.05)
         attributions[memory_id] = round(score, 2)
     return attributions
+
+
+def _is_instruction_or_procedure(memory_text: _RecalledMemoryText) -> bool:
+    return str(memory_text.memory_type or "").strip().upper() in {"INSTRUCTION", "PROCEDURE"}
 
 
 async def _verify_used_memories_with_llm(
@@ -381,6 +392,7 @@ def _memory_texts_by_id(input_payload: dict[str, Any]) -> dict[int, _RecalledMem
         }
         memory_texts[memory_id] = _RecalledMemoryText(
             memory_id=memory_id,
+            memory_type=fields.get("type", ""),
             summary=fields.get("summary", ""),
             content=fields.get("content", ""),
         )
@@ -390,6 +402,7 @@ def _memory_texts_by_id(input_payload: dict[str, Any]) -> dict[int, _RecalledMem
 def _memory_text_payload(memory: _RecalledMemoryText) -> dict[str, Any]:
     return {
         "memoryId": memory.memory_id,
+        "memoryType": memory.memory_type,
         "summary": memory.summary,
         "content": memory.content,
     }

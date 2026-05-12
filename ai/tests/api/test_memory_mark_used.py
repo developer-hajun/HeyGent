@@ -68,6 +68,30 @@ def _task_input(memory_ids=None) -> dict:
     }
 
 
+def _instruction_task_input(memory_ids=None) -> dict:
+    memory_ids = memory_ids or [11]
+    return {
+        "persistent_memory_context": """
+<memory-context>
+아래 내용은 이전에 저장된 장기기억입니다.
+
+- id: 11
+  type: INSTRUCTION
+  store: AGENT_MEMORY
+  scope: GLOBAL
+  summary: 여행 계획 절차
+  content: 여행 계획 요청 시 날짜와 예산을 먼저 확인한 뒤 교통편, 숙소, 식당 순서로 계획한다.
+</memory-context>
+""".strip(),
+        "memory_context_meta": {
+            "recall": {
+                "status": "injected",
+                "memory_ids": memory_ids,
+            }
+        },
+    }
+
+
 @pytest.mark.asyncio
 async def test_mark_used_recalled_memories_marks_attributed_memory_once():
     memory_client = FakeMemoryClient()
@@ -98,6 +122,25 @@ async def test_mark_used_recalled_memories_marks_attributed_memory_once():
     assert observation["task_run_id_present"] is True
     assert observation["attribution"]["heuristic_used_memory_ids"] == [10]
     assert observation["attribution"]["llm_source"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_mark_used_recalled_memories_does_not_heuristically_mark_instruction_by_topic_overlap():
+    memory_client = FakeMemoryClient()
+
+    observation = await mark_used_recalled_memories(
+        app_state=SimpleNamespace(backend_memory_client=memory_client),
+        task_input=_instruction_task_input(),
+        user_id="7",
+        assistant_message="서울 2박 3일 여행 계획은 경복궁, 성수동, 한강을 중심으로 구성하면 좋습니다.",
+        task_run_id="task_1",
+    )
+
+    assert memory_client.calls == []
+    assert observation["status"] == "skipped"
+    assert observation["reason"] == "no_memory_attribution"
+    assert observation["used_memory_ids"] == []
+    assert observation["skipped_memory_ids"] == [11]
 
 
 @pytest.mark.asyncio

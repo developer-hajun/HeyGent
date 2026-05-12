@@ -241,6 +241,27 @@ def test_persistent_memory_prompt_sanitizes_metadata():
     assert "sensitivity" not in prompt
 
 
+def test_persistent_memory_prompt_applies_relevant_instructions():
+    prompt = build_persistent_memory_prompt(
+        [
+            BackendMemoryItem(
+                id=11,
+                memory_type="INSTRUCTION",
+                store_type="AGENT_MEMORY",
+                scope_type="GLOBAL",
+                content="여행 계획 요청 시 날짜와 예산을 먼저 확인한 뒤 교통편, 숙소, 식당 순서로 계획한다.",
+                summary="여행 계획 절차",
+                metadata={"category": "instruction", "tags": ["travel", "planning"]},
+            )
+        ]
+    )
+
+    assert "INSTRUCTION/PROCEDURE 기억은 관련 요청의 답변 방식이나 진행 절차에 적용하세요." in prompt
+    assert "필요한 조건을 먼저 짧게 물어보세요." in prompt
+    assert "작업 수행을 요청하는 말은 선확인 절차와 충돌하는 지시가 아닙니다." in prompt
+    assert "여행 계획 요청 시 날짜와 예산" in prompt
+
+
 def test_prompt_builder_includes_skill_catalog_before_web_tool_choice():
     registry = SkillRegistry()
     registry.register_many(SkillLoader().load_builtin())
