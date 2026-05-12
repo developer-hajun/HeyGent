@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import httpx
+import json
 import pytest
 
 from app.clients.backend_ai import BackendAiClient
@@ -95,9 +96,19 @@ async def test_record_command_usage_maps_openai_usage_and_session_context():
 
     assert captured["url"] == "http://backend/internal/ai/usages/commands"
     assert captured["headers"]["authorization"] == "Bearer service-token"
-    assert captured["json"] == (
-        '{"userId":10,"providerName":"openai_api_key","model":"gpt-5.4",'
-        '"taskRunId":"task-1","stepRunId":"step-1","sessionId":"session-1",'
-        '"requestId":"resp-1","inputTokens":12,"outputTokens":4,"totalTokens":16,'
-        '"cachedInputTokens":3,"reasoningTokens":2,"metadata":{"command":"agent_loop"}}'
-    )
+    assert json.loads(captured["json"]) == {
+        "userId": 10,
+        "providerName": "openai_api_key",
+        "model": "gpt-5.4",
+        "taskRunId": "task-1",
+        "stepRunId": "step-1",
+        "sessionId": "session-1",
+        "requestId": "resp-1",
+        "inputTokens": 12,
+        "outputTokens": 4,
+        "totalTokens": 16,
+        "cachedInputTokens": 3,
+        "reasoningTokens": 2,
+        "estimatedCostUsd": 0.00008325,
+        "metadata": {"command": "agent_loop"},
+    }

@@ -761,6 +761,31 @@ class InMemoryAgentRepository:
             return None
         return deepcopy(profile)
 
+    def update_session_agent(
+        self,
+        *,
+        session_id: str,
+        owner_key: str,
+        profile_id: str,
+        config_snapshot: dict[str, Any],
+        delegation_policy: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        profile = self.profiles.get(profile_id)
+        if profile is None or profile.get("owner_key") != owner_key or profile.get("session_id") != session_id:
+            return None
+        profile["profile_version"] = int(profile.get("profile_version") or 1) + 1
+        profile["provider_name"] = config_snapshot.get("adapterType")
+        profile["model_name"] = config_snapshot.get("model")
+        profile["config_snapshot"] = deepcopy(config_snapshot)
+        if delegation_policy is not None:
+            profile["delegation_policy"] = deepcopy(delegation_policy)
+        profile["entry_document_key"] = config_snapshot.get("entryDocumentKey") or "AGENTS.md"
+        bundle = self.bundles.get(str(profile.get("bundle_id") or ""))
+        if bundle is not None:
+            bundle["entry_document_key"] = profile["entry_document_key"]
+            bundle["documents"] = deepcopy(config_snapshot.get("documents") or [])
+        return deepcopy(profile)
+
     def get_session_agent_by_template(self, *, session_id: str, owner_key: str, template_key: str) -> dict[str, Any] | None:
         for profile in self.profiles.values():
             if (

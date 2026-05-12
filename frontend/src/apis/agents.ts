@@ -57,7 +57,7 @@ export type AgentInstructionBundle = {
   documents: AgentInstructionDocument[]
 }
 
-type CreateSessionAgentInput = {
+type SessionAgentInput = {
   name: string
   role: string
   title?: string
@@ -91,10 +91,22 @@ export async function getSessionMainAgent(sessionId: string): Promise<AgentProfi
 
 export async function createSessionAgent(
   sessionId: string,
-  input: CreateSessionAgentInput,
+  input: SessionAgentInput,
 ): Promise<AgentProfile> {
   const { data } = await aiAxiosInstance.post<AgentProfile>(
     `/sessions/${encodeURIComponent(sessionId)}/agents`,
+    input,
+  )
+  return data
+}
+
+export async function updateSessionAgent(
+  sessionId: string,
+  profileId: string,
+  input: Partial<SessionAgentInput>,
+): Promise<AgentProfile> {
+  const { data } = await aiAxiosInstance.patch<AgentProfile>(
+    `/sessions/${encodeURIComponent(sessionId)}/agents/${encodeURIComponent(profileId)}`,
     input,
   )
   return data
@@ -169,7 +181,7 @@ export function agentProfileToAgent(profile: AgentProfile): Agent {
     accent: '#111827',
     title: profile.title ?? undefined,
     role: profile.role,
-    adapterType: profile.adapterType ?? undefined,
+    adapterType: normalizeAgentAdapterType(profile.adapterType),
     command: '',
     model: profile.model ?? undefined,
     extraArgs: '',
@@ -177,6 +189,12 @@ export function agentProfileToAgent(profile: AgentProfile): Agent {
     reportsToAgentId: 'main',
     skills: profile.skills,
   }
+}
+
+function normalizeAgentAdapterType(value: string | null | undefined) {
+  return value === 'openai' || value === undefined || value === null
+    ? (value ?? undefined)
+    : 'openai'
 }
 
 function getInstructionsFiles(configSnapshot: Record<string, unknown>): Record<string, string> {

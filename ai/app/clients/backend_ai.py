@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 
+from app.clients.openai_usage_cost import decimal_to_json_number, estimate_openai_usage_cost_usd
 from app.core.config import Settings, get_settings
 
 
@@ -110,7 +111,15 @@ class BackendAiClient:
         self._put_if_present(payload, "stepRunId", self._optional_text(step_run_id))
         self._put_if_present(payload, "sessionId", self._optional_text(session_id))
         self._put_if_present(payload, "requestId", self._optional_text(request_id))
-        payload.update(self._usage_payload(usage or {}))
+        usage_payload = self._usage_payload(usage or {})
+        payload.update(usage_payload)
+        estimated_cost = self._estimated_cost_payload(
+            provider_name=normalized_provider,
+            model=normalized_model,
+            usage=usage or {},
+            usage_payload=usage_payload,
+        )
+        self._put_if_present(payload, "estimatedCostUsd", estimated_cost)
         if metadata:
             payload["metadata"] = metadata
 
@@ -182,6 +191,26 @@ class BackendAiClient:
         self._put_if_present(payload, "cachedInputTokens", cached_tokens)
         self._put_if_present(payload, "reasoningTokens", reasoning_tokens)
         return payload
+
+    def _estimated_cost_payload(
+        self,
+        *,
+        provider_name: str,
+        model: str,
+        usage: dict[str, Any],
+        usage_payload: dict[str, int],
+    ) -> float | None:
+        explicit_cost = usage.get("estimated_cost_usd", usage.get("estimatedCostUsd"))
+        if isinstance(explicit_cost, (int, float)) and not isinstance(explicit_cost, bool) and explicit_cost >= 0:
+            return float(explicit_cost)
+        estimated = estimate_openai_usage_cost_usd(
+            provider_name=provider_name,
+            model=model,
+            input_tokens=usage_payload.get("inputTokens"),
+            output_tokens=usage_payload.get("outputTokens"),
+            cached_input_tokens=usage_payload.get("cachedInputTokens"),
+        )
+        return decimal_to_json_number(estimated) if estimated is not None else None
 
     def _required_user_id(self, value: str | int) -> int:
         if isinstance(value, int) and not isinstance(value, bool):
