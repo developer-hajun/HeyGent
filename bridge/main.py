@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import signal
+import ssl
 from typing import Any
 
 import websockets
@@ -151,14 +152,24 @@ async def _run_session(
     콘솔 모드(bridge/main.py 직접 실행)에서는 None으로 호출된다.
     """
 
+    if not settings.token:
+        logger.error("브릿지 토큰이 없습니다. GUI 에서 페어링을 먼저 진행해주세요.")
+        return
+
     logger.info("AI 서버에 접속 시도: %s", settings.ai_ws_url)
     # WebSocket 프로토콜 레벨의 keep-alive를 켠다. application-level ping과 별개로
     # docker NAT/프록시가 idle 연결로 판정해 끊는 것을 방지한다.
+    ssl_context: ssl.SSLContext | None = None
+    if settings.ai_ws_url.lower().startswith("wss://"):
+        # 기본 시스템 루트 CA 로 검증. NPM/Let's Encrypt 같은 표준 인증서는 그대로 통과.
+        ssl_context = ssl.create_default_context()
+
     try:
         async with websockets.connect(
             settings.ai_ws_url,
             ping_interval=settings.ping_interval_seconds,
             ping_timeout=settings.ping_interval_seconds,
+            ssl=ssl_context,
         ) as websocket:
             # 1. hello 전송
             await _send_json(
@@ -167,6 +178,7 @@ async def _run_session(
                     "type": "bridge.hello",
                     "token": settings.token,
                     "workspace_root": str(settings.workspace_root),
+                    "device_name": settings.device_name or "",
                 },
             )
 

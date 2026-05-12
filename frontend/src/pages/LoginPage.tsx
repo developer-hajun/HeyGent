@@ -48,108 +48,108 @@ interface ClusterDef {
 const CLUSTER_DEFS: ClusterDef[] = [
   {
     id: 0,
-    rx: 0.5,
-    ry: 0.2,
-    label: 'CORE HUB',
-    title: 'CORE HUB',
-    desc: '각 기능 에이전트를 연결하고 전체 흐름과 작업 맥락을 조율하는 중심 허브입니다.',
-    keywords: 'Agent Orchestration · Context Routing · System Hub',
-    count: 50,
-    spread: 105,
+    rx: 0.61,
+    ry: 0.29,
+    label: 'ORCHESTRATION',
+    title: 'ORCHESTRATION',
+    desc: '각 기능 에이전트를 연결하고 전체 흐름과 작업 맥락을 조율하는 오케스트레이션 계층입니다.',
+    keywords: 'Agent Orchestration · Context Routing · Workflow Control',
+    count: 102,
+    spread: 178,
     isMain: true,
-    hubR: 8.5,
+    hubR: 11.2,
     hubAlpha: 1.0,
-    hoverDetectR: 0.15,
+    hoverDetectR: 0.2,
   },
   {
     id: 1,
-    rx: 0.21,
-    ry: 0.42,
+    rx: 0.11,
+    ry: 0.19,
     label: 'MEMORY',
     title: 'MEMORY',
     desc: '이전 대화와 세션 맥락을 기억하고 이어줍니다.',
     keywords: 'Session Context · Recall · Persistence',
-    count: 18,
-    spread: 58,
+    count: 34,
+    spread: 92,
     isMain: false,
-    hubR: 4.4,
+    hubR: 4.9,
     hubAlpha: 0.85,
-    hoverDetectR: 0.1,
+    hoverDetectR: 0.13,
   },
   {
     id: 2,
-    rx: 0.79,
-    ry: 0.3,
+    rx: 0.9,
+    ry: 0.16,
     label: 'PLANNING',
     title: 'PLANNING',
     desc: '일정, 리마인더, 할 일을 정리하고 관리합니다.',
     keywords: 'Schedule · Reminder · Task Management',
-    count: 17,
-    spread: 56,
+    count: 29,
+    spread: 82,
     isMain: false,
-    hubR: 4.4,
-    hubAlpha: 0.85,
-    hoverDetectR: 0.1,
+    hubR: 4.5,
+    hubAlpha: 0.82,
+    hoverDetectR: 0.12,
   },
   {
     id: 3,
-    rx: 0.18,
-    ry: 0.72,
+    rx: 0.09,
+    ry: 0.76,
     label: 'VOICE',
     title: 'VOICE',
     desc: '음성 명령과 대화를 통해 에이전트를 호출합니다.',
     keywords: 'Speech · Command · Dialogue',
-    count: 16,
-    spread: 54,
+    count: 26,
+    spread: 78,
     isMain: false,
-    hubR: 4.2,
+    hubR: 4.4,
     hubAlpha: 0.82,
-    hoverDetectR: 0.1,
+    hoverDetectR: 0.13,
   },
   {
     id: 4,
-    rx: 0.83,
-    ry: 0.74,
+    rx: 0.92,
+    ry: 0.68,
     label: 'HEALTH',
     title: 'HEALTH',
     desc: '수면, 걸음 수, 운동 기록 등 건강 데이터를 분석합니다.',
     keywords: 'Sleep · Activity · Biometrics',
-    count: 17,
-    spread: 56,
+    count: 30,
+    spread: 86,
     isMain: false,
-    hubR: 4.2,
+    hubR: 4.4,
     hubAlpha: 0.82,
-    hoverDetectR: 0.1,
+    hoverDetectR: 0.13,
   },
   {
     id: 5,
-    rx: 0.4,
-    ry: 0.85,
+    rx: 0.3,
+    ry: 0.91,
     label: 'SYNC',
     title: 'SYNC',
     desc: '연결된 서비스와 데이터를 실시간으로 동기화합니다.',
     keywords: 'Real-time · Integration · Data Sync',
-    count: 14,
-    spread: 50,
+    count: 22,
+    spread: 66,
     isMain: false,
-    hubR: 4.0,
-    hubAlpha: 0.8,
-    hoverDetectR: 0.1,
+    hubR: 3.9,
+    hubAlpha: 0.76,
+    hoverDetectR: 0.11,
   },
   {
     id: 6,
-    rx: 0.65,
-    ry: 0.8,
+    rx: 0.73,
+    ry: 0.9,
     label: 'CONTEXT',
     title: 'CONTEXT',
     desc: '현재 작업 흐름과 필요한 정보를 연결합니다.',
     keywords: 'Workflow · Relevance · State Awareness',
-    count: 14,
-    spread: 50,
+    count: 24,
+    spread: 70,
     isMain: false,
     hubR: 4.0,
-    hubAlpha: 0.8,
-    hoverDetectR: 0.1,
+    hubAlpha: 0.78,
+    hoverDetectR: 0.11,
   },
 ]
 
@@ -164,6 +164,8 @@ function inCopySZ(px: number, py: number, W: number, H: number): boolean {
 
 // 화면 가장자리 soft margin — 노드는 이 거리 안쪽에서 시작
 const EDGE_SOFT = 70
+const LOGO_SAFE_WIDTH = 190
+const LOGO_SAFE_HEIGHT = 110
 
 // ─── 타입 ────────────────────────────────────────────────────
 
@@ -216,22 +218,53 @@ function makeMergeOffset(tier: NodeTier, isMain: boolean): { mergeR: number; mer
   const mergeA = Math.random() * Math.PI * 2
   let mergeR: number
   if (tier === 'hub') {
-    // CORE HUB hub 는 가장 안쪽 / 다른 hub 는 그 다음
+    // ORCHESTRATION hub 는 가장 안쪽 / 다른 hub 는 그 다음
     mergeR = isMain ? 6 + Math.random() * 14 : 26 + Math.random() * 22
   } else if (tier === 'normal') {
-    mergeR = 42 + Math.random() * 48
+    mergeR = isMain ? 30 + Math.random() * 54 : 42 + Math.random() * 48
   } else {
-    mergeR = 75 + Math.random() * 65
+    mergeR = isMain ? 62 + Math.random() * 58 : 75 + Math.random() * 65
   }
   return { mergeR, mergeA }
+}
+
+function getClusterAnchor(cl: ClusterDef, W: number, H: number): { x: number; y: number } {
+  const sideMargin = Math.min(W * 0.2, Math.max(EDGE_SOFT + 20, 90))
+  const topMargin = Math.min(H * 0.2, Math.max(EDGE_SOFT + 16, 86))
+  const bottomMargin = Math.min(H * 0.18, Math.max(EDGE_SOFT + 22, 92))
+  const rawX = cl.rx * W
+  const rawY = cl.ry * H
+  const x = Math.max(sideMargin, Math.min(W - sideMargin, rawX))
+  const y = Math.max(topMargin, Math.min(H - bottomMargin, rawY))
+
+  if (x < LOGO_SAFE_WIDTH && y < LOGO_SAFE_HEIGHT) {
+    return { x: LOGO_SAFE_WIDTH + 18, y: LOGO_SAFE_HEIGHT + 14 }
+  }
+
+  return { x, y }
+}
+
+function getClusterSpread(cl: ClusterDef, W: number, H: number) {
+  const viewportScale = Math.max(0.58, Math.min(1.08, Math.min(W / 1280, H / 780)))
+  const mobileScale = W < 760 ? 0.72 : 1
+  return cl.spread * viewportScale * mobileScale
+}
+
+function getClusterLabelPlacement(cl: ClusterDef): { dx: number; dy: number; maxMargin?: number } {
+  if (cl.id === 0) return { dx: -0.36, dy: -0.94, maxMargin: 118 }
+  if (cl.id === 2) return { dx: -0.68, dy: 0.74, maxMargin: 94 }
+  if (cl.id === 4) return { dx: -1, dy: 0.08, maxMargin: 96 }
+  return { dx: cl.rx - 0.5, dy: cl.ry - 0.5 }
 }
 
 function buildNetwork(W: number, H: number): NetNode[] {
   const nodes: NetNode[] = []
 
   for (const cl of CLUSTER_DEFS) {
-    const cx = cl.rx * W
-    const cy = cl.ry * H
+    const anchor = getClusterAnchor(cl, W, H)
+    const cx = anchor.x
+    const cy = anchor.y
+    const spread = getClusterSpread(cl, W, H)
 
     const hm = makeMergeOffset('hub', cl.isMain)
     nodes.push({
@@ -251,9 +284,12 @@ function buildNetwork(W: number, H: number): NetNode[] {
     })
 
     if (cl.isMain) {
-      for (let k = 0; k < 3; k++) {
-        const a = (k / 3) * Math.PI * 2
-        const d = 22 + k * 9
+      for (let k = 0; k < 6; k++) {
+        const ring = k < 3 ? 0 : 1
+        const ringIndex = ring === 0 ? k : k - 3
+        const ringCount = 3
+        const a = (ringIndex / ringCount) * Math.PI * 2 + (ring === 0 ? 0.18 : 0.74)
+        const d = ring === 0 ? 30 + ringIndex * 7 : 58 + ringIndex * 8
         const sm = makeMergeOffset('hub', true)
         nodes.push({
           ox: cx + Math.cos(a) * d,
@@ -262,8 +298,8 @@ function buildNetwork(W: number, H: number): NetNode[] {
           y: cy + Math.sin(a) * d,
           vx: 0,
           vy: 0,
-          r: 3.4 - k * 0.5,
-          baseAlpha: 0.78 - k * 0.08,
+          r: ring === 0 ? 3.9 - ringIndex * 0.36 : 2.6 - ringIndex * 0.18,
+          baseAlpha: ring === 0 ? 0.82 - ringIndex * 0.05 : 0.58 - ringIndex * 0.04,
           tier: 'hub',
           clusterId: cl.id,
           phase: Math.random() * Math.PI * 2,
@@ -280,12 +316,21 @@ function buildNetwork(W: number, H: number): NetNode[] {
         oy = 0
       let attempts = 0
       while (attempts < 8) {
-        const u = Math.max(Math.random(), 1e-9)
-        const v = Math.max(Math.random(), 1e-9)
-        const g1 = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v)
-        const g2 = Math.sqrt(-2 * Math.log(u)) * Math.sin(2 * Math.PI * v)
-        ox = cx + g1 * cl.spread
-        oy = cy + g2 * cl.spread * 0.78
+        if (cl.isMain && Math.random() < 0.58) {
+          const lanes = [-2.58, -1.42, -0.3, 0.82, 1.92]
+          const a = lanes[i % lanes.length] + (Math.random() - 0.5) * 0.38
+          const d = 34 + Math.random() * spread * 1.08
+          const side = (Math.random() - 0.5) * spread * 0.28
+          ox = cx + Math.cos(a) * d + Math.cos(a + Math.PI / 2) * side
+          oy = cy + Math.sin(a) * d * 0.74 + Math.sin(a + Math.PI / 2) * side * 0.58
+        } else {
+          const u = Math.max(Math.random(), 1e-9)
+          const v = Math.max(Math.random(), 1e-9)
+          const g1 = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v)
+          const g2 = Math.sqrt(-2 * Math.log(u)) * Math.sin(2 * Math.PI * v)
+          ox = cx + g1 * spread
+          oy = cy + g2 * spread * 0.78
+        }
 
         const okEdge = ox > EDGE_SOFT && ox < W - EDGE_SOFT && oy > EDGE_SOFT && oy < H - EDGE_SOFT
         const okSafe = !inCopySZ(ox, oy, W, H)
@@ -305,8 +350,8 @@ function buildNetwork(W: number, H: number): NetNode[] {
         oy = H * 0.5 + dy * (COPY_SZ_HH + 12 + Math.random() * 20)
       }
 
-      const distRatio = Math.hypot((ox - cx) / cl.spread, (oy - cy) / cl.spread)
-      const normalThresh = cl.isMain ? 0.85 : 0.65
+      const distRatio = Math.hypot((ox - cx) / spread, (oy - cy) / spread)
+      const normalThresh = cl.isMain ? 0.8 : 0.65
       const tier: NodeTier =
         distRatio < normalThresh && Math.random() > (cl.isMain ? 0.18 : 0.3)
           ? 'normal'
@@ -323,18 +368,18 @@ function buildNetwork(W: number, H: number): NetNode[] {
         r:
           tier === 'normal'
             ? cl.isMain
-              ? 2.3 + Math.random() * 1.1
+              ? 2.12 + Math.random() * 1.02
               : 1.7 + Math.random() * 1.0
             : cl.isMain
-              ? 1.1 + Math.random() * 0.6
+              ? 1.02 + Math.random() * 0.56
               : 0.85 + Math.random() * 0.55,
         baseAlpha:
           tier === 'normal'
             ? cl.isMain
-              ? 0.5 + Math.random() * 0.28
+              ? 0.48 + Math.random() * 0.24
               : 0.42 + Math.random() * 0.28
             : cl.isMain
-              ? 0.18 + Math.random() * 0.14
+              ? 0.17 + Math.random() * 0.12
               : 0.12 + Math.random() * 0.16,
         tier,
         clusterId: cl.id,
@@ -347,6 +392,52 @@ function buildNetwork(W: number, H: number): NetNode[] {
   return nodes
 }
 
+// 클러스터별 실제 점 분포 bbox — 매 빌드 시 새로 계산되어 라벨/호버 영역이 점 범위에 따라가도록 함
+// moveRadiusX/Y 는 점 분포보다 살짝 큰 영역 — 점이 마우스/물리로 움직여도 이 영역을 벗어나지 않게 제한
+interface ClusterMeta {
+  centerX: number
+  centerY: number
+  radiusX: number // 라벨 위치 결정용 (실제 점 bbox 반경)
+  radiusY: number
+  moveRadiusX: number // 점이 움직일 수 있는 영역 반경 (bbox + 여유)
+  moveRadiusY: number
+}
+
+// 점 분포 bbox 바깥으로 추가로 허용할 여유 (px). 이 만큼 더 넓은 영역까지 점이 움직일 수 있음
+const MOVE_AREA_MARGIN = 22
+
+function computeClusterMetas(nodes: NetNode[]): Map<number, ClusterMeta> {
+  const metas = new Map<number, ClusterMeta>()
+  for (const cl of CLUSTER_DEFS) {
+    let minX = Infinity
+    let maxX = -Infinity
+    let minY = Infinity
+    let maxY = -Infinity
+    let found = false
+    for (const n of nodes) {
+      if (n.clusterId !== cl.id) continue
+      if (n.tier === 'background' && !cl.isMain) continue // 너무 외곽 점은 라벨 위치 기준에서 제외
+      if (n.ox < minX) minX = n.ox
+      if (n.ox > maxX) maxX = n.ox
+      if (n.oy < minY) minY = n.oy
+      if (n.oy > maxY) maxY = n.oy
+      found = true
+    }
+    if (!found) continue
+    const radiusX = (maxX - minX) / 2
+    const radiusY = (maxY - minY) / 2
+    metas.set(cl.id, {
+      centerX: (minX + maxX) / 2,
+      centerY: (minY + maxY) / 2,
+      radiusX,
+      radiusY,
+      moveRadiusX: radiusX + MOVE_AREA_MARGIN,
+      moveRadiusY: radiusY + MOVE_AREA_MARGIN,
+    })
+  }
+  return metas
+}
+
 function buildPulses(nodes: NetNode[]): Pulse[] {
   const pulses: Pulse[] = []
   for (let i = 0; i < nodes.length; i++) {
@@ -356,8 +447,8 @@ function buildPulses(nodes: NetNode[]): Pulse[] {
       if (i === j || nodes[j].clusterId !== nodes[i].clusterId) continue
       if (nodes[j].tier === 'background') continue
       const d = Math.hypot(nodes[i].ox - nodes[j].ox, nodes[i].oy - nodes[j].oy)
-      const maxDist = isCore ? 200 : 120
-      const prob = isCore ? 0.36 : 0.22
+      const maxDist = isCore ? 206 : 118
+      const prob = isCore ? 0.29 : 0.2
       if (d < maxDist && Math.random() < prob) {
         pulses.push({
           fromIdx: i,
@@ -372,6 +463,33 @@ function buildPulses(nodes: NetNode[]): Pulse[] {
 }
 
 // ─── easing ──────────────────────────────────────────────────
+
+function findHoveredCluster(nodes: NetNode[], mx: number, my: number): number | null {
+  let closest: number | null = null
+  let closestScore = Infinity
+
+  for (const cl of CLUSTER_DEFS) {
+    let minNodeDist = Infinity
+
+    for (const node of nodes) {
+      if (node.clusterId !== cl.id) continue
+
+      const reach =
+        node.tier === 'hub'
+          ? Math.min(cl.isMain ? 34 : 24, node.r * 2.2 + (cl.isMain ? 10 : 8))
+          : Math.max(9, node.r * 2.4 + 7)
+      const dist = Math.hypot(mx - node.x, my - node.y) - reach
+      if (dist < minNodeDist) minNodeDist = dist
+    }
+
+    if (minNodeDist <= (cl.isMain ? 8 : 10) && minNodeDist < closestScore) {
+      closestScore = minNodeDist
+      closest = cl.id
+    }
+  }
+
+  return closest
+}
 
 function easeInOut(t: number): number {
   return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t
@@ -400,6 +518,7 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
   const stateRef = useRef<{
     nodes: NetNode[]
     pulses: Pulse[]
+    clusterMetas: Map<number, ClusterMeta>
     mouse: { x: number; y: number }
     lerpMouse: { x: number; y: number }
     raf: number
@@ -417,13 +536,13 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
     if (stateRef.current) stateRef.current.scrollProgress = scrollProgress
   }, [scrollProgress])
 
-  const INTRA = 130
-  const CORE_INTRA = 200
-  const BRIDGE = 280
+  const INTRA = 126
+  const CORE_INTRA = 206
+  const BRIDGE = 300
   const SK = 0.024
-  const DAMP = 0.79
-  const MR = 150
-  const LERP_M = 0.09
+  const DAMP = 0.74
+  const MR = 118
+  const LERP_M = 0.26
   const DRIFT = 0.55
 
   const queueFrame = useCallback(() => {
@@ -442,7 +561,7 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
     if (!ctx) return
 
     const dpr = window.devicePixelRatio || 1
-    const { W, H, nodes, pulses, mouse, lerpMouse } = s
+    const { W, H, nodes, pulses, mouse, lerpMouse, clusterMetas } = s
     const hc = s.hoveredCluster
     const sp = s.scrollProgress
     const t = performance.now() * 0.001
@@ -504,13 +623,13 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
 
       // 마우스 인터랙션 (hero 상태에만)
       const interactStrength = clamp01(1 - stage1Band * 1.5)
-      if (interactStrength > 0.02) {
+      if (isHovered && interactStrength > 0.02) {
         const mdx = lerpMouse.x - nd.x
         const mdy = lerpMouse.y - nd.y
         const mdist = Math.hypot(mdx, mdy)
         if (mdist < MR && mdist > 1) {
-          const fac = ((MR - mdist) / MR) ** 1.6
-          const pull = (isHovered ? 0.09 : 0.035) * interactStrength
+          const fac = ((MR - mdist) / MR) ** 1.45
+          const pull = 0.17 * interactStrength
           addVelocity(nd, (mdx / mdist) * fac * pull * 6, (mdy / mdist) * fac * pull * 6)
         }
       }
@@ -534,6 +653,27 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
         else if (nd.x > W - EDGE_SOFT) addVelocity(nd, -(nd.x - (W - EDGE_SOFT)) * er, 0)
         if (nd.y < EDGE_SOFT) addVelocity(nd, 0, (EDGE_SOFT - nd.y) * er)
         else if (nd.y > H - EDGE_SOFT) addVelocity(nd, 0, -(nd.y - (H - EDGE_SOFT)) * er)
+
+        // 클러스터별 이동 가능 영역 (bbox + 여유) — 타원형 soft boundary
+        // 마우스/물리로 점이 영역 바깥으로 밀려도 부드럽게 안으로 끌어당김
+        const meta = clusterMetas.get(nd.clusterId)
+        if (meta && meta.moveRadiusX > 1 && meta.moveRadiusY > 1) {
+          const dx = nd.x - meta.centerX
+          const dy = nd.y - meta.centerY
+          const nx = dx / meta.moveRadiusX
+          const ny = dy / meta.moveRadiusY
+          const ellipseDist2 = nx * nx + ny * ny
+          if (ellipseDist2 > 1) {
+            // 영역 바깥 — 중심으로 부드럽게 끌어당김
+            const overshoot = Math.sqrt(ellipseDist2) - 1
+            const pull = Math.min(overshoot, 1.2) * 0.12 * sgRepel
+            addVelocity(
+              nd,
+              -(dx / Math.max(meta.moveRadiusX, 1)) * pull * meta.moveRadiusX * 0.05,
+              -(dy / Math.max(meta.moveRadiusY, 1)) * pull * meta.moveRadiusY * 0.05,
+            )
+          }
+        }
       }
 
       advanceNode(nd, DAMP)
@@ -575,8 +715,11 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
 
           const mDist = Math.hypot(midX - lerpMouse.x, midY - lerpMouse.y)
           const mBoost = mDist < MR ? 1 + (1 - mDist / MR) * 1.3 : 1
+          const coreLineMul = isCoreEdge ? 0.78 : 1
           const base = same
-            ? Math.pow(1 - dist / maxD, 1.6) * (a.tier === 'hub' || b.tier === 'hub' ? 0.28 : 0.11)
+            ? Math.pow(1 - dist / maxD, 1.6) *
+              (a.tier === 'hub' || b.tier === 'hub' ? 0.28 : 0.11) *
+              coreLineMul
             : Math.pow(1 - dist / maxD, 2.2) * 0.14
           const hoverMul = isActive ? 2.0 : hc !== null ? 0.35 : 1
           const alpha = Math.min(base * mBoost * hoverMul * lineOpMul, 0.52)
@@ -640,14 +783,14 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
       }
     }
 
-    // ── CORE HUB halo — Stage 1 진행 시 강해지며 코어 형성 인상 ──
+    // ── ORCHESTRATION halo — Stage 1 진행 시 강해지며 코어 형성 인상 ──
     const coreHub = nodes.find((n) => n.clusterId === 0 && n.tier === 'hub')
     if (coreHub) {
       const isHov = hc === 0
       const breathe = 1 + Math.sin(t * 0.46 + coreHub.phase) * 0.08
       const formIntensity = stage1Eased * (1 - stage2Eased * 0.85)
-      const ringBase = (isHov ? 0.18 : 0.08) + formIntensity * 0.16
-      const haloR = (66 + Math.sin(t * 0.36) * 5 + formIntensity * 36) * breathe
+      const ringBase = (isHov ? 0.2 : 0.105) + formIntensity * 0.17
+      const haloR = (78 + Math.sin(t * 0.36) * 5 + formIntensity * 42) * breathe
 
       const halo = ctx.createRadialGradient(
         coreHub.x * dpr,
@@ -657,22 +800,22 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
         coreHub.y * dpr,
         haloR * dpr,
       )
-      halo.addColorStop(0, `rgba(210,210,214,${(ringBase * 0.65).toFixed(3)})`)
+      halo.addColorStop(0, `rgba(210,210,214,${(ringBase * 0.72).toFixed(3)})`)
       halo.addColorStop(1, 'rgba(210,210,214,0)')
       ctx.beginPath()
       ctx.arc(coreHub.x * dpr, coreHub.y * dpr, haloR * dpr, 0, Math.PI * 2)
       ctx.fillStyle = halo
       ctx.fill()
 
-      for (let ri = 0; ri < 2; ri++) {
-        const ringR = (42 + ri * 22 + formIntensity * 18) * breathe
+      for (let ri = 0; ri < 3; ri++) {
+        const ringR = (44 + ri * 20 + formIntensity * 20) * breathe
         const startA = t * (ri === 0 ? 0.15 : -0.1) + ri * 1.1
-        const span = Math.PI * (ri === 0 ? 1.35 : 0.85)
-        const rA = (ringBase + (isHov ? 0.06 : 0)) * (ri === 0 ? 1 : 0.52)
+        const span = Math.PI * (ri === 0 ? 1.42 : ri === 1 ? 1.0 : 0.62)
+        const rA = (ringBase + (isHov ? 0.06 : 0)) * (ri === 0 ? 1 : ri === 1 ? 0.58 : 0.34)
         ctx.beginPath()
         ctx.arc(coreHub.x * dpr, coreHub.y * dpr, ringR * dpr, startA, startA + span)
         ctx.strokeStyle = `rgba(210,210,214,${rA.toFixed(3)})`
-        ctx.lineWidth = (ri === 0 ? 0.8 : 0.5) * dpr
+        ctx.lineWidth = (ri === 0 ? 0.9 : 0.5) * dpr
         ctx.stroke()
       }
     }
@@ -737,8 +880,8 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
       if (alpha < 0.01) continue
 
       if (nd.tier === 'hub') {
-        const glowMul = isCore ? (isHov ? 8.5 : 6.0) : isHov ? 6.0 : 4.2
-        const glowA0 = isCore ? (isHov ? 0.32 : 0.18) : isHov ? 0.24 : 0.13
+        const glowMul = isCore ? (isHov ? 9.2 : 6.8) : isHov ? 6.0 : 4.2
+        const glowA0 = isCore ? (isHov ? 0.36 : 0.22) : isHov ? 0.24 : 0.13
         const glow = ctx.createRadialGradient(
           nd.x * dpr,
           nd.y * dpr,
@@ -762,29 +905,38 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
     }
 
     // ── 클러스터 라벨 (hero state 만) ─────────────────────
+    // 라벨 위치/마진은 클러스터의 실제 점 bbox(clusterMetas)에 따라 동적으로 결정 —
+    // 매 새로고침 시 점 분포가 달라져도 라벨이 점 영역 바깥에 자연스럽게 자리잡음
     const labelOpacity = 1 - progressBand(sp, 0.06, 0.22)
     if (labelOpacity > 0.02) {
       for (const cl of CLUSTER_DEFS) {
         const hubNode = nodes.find((n) => n.clusterId === cl.id && n.tier === 'hub')!
+        const meta = clusterMetas.get(cl.id)
         const isHov = hc === cl.id
         const mDist = Math.hypot(hubNode.x - lerpMouse.x, hubNode.y - lerpMouse.y)
         const prox = Math.max(0, 1 - mDist / 190)
         const nameAlpha = (isHov ? 0.95 : 0.42 + prox * 0.36) * labelOpacity
 
-        const vecX = cl.rx - 0.5
-        const vecY = cl.ry - 0.5
+        const labelPlacement = getClusterLabelPlacement(cl)
+        const vecX = labelPlacement.dx
+        const vecY = labelPlacement.dy
         const vecLen = Math.hypot(vecX, vecY) || 1
         const ux = vecX / vecLen
         const uy = vecY / vecLen
 
-        const margin = cl.isMain ? cl.spread * 0.65 + 30 : cl.spread * 0.55 + 20
+        // bbox 기준 outward 방향의 실제 반경 — 라벨 마진이 점 분포에 맞춰 조정됨
+        const bboxReach = meta ? Math.abs(ux) * meta.radiusX + Math.abs(uy) * meta.radiusY : 0
+        const rawMargin = bboxReach + (cl.isMain ? 22 : 16)
+        const margin = labelPlacement.maxMargin
+          ? Math.min(rawMargin, labelPlacement.maxMargin)
+          : rawMargin
         let lx = hubNode.x + ux * margin
         let ly = hubNode.y + uy * margin
 
-        const fontSize = cl.isMain ? 13 : 12
+        const fontSize = cl.isMain ? 14 : 12
         const padL = fontSize * cl.label.length * 0.5 + 14
-        lx = Math.max(padL, Math.min(W - padL, lx))
-        ly = Math.max(45, Math.min(H - 24, ly))
+        lx = Math.max(padL + 20, Math.min(W - padL - 28, lx))
+        ly = Math.max(54, Math.min(H - 34, ly))
 
         const align: CanvasTextAlign = ux > 0.25 ? 'left' : ux < -0.25 ? 'right' : 'center'
         const baselineShift = uy > 0.2 ? 13 : uy < -0.2 ? -4 : 5
@@ -853,9 +1005,11 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
 
     const nodes = buildNetwork(W, H)
     const pulses = buildPulses(nodes)
+    const clusterMetas = computeClusterMetas(nodes)
     stateRef.current = {
       nodes,
       pulses,
+      clusterMetas,
       mouse: { x: W / 2, y: H / 2 },
       lerpMouse: { x: W / 2, y: H / 2 },
       raf: 0,
@@ -884,8 +1038,12 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
   const onMouseMove = useCallback(
     (e: MouseEvent) => {
       if (!stateRef.current) return
-      stateRef.current.mouse.x = e.clientX
-      stateRef.current.mouse.y = e.clientY
+      const canvas = canvasRef.current
+      const rect = canvas?.getBoundingClientRect()
+      const x = rect ? (e.clientX - rect.left) * (stateRef.current.W / rect.width) : e.clientX
+      const y = rect ? (e.clientY - rect.top) * (stateRef.current.H / rect.height) : e.clientY
+      stateRef.current.mouse.x = x
+      stateRef.current.mouse.y = y
 
       // hero 상태에서만 hover 감지
       if (stateRef.current.scrollProgress > 0.14) {
@@ -893,28 +1051,20 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
         return
       }
 
-      const { nodes, W, H } = stateRef.current
-      let closest: number | null = null
-      let minDist = 9999
-      for (const cl of CLUSTER_DEFS) {
-        const hub = nodes.find((n) => n.clusterId === cl.id && n.tier === 'hub')
-        if (!hub) continue
-        const d = Math.hypot(hub.x - e.clientX, hub.y - e.clientY)
-        const r = Math.min(W, H) * cl.hoverDetectR
-        if (d < r && d < minDist) {
-          minDist = d
-          closest = cl.id
-        }
-      }
-      onClusterHover(closest)
+      onClusterHover(findHoveredCluster(stateRef.current.nodes, x, y))
     },
     [onClusterHover],
   )
 
   useEffect(() => {
+    const onMouseLeave = () => onClusterHover(null)
     window.addEventListener('mousemove', onMouseMove)
-    return () => window.removeEventListener('mousemove', onMouseMove)
-  }, [onMouseMove])
+    window.addEventListener('mouseleave', onMouseLeave)
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseleave', onMouseLeave)
+    }
+  }, [onClusterHover, onMouseMove])
 
   return (
     <canvas
@@ -1001,6 +1151,9 @@ export function LoginPage() {
   const loginEmphasis = clamp01(progressBand(scrollProgress, 0.78, 0.92))
 
   const hintOpacity = clamp01(1 - progressBand(scrollProgress, 0.02, 0.12))
+
+  // 스크롤 끝부분에서 배경 문구 "Handle Everything for You" fade in
+  const bgPhraseOpacity = clamp01(progressBand(scrollProgress, 0.85, 1.0))
 
   return (
     <div
@@ -1099,9 +1252,9 @@ export function LoginPage() {
               </div>
               <p
                 style={{
-                  color: 'rgba(178,178,184,0.90)',
-                  fontSize: 13,
-                  lineHeight: 1.68,
+                  color: 'rgba(198,198,204,0.94)',
+                  fontSize: 13.5,
+                  lineHeight: 1.7,
                   marginBottom: hovered.keywords ? 10 : 0,
                   wordBreak: 'keep-all',
                   fontFamily:
@@ -1113,12 +1266,12 @@ export function LoginPage() {
               {hovered.keywords && (
                 <p
                   style={{
-                    color: 'rgba(148,148,154,0.58)',
-                    fontSize: 10.5,
+                    color: 'rgba(174,174,181,0.78)',
+                    fontSize: 11,
                     fontFamily:
                       '-apple-system, BlinkMacSystemFont, "SF Mono", "Fira Code", monospace',
                     letterSpacing: '0.04em',
-                    borderTop: '1px solid rgba(210,210,214,0.10)',
+                    borderTop: '1px solid rgba(210,210,214,0.15)',
                     paddingTop: 9,
                     margin: 0,
                     lineHeight: 1.5,
@@ -1173,6 +1326,52 @@ export function LoginPage() {
             <br />
             and sync agents in one intelligent workspace.
           </p>
+        </div>
+
+        {/* 배경 문구 — 스크롤 끝부분에 fade in, 로그인 버튼 아래 영역에 배치하여 겹치지 않음 */}
+        <div
+          style={{
+            position: 'fixed',
+            left: 0,
+            right: 0,
+            top: '60vh',
+            bottom: 0,
+            zIndex: 2,
+            opacity: bgPhraseOpacity,
+            pointerEvents: 'none',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'space-evenly',
+            transition: 'none',
+            userSelect: 'none',
+          }}
+          aria-hidden="true"
+        >
+          {(
+            [
+              { key: 'handle', before: '', accent: 'H', after: 'andle' },
+              { key: 'everything', before: '', accent: 'E', after: 'verything' },
+              { key: 'foryou', before: 'for ', accent: 'Y', after: 'ou' },
+            ] as const
+          ).map(({ key, before, accent, after }) => (
+            <span
+              key={key}
+              style={{
+                fontFamily: 'var(--font-display), -apple-system, BlinkMacSystemFont, sans-serif',
+                fontSize: 'clamp(40px, 8vw, 96px)',
+                fontWeight: 800,
+                letterSpacing: '-0.02em',
+                lineHeight: 1,
+                textTransform: 'none',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {before && <span style={{ color: 'rgba(240,240,242,0.08)' }}>{before}</span>}
+              <span style={{ color: 'rgba(240,240,242,0.32)' }}>{accent}</span>
+              <span style={{ color: 'rgba(240,240,242,0.08)' }}>{after}</span>
+            </span>
+          ))}
         </div>
 
         {/* Login reveal — Stage 2 시점부터 등장 */}
