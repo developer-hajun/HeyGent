@@ -27,15 +27,23 @@ export interface CustomAgentConfig {
 }
 
 interface NewSessionModalProps {
+  error?: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onConfirm: (config?: CustomAgentConfig) => void
+  submitting?: boolean
 }
 
 type ModalView = 'select' | 'customize'
 type CustomizeStep = 'settings' | 'instructions'
 
-export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionModalProps) {
+export function NewSessionModal({
+  error,
+  open,
+  onOpenChange,
+  onConfirm,
+  submitting = false,
+}: NewSessionModalProps) {
   const [view, setView] = useState<ModalView>('select')
   const [customizeStep, setCustomizeStep] = useState<CustomizeStep>('settings')
   const [agentName, setAgentName] = useState('')
@@ -144,10 +152,11 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                 {/* 기본 제공 에이전트 */}
                 <button
                   onClick={() => onConfirm(defaultAgentSessionConfig())}
-                  className="border-border hover:border-primary/40 hover:bg-primary/3 group flex w-full items-start gap-4 rounded-xl border p-4 text-left transition-all duration-150"
+                  disabled={submitting}
+                  className="hover:bg-muted/60 group flex w-full items-start gap-4 rounded-xl p-4 text-left transition-colors duration-150 disabled:pointer-events-none disabled:opacity-50"
                 >
-                  <div className="bg-primary/10 group-hover:bg-primary/15 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl transition-colors">
-                    <Bot className="text-primary h-5 w-5" />
+                  <div className="bg-muted group-hover:bg-muted/80 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors">
+                    <Bot className="text-foreground/70 h-5 w-5" />
                   </div>
                   <div>
                     <p className="text-foreground text-sm font-semibold">기본 제공 에이전트</p>
@@ -163,10 +172,11 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                     setCustomizeStep('settings')
                     setView('customize')
                   }}
-                  className="border-border group flex w-full items-start gap-4 rounded-xl border p-4 text-left transition-all duration-150 hover:border-violet-300 hover:bg-violet-50/50"
+                  disabled={submitting}
+                  className="hover:bg-muted/60 group flex w-full items-start gap-4 rounded-xl p-4 text-left transition-colors duration-150 disabled:pointer-events-none disabled:opacity-50"
                 >
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-violet-100 transition-colors group-hover:bg-violet-200/70">
-                    <SlidersHorizontal className="h-5 w-5 text-violet-600" />
+                  <div className="bg-muted group-hover:bg-muted/80 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors">
+                    <SlidersHorizontal className="text-foreground/70 h-5 w-5" />
                   </div>
                   <div>
                     <p className="text-foreground text-sm font-semibold">에이전트 커스터마이징</p>
@@ -175,6 +185,11 @@ export function NewSessionModal({ open, onOpenChange, onConfirm }: NewSessionMod
                     </p>
                   </div>
                 </button>
+                {error && (
+                  <p className="text-destructive border-destructive/30 rounded-lg border px-3 py-2 text-xs">
+                    {error}
+                  </p>
+                )}
               </div>
             </motion.div>
           ) : (

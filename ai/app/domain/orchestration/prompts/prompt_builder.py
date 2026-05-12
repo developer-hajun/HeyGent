@@ -139,6 +139,7 @@ class PromptBuilder:
                     "이미 충분한 정보가 있으면 더 이상 도구를 부르지 말고 일반 답변으로 종료하세요.",
                     "직전에 같은 도구를 같은 인자로 실행했다면 반복하지 말고 답변 종료를 우선하세요.",
                     "연결된 작업의 담당자가 CEO이고 사용자가 세션 에이전트에게 맡기라고 하거나 후보 에이전트의 전문성이 더 맞으면 session_agent_task 로 하위 작업을 만들고 실행하세요.",
+                    "세션 에이전트 후보가 있으면 명확한 위임 단위는 직접 처리보다 가장 적합한 후보에게 session_agent_task 로 맡기는 쪽을 우선하세요.",
                     "session_agent_task 는 작업 보드에 보이는 하위 작업과 실제 세션 에이전트 실행을 묶는 도구입니다.",
                     "세션 에이전트에게 맡기기 전 세션 에이전트 후보의 이름, 역할, 설명을 비교하세요.",
                     "별도 전문성, 독립 산출물, 병렬 진행 가능성, 부모 작업이 기다려야 하는 하위 산출물이 있으면 세션 에이전트 작업으로 분리하세요.",
@@ -146,12 +147,7 @@ class PromptBuilder:
                     "적합한 세션 에이전트가 없으면 임의로 배정하지 말고 차단 사유와 필요한 역할 또는 사용자 결정 지점을 남기세요.",
                     "session_agent_task 입력에는 담당자가 다시 묻지 않아도 실행할 수 있도록 제목, 지시, 기대 산출물, 완료 기준, 제약을 구체적으로 담으세요.",
                     "workId가 연결된 실행은 답변을 끝내기 전에 work_disposition 도구로 작업 상태를 명시하세요.",
-                    "완료 조건을 만족하면 done, 추가 검토가 필요하면 in_review, 외부 입력이나 차단 조건이 있으면 blocked, 등록만 요청한 작업이면 todo를 남기세요.",
-                    "delegate_task 는 사용자가 worker 병렬 처리, 여러 관점 검토, 내부 임시 분업을 명시한 경우에만 사용하세요.",
-                    "사용자가 여러 관점/영역을 각각 worker 로 검토하라고 요청하면 관점/영역별로 독립된 delegate_task 를 호출하고, parent 는 그 결과를 받은 뒤 비교·종합하세요.",
-                    "명시된 worker 대상이 아직 남아 있으면 parent 가 web_search, web_extract, terminal.run, write_file 등으로 그 하위 작업을 직접 수행하지 마세요.",
-                    "여러 worker 대상이 명시된 요청에서는 하나의 delegate_task 로 전부 합치지 말고, 각 대상마다 별도 delegate_task 결과를 받은 뒤 다음 판단을 하세요.",
-                    "delegate_task 결과가 필요한 문서 작성, 파일 저장, 최종 종합 도구 호출은 worker 결과를 받은 다음 턴에서 판단하세요.",
+                    "완료 조건을 만족하면 done, 산출물은 있지만 사용자나 담당자의 확인이 필요하면 in_review, 실제 선행 작업/필수 입력/권한/도구가 없어 더 진행할 수 없을 때만 blocked, 등록만 요청한 작업이면 todo를 남기세요.",
                     "승인이 없으면 진행하면 안 되는 경우에만 approval 을 요청하세요.",
                     "사용자에게 보일 큰 작업 단계는 step 도구로 선언하고, 세부 체크리스트는 todo 도구로 갱신하세요.",
                     "사용자가 저장 위치로 폴더 경로를 주고 파일명을 생략하면, 그 폴더 경로 자체를 파일명으로 바꾸지 말고 폴더 안에 의미 있는 파일명을 만들어 저장하세요.",
@@ -204,10 +200,11 @@ def build_work_context_prompt(*, input_payload: dict) -> str:
     work_id = str(input_payload.get("workId") or "").strip()
     work_identifier = str(input_payload.get("workIdentifier") or "").strip()
     assignee_agent_id = str(input_payload.get("workAssigneeAgentId") or "").strip()
-    if not work_id and not work_identifier and not isinstance(work_context, dict):
+    has_session_agent_profiles = isinstance(session_agent_profiles, list) and bool(session_agent_profiles)
+    if not work_id and not work_identifier and not isinstance(work_context, dict) and not has_session_agent_profiles:
         return ""
 
-    lines = ["연결된 작업 컨텍스트:"]
+    lines = ["연결된 작업 컨텍스트:" if work_id or work_identifier or isinstance(work_context, dict) else "세션 에이전트 컨텍스트:"]
     if work_identifier:
         lines.append(f"- 작업 번호: {work_identifier}")
     if assignee_agent_id:
@@ -225,7 +222,7 @@ def build_work_context_prompt(*, input_payload: dict) -> str:
         if instruction_lines:
             lines.append("- 실행 에이전트 지침:")
             lines.extend(instruction_lines)
-    if isinstance(session_agent_profiles, list) and session_agent_profiles:
+    if has_session_agent_profiles:
         profile_lines = _build_session_agent_profile_lines(session_agent_profiles)
         if profile_lines:
             lines.append("- 세션 에이전트 후보:")

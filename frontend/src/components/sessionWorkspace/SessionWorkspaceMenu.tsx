@@ -50,7 +50,7 @@ interface SessionWorkspaceMenuProps {
 }
 
 const MENU_ITEMS: Array<{
-  id: Exclude<WorkspaceNavId, 'purpose' | 'subAgents'>
+  id: Exclude<WorkspaceNavId, 'ceo' | 'subAgents'>
   label: string
   icon: typeof Target
 }> = [
@@ -250,9 +250,9 @@ export function SessionWorkspaceMenu({
           <div className="group/main relative flex items-center">
             <button
               type="button"
-              onClick={() => onSelectPanel('purpose')}
+              onClick={() => onSelectPanel('ceo')}
               className={`flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5 pr-8 text-left text-sm font-medium transition-colors ${
-                activePanel === 'purpose'
+                activePanel === 'ceo'
                   ? 'bg-accent text-foreground'
                   : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
               }`}
@@ -262,7 +262,7 @@ export function SessionWorkspaceMenu({
             </button>
             <button
               type="button"
-              onClick={() => onSelectPanel('purpose')}
+              onClick={() => onSelectPanel('ceo')}
               className="text-muted-foreground hover:bg-accent/50 hover:text-foreground absolute top-1/2 right-1 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg opacity-0 transition-opacity group-focus-within/main:opacity-100 group-hover/main:opacity-100 data-[state=open]:opacity-100"
               aria-label={`${mainAgentName} 메인 에이전트 편집`}
             >
@@ -432,11 +432,7 @@ function ConnectionStatusRow({ state }: { state: WorkspaceConnectionState }) {
   return (
     <div
       className={`flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium ${
-        isError
-          ? 'text-destructive'
-          : isConnected
-            ? 'text-emerald-600 dark:text-emerald-400'
-            : 'text-muted-foreground'
+        isError ? 'text-destructive' : isConnected ? 'text-emerald-600' : 'text-muted-foreground'
       }`}
     >
       <Icon className="h-4 w-4 shrink-0" />

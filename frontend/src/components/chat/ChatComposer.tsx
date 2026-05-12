@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import { useLayoutEffect, useRef, useState, useCallback, type KeyboardEvent } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Switch } from '@/components/ui/switch'
+import { VoiceWaveform } from './VoiceWaveform'
 import { getCommandUsage, type CommandUsageSummary } from '@/apis/aiCommandUsage'
 
 type ChatComposerProps = {
@@ -27,14 +27,11 @@ type ChatComposerProps = {
   onSend: (content: string) => void
   onClearSelectedWork?: () => void
   onSelectWorkClick?: () => void
-  onWorkModeChange?: (enabled: boolean) => void
   onStop?: () => void
   onVoiceMode?: () => void
   draftValue?: string | null
   statusMessage?: string | null
   selectedWorkLabel?: string | null
-  workMode?: boolean
-  workModeDisabled?: boolean
   sessionId?: string
 }
 
@@ -56,14 +53,11 @@ export function ChatComposer({
   onSend,
   onClearSelectedWork,
   onSelectWorkClick,
-  onWorkModeChange,
   onStop,
   onVoiceMode,
   draftValue = null,
   statusMessage = null,
   selectedWorkLabel = null,
-  workMode = false,
-  workModeDisabled = false,
   sessionId,
 }: ChatComposerProps) {
   const [value, setValue] = useState(draftValue ?? '')
@@ -109,10 +103,6 @@ export function ChatComposer({
     setValue('')
   }
 
-  const toggleWorkMode = (enabled: boolean) => {
-    onWorkModeChange?.(enabled)
-  }
-
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
@@ -125,14 +115,12 @@ export function ChatComposer({
       <div className="mx-auto max-w-3xl">
         <div className="border-border bg-card overflow-hidden rounded-2xl border shadow-sm transition-shadow duration-200 hover:shadow-md">
           {/* Input row */}
-          {(workMode || selectedWorkLabel) && (
+          {selectedWorkLabel && (
             <div className="border-border/60 bg-muted/20 flex items-center gap-2 border-b px-5 py-2 text-xs">
               <ListTodo className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-              <span className="text-muted-foreground">
-                {selectedWorkLabel ? '연결된 작업' : '작업 모드'}
-              </span>
+              <span className="text-muted-foreground">연결된 작업</span>
               <span className="text-foreground min-w-0 flex-1 truncate font-medium">
-                {selectedWorkLabel ?? '새 작업으로 생성'}
+                {selectedWorkLabel}
               </span>
               {selectedWorkLabel && (
                 <button
@@ -193,16 +181,6 @@ export function ChatComposer({
                   <ListTodo className="text-muted-foreground h-4 w-4 shrink-0" />
                   <span className="text-foreground flex-1 text-sm">기존 작업 선택</span>
                 </button>
-                <label className="hover:bg-muted flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2 transition-colors">
-                  <ListTodo className="text-muted-foreground h-4 w-4 shrink-0" />
-                  <span className="text-foreground flex-1 text-sm">작업 모드</span>
-                  <Switch
-                    checked={workMode}
-                    disabled={workModeDisabled}
-                    aria-label="작업 모드"
-                    onCheckedChange={toggleWorkMode}
-                  />
-                </label>
               </PopoverContent>
             </Popover>
             {/* 토큰 사용량 버튼 — 세션 ID가 있을 때만 표시 */}
@@ -269,23 +247,28 @@ export function ChatComposer({
                 </PopoverContent>
               </Popover>
             )}
-            <textarea
-              ref={textareaRef}
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder}
-              disabled={disabled}
-              rows={1}
-              className="text-foreground placeholder:text-muted-foreground max-h-36 min-h-6 flex-1 resize-none bg-transparent py-0 text-[15px] outline-none disabled:opacity-60"
-            />
+            {isRecording ? (
+              <VoiceWaveform active={isRecording} onError={() => setIsRecording(false)} />
+            ) : (
+              <textarea
+                ref={textareaRef}
+                value={value}
+                onChange={(event) => setValue(event.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder={placeholder}
+                disabled={disabled}
+                rows={1}
+                className="text-foreground placeholder:text-muted-foreground max-h-36 min-h-6 flex-1 resize-none bg-transparent py-0 text-[15px] outline-none disabled:opacity-60"
+              />
+            )}
             <button
               type="button"
               onClick={() => setIsRecording((r) => !r)}
               aria-label={isRecording ? '음성 입력 중지' : '음성 입력 시작'}
+              aria-pressed={isRecording}
               className={`shrink-0 rounded-2xl p-2.5 transition-colors ${
                 isRecording
-                  ? 'animate-pulse bg-red-500 text-white'
+                  ? 'bg-red-500 text-white hover:bg-red-500/90'
                   : 'bg-muted text-muted-foreground hover:bg-muted/80'
               }`}
             >
@@ -297,7 +280,7 @@ export function ChatComposer({
                 onClick={onStop}
                 aria-label="응답 중지"
                 title="응답 중지"
-                className="border-foreground text-foreground hover:bg-muted shrink-0 rounded-2xl border-2 bg-white p-2.5 transition-colors"
+                className="border-foreground bg-background text-foreground hover:bg-muted shrink-0 rounded-2xl border-2 p-2.5 transition-colors"
               >
                 <Square className="h-4 w-4 fill-current" />
               </button>
@@ -307,7 +290,7 @@ export function ChatComposer({
                 onClick={submit}
                 disabled={disabled}
                 aria-label="메시지 보내기"
-                className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 text-white transition-colors disabled:opacity-40"
+                className="bg-foreground text-background hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 transition-colors disabled:opacity-40"
               >
                 <Send className="h-4 w-4" />
               </button>
@@ -317,7 +300,7 @@ export function ChatComposer({
                 onClick={onVoiceMode}
                 aria-label="음성 대화 모드"
                 title="음성 대화 모드"
-                className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 text-white transition-colors"
+                className="bg-foreground text-background hover:bg-foreground/85 shrink-0 rounded-2xl p-2.5 transition-colors"
               >
                 <AudioLines className="h-4 w-4" />
               </button>

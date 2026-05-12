@@ -422,13 +422,35 @@ public class UserMemoryService {
 
     @Transactional
     public UserMemoryResponse markUsed(Long userId, Long memoryId, Double usefulnessScore) {
+        return markUsed(userId, memoryId, usefulnessScore, null);
+    }
+
+    @Transactional
+    public UserMemoryResponse markUsed(
+        Long userId,
+        Long memoryId,
+        Double usefulnessScore,
+        String sourceTaskRunId
+    ) {
         UserMemory memory = findOwnedMemory(userId, memoryId);
         if (memory.getStatus() != MemoryStatus.ACTIVE || !isNotExpired(memory, LocalDateTime.now())) {
             throw new CustomException(ErrorCode.RESOURCE_NOT_FOUND);
         }
 
+        String normalizedTaskRunId = trimToNull(sourceTaskRunId);
+        if (userMemoryEventService.existsEvent(memory, MemoryEventType.USED, normalizedTaskRunId)) {
+            return UserMemoryResponse.from(memory);
+        }
+
         memory.markUsed(LocalDateTime.now(), usefulnessScore);
-        userMemoryEventService.record(memory, MemoryEventType.USED, usefulnessScore, Map.of());
+        userMemoryEventService.record(
+            memory,
+            MemoryEventType.USED,
+            usefulnessScore,
+            Map.of(),
+            normalizedTaskRunId,
+            null
+        );
         return UserMemoryResponse.from(memory);
     }
 

@@ -74,7 +74,7 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "local-core": RuntimeToolsetDefinition(
         description="Current minimal local runtime tool bundle.",
-        includes=("skills", "session", "planning", "terminal", "file", "web", "work", "delegation"),
+        includes=("skills", "session", "planning", "terminal", "file", "web", "work"),
     ),
 }
 

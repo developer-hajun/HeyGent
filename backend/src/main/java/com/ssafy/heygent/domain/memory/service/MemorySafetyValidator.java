@@ -53,6 +53,7 @@ public class MemorySafetyValidator {
     );
 
     private static final Set<String> ALLOWED_TTLS = Set.of(
+        "session",
         "short",
         "medium",
         "long",

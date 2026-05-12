@@ -38,6 +38,15 @@ class SessionListResponse(BaseModel):
     has_next: bool = Field(alias="hasNext", description="다음 페이지가 있으면 `true`입니다.")
 
 
+class CreateSessionRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=120, description="빈 AI 세션 제목입니다.")
+    model: str | None = Field(default=None, max_length=100, description="세션 기본 모델입니다.")
+    settings: dict[str, Any] = Field(default_factory=dict, description="세션별 실행 설정입니다.")
+    metadata_patch: dict[str, Any] | None = Field(default=None, alias="metadataPatch", description="서버가 허용한 표시용 metadata입니다.")
+
+
 class CreateSessionMessageRequest(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,

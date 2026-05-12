@@ -7,7 +7,7 @@ from app.clients.backend_memory import BackendMemoryItem
 
 _MAX_CONTENT_CHARS = 500
 _MAX_SUMMARY_CHARS = 200
-_ALLOWED_METADATA_KEYS = {"workspaceKey", "resourceId", "tags", "category"}
+_ALLOWED_METADATA_KEYS = {"workspaceKey", "resourceId", "tags", "category", "ttl", "sourceTimestamp", "eventTime", "reason"}
 
 
 def build_persistent_memory_prompt(memory_items: list[BackendMemoryItem] | None) -> str:

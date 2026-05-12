@@ -83,7 +83,7 @@ export function SessionWorkspaceDetailPanel({
   }
 
   if (session === null) {
-    const title = activePanel === 'purpose' ? '메인 에이전트' : '세션'
+    const title = activePanel === 'ceo' ? '메인 에이전트' : '세션'
     return (
       <WorkspacePageShell title={title} eyebrow="작업면">
         <p className="text-muted-foreground text-sm">세션 정보를 불러오는 중입니다.</p>
@@ -91,14 +91,14 @@ export function SessionWorkspaceDetailPanel({
     )
   }
 
-  if (activePanel === 'purpose') {
-    return <PurposePage session={session} />
+  if (activePanel === 'ceo') {
+    return <MainAgentPage session={session} />
   }
 
   return null
 }
 
-function PurposePage({ session }: { session: RawAiSession }) {
+function MainAgentPage({ session }: { session: RawAiSession }) {
   const authenticatedReady = useAiRealtimeStore((state) => state.authenticatedReady)
   const commandClient = useAiRealtimeStore((state) => state.commandClient)
   const messages = useChatStore(
@@ -415,7 +415,7 @@ function PurposePage({ session }: { session: RawAiSession }) {
       setSaved(true)
       window.setTimeout(() => setSaved(false), 1400)
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : '목표 저장에 실패했습니다.')
+      setSaveError(error instanceof Error ? error.message : '메인 에이전트 저장에 실패했습니다.')
     } finally {
       setSaving(false)
     }

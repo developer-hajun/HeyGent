@@ -12,12 +12,15 @@ import {
   Filter,
   FileText,
   FolderKanban,
+  GitBranch,
   List,
   ListTree,
+  Loader2,
   MessageSquare,
   PauseCircle,
   PlayCircle,
   Plus,
+  RotateCcw,
   Search,
   Send,
   Tag,
@@ -25,16 +28,36 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { useNavigate } from 'react-router'
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
-import { addWorkRelation, createChildWork, removeWorkRelation, updateWorkParent } from '@/apis/work'
+import {
+  agentProfilesToPanelItems,
+  createDefaultSessionAgents,
+  listSessionAgents,
+} from '@/apis/agents'
+import {
+  addWorkRelation,
+  createChildWork,
+  removeWorkRelation,
+  updateWorkFlowOrder,
+  updateWorkParent,
+} from '@/apis/work'
 import { cn } from '@/components/ui/utils'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useWorkStore } from '@/store/useWorkStore'
 import type { WorkItem, WorkLabel } from '@/types/work'
+import { getApiErrorMessage } from '@/utils/apiErrorMessage'
 import {
   ISSUE_BOARD_STATUSES,
   createIssueBoardIdentifier,
@@ -51,7 +74,9 @@ import {
   WorkDocumentsPanel,
   WorkInteractionsPanel,
   WorkProductsPanel,
+  WorkRecoveryPanel,
 } from './WorkCollaborationPanels'
+import { WorkFlowDiagram } from './WorkFlowDiagram'
 import {
   arraysEqual,
   assigneeLabel,
@@ -87,9 +112,50 @@ const QUICK_FILTERS = [
   { id: 'done', label: '완료', statuses: ['done'] },
 ] as const
 
+function hasUnresolvedBlockers(issue: IssueBoardIssue) {
+  return issue.blockedBy.some((item) => item.status !== 'done')
+}
+
+function shouldResumeWorkFromComment(issue: IssueBoardIssue) {
+  if (issue.status === 'done') return true
+  if (issue.status === 'blocked') return !hasUnresolvedBlockers(issue)
+  return false
+}
+
+function commentSubmitHint(issue: IssueBoardIssue) {
+  if (issue.live) return '실행 중인 작업이라 댓글 반영을 대기열에 올립니다.'
+  if (issue.status === 'done') return '댓글 전송 후 완료된 작업을 다시 실행합니다.'
+  if (issue.status === 'blocked' && hasUnresolvedBlockers(issue)) {
+    return '선행 작업이 남아 있어 댓글만 기록합니다.'
+  }
+  if (issue.status === 'blocked') return '댓글 전송 후 차단을 풀고 작업을 다시 실행합니다.'
+  if (issue.assigneeAgentId) return '댓글 전송 후 담당 에이전트가 내용을 반영합니다.'
+  return '댓글은 작업 기록에 남습니다.'
+}
+
+function collectDescendantIssueIds(issues: IssueBoardIssue[], issueId: string) {
+  const childIdsByParent = new Map<string, string[]>()
+  for (const issue of issues) {
+    if (!issue.parentId) continue
+    childIdsByParent.set(issue.parentId, [
+      ...(childIdsByParent.get(issue.parentId) ?? []),
+      issue.id,
+    ])
+  }
+  const descendantIds: string[] = []
+  const queue = [...(childIdsByParent.get(issueId) ?? [])]
+  while (queue.length > 0) {
+    const childId = queue.shift()
+    if (!childId || descendantIds.includes(childId)) continue
+    descendantIds.push(childId)
+    queue.push(...(childIdsByParent.get(childId) ?? []))
+  }
+  return descendantIds
+}
+
 export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
-  const navigate = useNavigate()
   const storageKey = `heygent-task-board:v4:${sessionId}`
+  const isPendingSession = sessionId.startsWith('pending_session_')
   const workItems = useWorkStore((state) => state.itemsBySessionId[sessionId] ?? EMPTY_WORK_ITEMS)
   const commentsByWorkId = useWorkStore((state) => state.commentsByWorkId)
   const isWorkLoading = useWorkStore((state) => state.loadingBySessionId[sessionId] === true)
@@ -105,9 +171,12 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const updateWorkItemAssignee = useWorkStore((state) => state.updateAssignee)
   const addWorkItemComment = useWorkStore((state) => state.addComment)
   const createWorkItemLabel = useWorkStore((state) => state.createLabel)
+  const createWorkItem = useWorkStore((state) => state.createWork)
+  const createWorkItemRun = useWorkStore((state) => state.createRun)
   const setWorkItemLabels = useWorkStore((state) => state.setLabels)
   const deleteWorkItem = useWorkStore((state) => state.deleteWorkItem)
   const agentPanelsBySessionId = useSessionStore((state) => state.agentPanelsBySessionId)
+  const setAgentPanelsForSession = useSessionStore((state) => state.setAgentPanelsForSession)
   const assignees = useMemo<BoardAssignee[]>(() => {
     const agentPanels = agentPanelsBySessionId[sessionId] ?? EMPTY_AGENT_PANELS
     return [
@@ -116,10 +185,11 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         id: panel.id,
         name: panel.agent.name,
         icon: Bot,
+        templateKey: panel.agent.templateKey,
       })),
     ]
   }, [agentPanelsBySessionId, sessionId])
-  const [initialState] = useState(() => loadTodoBoardState(storageKey, sessionId))
+  const [initialState] = useState(() => loadTodoBoardState(storageKey))
   const [issues, setIssues] = useState(initialState.issues)
   const [labels, setLabels] = useState<IssueBoardLabel[]>(initialState.labels)
   const [query, setQuery] = useState(initialState.query)
@@ -136,13 +206,19 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const [draggedIssueId, setDraggedIssueId] = useState<string | null>(null)
   const [dragOverStatus, setDragOverStatus] = useState<IssueBoardStatus | null>(null)
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null)
+  const [workNotice, setWorkNotice] = useState<string | null>(null)
+  const visibleWorkError = workError && workError !== workNotice ? workError : null
+  const [runningIssueIds, setRunningIssueIds] = useState<Set<string>>(() => new Set())
+  const [commentSubmittingIssueIds, setCommentSubmittingIssueIds] = useState<Set<string>>(
+    () => new Set(),
+  )
 
   useEffect(() => {
-    if (sessionId.startsWith('pending_session_')) return
+    if (isPendingSession) return
     void Promise.all([fetchSessionWork(sessionId), fetchWorkLabels(sessionId)]).catch((error) => {
       console.error(error)
     })
-  }, [fetchSessionWork, fetchWorkLabels, sessionId])
+  }, [fetchSessionWork, fetchWorkLabels, isPendingSession, sessionId])
 
   useEffect(() => {
     saveTodoBoardState(storageKey, {
@@ -170,13 +246,12 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   ])
 
   const boardIssues = useMemo(
-    () =>
-      workItems.length > 0 ? workItems.map((item) => toIssueBoardIssue(item, workItems)) : issues,
-    [issues, workItems],
+    () => (isPendingSession ? issues : workItems.map((item) => toIssueBoardIssue(item, workItems))),
+    [isPendingSession, issues, workItems],
   )
   const boardLabels = useMemo(
-    () => (serverLabels.length > 0 ? serverLabels.map(toIssueBoardLabel) : labels),
-    [labels, serverLabels],
+    () => (isPendingSession ? labels : serverLabels.map(toIssueBoardLabel)),
+    [isPendingSession, labels, serverLabels],
   )
   const filteredIssues = useMemo(
     () =>
@@ -293,16 +368,29 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
     )
   }
 
-  const addIssueComment = (issueId: string, body: string) => {
+  const addIssueComment = async (issueId: string, body: string) => {
     const trimmed = body.trim()
     if (!trimmed) return
     const serverWork = workItems.find((item) => item.workId === issueId)
     if (serverWork) {
-      void addWorkItemComment(issueId, trimmed)
-        .then(() => Promise.all([fetchSessionWork(sessionId), fetchWorkComments(issueId)]))
-        .catch((error) => {
-          console.error(error)
+      const issue = boardIssues.find((item) => item.id === issueId)
+      const resume = issue ? shouldResumeWorkFromComment(issue) : false
+      setCommentSubmittingIssueIds((current) => new Set(current).add(issueId))
+      try {
+        await addWorkItemComment(issueId, trimmed, resume)
+        await Promise.all([fetchSessionWork(sessionId), fetchWorkComments(issueId)])
+      } catch (error) {
+        const message = getApiErrorMessage(error, { fallback: '댓글을 전송하지 못했습니다.' })
+        setWorkNotice(message)
+        console.error(error)
+        throw error
+      } finally {
+        setCommentSubmittingIssueIds((current) => {
+          const next = new Set(current)
+          next.delete(issueId)
+          return next
         })
+      }
       return
     }
     const now = new Date().toISOString()
@@ -329,7 +417,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   }
 
   const createLabel = (label: IssueBoardLabel) => {
-    if (!sessionId.startsWith('pending_session_')) {
+    if (!isPendingSession) {
       void createWorkItemLabel(sessionId, { name: label.name, color: label.color }).catch(
         (error) => {
           console.error(error)
@@ -346,27 +434,75 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const runIssue = (issueId: string) => {
     const issue = boardIssues.find((item) => item.id === issueId)
     if (!issue) return
+    const serverWork = workItems.find((item) => item.workId === issueId)
+    if (!serverWork) {
+      setWorkNotice('서버에 저장된 작업만 실행할 수 있습니다.')
+      return
+    }
+    const unresolvedBlockers = issue.blockedBy.filter((item) => item.status !== 'done')
+    if (unresolvedBlockers.length > 0) {
+      setWorkNotice(
+        `먼저 완료해야 하는 작업이 있습니다: ${unresolvedBlockers
+          .map((item) => item.identifier)
+          .join(', ')}`,
+      )
+      return
+    }
+    setWorkNotice(null)
     const message =
       issue.status === 'blocked'
         ? '차단 해제 정보를 반영해서 이 작업을 이어서 진행해.'
         : issue.status === 'done'
           ? '이 작업을 다시 검토하고 필요한 후속 실행을 진행해.'
           : '이 작업을 이어서 진행해.'
-    const params = new URLSearchParams({ workId: issue.id, draft: message })
-    navigate(`/session/${sessionId}?${params.toString()}`)
+    setRunningIssueIds((current) => new Set(current).add(issueId))
+    void createWorkItemRun(issueId, message)
+      .then((response) => {
+        setSelectedIssueId(response.work.workId)
+        setWorkNotice(`${response.work.identifier} 작업 실행을 시작했습니다.`)
+        return fetchSessionWork(sessionId)
+      })
+      .catch((error) => {
+        setWorkNotice(getApiErrorMessage(error, { fallback: '작업 실행에 실패했습니다.' }))
+      })
+      .finally(() => {
+        setRunningIssueIds((current) => {
+          const next = new Set(current)
+          next.delete(issueId)
+          return next
+        })
+      })
   }
 
-  const deleteIssue = (issueId: string) => {
+  const deleteIssue = async (issueId: string, cascadeChildren = false) => {
     const serverWork = workItems.find((item) => item.workId === issueId)
     if (serverWork) {
-      void deleteWorkItem(issueId)
-        .then(() => setSelectedIssueId(null))
-        .catch((error) => {
-          console.error(error)
-        })
+      try {
+        const item = await deleteWorkItem(issueId, cascadeChildren)
+        await fetchSessionWork(sessionId)
+        setSelectedIssueId(null)
+        setWorkNotice(
+          cascadeChildren
+            ? `${item.identifier} 작업과 하위 작업을 삭제했습니다.`
+            : `${item.identifier} 작업을 삭제했습니다.`,
+        )
+      } catch (error) {
+        console.error(error)
+        setWorkNotice(getApiErrorMessage(error, { fallback: '작업 삭제에 실패했습니다.' }))
+        throw error
+      }
       return
     }
-    setIssues((current) => current.filter((issue) => issue.id !== issueId))
+    setIssues((current) => {
+      if (!cascadeChildren) {
+        return current
+          .filter((issue) => issue.id !== issueId)
+          .map((issue) => (issue.parentId === issueId ? { ...issue, parentId: null } : issue))
+      }
+      const deletedIds = new Set(collectDescendantIssueIds(current, issueId))
+      deletedIds.add(issueId)
+      return current.filter((issue) => !deletedIds.has(issue.id))
+    })
     setSelectedIssueId(null)
   }
 
@@ -379,6 +515,33 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   }
 
   const createNewTodo = () => {
+    if (!isPendingSession) {
+      void createWorkItem(sessionId, {
+        clientRequestId: `manual:${sessionId}:${Date.now()}`,
+        title: '새 작업',
+        description: '담당 에이전트 한 명에게 맡길 작업입니다.',
+        assigneeAgentId: null,
+        rawUserInput: '새 작업',
+        executionInstruction: '작업 내용을 확인하고 필요한 실행을 진행합니다.',
+        startExecution: false,
+        acceptanceCriteria: [],
+        constraints: [],
+        labelNames: [],
+        initialComment: '새 작업이 생성되었습니다.',
+        metadata: { createdFrom: 'work_board' },
+        flowOrder: boardIssues.length,
+      })
+        .then((response) => {
+          setSelectedIssueId(response.work.workId)
+          setWorkNotice(`${response.work.identifier} 작업을 만들었습니다.`)
+          return fetchSessionWork(sessionId)
+        })
+        .catch((error) => {
+          console.error(error)
+          setWorkNotice(getApiErrorMessage(error, { fallback: '작업 생성에 실패했습니다.' }))
+        })
+      return
+    }
     const now = new Date().toISOString()
     const sequence = issues.length + 1
     const todoId = `${sessionId}:todo:${String(sequence).padStart(3, '0')}`
@@ -391,6 +554,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         status: 'todo',
         assigneeAgentId: null,
         parentId: null,
+        flowOrder: null,
         labels: [],
         comments: [
           {
@@ -414,6 +578,98 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
       },
       ...current,
     ])
+  }
+
+  const createRootFlowWork = (input: {
+    assigneeAgentId: string | null
+    description: string
+    title: string
+  }) => {
+    const rootCount = boardIssues.filter((issue) => issue.parentId === null).length
+    if (!isPendingSession) {
+      void createWorkItem(sessionId, {
+        clientRequestId: `flow:${sessionId}:${Date.now()}`,
+        title: input.title,
+        description: input.description,
+        assigneeAgentId: input.assigneeAgentId,
+        rawUserInput: input.description,
+        executionInstruction: input.description,
+        startExecution: false,
+        acceptanceCriteria: [],
+        constraints: [],
+        labelNames: [],
+        initialComment: null,
+        metadata: { createdFrom: 'work_flow' },
+        flowOrder: rootCount,
+      })
+        .then(() => fetchSessionWork(sessionId))
+        .catch((error) => {
+          console.error(error)
+        })
+      return
+    }
+    const now = new Date().toISOString()
+    const sequence = issues.length + 1
+    const todoId = `${sessionId}:todo:${String(sequence).padStart(3, '0')}`
+    setIssues((current) => [
+      {
+        id: todoId,
+        identifier: createIssueBoardIdentifier(sequence),
+        title: input.title,
+        description: input.description,
+        status: 'todo',
+        assigneeAgentId: input.assigneeAgentId,
+        parentId: null,
+        flowOrder: rootCount,
+        labels: [],
+        comments: [],
+        runs: [],
+        documents: [],
+        childItems: [],
+        relatedItems: [],
+        blockedBy: [],
+        createdAt: now,
+        updatedAt: now,
+        startedAt: null,
+        completedAt: null,
+        live: false,
+      },
+      ...current,
+    ])
+  }
+
+  const ensureDefaultFlowAgents = async (): Promise<BoardAssignee[]> => {
+    if (isPendingSession) return []
+    await createDefaultSessionAgents(sessionId)
+    const profiles = await listSessionAgents(sessionId)
+    const panels = agentProfilesToPanelItems(profiles)
+    setAgentPanelsForSession(sessionId, panels)
+    return [
+      MAIN_AGENT_ASSIGNEE,
+      ...panels.map((panel) => ({
+        id: panel.id,
+        name: panel.agent.name,
+        icon: Bot,
+        templateKey: panel.agent.templateKey,
+      })),
+    ]
+  }
+
+  const reorderChildFlowWork = (parentId: string, workIds: string[]) => {
+    if (!isPendingSession) {
+      void updateWorkFlowOrder(parentId, workIds)
+        .then(() => fetchSessionWork(sessionId))
+        .catch((error) => {
+          console.error(error)
+        })
+      return
+    }
+    const orderById = new Map(workIds.map((workId, index) => [workId, index]))
+    setIssues((current) =>
+      current.map((issue) =>
+        orderById.has(issue.id) ? { ...issue, flowOrder: orderById.get(issue.id) ?? null } : issue,
+      ),
+    )
   }
 
   return (
@@ -444,9 +700,14 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
             </span>
           </div>
         </div>
-        {workError && (
+        {visibleWorkError && (
           <p className="text-destructive text-xs" aria-live="polite">
-            {workError}
+            {visibleWorkError}
+          </p>
+        )}
+        {workNotice && (
+          <p className="text-xs text-amber-600" aria-live="polite">
+            {workNotice}
           </p>
         )}
 
@@ -492,6 +753,16 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
               >
                 <Columns3 className="h-4 w-4" />
               </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className={cn(viewMode === 'flow' && 'bg-accent text-foreground')}
+                title="Flow"
+                onClick={() => setViewMode('flow')}
+              >
+                <GitBranch className="h-4 w-4" />
+              </Button>
             </div>
             <FilterPopover
               activeFilterCount={activeFilterCount}
@@ -522,7 +793,38 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         </div>
       </header>
 
-      {viewMode === 'board' ? (
+      {viewMode === 'flow' ? (
+        <WorkFlowDiagram
+          assignees={assignees}
+          issues={boardIssues}
+          onAddRelation={(sourceId, targetId) => {
+            void addWorkRelation(sourceId, targetId, 'blocks')
+              .then(() => fetchSessionWork(sessionId))
+              .catch((error) => {
+                console.error(error)
+              })
+          }}
+          onCreateChildWork={(parentId, input) => {
+            const childCount = boardIssues.filter((issue) => issue.parentId === parentId).length
+            void createChildWork(parentId, {
+              clientRequestId: `flow-child:${parentId}:${Date.now()}`,
+              title: input.title,
+              description: input.description,
+              assigneeAgentId: input.assigneeAgentId,
+              blockParentUntilDone: false,
+              flowOrder: childCount,
+            })
+              .then(() => fetchSessionWork(sessionId))
+              .catch((error) => {
+                console.error(error)
+              })
+          }}
+          onCreateRootWork={createRootFlowWork}
+          onEnsureDefaultAgents={ensureDefaultFlowAgents}
+          onOpenIssue={setSelectedIssueId}
+          onReorderChildWork={reorderChildFlowWork}
+        />
+      ) : viewMode === 'board' ? (
         <TodoKanbanBoard
           draggedIssueId={draggedIssueId}
           dragOverStatus={dragOverStatus}
@@ -556,6 +858,10 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         assignees={assignees}
         allIssues={boardIssues}
         issue={selectedIssue}
+        isCommentSubmitting={
+          selectedIssue ? commentSubmittingIssueIds.has(selectedIssue.id) : false
+        }
+        isRunning={selectedIssue ? runningIssueIds.has(selectedIssue.id) : false}
         labels={boardLabels}
         onAssignIssue={assignIssue}
         onAddComment={addIssueComment}
@@ -583,7 +889,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
             clientRequestId: `child:${parentId}:${Date.now()}`,
             title,
             description,
-            blockParentUntilDone: true,
+            blockParentUntilDone: false,
           })
             .then(() => fetchSessionWork(sessionId))
             .catch((error) => {
@@ -636,6 +942,26 @@ function TodoKanbanBoard({
         {ISSUE_BOARD_STATUSES.map((status) => {
           const issues = grouped[status]
           const isOver = dragOverStatus === status
+          if (issues.length === 0 && !isOver) {
+            return (
+              <section
+                key={status}
+                onDragOver={(event) => {
+                  event.preventDefault()
+                  onDragOverStatus(status)
+                }}
+                className="flex w-14 min-w-14 shrink-0 flex-col"
+              >
+                <div className="bg-muted/20 border-border/70 flex min-h-[220px] flex-1 flex-col items-center gap-2 rounded-md border border-dashed py-3">
+                  <StatusIcon status={status} />
+                  <span className="text-muted-foreground text-xs font-semibold tracking-wide [writing-mode:vertical-rl]">
+                    {issueBoardStatusLabel(status)}
+                  </span>
+                  <span className="text-muted-foreground/60 mt-auto text-xs tabular-nums">0</span>
+                </div>
+              </section>
+            )
+          }
           return (
             <section
               key={status}
@@ -1182,6 +1508,8 @@ function TodoDetailPanel({
   assignees,
   allIssues,
   issue,
+  isCommentSubmitting,
+  isRunning,
   labels,
   onAssignIssue,
   onAddComment,
@@ -1199,14 +1527,16 @@ function TodoDetailPanel({
   assignees: BoardAssignee[]
   allIssues: IssueBoardIssue[]
   issue: IssueBoardIssue | null
+  isCommentSubmitting: boolean
+  isRunning: boolean
   labels: IssueBoardLabel[]
   onAssignIssue: (issueId: string, assigneeAgentId: string | null) => void
-  onAddComment: (issueId: string, body: string) => void
+  onAddComment: (issueId: string, body: string) => Promise<void> | void
   onAddRelation: (sourceId: string, targetId: string, relationType: 'blocks' | 'related') => void
   onChangeParent: (issueId: string, parentId: string | null) => void
   onCreateChild: (parentId: string, title: string, description: string) => void
   onCreateLabel: (label: IssueBoardLabel) => void
-  onDeleteIssue: (issueId: string) => void
+  onDeleteIssue: (issueId: string, cascadeChildren?: boolean) => Promise<void> | void
   onMoveStatus: (issueId: string, status: IssueBoardStatus) => void
   onOpenChange: (open: boolean) => void
   onRemoveRelation: (sourceId: string, targetId: string, relationType: 'blocks' | 'related') => void
@@ -1215,13 +1545,40 @@ function TodoDetailPanel({
 }) {
   const [detailTab, setDetailTab] = useState<DetailTab>('chat')
   const [commentDraft, setCommentDraft] = useState('')
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   if (issue === null) return null
 
   const submitComment = () => {
-    if (!commentDraft.trim()) return
-    onAddComment(issue.id, commentDraft)
-    setCommentDraft('')
+    if (!commentDraft.trim() || isCommentSubmitting) return
+    void Promise.resolve(onAddComment(issue.id, commentDraft))
+      .then(() => {
+        setCommentDraft('')
+      })
+      .catch(() => undefined)
+  }
+  const descendantCount = collectDescendantIssueIds(allIssues, issue.id).length
+  const hasChildIssues = descendantCount > 0
+  const requestDelete = () => {
+    if (hasChildIssues) {
+      setDeleteDialogOpen(true)
+      return
+    }
+    void deleteIssue(false)
+  }
+  const deleteIssue = async (cascadeChildren: boolean) => {
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await onDeleteIssue(issue.id, cascadeChildren)
+      setDeleteDialogOpen(false)
+    } catch (error) {
+      setDeleteError(getApiErrorMessage(error, { fallback: '작업을 삭제하지 못했습니다.' }))
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return (
@@ -1252,18 +1609,27 @@ function TodoDetailPanel({
               variant="outline"
               size="sm"
               className="h-8 gap-1.5"
-              disabled={issue.live || issue.status === 'backlog' || issue.status === 'cancelled'}
+              disabled={
+                isRunning ||
+                issue.live ||
+                issue.status === 'backlog' ||
+                issue.status === 'cancelled'
+              }
               onClick={() => onRunIssue(issue.id)}
             >
-              <PlayCircle className="h-3.5 w-3.5" />
-              실행
+              {isRunning ? (
+                <Clock3 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <PlayCircle className="h-3.5 w-3.5" />
+              )}
+              {isRunning ? '실행 중' : '실행'}
             </Button>
             <Button
               type="button"
               aria-label="작업 삭제"
               variant="ghost"
               size="icon-sm"
-              onClick={() => onDeleteIssue(issue.id)}
+              onClick={requestDelete}
             >
               <Trash2 className="h-4 w-4" />
             </Button>
@@ -1348,14 +1714,23 @@ function TodoDetailPanel({
                 label="확인"
                 onClick={() => setDetailTab('interactions')}
               />
+              <DetailTabButton
+                active={detailTab === 'recovery'}
+                icon={<RotateCcw className="h-3.5 w-3.5" />}
+                label="복구"
+                onClick={() => setDetailTab('recovery')}
+              />
             </div>
 
             {detailTab === 'chat' && (
               <IssueChatThread
                 commentDraft={commentDraft}
                 comments={issue.comments}
+                hint={commentSubmitHint(issue)}
+                isSubmitting={isCommentSubmitting}
                 onCommentDraftChange={setCommentDraft}
                 onSubmit={submitComment}
+                submitLabel={shouldResumeWorkFromComment(issue) ? '다시 실행' : '전송'}
               />
             )}
             {detailTab === 'runs' && <IssueRunLedger issue={issue} />}
@@ -1373,10 +1748,75 @@ function TodoDetailPanel({
             {detailTab === 'documents' && <WorkDocumentsPanel workId={issue.id} />}
             {detailTab === 'products' && <WorkProductsPanel workId={issue.id} />}
             {detailTab === 'interactions' && <WorkInteractionsPanel workId={issue.id} />}
+            {detailTab === 'recovery' && <WorkRecoveryPanel workId={issue.id} />}
           </div>
         </div>
       </aside>
+      <DeleteIssueDialog
+        deleteError={deleteError}
+        deleting={deleting}
+        descendantCount={descendantCount}
+        issue={issue}
+        open={deleteDialogOpen}
+        onDeleteOnlyParent={() => void deleteIssue(false)}
+        onDeleteWithChildren={() => void deleteIssue(true)}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeleteError(null)
+          setDeleteDialogOpen(open)
+        }}
+      />
     </div>
+  )
+}
+
+function DeleteIssueDialog({
+  deleteError,
+  deleting,
+  descendantCount,
+  issue,
+  open,
+  onDeleteOnlyParent,
+  onDeleteWithChildren,
+  onOpenChange,
+}: {
+  deleteError: string | null
+  deleting: boolean
+  descendantCount: number
+  issue: IssueBoardIssue
+  open: boolean
+  onDeleteOnlyParent: () => void
+  onDeleteWithChildren: () => void
+  onOpenChange: (open: boolean) => void
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>하위 작업도 함께 삭제할까요?</AlertDialogTitle>
+          <AlertDialogDescription>
+            `{issue.identifier}` 작업 아래에 하위 작업 {descendantCount}개가 있습니다. 부모만
+            삭제하면 하위 작업은 루트 작업으로 남고, 함께 삭제하면 하위 작업 전체가 삭제됩니다.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {deleteError ? <p className="text-destructive text-sm">{deleteError}</p> : null}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleting}>취소</AlertDialogCancel>
+          <Button variant="outline" disabled={deleting} onClick={onDeleteOnlyParent}>
+            부모만 삭제
+          </Button>
+          <Button variant="destructive" disabled={deleting} onClick={onDeleteWithChildren}>
+            {deleting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                삭제 중
+              </>
+            ) : (
+              '하위까지 삭제'
+            )}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
@@ -1497,13 +1937,19 @@ function DetailTabButton({
 function IssueChatThread({
   commentDraft,
   comments,
+  hint,
+  isSubmitting,
   onCommentDraftChange,
   onSubmit,
+  submitLabel,
 }: {
   commentDraft: string
   comments: IssueBoardIssue['comments']
+  hint: string
+  isSubmitting: boolean
   onCommentDraftChange: (value: string) => void
   onSubmit: () => void
+  submitLabel: string
 }) {
   return (
     <div className="space-y-3">
@@ -1528,6 +1974,16 @@ function IssueChatThread({
             </div>
           ))
         )}
+        {isSubmitting && commentDraft.trim().length > 0 && (
+          <div className="bg-muted/20 rounded-md border border-dashed p-3 opacity-80">
+            <div className="mb-1 flex items-center gap-2 text-xs">
+              <span className="font-medium">사용자</span>
+              <span className="text-muted-foreground">전송 중</span>
+              <Loader2 className="text-muted-foreground ml-auto h-3.5 w-3.5 animate-spin" />
+            </div>
+            <p className="text-sm leading-relaxed whitespace-pre-wrap">{commentDraft.trim()}</p>
+          </div>
+        )}
       </div>
       <div className="rounded-md border p-2">
         <Textarea
@@ -1535,6 +1991,7 @@ function IssueChatThread({
           onChange={(event) => onCommentDraftChange(event.target.value)}
           placeholder="실행 시 참고할 작업 댓글 입력..."
           className="min-h-20 resize-none border-0 p-2 shadow-none focus-visible:ring-0"
+          disabled={isSubmitting}
           onKeyDown={(event) => {
             if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
               event.preventDefault()
@@ -1543,10 +2000,22 @@ function IssueChatThread({
           }}
         />
         <div className="flex items-center justify-between gap-2 px-2 pb-1">
-          <span className="text-muted-foreground text-xs">Ctrl/⌘ + Enter로 전송</span>
-          <Button type="button" size="sm" className="h-8 gap-1.5" onClick={onSubmit}>
-            <Send className="h-3.5 w-3.5" />
-            전송
+          <span className="text-muted-foreground min-w-0 text-xs">
+            {isSubmitting ? '댓글 전송 중...' : hint}
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            className="h-8 shrink-0 gap-1.5"
+            disabled={isSubmitting || commentDraft.trim().length === 0}
+            onClick={onSubmit}
+          >
+            {isSubmitting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Send className="h-3.5 w-3.5" />
+            )}
+            {isSubmitting ? '전송 중' : submitLabel}
           </Button>
         </div>
       </div>

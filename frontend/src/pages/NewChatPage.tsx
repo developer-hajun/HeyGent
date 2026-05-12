@@ -9,7 +9,6 @@ import {
   FileImage,
   Globe,
   ImagePlus,
-  ListTodo,
   Mic,
   MoreHorizontal,
   Plus,
@@ -20,7 +19,7 @@ import { motion } from 'motion/react'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Switch } from '@/components/ui/switch'
+import { VoiceWaveform } from '@/components/chat/VoiceWaveform'
 import {
   type AiRealtimeAuthStatus,
   type AiRealtimeConnectionStatus,
@@ -59,7 +58,6 @@ export function NewChatPage() {
   const [isSending, setIsSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [attachOpen, setAttachOpen] = useState(false)
-  const [workMode, setWorkMode] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   useLayoutEffect(() => {
@@ -92,10 +90,6 @@ export function NewChatPage() {
   const handleSend = async () => {
     const content = inputValue.trim()
     if (!content || isSending) return
-    if (workMode) {
-      setSendError('작업 모드는 기존 세션에서 사용할 수 있습니다.')
-      return
-    }
     if (commandClient === null) {
       setSendError(
         getRealtimeUnavailableMessage(connectionStatus, authStatus, realtimeError, accessToken),
@@ -264,38 +258,30 @@ export function NewChatPage() {
                       </button>
                     ),
                   )}
-                  <div className="border-border/60 my-1 border-t" />
-                  <label className="hover:bg-muted flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2 transition-colors">
-                    <ListTodo className="text-muted-foreground h-4 w-4 shrink-0" />
-                    <span className="text-foreground flex-1 text-sm">작업 모드</span>
-                    <Switch
-                      checked={workMode}
-                      aria-label="작업 모드"
-                      onCheckedChange={(checked) => {
-                        setWorkMode(checked)
-                        setSendError(null)
-                      }}
-                    />
-                  </label>
                 </PopoverContent>
               </Popover>
-              <textarea
-                ref={textareaRef}
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="무엇이든 물어보세요..."
-                rows={1}
-                autoFocus
-                className="text-foreground placeholder:text-muted-foreground max-h-36 min-h-6 flex-1 resize-none bg-transparent py-0 text-[15px] outline-none"
-              />
+              {isRecording ? (
+                <VoiceWaveform active={isRecording} onError={() => setIsRecording(false)} />
+              ) : (
+                <textarea
+                  ref={textareaRef}
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="무엇이든 물어보세요..."
+                  rows={1}
+                  autoFocus
+                  className="text-foreground placeholder:text-muted-foreground max-h-36 min-h-6 flex-1 resize-none bg-transparent py-0 text-[15px] outline-none"
+                />
+              )}
               <button
                 type="button"
                 onClick={handleVoiceInput}
                 aria-label={isRecording ? '음성 입력 중지' : '음성 입력 시작'}
+                aria-pressed={isRecording}
                 className={`shrink-0 rounded-2xl p-2.5 transition-colors ${
                   isRecording
-                    ? 'animate-pulse bg-red-500 text-white'
+                    ? 'bg-red-500 text-white hover:bg-red-500/90'
                     : 'bg-muted text-muted-foreground hover:bg-muted/80'
                 }`}
               >
@@ -307,7 +293,7 @@ export function NewChatPage() {
                   onClick={() => void handleSend()}
                   aria-label="새 대화 메시지 보내기"
                   disabled={isSending || commandClient === null}
-                  className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2 text-white transition-colors disabled:opacity-40"
+                  className="bg-foreground text-background hover:bg-foreground/85 shrink-0 rounded-2xl p-2 transition-colors disabled:opacity-40"
                 >
                   <Send className={`h-4 w-4 ${isSending ? 'animate-pulse' : ''}`} />
                 </button>
@@ -317,7 +303,7 @@ export function NewChatPage() {
                   onClick={() => navigate('/session/voice', { state: { voiceMode: true } })}
                   aria-label="음성 대화 모드"
                   title="음성 대화 모드"
-                  className="bg-foreground hover:bg-foreground/85 shrink-0 rounded-2xl p-2 text-white transition-colors"
+                  className="bg-foreground text-background hover:bg-foreground/85 shrink-0 rounded-2xl p-2 transition-colors"
                 >
                   <AudioLines className="h-4 w-4" />
                 </button>

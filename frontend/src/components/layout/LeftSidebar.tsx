@@ -31,6 +31,8 @@ import { useAuthStore } from '@/store/useAuthStore'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useChatStore } from '@/store/useChatStore'
 import { logout } from '@/apis/auth'
+import { agentProfilesToPanelItems, createDefaultSessionAgents } from '@/apis/agents'
+import { createSession as createAiSession } from '@/apis/sessions'
 import { updateMyInfo } from '@/apis/users'
 import type { RawAiSession } from '@/types/aiChat'
 
@@ -54,9 +56,11 @@ export function LeftSidebar() {
     theme,
     setTheme,
   } = useUIStore()
-  const { setSelectedSessionId, pinnedSessionIds } = useSessionStore()
+  const { setAgentPanelsForSession, setSelectedSessionId, pinnedSessionIds } = useSessionStore()
   const [profileOpen, setProfileOpen] = useState(false)
   const [newSessionModalOpen, setNewSessionModalOpen] = useState(false)
+  const [newSessionCreating, setNewSessionCreating] = useState(false)
+  const [newSessionError, setNewSessionError] = useState<string | null>(null)
   const commandClient = useAiRealtimeStore((state) => state.commandClient)
   const realtimeStatus = useAiRealtimeStore((state) => state.connectionStatus)
   const sessionsById = useChatStore((state) => state.sessionsById)
@@ -114,9 +118,58 @@ export function LeftSidebar() {
         initialTab={settingsInitialTab as 'apiKeys'}
       />
       <NewSessionModal
+        error={newSessionError}
         open={newSessionModalOpen}
-        onOpenChange={setNewSessionModalOpen}
+        onOpenChange={(open) => {
+          if (newSessionCreating) return
+          setNewSessionError(null)
+          setNewSessionModalOpen(open)
+        }}
+        submitting={newSessionCreating}
         onConfirm={(config) => {
+          if (config?.seedDefaultAgents) {
+            setNewSessionCreating(true)
+            setNewSessionError(null)
+            void createAiSession({
+              title: '새 AI 대화',
+              model: config.model.trim() || undefined,
+              settings: {
+                ...(config.persona.trim() ? { systemPrompt: config.persona.trim() } : {}),
+                ...(config.model.trim() ? { model: config.model.trim() } : {}),
+                delegationPolicy: config.delegationPolicy,
+              },
+              metadataPatch: {
+                ui: {
+                  agentName: config.agentName,
+                  callName: config.callName,
+                  agentCapabilities: config.capabilities,
+                  agentProfileImage: config.profileImage,
+                  instructionsEntryFile: config.instructionsEntryFile,
+                  instructionsMode: config.instructionsMode,
+                  instructionsRootPath: config.instructionsRootPath,
+                  instructionsFiles: config.instructionsFiles,
+                },
+              },
+            })
+              .then(async (session) => {
+                const profiles = await createDefaultSessionAgents(session.session_id)
+                setAgentPanelsForSession(session.session_id, agentProfilesToPanelItems(profiles))
+                void fetchSessions().catch(() => undefined)
+                setSelectedSessionId(session.session_id)
+                setNewSessionModalOpen(false)
+                setSidebarCollapsed(true)
+                setSessionWorkspaceCollapsed(false)
+                navigate(`/session/${session.session_id}`)
+              })
+              .catch((error) => {
+                setNewSessionError(getNewSessionErrorMessage(error))
+                setSidebarCollapsed(false)
+              })
+              .finally(() => {
+                setNewSessionCreating(false)
+              })
+            return
+          }
           storePendingSessionConfig(config)
           setNewSessionModalOpen(false)
           if (config && !config.seedDefaultAgents) {
@@ -137,16 +190,23 @@ export function LeftSidebar() {
         {collapsed && (
           <div className="flex h-full flex-col items-center gap-1.5 px-2 py-4">
             <div className="flex h-12 shrink-0 items-center justify-center">
-              <CollapsedTooltip label="에이전트 상태">
-                <button
-                  type="button"
-                  onClick={() => handleOpenPrimaryRoute('/agent-status')}
-                  className="hover:bg-accent/50 flex h-12 w-12 items-center justify-center rounded-xl transition-colors"
-                  aria-label="에이전트 상태로 이동"
-                >
-                  <img src="/onlylogo.png" alt="HeyGent" className="h-9 w-9 object-contain" />
-                </button>
-              </CollapsedTooltip>
+              <button
+                type="button"
+                onClick={() => handleOpenPrimaryRoute('/agent-status')}
+                className="flex h-12 w-12 items-center justify-center rounded-xl"
+                aria-label="에이전트 상태로 이동"
+              >
+                <img
+                  src="/img_logo_light.png"
+                  alt="HeyGent"
+                  className="h-9 w-9 object-contain dark:hidden"
+                />
+                <img
+                  src="/img_logo_dark.png"
+                  alt="HeyGent"
+                  className="hidden h-9 w-9 object-contain dark:block"
+                />
+              </button>
             </div>
 
             <div className="bg-border my-1 h-px w-10" />
@@ -228,51 +288,50 @@ export function LeftSidebar() {
               </button>
             </CollapsedTooltip>
 
-            {/* Profile icon (collapsed) */}
-            <div className="bg-border my-1 h-px w-10" />
-            <Popover open={profileOpen} onOpenChange={setProfileOpen}>
-              <CollapsedTooltip label="프로필">
+            {/* Profile (collapsed) — 우측 SessionWorkspaceMenu의 border-t 위치와 정렬 */}
+            <div className="border-border -mx-2 mt-1.5 -mb-4 flex shrink-0 justify-center self-stretch border-t py-3">
+              <Popover open={profileOpen} onOpenChange={setProfileOpen}>
                 <PopoverTrigger asChild>
-                  <button className="hover:bg-accent/50 flex h-12 w-12 items-center justify-center rounded-xl transition-colors">
-                    <ProfileAvatar size={34} />
+                  <button
+                    aria-label="프로필"
+                    className="hover:bg-accent/50 flex h-10 w-10 items-center justify-center rounded-xl transition-colors"
+                  >
+                    <ProfileAvatar size={28} />
                   </button>
                 </PopoverTrigger>
-              </CollapsedTooltip>
-              <PopoverContent side="right" align="end" className="w-52 rounded-2xl p-1.5">
-                <ProfileMenu
-                  onSettingsClick={() => {
-                    setProfileOpen(false)
-                    setSettingsOpen(true)
-                  }}
-                />
-              </PopoverContent>
-            </Popover>
+                <PopoverContent side="right" align="end" className="w-52 rounded-2xl p-1.5">
+                  <ProfileMenu
+                    onSettingsClick={() => {
+                      setProfileOpen(false)
+                      setSettingsOpen(true)
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
+            </div>
           </div>
         )}
 
         {/* ── Expanded Panel ── */}
         {!collapsed && (
           <div className="flex h-full flex-col overflow-hidden">
-            <div className="flex h-12 shrink-0 items-center gap-1 px-4">
+            <div className="flex h-12 shrink-0 items-center px-4">
               <button
                 type="button"
                 onClick={() => handleOpenPrimaryRoute('/agent-status')}
-                className="hover:bg-accent/50 flex min-w-0 flex-1 items-center justify-center rounded-lg px-2 py-2 transition-colors"
+                className="flex h-full w-full min-w-0 items-center justify-center rounded-lg p-0"
                 aria-label="에이전트 상태로 이동"
               >
                 <img
-                  src="/logo-no-character.png"
+                  src="/text_logo_light.png"
                   alt="HeyGent"
-                  className="h-8 max-w-[150px] shrink-0 object-contain"
+                  className="h-7 w-auto max-w-full shrink-0 translate-y-1 scale-[2] object-contain mix-blend-multiply dark:hidden"
                 />
-              </button>
-              <button
-                type="button"
-                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors"
-                aria-label={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
-              >
-                {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                <img
+                  src="/text_logo_dark.png"
+                  alt="HeyGent"
+                  className="hidden h-7 w-auto max-w-full shrink-0 translate-y-1 scale-[2] object-contain mix-blend-screen dark:block"
+                />
               </button>
             </div>
 
@@ -360,13 +419,26 @@ export function LeftSidebar() {
               </section>
             </div>
 
+            {/* ── Theme toggle (above profile) ── */}
+            <div className="flex shrink-0 justify-start px-4 pt-2">
+              <button
+                type="button"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors"
+                aria-label={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+                title={theme === 'dark' ? '라이트 모드' : '다크 모드'}
+              >
+                {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </button>
+            </div>
+
             {/* ── Profile Footer (Fixed) ── */}
             <div className="border-border shrink-0 border-t px-4 py-3">
               <Popover open={profileOpen} onOpenChange={setProfileOpen}>
                 <PopoverTrigger asChild>
-                  <button className="hover:bg-accent/50 flex w-full items-center gap-3 rounded-lg p-2 transition-colors">
-                    <ProfileAvatar size={32} />
-                    <div className="min-w-0 flex-1 text-left">
+                  <button className="hover:bg-accent/50 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors">
+                    <ProfileAvatar size={20} />
+                    <div className="min-w-0 flex-1">
                       <p className="text-foreground truncate text-sm font-medium">
                         <ProfileName />
                       </p>
@@ -396,6 +468,20 @@ function storePendingSessionConfig(config: CustomAgentConfig | undefined) {
     return
   }
   sessionStorage.setItem('ai-new-session-config', JSON.stringify(config))
+}
+
+function getNewSessionErrorMessage(error: unknown) {
+  if (isAxiosLikeError(error)) {
+    const detail = error.response?.data?.detail
+    if (typeof detail === 'string' && detail.trim() !== '') {
+      return detail
+    }
+  }
+  return error instanceof Error ? error.message : '세션을 만들지 못했습니다.'
+}
+
+function isAxiosLikeError(error: unknown): error is { response?: { data?: { detail?: unknown } } } {
+  return typeof error === 'object' && error !== null && 'response' in error
 }
 
 function EmptySessionNotice({
@@ -609,7 +695,7 @@ function ProfileMenu({ onSettingsClick }: { onSettingsClick: () => void }) {
                   }
                 }}
                 disabled={isSaving || !nickname.trim()}
-                className="bg-primary hover:bg-primary/90 rounded-lg p-2 text-white transition-colors disabled:opacity-50"
+                className="bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg p-2 transition-colors disabled:opacity-50"
               >
                 {isSaving ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
