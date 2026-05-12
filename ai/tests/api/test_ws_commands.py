@@ -939,7 +939,7 @@ def test_ws_session_settings_snapshot_wins_over_message_overrides(client, monkey
         task = client.app.state.repository.get_task(accepted["payload"]["task_run_id"])
 
         assert task is not None
-        assert task.input_payload["model"] == "gpt-session-patch"
+        assert task.input_payload["model"] == "gpt-5.4"
         assert task.input_payload["system_prompt_snapshot"] == "세션에 저장된 시스템 프롬프트"
         assert task.input_payload["toolsets"] == ["session", "planning"]
         assert task.input_payload["enabled_toolsets"] == ["session", "planning"]

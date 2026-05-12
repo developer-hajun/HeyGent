@@ -57,6 +57,21 @@ _PROTECTED_SESSION_METADATA_KEYS = {
 _SESSION_METADATA_PATCH_ALLOWLIST = {"pinned", "color", "tags", "description", "lastViewedAt", "last_viewed_at", "ui"}
 _SESSION_SETTINGS_ALLOWLIST = {"model", "systemPrompt", "system_prompt", "toolsets", "delegationPolicy", "delegation_policy"}
 _PUBLIC_SESSION_TOOLSETS = {"skills", "session", "planning", "web", "work", "safe"}
+_OPENAI_MODEL_FALLBACKS = (
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-5.2",
+    "gpt-5.1",
+    "gpt-5",
+    "gpt-5-mini",
+    "gpt-5-nano",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "gpt-4o",
+    "gpt-4o-mini",
+)
 
 
 class WebSocketCommandError(Exception):
@@ -340,20 +355,18 @@ class WebSocketCommandRouter:
         conversation_history = compact_conversation_history(
             build_conversation_history(session_store.list_messages(session_id))
         )
-        settings_snapshot = _session_settings_snapshot(session)
-        effective_model = str(settings_snapshot.get("model") or model or "").strip() or None
-        transcript_session_id = _create_task_transcript_session(
-            session_store,
-            session_id=session_id,
-            owner_key=context.auth.user_id,
-            title=session.get("title") or content[:120],
-            model=effective_model,
-        )
         task_input = dict(input_payload)
         task_input["sessionId"] = session_id
         task_input["ownerKey"] = context.auth.user_id
         task_input["ownerUserId"] = _owner_user_id(context.auth.user_id)
+        settings_snapshot = _session_settings_snapshot(session)
         _seed_default_session_agents_if_requested(
+            context.websocket.app.state,
+            task_input=task_input,
+            session_id=session_id,
+            owner_key=context.auth.user_id,
+        )
+        main_profile = _attach_main_agent_context(
             context.websocket.app.state,
             task_input=task_input,
             session_id=session_id,
@@ -367,8 +380,17 @@ class WebSocketCommandRouter:
         )
         if session_agent_profiles:
             task_input["allowSessionAgentRootWork"] = True
-        if effective_model and not task_input.get("model"):
+        profile_model = _profile_model(main_profile) if main_profile is not None else None
+        effective_model = str(profile_model or settings_snapshot.get("model") or model or "").strip() or None
+        if effective_model:
             task_input["model"] = effective_model
+        transcript_session_id = _create_task_transcript_session(
+            session_store,
+            session_id=session_id,
+            owner_key=context.auth.user_id,
+            title=session.get("title") or content[:120],
+            model=effective_model,
+        )
         task_input["prompt"] = content
         task_input["transcript_session_id"] = transcript_session_id
         task_input["conversation_history"] = conversation_history
@@ -850,30 +872,31 @@ class WebSocketCommandRouter:
             current_model = (_session_settings_snapshot(session).get("model") or session.get("model"))
         settings = context.websocket.app.state.settings
         default_model = str(current_model or getattr(settings, "openai_response_model", "") or "gpt-5.4")
-        providers = []
-        registry = context.websocket.app.state.provider_registry
-        for provider in registry.health():
-            payload_item = provider.model_dump(mode="json") if hasattr(provider, "model_dump") else dict(provider)
-            provider_name = str(payload_item.get("provider_name") or "default")
-            provider_models = [
-                {
-                    "id": default_model,
-                    "label": default_model,
-                    "provider": provider_name,
-                    "is_current": default_model == current_model or current_model is None,
-                }
-            ]
-            providers.append(
-                {
-                    "slug": provider_name,
-                    "provider_name": provider_name,
-                    "models": provider_models,
-                    "is_current": any(model["is_current"] for model in provider_models),
-                    "total_models": len(provider_models),
-                    "warning": None if payload_item.get("healthy") or payload_item.get("configured") or payload_item.get("connected") else payload_item.get("detail"),
-                    "health": payload_item,
-                }
-            )
+        model_ids = await _list_openai_models_for_user(
+            context.websocket.app.state,
+            user_id=context.auth.user_id,
+            fallback_model=default_model,
+        )
+        provider_models = [
+            {
+                "id": model_id,
+                "label": model_id,
+                "provider": "OpenAI",
+                "is_current": model_id == current_model or (current_model is None and model_id == default_model),
+            }
+            for model_id in model_ids
+        ]
+        providers = [
+            {
+                "slug": "openai_api_key",
+                "provider_name": "openai_api_key",
+                "models": provider_models,
+                "is_current": any(model["is_current"] for model in provider_models),
+                "total_models": len(provider_models),
+                "warning": None,
+                "health": {"provider_name": "openai_api_key", "configured": True, "connected": True},
+            }
+        ]
         return ("model.options.result", {"model": default_model, "providers": providers, "models": [model for provider in providers for model in provider["models"]]})
 
     async def _task_runs_active_list(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
@@ -1456,22 +1479,39 @@ def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work
     profile_id = str(profile.get("profile_id") or assignee_agent_id)
     if not assignee_agent_id or assignee_agent_id == "CEO":
         _attach_session_agent_candidates(state, task_input=task_input, session_id=work.session_id, owner_key=str(work.owner_key))
+    profile_model = _profile_model(profile)
+    if profile_model:
+        task_input["model"] = profile_model
     bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
     if bundle is None:
         return
-    task_input["targetAgentInstructions"] = {
-        "bundleId": bundle.get("bundle_id"),
-        "entryDocumentKey": bundle.get("entry_document_key") or "AGENTS.md",
-        "documents": [
-            {
-                "documentKey": document.get("document_key"),
-                "displayName": document.get("display_name"),
-                "content": document.get("content") or "",
-            }
-            for document in list(bundle.get("documents") or [])
-            if isinstance(document, dict)
-        ],
-    }
+    task_input["targetAgentInstructions"] = _instruction_bundle_prompt_payload(bundle)
+
+
+def _attach_main_agent_context(
+    state: Any,
+    *,
+    task_input: dict[str, Any],
+    session_id: str,
+    owner_key: str,
+) -> dict[str, Any] | None:
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return None
+    profile = agent_repository.ensure_session_main_agent(
+        session_id=session_id,
+        owner_key=str(owner_key),
+        owner_user_id=_owner_user_id(owner_key),
+    )
+    if profile is None:
+        return None
+    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
+    profile_id = str(profile.get("profile_id") or "").strip()
+    if profile_id:
+        bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(owner_key))
+        if bundle is not None:
+            task_input["targetAgentInstructions"] = _instruction_bundle_prompt_payload(bundle)
+    return profile
 
 
 def _apply_work_execution_defaults(task_input: dict[str, Any], *, settings: Any) -> None:
@@ -1920,7 +1960,7 @@ def _apply_session_settings_snapshot(task_input: dict[str, Any], settings: dict[
 
     snapshot = dict(settings)
     task_input["settings_snapshot"] = snapshot
-    if "model" in snapshot:
+    if "model" in snapshot and not task_input.get("model"):
         task_input["model"] = snapshot["model"]
     if "toolsets" in snapshot:
         task_input["toolsets"] = list(snapshot["toolsets"])
@@ -1928,6 +1968,39 @@ def _apply_session_settings_snapshot(task_input: dict[str, Any], settings: dict[
     if "delegationPolicy" in snapshot:
         task_input["delegation_policy"] = dict(snapshot["delegationPolicy"])
     task_input["system_prompt_snapshot"] = get_system_prompt_snapshot(session)
+
+
+async def _list_openai_models_for_user(state: Any, *, user_id: str, fallback_model: str) -> list[str]:
+    models: list[str] = []
+    registry = getattr(state, "provider_registry", None)
+    provider = None
+    if registry is not None and hasattr(registry, "get"):
+        try:
+            provider = registry.get("openai_api")
+        except KeyError:
+            provider = None
+    if provider is not None and hasattr(provider, "list_user_models"):
+        try:
+            models = await provider.list_user_models(user_id=user_id, model=fallback_model)
+        except Exception:
+            models = []
+
+    preferred = [fallback_model, *_OPENAI_MODEL_FALLBACKS]
+    configured = getattr(getattr(state, "settings", None), "openai_allowed_models", None)
+    if isinstance(configured, str):
+        preferred.extend([item.strip() for item in configured.split(",") if item.strip()])
+    elif isinstance(configured, (list, tuple, set)):
+        preferred.extend([str(item).strip() for item in configured if str(item).strip()])
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for model in [*preferred, *models]:
+        model_id = str(model or "").strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        merged.append(model_id)
+    return merged or [fallback_model]
 
 
 def _json_dumps(value: Any) -> str:
@@ -2168,6 +2241,31 @@ def _agent_profile_prompt_payload(profile: dict[str, Any]) -> dict[str, Any]:
         "templateKey": profile.get("template_key"),
         "configSnapshot": profile.get("config_snapshot") or {},
     }
+
+
+def _instruction_bundle_prompt_payload(bundle: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "bundleId": bundle.get("bundle_id"),
+        "entryDocumentKey": bundle.get("entry_document_key") or "AGENTS.md",
+        "documents": [
+            {
+                "documentKey": document.get("document_key") or document.get("documentKey"),
+                "displayName": document.get("display_name") or document.get("displayName"),
+                "content": document.get("content") or "",
+            }
+            for document in list(bundle.get("documents") or [])
+            if isinstance(document, dict)
+        ],
+    }
+
+
+def _profile_model(profile: dict[str, Any] | None) -> str | None:
+    if profile is None:
+        return None
+    config = profile.get("config_snapshot") if isinstance(profile.get("config_snapshot"), dict) else {}
+    value = config.get("model") or profile.get("model_name")
+    text = str(value or "").strip()
+    return text or None
 
 
 def _step_payload_with_display_context(task: Any, step: Any) -> dict[str, Any]:

@@ -5,6 +5,10 @@ import {
   AgentConfigurationPanel,
   AgentDashboardPanel,
   AgentDetailHeader,
+  AgentRunActivityChart,
+  AgentRunStatusChart,
+  AgentRunSuccessRateChart,
+  AgentUsageActivityChart,
   AgentInstructionsBundlePanel,
   AgentInstructionsPanel,
   AgentRunsPanel,
@@ -14,6 +18,9 @@ import {
 import {
   buildAgentRunUsageMap,
   buildAgentUsageSummaryItems,
+  buildAgentUsageRows,
+  buildUsageSummaryFromRecords,
+  filterUsageRecordsByTaskRunIds,
   formatAgentRunCostUsage,
   formatAgentRunTokenUsage,
 } from '@/components/sessionWorkspace/agentUsageDisplay'
@@ -34,12 +41,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tabs } from '@/components/ui/tabs'
-import {
-  getCommandUsage,
-  type CommandUsageRecord,
-  type CommandUsageSummary,
-} from '@/apis/aiCommandUsage'
+import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
 import { listTaskRuns } from '@/apis/taskRuns'
+import {
+  getCachedTaskRuns,
+  getCachedUsageRecords,
+  setCachedTaskRuns,
+  setCachedUsageRecords,
+} from '@/components/sessionWorkspace/sessionWorkspaceDashboardCache'
 import type { AgentPanelItem } from '@/store/useSessionStore'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
@@ -85,7 +94,9 @@ export function SubAgentDetailView({
   const eventsByTaskRunId = useTaskRunStore((state) => state.eventsByTaskRunId)
   const fetchActiveTaskRuns = useTaskRunStore((state) => state.fetchActiveTaskRuns)
   const [tab, setTab] = useState<SubAgentDetailTab>(getDetailTab(requestedTab))
-  const [loadedTaskRuns, setLoadedTaskRuns] = useState<RawTaskRun[]>([])
+  const [loadedTaskRuns, setLoadedTaskRuns] = useState<RawTaskRun[]>(
+    () => getCachedTaskRuns(sessionId) ?? [],
+  )
   const [instructionsDraft, setInstructionsDraft] = useState(item.agent.instructions ?? '')
   const [instructionsEntryFile, setInstructionsEntryFile] = useState(
     item.agent.instructionsEntryFile ?? 'AGENTS.md',
@@ -102,8 +113,9 @@ export function SubAgentDetailView({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
-  const [usageSummary, setUsageSummary] = useState<CommandUsageSummary | null>(null)
-  const [usageRecords, setUsageRecords] = useState<CommandUsageRecord[]>([])
+  const [usageRecords, setUsageRecords] = useState<CommandUsageRecord[]>(
+    () => getCachedUsageRecords(sessionId) ?? [],
+  )
   const [usageError, setUsageError] = useState<string | null>(null)
   const selectedSkills = SUB_AGENT_SKILLS.filter((skill) => item.agent.skills?.includes(skill.id))
   const profileId = item.agent.profileId ?? item.id
@@ -116,16 +128,23 @@ export function SubAgentDetailView({
     [agentTaskRuns, eventsByTaskRunId, usageRecords],
   )
   const latestRun = runItems[0] ?? null
-  const blockedRunCount = agentTaskRuns.filter(
-    (taskRun) => normalizeRunStatus(taskRun.status) === 'failed',
-  ).length
-  const completedRunCount = agentTaskRuns.filter(
-    (taskRun) => normalizeRunStatus(taskRun.status) === 'succeeded',
-  ).length
-  const usageItems = useMemo(
-    () => buildAgentUsageSummaryItems(usageSummary, false, usageError),
-    [usageError, usageSummary],
+  const agentUsageRecords = useMemo(
+    () =>
+      filterUsageRecordsByTaskRunIds(
+        usageRecords,
+        agentTaskRuns.map((taskRun) => taskRun.task_run_id),
+      ),
+    [agentTaskRuns, usageRecords],
   )
+  const agentUsageSummary = useMemo(
+    () => buildUsageSummaryFromRecords(agentUsageRecords),
+    [agentUsageRecords],
+  )
+  const usageItems = useMemo(
+    () => buildAgentUsageSummaryItems(agentUsageSummary, false, usageError),
+    [agentUsageSummary, usageError],
+  )
+  const usageRows = useMemo(() => buildAgentUsageRows(agentUsageRecords), [agentUsageRecords])
   const instructionsDirty =
     instructionsDraft.trim() !== (item.agent.instructions ?? '') ||
     instructionsEntryFile.trim() !== (item.agent.instructionsEntryFile ?? 'AGENTS.md') ||
@@ -146,6 +165,7 @@ export function SubAgentDetailView({
       .then(([, taskRuns]) => {
         if (!alive) return
         setLoadedTaskRuns(taskRuns)
+        setCachedTaskRuns(sessionId, taskRuns)
       })
       .catch((error) => {
         if (alive) console.error(error)
@@ -166,12 +186,11 @@ export function SubAgentDetailView({
       .then((result) => {
         if (!alive) return
         setUsageError(null)
-        setUsageSummary(result.summary)
         setUsageRecords(result.records)
+        setCachedUsageRecords(sessionId, result.records)
       })
       .catch(() => {
         if (!alive) return
-        setUsageRecords([])
         setUsageError('사용량을 불러오지 못했습니다.')
       })
 
@@ -300,35 +319,43 @@ export function SubAgentDetailView({
           metrics={[
             {
               icon: Activity,
-              label: '실행 현황',
-              value: latestRun ? formatRunStatus(latestRun.status) : '준비 중',
+              label: '실행 활동',
+              value: `${runItems.length}회`,
               description: '최근 14일',
+              chart: <AgentRunActivityChart runs={runItems} />,
             },
             {
               icon: FileText,
               label: '담당 작업',
-              value: String(agentTaskRuns.length),
+              value: `${agentTaskRuns.length}개`,
               description: '최근 14일',
+              chart: <AgentRunStatusChart runs={runItems} />,
             },
             {
               icon: BarChart3,
-              label: '차단됨',
-              value: String(blockedRunCount),
+              label: '토큰 사용',
+              value: agentUsageSummary.totalTokens.toLocaleString('ko-KR'),
               description: '최근 14일',
+              chart: <AgentUsageActivityChart records={agentUsageRecords} />,
             },
             {
               icon: Clock,
-              label: '완료 횟수',
-              value: String(completedRunCount),
+              label: '성공률',
+              value: getRunSuccessRateLabel(runItems),
               description: '최근 14일',
+              chart: <AgentRunSuccessRateChart runs={runItems} />,
             },
           ]}
           recentTitle="최근 작업"
           recentEmptyText="최근 작업이 없습니다."
-          recentItems={runItems.slice(0, 5).map((run) => ({
+          recentItems={runItems.map((run) => ({
             label: run.summary ?? run.id,
+            onSelect: () => selectTab('runs'),
             value: `${formatRunStatus(run.status)}${run.createdAt ? ` · ${run.createdAt}` : ''}`,
           }))}
+          onLatestRunOpen={() => selectTab('runs')}
+          onRecentOpen={() => selectTab('runs')}
+          usageRows={usageRows}
         />
       )}
 
@@ -397,7 +424,7 @@ export function SubAgentDetailView({
 
       {tab === 'runs' && <AgentRunsPanel emptyText="아직 실행 기록이 없습니다." items={runItems} />}
 
-      {instructionsDirty && (
+      {tab === 'instructions' && instructionsDirty && (
         <div className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-sm sm:hidden">
           <div className="flex items-center justify-end gap-2 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
             <Button variant="ghost" size="sm" onClick={resetInstructionsDraft}>
@@ -409,7 +436,7 @@ export function SubAgentDetailView({
           </div>
         </div>
       )}
-      {instructionsDirty && (
+      {tab === 'instructions' && instructionsDirty && (
         <div className="fixed right-6 bottom-6 z-30 hidden sm:block">
           <div className="bg-background/90 border-border flex items-center gap-2 rounded-lg border px-3 py-1.5 shadow-lg backdrop-blur-sm">
             <Button variant="ghost" size="sm" onClick={resetInstructionsDraft}>
@@ -493,7 +520,27 @@ function buildAgentRunItems(
       tokens: formatAgentRunTokenUsage(usageByTaskRunId.get(item.id)),
       cost: formatAgentRunCostUsage(usageByTaskRunId.get(item.id)),
       adapter: item.adapter,
+      sortTime: item.sortTime,
     }))
+}
+
+function getRunSuccessRateLabel(runs: Array<{ status: string }>) {
+  const finished = runs.filter(
+    (run) => isRunSuccessStatus(run.status) || isRunFailureStatus(run.status),
+  )
+  if (finished.length === 0) return '0%'
+  const succeeded = finished.filter((run) => isRunSuccessStatus(run.status)).length
+  return `${Math.round((succeeded / finished.length) * 100)}%`
+}
+
+function isRunSuccessStatus(status?: string | null) {
+  return status === 'succeeded' || status === 'completed'
+}
+
+function isRunFailureStatus(status?: string | null) {
+  return (
+    status === 'failed' || status === 'blocked' || status === 'cancelled' || status === 'canceled'
+  )
 }
 
 function buildAgentRunItem(taskRun: RawTaskRun, rawEvents: RawTaskEventPayload[]) {

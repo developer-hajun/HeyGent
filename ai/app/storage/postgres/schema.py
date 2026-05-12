@@ -474,7 +474,10 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     WHERE queue_status IN ('claimed', 'running') AND lease_expires_at IS NOT NULL;
     """,
     """
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_run_anchors_one_active_per_owner_session
+    DROP INDEX IF EXISTS idx_run_anchors_one_active_per_owner_session;
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_run_anchors_active_owner_session
     ON run_anchors(owner_key, session_key)
     WHERE session_key IS NOT NULL AND queue_status IN ('queued', 'claimed', 'running', 'waiting', 'failed_retry');
     """,

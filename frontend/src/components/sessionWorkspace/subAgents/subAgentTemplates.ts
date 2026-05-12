@@ -1,10 +1,6 @@
 import { Bot, Code2, FlaskConical, Search, ShieldCheck } from 'lucide-react'
 import type { Agent } from '@/types/agent'
-import {
-  getDefaultCommand,
-  getDefaultModel,
-  type SubAgentAdapterType,
-} from './subAgentConfigOptions'
+import { getDefaultModel, type SubAgentAdapterType } from './subAgentConfigOptions'
 import {
   defaultSubAgentIcon,
   getSubAgentImageBySpriteId,
@@ -34,7 +30,7 @@ export const SUB_AGENT_TEMPLATES = [
     title: 'General',
     role: 'general',
     description: '세션 맥락을 바탕으로 조사, 정리, 실행 보조 작업을 맡습니다.',
-    adapterType: 'claude_local',
+    adapterType: 'openai',
     spriteId: 'agent01',
     skills: ['notion'],
     icon: Bot,
@@ -45,7 +41,7 @@ export const SUB_AGENT_TEMPLATES = [
     title: 'Researcher',
     role: 'research',
     description: '시장, 문서, 웹 자료를 조사하고 근거 중심으로 요약합니다.',
-    adapterType: 'claude_local',
+    adapterType: 'openai',
     spriteId: 'agent02',
     skills: ['notion'],
     icon: Search,
@@ -56,7 +52,7 @@ export const SUB_AGENT_TEMPLATES = [
     title: 'Engineer',
     role: 'engineering',
     description: '코드 읽기, 구현, 테스트 보강처럼 개발 작업을 맡습니다.',
-    adapterType: 'codex_local',
+    adapterType: 'openai',
     spriteId: 'agent03',
     skills: ['code'],
     icon: Code2,
@@ -67,7 +63,7 @@ export const SUB_AGENT_TEMPLATES = [
     title: 'QA',
     role: 'qa',
     description: '완료 조건, 예외 상황, 화면 동작을 점검하고 피드백을 남깁니다.',
-    adapterType: 'claude_local',
+    adapterType: 'openai',
     spriteId: 'agent04',
     skills: ['notion'],
     icon: ShieldCheck,
@@ -78,7 +74,7 @@ export const SUB_AGENT_TEMPLATES = [
     title: 'Analyst',
     role: 'research',
     description: '데이터와 비교 관점을 정리해 의사결정에 필요한 요약을 만듭니다.',
-    adapterType: 'claude_local',
+    adapterType: 'openai',
     spriteId: 'agent05',
     skills: ['notion'],
     icon: FlaskConical,
@@ -106,8 +102,8 @@ export function createSubAgentFromTemplate(
     title: template.title,
     role: template.role,
     adapterType: template.adapterType,
-    command: getDefaultCommand(template.adapterType),
-    model: getDefaultModel(template.adapterType),
+    command: '',
+    model: getDefaultModel(),
     extraArgs: '',
     profileImage: getSubAgentImageBySpriteId(spriteId).src,
     spriteId,

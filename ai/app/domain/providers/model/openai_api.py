@@ -230,6 +230,33 @@ class OpenAIAPIProvider(BaseProvider):
         if self._owns_backend_ai_client:
             await self.backend_ai_client.aclose()
 
+    async def list_user_models(self, *, user_id: str | int, model: str) -> list[str]:
+        requested_model = str(model or self.settings.openai_response_model).strip() or self.settings.openai_response_model
+        credential = await self.backend_ai_client.issue_credential(
+            user_id=user_id,
+            provider_name="openai_api_key",
+            model=requested_model,
+        )
+        response = await self._http_client.get(
+            f"{self.settings.openai_rest_api_base_url.rstrip('/')}/models",
+            headers={"Authorization": f"Bearer {credential.credential}"},
+            timeout=self.settings.agent_model_request_timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            return []
+        return sorted(
+            {
+                model_id
+                for item in data
+                if isinstance(item, dict)
+                for model_id in [self._optional_text(item.get("id"))]
+                if model_id and _is_openai_text_model(model_id)
+            }
+        )
+
     def _credential_context(self, runtime_context: dict[str, Any] | None, model: str) -> dict[str, str] | None:
         if not runtime_context:
             return None
@@ -343,3 +370,24 @@ class OpenAIAPIProvider(BaseProvider):
             if isinstance(content, str) and content.strip():
                 return content.strip()[:120]
         return ""
+
+
+def _is_openai_text_model(model_id: str) -> bool:
+    normalized = model_id.lower()
+    if any(
+        blocked in normalized
+        for blocked in (
+            "audio",
+            "embedding",
+            "image",
+            "moderation",
+            "realtime",
+            "search",
+            "sora",
+            "transcribe",
+            "tts",
+            "whisper",
+        )
+    ):
+        return False
+    return normalized.startswith("gpt-") or normalized.startswith("o")
