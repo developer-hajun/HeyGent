@@ -31,6 +31,7 @@ import {
   type AgentRunUsageSummary,
   buildAgentRunUsageMap,
   buildAgentUsageSummaryItems,
+  buildAgentUsageRows,
   buildUsageSummaryFromRecords,
   filterUsageRecordsByTaskRunIds,
   formatAgentRunCostUsage,
@@ -257,9 +258,17 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
       ),
     [mainAgentTaskRunIds, usageRecords],
   )
+  const mainAgentUsageRecords = useMemo(
+    () => filterUsageRecordsByTaskRunIds(usageRecords, mainAgentTaskRunIds),
+    [mainAgentTaskRunIds, usageRecords],
+  )
   const usageItems = useMemo(
     () => buildAgentUsageSummaryItems(mainAgentUsageSummary, false, usageError),
     [mainAgentUsageSummary, usageError],
+  )
+  const usageRows = useMemo(
+    () => buildAgentUsageRows(mainAgentUsageRecords),
+    [mainAgentUsageRecords],
   )
 
   useEffect(() => {
@@ -579,8 +588,12 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
             recentEmptyText="최근 작업이 없습니다."
             recentItems={sessionRuns.map((run) => ({
               label: run.summary ?? run.id,
+              onSelect: () => selectTab('runs'),
               value: `${formatSessionRunStatus(run.status)}${run.createdAt ? ` · ${run.createdAt}` : ''}`,
             }))}
+            onLatestRunOpen={() => selectTab('runs')}
+            onRecentOpen={() => selectTab('runs')}
+            usageRows={usageRows}
           />
         )}
 

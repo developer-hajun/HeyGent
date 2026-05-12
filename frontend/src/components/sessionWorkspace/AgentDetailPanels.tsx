@@ -19,6 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 export interface AgentSummaryItemData {
   label: string
   value: ReactNode
+  onSelect?: () => void
 }
 
 export interface AgentMetricItem {
@@ -38,6 +39,14 @@ export interface AgentRunItemData {
   cost?: string
   adapter?: string
   model?: string
+}
+
+export interface AgentUsageRowData {
+  cost: ReactNode
+  date: ReactNode
+  input: ReactNode
+  output: ReactNode
+  run: ReactNode
 }
 
 export interface AgentSkillRowData {
@@ -130,29 +139,54 @@ export function AgentDashboardPanel({
   costs,
   latestRun,
   metrics,
+  onLatestRunOpen,
   onRecentOpen,
   recentEmptyText,
   recentItems,
   recentTitle,
+  usageRows,
 }: {
   costs: AgentSummaryItemData[]
   latestRun?: AgentRunItemData | null
   metrics: AgentMetricItem[]
+  onLatestRunOpen?: () => void
   onRecentOpen?: () => void
   recentEmptyText: string
   recentItems: AgentSummaryItemData[]
   recentTitle: string
+  usageRows?: AgentUsageRowData[]
 }) {
   const recentLimit = 10
   const visibleRecentItems = recentItems.slice(0, recentLimit)
   const hiddenRecentCount = Math.max(0, recentItems.length - visibleRecentItems.length)
+  const isLive = latestRun ? isLiveRunStatus(latestRun.status) : false
+  const visibleUsageRows = (usageRows ?? []).slice(0, 10)
 
   return (
     <div className="space-y-8 pt-2">
       <section className="space-y-3">
-        <h3 className="text-sm font-medium">최근 실행</h3>
+        <div className="flex w-full items-center justify-between gap-3">
+          <h3 className="flex items-center gap-2 text-sm font-medium">
+            {isLive ? (
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-cyan-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan-400" />
+              </span>
+            ) : null}
+            {isLive ? '실시간 실행' : '최근 실행'}
+          </h3>
+          {latestRun && onLatestRunOpen ? (
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground shrink-0 text-xs transition-colors"
+              onClick={onLatestRunOpen}
+            >
+              상세 보기 &rarr;
+            </button>
+          ) : null}
+        </div>
         {latestRun ? (
-          <AgentRunSummaryCard run={latestRun} />
+          <AgentRunSummaryCard run={latestRun} onSelect={onLatestRunOpen} />
         ) : (
           <p className="text-muted-foreground text-sm">아직 실행 기록이 없습니다.</p>
         )}
@@ -182,8 +216,12 @@ export function AgentDashboardPanel({
         ) : (
           <div className="divide-border divide-y rounded-md border">
             {visibleRecentItems.map((item) => (
-              <div key={item.label} className="px-4 py-3">
-                <AgentRecentSummaryItem label={item.label} value={item.value} />
+              <div key={item.label} className="px-3 py-0">
+                <AgentRecentSummaryItem
+                  label={item.label}
+                  onSelect={item.onSelect}
+                  value={item.value}
+                />
               </div>
             ))}
             {hiddenRecentCount > 0 ? (
@@ -213,11 +251,23 @@ export function AgentDashboardPanel({
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td className="text-muted-foreground px-3 py-4 text-center" colSpan={5}>
-                    아직 사용량 기록이 없습니다.
-                  </td>
-                </tr>
+                {visibleUsageRows.length > 0 ? (
+                  visibleUsageRows.map((row, index) => (
+                    <tr key={index} className="border-border border-b last:border-b-0">
+                      <td className="px-3 py-2">{row.date}</td>
+                      <td className="px-3 py-2 font-mono">{row.run}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.input}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.output}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.cost}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="text-muted-foreground px-3 py-4 text-center" colSpan={5}>
+                      아직 사용량 기록이 없습니다.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -925,13 +975,31 @@ export function AgentSummaryItem({ label, value }: AgentSummaryItemData) {
   )
 }
 
-function AgentRecentSummaryItem({ label, value }: AgentSummaryItemData) {
-  return (
-    <div className="grid min-w-0 gap-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-3">
+function AgentRecentSummaryItem({ label, onSelect, value }: AgentSummaryItemData) {
+  const content = (
+    <>
       <div className="min-w-0 truncate text-sm font-medium" title={label}>
         {label}
       </div>
       <div className="text-muted-foreground min-w-0 truncate text-xs sm:text-right">{value}</div>
+    </>
+  )
+
+  if (onSelect) {
+    return (
+      <button
+        type="button"
+        className="hover:bg-muted/50 grid w-full min-w-0 gap-1 py-3 text-left transition-colors sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-3"
+        onClick={onSelect}
+      >
+        {content}
+      </button>
+    )
+  }
+
+  return (
+    <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-3">
+      {content}
     </div>
   )
 }
@@ -945,7 +1013,7 @@ function AgentMetricCard({ metric }: { metric: AgentMetricItem }) {
         {Icon ? <Icon className="h-3.5 w-3.5" /> : null}
         {metric.label}
       </div>
-      <div className="mt-3 text-lg font-semibold">{metric.value}</div>
+      <div className="mt-3 text-lg font-semibold tabular-nums">{metric.value}</div>
       {metric.description ? (
         <div className="text-muted-foreground mt-1 text-xs leading-5">{metric.description}</div>
       ) : null}
@@ -953,34 +1021,48 @@ function AgentMetricCard({ metric }: { metric: AgentMetricItem }) {
   )
 }
 
-function AgentRunSummaryCard({ run }: { run: AgentRunItemData }) {
+function AgentRunSummaryCard({ onSelect, run }: { onSelect?: () => void; run: AgentRunItemData }) {
   const summary = getRunSummaryExcerpt(run.summary)
-
-  return (
-    <div className="border-border overflow-hidden rounded-lg border">
-      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <AgentStatusPill status={run.status} />
-            <span className="text-muted-foreground font-mono text-xs">{shortRunId(run.id)}</span>
-            {run.source ? (
-              <span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[10px] font-medium">
-                {run.source}
-              </span>
-            ) : null}
-          </div>
-          {summary ? (
-            <p className="text-muted-foreground max-h-16 overflow-hidden text-sm leading-5">
-              {summary}
-            </p>
-          ) : (
-            <p className="text-muted-foreground text-sm">아직 요약이 없습니다.</p>
-          )}
+  const content = (
+    <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <AgentStatusPill status={run.status} />
+          <span className="text-muted-foreground font-mono text-xs">{shortRunId(run.id)}</span>
+          {run.source ? (
+            <span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[10px] font-medium">
+              {run.source}
+            </span>
+          ) : null}
         </div>
-        <span className="text-muted-foreground shrink-0 text-xs">{run.createdAt ?? '방금 전'}</span>
+        {summary ? (
+          <p className="text-muted-foreground max-h-16 overflow-hidden text-sm leading-5">
+            {summary}
+          </p>
+        ) : (
+          <p className="text-muted-foreground text-sm">아직 요약이 없습니다.</p>
+        )}
       </div>
+      <span className="text-muted-foreground shrink-0 text-xs">{run.createdAt ?? '방금 전'}</span>
     </div>
   )
+
+  return (
+    <button
+      type="button"
+      className={`border-border block w-full overflow-hidden rounded-lg border text-left transition-colors ${
+        onSelect ? 'hover:bg-muted/50 cursor-pointer' : 'cursor-default'
+      } ${isLiveRunStatus(run.status) ? 'border-cyan-500/30 shadow-[0_0_12px_rgba(6,182,212,0.08)]' : ''}`}
+      onClick={onSelect}
+      disabled={!onSelect}
+    >
+      {content}
+    </button>
+  )
+}
+
+function isLiveRunStatus(status?: string | null) {
+  return status === 'running' || status === 'waiting' || status === 'queued' || status === 'RUNNING'
 }
 
 function getRunSummaryExcerpt(summary: string | undefined) {

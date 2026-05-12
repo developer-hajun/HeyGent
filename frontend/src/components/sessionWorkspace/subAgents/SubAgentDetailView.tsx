@@ -14,6 +14,7 @@ import {
 import {
   buildAgentRunUsageMap,
   buildAgentUsageSummaryItems,
+  buildAgentUsageRows,
   buildUsageSummaryFromRecords,
   filterUsageRecordsByTaskRunIds,
   formatAgentRunCostUsage,
@@ -145,6 +146,7 @@ export function SubAgentDetailView({
     () => buildAgentUsageSummaryItems(agentUsageSummary, false, usageError),
     [agentUsageSummary, usageError],
   )
+  const usageRows = useMemo(() => buildAgentUsageRows(agentUsageRecords), [agentUsageRecords])
   const instructionsDirty =
     instructionsDraft.trim() !== (item.agent.instructions ?? '') ||
     instructionsEntryFile.trim() !== (item.agent.instructionsEntryFile ?? 'AGENTS.md') ||
@@ -346,8 +348,12 @@ export function SubAgentDetailView({
           recentEmptyText="최근 작업이 없습니다."
           recentItems={runItems.map((run) => ({
             label: run.summary ?? run.id,
+            onSelect: () => selectTab('runs'),
             value: `${formatRunStatus(run.status)}${run.createdAt ? ` · ${run.createdAt}` : ''}`,
           }))}
+          onLatestRunOpen={() => selectTab('runs')}
+          onRecentOpen={() => selectTab('runs')}
+          usageRows={usageRows}
         />
       )}
 
