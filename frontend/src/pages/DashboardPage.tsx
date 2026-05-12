@@ -13,12 +13,16 @@ import {
   Moon,
   Footprints,
   Sparkles,
+  Download,
+  HelpCircle,
+  Bell,
 } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useNavigate } from 'react-router'
 import { useUIStore } from '@/store/useUIStore'
 import { getIotDevices, deleteIotDevice, pairIotDevice, type IotDevice } from '@/apis/iot'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { NewSessionModal, type CustomAgentConfig } from '@/components/session/NewSessionModal'
 
 // ── Mock 상태 (서버·에이전트) ─────────────────────────────────────────────────
@@ -27,7 +31,6 @@ type AgentStatus = 'idle' | 'working'
 
 const MOCK_SERVER: ServerStatus = 'ok'
 const MOCK_AGENT: AgentStatus = 'idle'
-
 type SamsungHealthData = {
   stepCount: number
   activeMinutes: number
@@ -157,12 +160,12 @@ function IotCard({ loading, device, onRegister, onDeregister }: IotCardProps) {
       )}
 
       {!loading && !device && (
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <span className="text-muted-foreground text-sm">등록된 디바이스가 없습니다.</span>
           <button
             type="button"
             onClick={onRegister}
-            className="border-border text-foreground hover:bg-accent/50 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors"
+            className="border-border text-foreground hover:bg-accent/50 shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors"
           >
             기기 등록하기
           </button>
@@ -172,11 +175,11 @@ function IotCard({ loading, device, onRegister, onDeregister }: IotCardProps) {
       {!loading && device && (
         <div className="space-y-3">
           <div className="flex items-start justify-between gap-3">
-            <div className="space-y-0.5">
-              <p className="text-foreground text-sm font-medium">
+            <div className="min-w-0 space-y-0.5">
+              <p className="text-foreground truncate text-sm font-medium">
                 {device.displayName ?? '(이름 없음)'}
               </p>
-              <p className="text-muted-foreground font-mono text-xs">{device.deviceId}</p>
+              <p className="text-muted-foreground truncate font-mono text-xs">{device.deviceId}</p>
             </div>
             <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
               <StatusDot color={isActive ? 'emerald' : 'amber'} />
@@ -186,15 +189,17 @@ function IotCard({ loading, device, onRegister, onDeregister }: IotCardProps) {
             </div>
           </div>
 
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <span className="text-muted-foreground text-xs">마지막 접속</span>
-              <span className="text-foreground text-xs">{formatLastSeen(device.lastSeenAt)}</span>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="text-muted-foreground shrink-0 text-xs">마지막 접속</span>
+              <span className="text-foreground truncate text-xs">
+                {formatLastSeen(device.lastSeenAt)}
+              </span>
             </div>
             <button
               type="button"
               onClick={() => onDeregister(device.deviceId)}
-              className="text-xs font-medium text-red-500 transition-colors hover:text-red-600"
+              className="shrink-0 text-xs font-medium text-red-500 transition-colors hover:text-red-600"
             >
               등록 해제
             </button>
@@ -202,6 +207,112 @@ function IotCard({ loading, device, onRegister, onDeregister }: IotCardProps) {
         </div>
       )}
     </div>
+  )
+}
+
+function BridgeCard() {
+  const [bridgeDownloaded, setBridgeDownloaded] = useState(false)
+
+  const handleBridgeDownloadToggle = () => {
+    setBridgeDownloaded((current) => !current)
+  }
+
+  return (
+    <div className="border-border bg-card flex flex-col justify-between gap-3 rounded-xl border p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="text-muted-foreground bg-muted/60 flex h-8 w-8 items-center justify-center rounded-lg">
+            <Download className="h-4 w-4" />
+          </div>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <p className="text-muted-foreground truncate text-xs">브릿지 프로그램</p>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground rounded-full transition-colors"
+                  aria-label="브릿지 프로그램 도움말"
+                >
+                  <HelpCircle className="h-3.5 w-3.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 text-sm" align="end">
+                <div className="space-y-2">
+                  <p className="text-foreground font-medium">브릿지 프로그램이란?</p>
+                  <p className="text-muted-foreground leading-relaxed">
+                    HeyGent와 로컬 PC 또는 IoT 기기를 연결하는 작은 실행 프로그램입니다. 기기 등록,
+                    로컬 명령 실행, 상태 전달처럼 브라우저만으로 처리하기 어려운 연결 작업을
+                    중계합니다.
+                  </p>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5 pt-2">
+          <StatusDot color={bridgeDownloaded ? 'emerald' : 'amber'} />
+          <span className="text-foreground text-xs font-medium">
+            {bridgeDownloaded ? '다운로드됨' : '확인 필요'}
+          </span>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <p className="text-muted-foreground text-xs leading-relaxed">
+          지금은 실제 파일을 내려받지 않고 다운로드 상태만 확인할 수 있습니다.
+        </p>
+        <button
+          type="button"
+          onClick={handleBridgeDownloadToggle}
+          className="border-border text-foreground hover:bg-accent/50 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors"
+        >
+          <Download className="h-3.5 w-3.5" />
+          {bridgeDownloaded ? '다운로드 상태 해제' : '다운로드 확인'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function LlmTaskNotice() {
+  const taskEvents: Array<{
+    label: string
+    status: string
+    color: StatusDotProps['color']
+    time: string
+  }> = [
+    { label: '건강 데이터 요약 생성', status: '완료', color: 'emerald', time: '방금 전' },
+    { label: 'IoT 연결 상태 분석', status: '처리 중', color: 'blue', time: '1분 전' },
+    { label: '작업 권장 사항 준비', status: '대기', color: 'muted', time: '2분 전' },
+  ]
+
+  return (
+    <aside className="border-border bg-card/95 rounded-xl border p-3 shadow-sm backdrop-blur">
+      <div className="mb-3 flex items-center gap-2">
+        <div className="bg-muted/70 text-muted-foreground flex h-7 w-7 items-center justify-center rounded-lg">
+          <Bell className="h-3.5 w-3.5" />
+        </div>
+        <div>
+          <p className="text-foreground text-xs font-semibold">LLM 작업 알림</p>
+          <p className="text-muted-foreground text-[11px]">작업 처리 이벤트</p>
+        </div>
+      </div>
+
+      <div className="space-y-3 xl:space-y-4">
+        {taskEvents.map((event) => (
+          <div key={event.label} className="space-y-1">
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-foreground text-xs leading-snug">{event.label}</span>
+              <span className="text-muted-foreground shrink-0 text-[10px]">{event.time}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <StatusDot color={event.color} pulse={event.color === 'blue'} />
+              <span className="text-muted-foreground text-[11px]">{event.status}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </aside>
   )
 }
 
@@ -433,17 +544,46 @@ interface HealthMetricCardProps {
   /** 진척도 0~1 — 게이지 바 표시 */
   progress: number
   hint?: string
+  detail: HealthDetailGroup
+  expanded: boolean
+  onToggle: () => void
 }
 
-function HealthMetricCard({ icon, label, value, unit, progress, hint }: HealthMetricCardProps) {
+function HealthMetricCard({
+  icon,
+  label,
+  value,
+  unit,
+  progress,
+  hint,
+  detail,
+  expanded,
+  onToggle,
+}: HealthMetricCardProps) {
   const pct = Math.max(0, Math.min(1, progress)) * 100
   return (
-    <div className="border-border bg-card flex flex-col gap-2.5 rounded-xl border p-4">
-      <div className="flex items-center gap-2">
-        <div className="text-muted-foreground bg-muted/60 flex h-7 w-7 items-center justify-center rounded-md">
-          {icon}
+    <div
+      className={`border-border bg-card flex flex-col gap-2.5 rounded-xl border p-4 ${
+        expanded ? 'lg:col-span-2' : ''
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="text-muted-foreground bg-muted/60 flex h-7 w-7 shrink-0 items-center justify-center rounded-md">
+            {icon}
+          </div>
+          <span className="text-muted-foreground truncate text-xs font-medium">{label}</span>
         </div>
-        <span className="text-muted-foreground text-xs font-medium">{label}</span>
+        <button
+          type="button"
+          onClick={onToggle}
+          className="border-border text-foreground hover:bg-accent/50 inline-flex shrink-0 items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-medium transition-colors"
+          aria-expanded={expanded}
+          aria-label={`${label} 상세 정보 ${expanded ? '접기' : '보기'}`}
+        >
+          {expanded ? '접기' : '자세히보기'}
+          <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        </button>
       </div>
       <div className="flex items-baseline gap-1">
         <span className="text-foreground text-xl font-semibold tabular-nums">{value}</span>
@@ -456,69 +596,19 @@ function HealthMetricCard({ icon, label, value, unit, progress, hint }: HealthMe
         />
       </div>
       {hint && <p className="text-muted-foreground text-[10px]">{hint}</p>}
-    </div>
-  )
-}
-
-interface HealthFieldItem {
-  field: keyof SamsungHealthData
-  label: string
-  value: string
-  note: string
-}
-
-interface HealthDataGroupCardProps {
-  icon: React.ReactNode
-  title: string
-  summary: string
-  status: string
-  items: HealthFieldItem[]
-  expanded: boolean
-  onToggle: () => void
-}
-
-function HealthDataGroupCard({
-  icon,
-  title,
-  summary,
-  status,
-  items,
-  expanded,
-  onToggle,
-}: HealthDataGroupCardProps) {
-  return (
-    <div className="border-border bg-card rounded-xl border p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-2">
-          <div className="text-muted-foreground bg-muted/60 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
-            {icon}
-          </div>
-          <div className="min-w-0 space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-foreground text-sm font-medium">{title}</p>
-              <span className="bg-muted/70 text-muted-foreground rounded-full px-2 py-0.5 text-[10px]">
-                {status}
-              </span>
-            </div>
-            <p className="text-muted-foreground text-xs leading-relaxed">{summary}</p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onToggle}
-          className="border-border text-foreground hover:bg-accent/50 inline-flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors"
-          aria-expanded={expanded}
-        >
-          {expanded ? '접기' : '자세히보기'}
-          <ChevronDown
-            className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
-          />
-        </button>
-      </div>
 
       {expanded && (
-        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {items.map((item) => (
+        <div className="border-border/70 mt-2 space-y-3 border-t pt-3">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-foreground text-sm font-medium">{detail.title}</p>
+              <span className="bg-muted/70 text-muted-foreground rounded-full px-2 py-0.5 text-[10px]">
+                {detail.status}
+              </span>
+            </div>
+            <p className="text-muted-foreground text-xs leading-relaxed">{detail.summary}</p>
+          </div>
+          {detail.items.map((item) => (
             <div key={item.field} className="bg-muted/35 rounded-lg px-3 py-2">
               <div className="mb-1 flex items-center justify-between gap-2">
                 <span className="text-muted-foreground text-xs">{item.label}</span>
@@ -536,6 +626,21 @@ function HealthDataGroupCard({
       )}
     </div>
   )
+}
+
+interface HealthFieldItem {
+  field: keyof SamsungHealthData
+  label: string
+  value: string
+  note: string
+}
+
+interface HealthDetailGroup {
+  icon: React.ReactNode
+  title: string
+  summary: string
+  status: string
+  items: HealthFieldItem[]
 }
 
 function formatNumber(value: number) {
@@ -614,7 +719,7 @@ export function DashboardPage() {
       current.includes(title) ? current.filter((item) => item !== title) : [...current, title],
     )
   }
-  const healthGroups: Omit<HealthDataGroupCardProps, 'expanded' | 'onToggle'>[] = [
+  const healthGroups: HealthDetailGroup[] = [
     {
       title: '활동',
       icon: <Activity className="h-4 w-4" />,
@@ -726,208 +831,219 @@ export function DashboardPage() {
       ],
     },
   ]
+  const [activityHealth, bodyCompositionHealth, vitalityHealth, sleepHealth] = healthGroups
+  const healthMetricCards = [
+    {
+      detail: activityHealth,
+      icon: <Footprints className="h-4 w-4" />,
+      label: activityHealth.title,
+      value: formatNumber(health.stepCount),
+      unit: '걸음',
+      progress: health.stepCount / 10000,
+      hint: `활동 ${health.activeMinutes}분`,
+    },
+    {
+      detail: bodyCompositionHealth,
+      icon: bodyCompositionHealth.icon,
+      label: bodyCompositionHealth.title,
+      value: String(health.weightKg),
+      unit: 'kg',
+      progress: health.bodyFatPct / 35,
+      hint: `체지방률 ${health.bodyFatPct}%`,
+    },
+    {
+      detail: vitalityHealth,
+      icon: vitalityHealth.icon,
+      label: vitalityHealth.title,
+      value: String(health.heartRateBpm),
+      unit: 'bpm',
+      progress: health.heartRateBpm / 130,
+      hint: `혈압 ${health.systolicBp}/${health.diastolicBp}`,
+    },
+    {
+      detail: sleepHealth,
+      icon: sleepHealth.icon,
+      label: sleepHealth.title,
+      value: formatSleepDuration(health.durationMinutes),
+      unit: '',
+      progress: health.durationMinutes / 480,
+      hint: `수면 점수 ${health.sleepScore}점`,
+    },
+  ]
 
   return (
     <div className="bg-background flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-4xl space-y-8 px-6 py-10">
-        {/* 섹션: 시스템 상태 */}
-        <motion.section
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-        >
-          <p className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase">
-            시스템 상태
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            <StatusCard
-              icon={<Server className="h-4 w-4" />}
-              title="서버 연결"
-              statusLabel={server.label}
-              dotColor={server.color}
-            />
-            <StatusCard
-              icon={<Bot className="h-4 w-4" />}
-              title="에이전트"
-              statusLabel={agent.label}
-              dotColor={agent.color}
-              pulse={agent.pulse}
-            />
-            <div className="col-span-2">
+      <div className="mx-auto grid w-full max-w-[1290px] grid-cols-1 gap-6 px-6 py-10 xl:translate-x-8 xl:grid-cols-[minmax(0,56rem)_18rem] xl:items-start 2xl:translate-x-12">
+        <div className="space-y-8">
+          {/* 섹션: 시스템 상태 */}
+          <motion.section
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <p className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase">
+              시스템 상태
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <StatusCard
+                icon={<Server className="h-4 w-4" />}
+                title="서버 연결"
+                statusLabel={server.label}
+                dotColor={server.color}
+              />
+              <StatusCard
+                icon={<Bot className="h-4 w-4" />}
+                title="에이전트"
+                statusLabel={agent.label}
+                dotColor={agent.color}
+                pulse={agent.pulse}
+              />
               <IotCard
                 loading={iotLoading}
                 device={device}
                 onRegister={() => setPairingOpen(true)}
                 onDeregister={handleDeregisterRequest}
               />
+              <BridgeCard />
             </div>
-          </div>
-        </motion.section>
+          </motion.section>
 
-        {/* 구분선 */}
-        <div className="border-border border-t" />
+          {/* 구분선 */}
+          <div className="border-border border-t" />
 
-        {/* 섹션: 빠른 실행 */}
-        <motion.section
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.1 }}
-        >
-          <p className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase">
-            빠른 실행
-          </p>
-          <div className="grid grid-cols-3 gap-3">
-            <ActionButton
-              icon={<Eye className="h-4 w-4" />}
-              label="에이전트 상태 보기"
-              onClick={() => navigate('/agent-status')}
-            />
-            <ActionButton
-              icon={<Plus className="h-4 w-4" />}
-              label="새 작업 요청하기"
-              onClick={() => setNewSessionOpen(true)}
-            />
-            <ActionButton
-              icon={<KeyRound className="h-4 w-4" />}
-              label="API 키 등록"
-              onClick={() => setSettingsOpen(true, 'apiKeys')}
-            />
-          </div>
-        </motion.section>
-
-        {/* 구분선 */}
-        <div className="border-border border-t" />
-
-        {/* 섹션: 건강 정보 — 삼성 Health 데이터 기반 요약 / 피드백 / 권장 사항 */}
-        <motion.section
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.15 }}
-        >
-          <div className="mb-3 flex items-center justify-between">
-            <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
-              건강 정보
+          {/* 섹션: 빠른 실행 */}
+          <motion.section
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.1 }}
+          >
+            <p className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase">
+              빠른 실행
             </p>
-            <span className="text-muted-foreground inline-flex items-center gap-1 text-[10px]">
-              <Activity className="h-3 w-3" />
-              Samsung Health 연동
-            </span>
-          </div>
-
-          <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <HealthMetricCard
-              icon={<Footprints className="h-4 w-4" />}
-              label="걸음 수"
-              value={formatNumber(health.stepCount)}
-              unit="걸음"
-              progress={health.stepCount / 10000}
-              hint="목표 10,000"
-            />
-            <HealthMetricCard
-              icon={<Activity className="h-4 w-4" />}
-              label="활동 시간"
-              value={String(health.activeMinutes)}
-              unit="분"
-              progress={health.activeMinutes / 60}
-              hint="목표 60분"
-            />
-            <HealthMetricCard
-              icon={<Heart className="h-4 w-4" />}
-              label="심박수"
-              value={String(health.heartRateBpm)}
-              unit="bpm"
-              progress={health.heartRateBpm / 130}
-              hint="안정 범위"
-            />
-            <HealthMetricCard
-              icon={<Moon className="h-4 w-4" />}
-              label="수면 시간"
-              value={formatSleepDuration(health.durationMinutes)}
-              unit=""
-              progress={health.durationMinutes / 480}
-              hint="목표 8h"
-            />
-          </div>
-
-          <div className="mb-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-            {healthGroups.map((group) => (
-              <HealthDataGroupCard
-                key={group.title}
-                icon={group.icon}
-                title={group.title}
-                summary={group.summary}
-                status={group.status}
-                items={group.items}
-                expanded={expandedHealthGroups.includes(group.title)}
-                onToggle={() => toggleHealthGroup(group.title)}
+            <div className="grid grid-cols-3 gap-3">
+              <ActionButton
+                icon={<Eye className="h-4 w-4" />}
+                label="에이전트 상태 보기"
+                onClick={() => navigate('/agent-status')}
               />
-            ))}
-          </div>
+              <ActionButton
+                icon={<Plus className="h-4 w-4" />}
+                label="새 작업 요청하기"
+                onClick={() => setNewSessionOpen(true)}
+              />
+              <ActionButton
+                icon={<KeyRound className="h-4 w-4" />}
+                label="API 키 등록"
+                onClick={() => setSettingsOpen(true, 'apiKeys')}
+              />
+            </div>
+          </motion.section>
 
-          <div className="border-border bg-card rounded-xl border p-4">
-            <div className="mb-3 flex items-center gap-3">
-              <div className="bg-muted text-foreground/70 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
-                <Sparkles className="h-4 w-4" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-foreground text-sm font-medium">LLM 건강 검토</p>
-                <p className="text-muted-foreground text-xs">
-                  요약, 부족한 항목 피드백, 다음 행동 권장 사항
-                </p>
-              </div>
+          {/* 구분선 */}
+          <div className="border-border border-t" />
+
+          {/* 섹션: 건강 정보 — 삼성 Health 데이터 기반 요약 / 피드백 / 권장 사항 */}
+          <motion.section
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.15 }}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                건강 정보
+              </p>
+              <span className="text-muted-foreground inline-flex items-center gap-1 text-[10px]">
+                <Activity className="h-3 w-3" />
+                Samsung Health 연동
+              </span>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1.3fr]">
-              <div className="bg-muted/35 rounded-lg p-3">
-                <p className="text-muted-foreground mb-1 text-xs">오늘의 요약</p>
-                <p className="text-foreground text-sm leading-relaxed">
-                  심박과 혈압은 안정적이며 활동량은 중간 수준입니다. 수면 시간이 짧아 회복 지표가
-                  우선 관리 대상입니다.
-                </p>
-              </div>
-              <ul className="space-y-2">
-                {HEALTH_RECOMMENDATIONS.map((tip) => (
-                  <li
-                    key={tip}
-                    className="text-foreground/85 flex items-start gap-2 text-xs leading-relaxed"
-                  >
-                    <span className="bg-switch-on/80 mt-1.5 h-1 w-1 shrink-0 rounded-full" />
-                    <span>{tip}</span>
-                  </li>
-                ))}
-              </ul>
+            <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {healthMetricCards.map((card) => (
+                <HealthMetricCard
+                  key={card.detail.title}
+                  icon={card.icon}
+                  label={card.label}
+                  value={card.value}
+                  unit={card.unit}
+                  progress={card.progress}
+                  hint={card.hint}
+                  detail={card.detail}
+                  expanded={expandedHealthGroups.includes(card.detail.title)}
+                  onToggle={() => toggleHealthGroup(card.detail.title)}
+                />
+              ))}
             </div>
-          </div>
-        </motion.section>
 
-        {/* 구분선 */}
-        <div className="border-border border-t" />
-
-        {/* 섹션: 최근 상태 로그 */}
-        <motion.section
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.2 }}
-        >
-          <p className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase">
-            최근 활동
-          </p>
-          <div className="border-border bg-card divide-border divide-y rounded-xl border">
-            {[
-              { message: '디바이스가 연결되었습니다.', dot: 'emerald', time: '방금 전' },
-              { message: '서버와의 연결이 정상입니다.', dot: 'emerald', time: '1분 전' },
-              { message: '에이전트가 대기 상태입니다.', dot: 'muted', time: '2분 전' },
-            ].map((log, i) => (
-              <div key={i} className="flex items-center justify-between px-4 py-3">
-                <div className="flex items-center gap-2.5">
-                  <StatusDot color={log.dot as 'emerald' | 'muted'} />
-                  <span className="text-foreground text-sm">{log.message}</span>
+            <div className="border-border bg-card rounded-xl border p-4">
+              <div className="mb-3 flex items-center gap-3">
+                <div className="bg-muted text-foreground/70 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
+                  <Sparkles className="h-4 w-4" />
                 </div>
-                <span className="text-muted-foreground shrink-0 text-xs">{log.time}</span>
+                <div className="min-w-0">
+                  <p className="text-foreground text-sm font-medium">LLM 건강 검토</p>
+                  <p className="text-muted-foreground text-xs">
+                    요약, 부족한 항목 피드백, 다음 행동 권장 사항
+                  </p>
+                </div>
               </div>
-            ))}
-          </div>
-        </motion.section>
+
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1.3fr]">
+                <div className="bg-muted/35 rounded-lg p-3">
+                  <p className="text-muted-foreground mb-1 text-xs">오늘의 요약</p>
+                  <p className="text-foreground text-sm leading-relaxed">
+                    심박과 혈압은 안정적이며 활동량은 중간 수준입니다. 수면 시간이 짧아 회복 지표가
+                    우선 관리 대상입니다.
+                  </p>
+                </div>
+                <ul className="space-y-2">
+                  {HEALTH_RECOMMENDATIONS.map((tip) => (
+                    <li
+                      key={tip}
+                      className="text-foreground/85 flex items-start gap-2 text-xs leading-relaxed"
+                    >
+                      <span className="bg-switch-on/80 mt-1.5 h-1 w-1 shrink-0 rounded-full" />
+                      <span>{tip}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </motion.section>
+
+          {/* 구분선 */}
+          <div className="border-border border-t" />
+
+          {/* 섹션: 최근 상태 로그 */}
+          <motion.section
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.2 }}
+          >
+            <p className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase">
+              최근 활동
+            </p>
+            <div className="border-border bg-card divide-border divide-y rounded-xl border">
+              {[
+                { message: '디바이스가 연결되었습니다.', dot: 'emerald', time: '방금 전' },
+                { message: '서버와의 연결이 정상입니다.', dot: 'emerald', time: '1분 전' },
+                { message: '에이전트가 대기 상태입니다.', dot: 'muted', time: '2분 전' },
+              ].map((log, i) => (
+                <div key={i} className="flex items-center justify-between px-4 py-3">
+                  <div className="flex items-center gap-2.5">
+                    <StatusDot color={log.dot as 'emerald' | 'muted'} />
+                    <span className="text-foreground text-sm">{log.message}</span>
+                  </div>
+                  <span className="text-muted-foreground shrink-0 text-xs">{log.time}</span>
+                </div>
+              ))}
+            </div>
+          </motion.section>
+        </div>
+
+        <div className="xl:sticky xl:top-[65px] xl:mt-[25px] xl:self-start">
+          <LlmTaskNotice />
+        </div>
       </div>
 
       <PairingModal

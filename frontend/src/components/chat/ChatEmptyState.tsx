@@ -2,7 +2,7 @@ import { Bot, MessageCircle } from 'lucide-react'
 
 export function ChatEmptyState() {
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center px-6">
+    <div className="bg-background flex min-h-0 flex-1 items-center justify-center px-6">
       <div className="max-w-md space-y-4 text-center">
         <div className="bg-primary/10 text-primary mx-auto flex h-14 w-14 items-center justify-center rounded-2xl">
           <Bot className="h-7 w-7" />
