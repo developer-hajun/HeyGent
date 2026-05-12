@@ -313,6 +313,39 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     );
     """,
     """
+    CREATE TABLE IF NOT EXISTS work_wake_requests (
+        wake_id TEXT PRIMARY KEY,
+        work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+        root_work_id TEXT REFERENCES work_items(work_id) ON DELETE SET NULL,
+        reason TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('queued', 'claimed', 'dispatching', 'scheduled_retry', 'dispatched', 'completed', 'skipped', 'failed')),
+        requested_by_task_run_id TEXT,
+        task_run_id TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        claimed_at TIMESTAMPTZ,
+        next_attempt_at TIMESTAMPTZ,
+        completed_at TIMESTAMPTZ
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS work_recovery_actions (
+        action_id TEXT PRIMARY KEY,
+        work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+        action_type TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('open', 'resolved', 'ignored')),
+        reason TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        task_run_id TEXT,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        resolved_at TIMESTAMPTZ
+    );
+    """,
+    """
     CREATE TABLE IF NOT EXISTS work_read_states (
         work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
         owner_user_id BIGINT NOT NULL REFERENCES users(id),
@@ -461,6 +494,19 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_work_runs_work_created
     ON work_runs(work_id, created_at DESC);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_work_wake_requests_status_created
+    ON work_wake_requests(status, created_at ASC);
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_work_wake_requests_work_active
+    ON work_wake_requests(work_id)
+    WHERE status IN ('queued', 'claimed', 'dispatching', 'scheduled_retry');
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_work_recovery_actions_work_created
+    ON work_recovery_actions(work_id, created_at DESC);
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_work_documents_work_updated

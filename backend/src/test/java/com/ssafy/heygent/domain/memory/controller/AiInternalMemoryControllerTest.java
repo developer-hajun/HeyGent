@@ -139,19 +139,20 @@ class AiInternalMemoryControllerTest {
 
     @Test
     void markUsedCallsServiceWithUserIdAndScore() throws Exception {
-        when(userMemoryService.markUsed(USER_ID, 10L, 0.75)).thenReturn(memoryResponse(10L));
+        when(userMemoryService.markUsed(USER_ID, 10L, 0.75, "task_1")).thenReturn(memoryResponse(10L));
 
         mockMvc.perform(post("/internal/ai/memories/{memoryId}/used", 10L)
                 .header("Authorization", "Bearer " + INTERNAL_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(Map.of(
                     "userId", USER_ID,
-                    "usefulnessScore", 0.75
+                    "usefulnessScore", 0.75,
+                    "sourceTaskRunId", "task_1"
                 ))))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.id").value(10L));
 
-        verify(userMemoryService).markUsed(USER_ID, 10L, 0.75);
+        verify(userMemoryService).markUsed(USER_ID, 10L, 0.75, "task_1");
     }
 
     private UserMemoryResponse memoryResponse(Long memoryId) {

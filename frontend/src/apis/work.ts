@@ -13,9 +13,11 @@ import type {
   WorkLabel,
   WorkListResponse,
   WorkProduct,
+  WorkRecoveryAction,
   WorkRelation,
   WorkRun,
   WorkStatus,
+  WorkWake,
 } from '@/types/work'
 
 export async function listSessionWork(sessionId: string): Promise<WorkListResponse> {
@@ -123,8 +125,10 @@ export async function createChildWork(
   return data
 }
 
-export async function deleteWork(workId: string): Promise<WorkItem> {
-  const { data } = await aiAxiosInstance.delete<WorkItem>(`/work/${encodeURIComponent(workId)}`)
+export async function deleteWork(workId: string, cascadeChildren = false): Promise<WorkItem> {
+  const { data } = await aiAxiosInstance.delete<WorkItem>(`/work/${encodeURIComponent(workId)}`, {
+    params: { cascadeChildren },
+  })
   return data
 }
 
@@ -173,6 +177,25 @@ export async function listWorkRuns(
   const { data } = await aiAxiosInstance.get<{ items: WorkRun[]; totalCount: number }>(
     `/work/${encodeURIComponent(workId)}/runs`,
   )
+  return data
+}
+
+export async function listWorkWakes(
+  workId: string,
+): Promise<{ items: WorkWake[]; totalCount: number }> {
+  const { data } = await aiAxiosInstance.get<{ items: WorkWake[]; totalCount: number }>(
+    `/work/${encodeURIComponent(workId)}/wakes`,
+  )
+  return data
+}
+
+export async function listWorkRecoveryActions(
+  workId: string,
+): Promise<{ items: WorkRecoveryAction[]; totalCount: number }> {
+  const { data } = await aiAxiosInstance.get<{
+    items: WorkRecoveryAction[]
+    totalCount: number
+  }>(`/work/${encodeURIComponent(workId)}/recovery-actions`)
   return data
 }
 

@@ -12,6 +12,7 @@ from app.domain.work.policies import (
     status_after_run_start_failure,
 )
 from app.domain.work.repository import WorkRepository
+from app.domain.work.wake import WorkWakeService
 from app.domain.tasks.models import TaskRun
 
 
@@ -141,6 +142,16 @@ class WorkService:
                     },
                 )
             )
+            if status in {"done", "cancelled"}:
+                wake_service = WorkWakeService(self.repository)
+                wake_service.enqueue_after_blocker_update(
+                    blocker_work_id=work_id,
+                    requested_by_task_run_id=task.task_run_id,
+                )
+                wake_service.enqueue_after_child_terminal_update(
+                    child_work_id=work_id,
+                    requested_by_task_run_id=task.task_run_id,
+                )
             return updated
         task_status = getattr(task.status, "value", str(task.status))
         if task_status == TaskStatus.FAILED.value:
