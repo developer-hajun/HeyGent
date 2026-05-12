@@ -45,6 +45,8 @@ public class SecurityConfig {
                                 "/auth/callback",
                                 "/api/v1/iot/pairing/start",
                                 "/api/v1/iot/pairing/devices/*/status",
+                                "/api/v1/bridge/pair",
+                                "/api/v1/bridge/unpair",
                                 "/api/v3/api-docs/**",
                                 "/api/swagger-ui/**",
                                 "/api/swagger-ui.html"
