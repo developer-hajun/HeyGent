@@ -23,6 +23,15 @@ class BackendAuthVerifyResult:
     scope_expires_at: str | None = None
 
 
+@dataclass(slots=True)
+class BridgeTokenVerifyResult:
+    """브릿지 토큰 검증 결과. backend /internal/bridge/auth/validate 응답을 그대로 담는다."""
+
+    user_id: str
+    device_id: str
+    device_name: str
+
+
 class BackendAuthClient:
     """backend 내부 인증 검증 API를 호출하는 client이다."""
 
@@ -63,6 +72,36 @@ class BackendAuthClient:
             token_expires_at=self._optional_str(data.get("jwtExpiresAt", data.get("tokenExpiresAt"))),
             scope_expires_at=self._optional_str(data.get("scopeExpiresAt")),
         )
+
+    async def verify_bridge_token(self, bridge_token: str) -> BridgeTokenVerifyResult:
+        """브릿지 토큰을 backend에 위임 검증한다.
+
+        브릿지 hello 메시지의 token 값을 그대로 넘기면 user/device 식별 결과만 받아온다.
+        AI 서버 단일 공유 토큰 시절과 달리, AI 는 토큰 원본을 저장하지 않고 매 hello 마다 backend 검증을 거친다.
+        """
+
+        try:
+            response = await self._http_client.post(
+                self._settings.backend_bridge_auth_verify_url,
+                json={"bridgeToken": bridge_token},
+                headers={"Authorization": f"Bearer {self._settings.internal_service_token or ''}"},
+            )
+        except httpx.HTTPError as exc:
+            raise BackendAuthVerifyError("backend 브릿지 토큰 검증 요청 중 네트워크 오류가 발생했습니다.") from exc
+        if response.status_code >= 400:
+            raise BackendAuthVerifyError(f"backend 브릿지 토큰 검증 요청 실패: HTTP {response.status_code}")
+
+        payload = self._read_json(response)
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise BackendAuthVerifyError("backend 브릿지 토큰 검증 응답에 data가 없습니다.")
+
+        user_id = self._required_user_id(data.get("userId"))
+        device_id = self._required_user_id(data.get("deviceId"))
+        device_name_value = data.get("deviceName")
+        device_name = device_name_value if isinstance(device_name_value, str) else ""
+
+        return BridgeTokenVerifyResult(user_id=user_id, device_id=device_id, device_name=device_name)
 
     async def aclose(self) -> None:
         """client가 생성한 HTTP 세션만 닫는다."""
