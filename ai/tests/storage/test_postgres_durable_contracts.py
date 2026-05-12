@@ -126,7 +126,7 @@ def test_postgres_schema_contains_anchor_profile_and_worker_linkage_columns():
         "lease_expires_at TIMESTAMPTZ",
         "attempts INTEGER NOT NULL DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS idx_run_anchors_queue_claim",
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_run_anchors_one_active_per_owner_session",
+        "CREATE INDEX IF NOT EXISTS idx_run_anchors_active_owner_session",
         "parent_step_run_id TEXT",
         "worker_session_id TEXT",
         "agent_profile_version INTEGER",
@@ -234,7 +234,9 @@ def test_postgres_work_schema_contains_wake_recovery_contract():
 
     assert "0013_work_recovery_actions" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
     assert "0014_task_run_queue_claims" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "0015_allow_nested_session_agent_runs" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
     assert "DROP CONSTRAINT IF EXISTS work_wake_requests_status_check" in migration_sql
+    assert "DROP INDEX IF EXISTS idx_run_anchors_one_active_per_owner_session" in migration_sql
 
 
 def test_work_item_response_exposes_flow_order_for_diagram_layout():
