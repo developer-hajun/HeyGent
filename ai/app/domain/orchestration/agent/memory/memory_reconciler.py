@@ -23,6 +23,7 @@ class MemoryRecallClient(Protocol):
         scope_type: str | None = None,
         resource_id: str | None = None,
         tags: list[str] | None = None,
+        metadata_categories: list[str] | None = None,
     ) -> list[Any]:
         """Return recalled memories from backend."""
 
@@ -67,16 +68,23 @@ class MemoryOperationReconciler:
             return dict(candidate)
 
         try:
-            memories = await self._memory_client.recall(
-                user_id=context.user_id,
-                query=query,
-                limit=self._recall_limit,
-                workspace_key=context.workspace_key if candidate.get("scopeType") == "WORKSPACE" else None,
-                store_type=_string(candidate.get("storeType")),
-                memory_type=_string(candidate.get("memoryType")),
-                scope_type=_string(candidate.get("scopeType")),
-                tags=_tags(candidate),
-            )
+            recall_kwargs = {
+                "user_id": context.user_id,
+                "query": query,
+                "limit": self._recall_limit,
+                "workspace_key": context.workspace_key if candidate.get("scopeType") == "WORKSPACE" else None,
+                "store_type": _string(candidate.get("storeType")),
+                "memory_type": _string(candidate.get("memoryType")),
+                "scope_type": _string(candidate.get("scopeType")),
+                "tags": _tags(candidate),
+            }
+            memories = await self._memory_client.recall(**recall_kwargs)
+            if not memories and _should_retry_recall_by_filter(candidate):
+                filter_recall_kwargs = dict(recall_kwargs)
+                filter_recall_kwargs["query"] = None
+                if not filter_recall_kwargs.get("tags"):
+                    filter_recall_kwargs["metadata_categories"] = _metadata_categories(candidate)
+                memories = await self._memory_client.recall(**filter_recall_kwargs)
         except BackendMemoryClientError:
             logger.warning("장기기억 operation 판단용 recall에 실패했습니다.", exc_info=True)
             return dict(candidate)
@@ -112,6 +120,8 @@ def _best_related_memory(candidate: dict[str, Any], memories: list[Any]) -> Any 
     candidate_summary = _string(candidate.get("summary")) or ""
     candidate_text = f"{candidate_summary} {candidate_content}".strip()
     candidate_tokens = _tokens(candidate_text)
+    candidate_tags = _metadata_tags(candidate.get("metadata"))
+    candidate_category = _metadata_category(candidate.get("metadata"))
 
     best_memory: Any | None = None
     best_score = 0.0
@@ -119,7 +129,12 @@ def _best_related_memory(candidate: dict[str, Any], memories: list[Any]) -> Any 
         if not _same_contract(candidate, memory):
             continue
         memory_text = f"{getattr(memory, 'summary', '') or ''} {getattr(memory, 'content', '') or ''}".strip()
-        score = _similarity(candidate_tokens, _tokens(memory_text))
+        score = _similarity(candidate_tokens, _tokens(memory_text)) + _metadata_similarity(
+            candidate_tags,
+            candidate_category,
+            _metadata_tags(getattr(memory, "metadata", None)),
+            _metadata_category(getattr(memory, "metadata", None)),
+        )
         if score > best_score:
             best_score = score
             best_memory = memory
@@ -192,6 +207,18 @@ def _tags(candidate: dict[str, Any]) -> list[str] | None:
     return result or None
 
 
+def _metadata_categories(candidate: dict[str, Any]) -> list[str] | None:
+    category = _metadata_category(candidate.get("metadata"))
+    return [category] if category else None
+
+
+def _should_retry_recall_by_filter(candidate: dict[str, Any]) -> bool:
+    memory_type = _string(candidate.get("memoryType"))
+    store_type = _string(candidate.get("storeType"))
+    has_metadata_filter = bool(_tags(candidate) or _metadata_categories(candidate))
+    return memory_type in {"PREFERENCE", "PROFILE", "INSTRUCTION"} and store_type == "USER_PROFILE" and has_metadata_filter
+
+
 def _operation(value: Any) -> str:
     text = _string(value)
     return text if text in {"ADD", "UPDATE", "MERGE", "INVALIDATE"} else "ADD"
@@ -217,6 +244,47 @@ def _similarity(left: set[str], right: set[str]) -> float:
     return len(left & right) / len(left | right)
 
 
+def _metadata_similarity(
+    candidate_tags: set[str],
+    candidate_category: str | None,
+    memory_tags: set[str],
+    memory_category: str | None,
+) -> float:
+    score = 0.0
+    tag_score = _similarity(candidate_tags, memory_tags)
+    if tag_score > 0:
+        score += min(0.25, 0.15 + tag_score * 0.2)
+    if candidate_category and candidate_category == memory_category:
+        score += 0.1
+    return score
+
+
+def _metadata_tags(metadata: Any) -> set[str]:
+    if not isinstance(metadata, dict):
+        return set()
+    tags = metadata.get("tags")
+    if not isinstance(tags, list):
+        return set()
+    return {
+        tag
+        for tag in (_normalize_metadata_token(tag) for tag in tags)
+        if tag and tag not in _GENERIC_METADATA_TAGS
+    }
+
+
+def _metadata_category(metadata: Any) -> str | None:
+    if not isinstance(metadata, dict):
+        return None
+    return _normalize_metadata_token(metadata.get("category"))
+
+
+def _normalize_metadata_token(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    return text or None
+
+
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().lower())
 
@@ -233,6 +301,12 @@ _UPDATE_SIGNALS = (
     "변경",
     "수정",
     "더 이상",
+    "요즘",
+    "최근",
+    "보다",
+    "더 좋아",
+    "우선",
+    "우선해",
     "from now on",
     "instead",
     "change",
@@ -255,3 +329,10 @@ _INVALIDATE_SIGNALS = (
     "not valid",
     "no longer",
 )
+_GENERIC_METADATA_TAGS = {
+    "preference",
+    "profile",
+    "instruction",
+    "user_profile",
+    "ai.writeback",
+}
