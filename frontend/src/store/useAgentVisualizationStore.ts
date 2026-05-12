@@ -372,8 +372,15 @@ export const useAgentVisualizationStore = create<AgentVisualizationState>((set) 
 
   updateAgentInfo: (agentId, updates) =>
     set((state) => {
-      const existing = state.agentInfoMap[agentId]
-      if (!existing) return state
+      const existing = state.agentInfoMap[agentId] ?? {
+        agentId,
+        name: agentId,
+        role: '',
+        skills: [],
+        activityStatus: 'inactive' as AgentActivityStatus,
+        currentTask: undefined,
+        taskHistory: [],
+      }
       return { agentInfoMap: { ...state.agentInfoMap, [agentId]: { ...existing, ...updates } } }
     }),
 

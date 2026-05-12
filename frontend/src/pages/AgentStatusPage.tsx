@@ -1,9 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { OfficeMap } from '@/components/office/OfficeMap'
-import {
-  useAgentVisualizationStore,
-  createMockAgentInfoMap,
-} from '@/store/useAgentVisualizationStore'
+import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
 import { getCommandUsage } from '@/apis/aiCommandUsage'
 import type { CommandUsageSummary } from '@/apis/aiCommandUsage'
 import type {
@@ -774,21 +771,6 @@ function isSpotOccupied(
   })
 }
 
-function initAgents(): AgentRuntime[] {
-  return AGENT_CONFIGS.map((config) => ({
-    config,
-    position: { ...config.initialPosition },
-    state: 'idle' as const,
-    targetState: 'sitting_desk' as const,
-    walkFrame: 0 as const,
-    transitionDuration: 3,
-    pendingWaypoints: [],
-    targetPosition: null,
-    standWaitTarget: null,
-    facingRight: false,
-  }))
-}
-
 const DESTINATIONS: UIDestination[] = ['desk', 'rest', 'meeting', 'calling']
 
 function playSpawnSound() {
@@ -818,7 +800,7 @@ function playSpawnSound() {
 }
 
 export function AgentStatusPage() {
-  const [agents, setAgents] = useState<AgentRuntime[]>(initAgents)
+  const [agents, setAgents] = useState<AgentRuntime[]>([])
   const [selectedId, setSelectedId] = useState('agent01')
   const [panelTop, setPanelTop] = useState(false)
   const [navmeshGrid, setNavmeshGrid] = useState<boolean[][] | null>(null)
@@ -845,25 +827,8 @@ export function AgentStatusPage() {
   const runtimeGridRef = useRef<boolean[][]>(OBSTACLE_GRID)
   const walkTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({})
 
-  const { agentInfoMap, selectedAgentId, setAgentInfoMap, selectAgent } =
-    useAgentVisualizationStore()
-
-  useEffect(() => {
-    const map = createMockAgentInfoMap()
-    setAgentInfoMap(map)
-
-    // 초기 mock 스폰 — API 연동 시 에이전트별 spawnAgent() 개별 호출로 교체
-    // setTimeout(0): 린터 규칙(effect 내 동기 setState 금지)을 피하기 위해 한 프레임 뒤에 실행
-    const spawnTimer = setTimeout(() => {
-      setSpawningIds(new Set(Object.keys(map)))
-      playSpawnSound()
-    }, 0)
-    const clearTimer = setTimeout(() => setSpawningIds(new Set()), 2500)
-    return () => {
-      clearTimeout(spawnTimer)
-      clearTimeout(clearTimer)
-    }
-  }, [setAgentInfoMap])
+  const { agentInfoMap, selectedAgentId, selectAgent } = useAgentVisualizationStore()
+  const spawnedKeysRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     let cancelled = false
@@ -895,7 +860,43 @@ export function AgentStatusPage() {
   }
 
   const handleMove = (agentId: string, destination: UIDestination) => {
-    setAgents((prev) => {
+    // 미등록 에이전트 자동 스폰 — task run에서 처음 등장하는 경우
+    if (!spawnedKeysRef.current.has(agentId) && AGENT_CONFIGS.some((c) => c.id === agentId)) {
+      spawnedKeysRef.current.add(agentId)
+      setSpawningIds((s) => new Set([...s, agentId]))
+      playSpawnSound()
+      setTimeout(() => {
+        setSpawningIds((s) => {
+          const n = new Set(s)
+          n.delete(agentId)
+          return n
+        })
+      }, 2500)
+    }
+
+    setAgents((prevAgents) => {
+      // 아직 agents 배열에 없으면 initialPosition에 추가
+      let prev = prevAgents
+      if (!prev.some((a) => a.config.id === agentId)) {
+        const config = AGENT_CONFIGS.find((c) => c.id === agentId)
+        if (!config) return prev
+        prev = [
+          ...prev,
+          {
+            config,
+            position: { ...config.initialPosition },
+            state: 'idle' as const,
+            targetState: 'sitting_desk' as const,
+            walkFrame: 0 as const,
+            transitionDuration: 3,
+            pendingWaypoints: [],
+            targetPosition: null,
+            standWaitTarget: null,
+            facingRight: false,
+          },
+        ]
+      }
+
       const agent = prev.find((a) => a.config.id === agentId)
       if (!agent || agent.state === 'walking') return prev
 
