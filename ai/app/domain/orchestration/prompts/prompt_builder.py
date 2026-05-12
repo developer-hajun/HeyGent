@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from app.domain.providers.model.base import AgentMessage
 from app.domain.orchestration.prompts.compression import compress_prompt_sections
@@ -11,6 +12,10 @@ from app.domain.orchestration.prompts.step_context_prompt import build_step_cont
 from app.domain.orchestration.prompts.step_run_boundary_prompt import build_step_run_boundary_prompt
 from app.domain.orchestration.prompts.step_run_prompt import build_step_run_prompt
 from app.domain.orchestration.prompts.task_context_prompt import build_task_context_prompt
+
+_MEMORY_APPLICATION_BLOCK_PATTERN = re.compile(
+    r"(?s)<memory-application-instructions>.*?</memory-application-instructions>"
+)
 
 
 def assemble_agent_loop_messages(
@@ -71,9 +76,9 @@ class PromptBuilder:
                 self.skill_prompt_builder.build_catalog(),
                 build_project_context_prompt(input_payload=input_payload),
                 build_gateway_context_prompt(input_payload=input_payload),
-                str(input_payload.get("persistent_memory_context", "")).strip(),
                 build_work_context_prompt(input_payload=input_payload),
                 base_prompt,
+                str(input_payload.get("persistent_memory_context", "")).strip(),
             ]
         )
         return "\n\n".join(parts)
@@ -155,6 +160,9 @@ class PromptBuilder:
                 ]
             )
         )
+        memory_application_instructions = _memory_application_instructions(input_payload)
+        if memory_application_instructions:
+            sections.append(memory_application_instructions)
         return "\n\n".join(compress_prompt_sections(sections))
 
     def _merge_skill_context(self, *, base_prompt: str, input_payload: dict) -> str:
@@ -304,6 +312,14 @@ def _build_target_agent_instruction_lines(bundle: dict) -> list[str]:
         lines.append(f"  - {prefix}: {key}")
         lines.append(content[:6000])
     return lines
+
+
+def _memory_application_instructions(input_payload: dict[str, object]) -> str:
+    memory_context = str(input_payload.get("persistent_memory_context", "")).strip()
+    if not memory_context:
+        return ""
+    match = _MEMORY_APPLICATION_BLOCK_PATTERN.search(memory_context)
+    return match.group(0).strip() if match else ""
 
 
 class PromptManager(PromptBuilder):
