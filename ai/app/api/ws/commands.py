@@ -1136,6 +1136,12 @@ class WebSocketCommandRouter:
                 writeback=writeback_observation,
                 mark_used=mark_used_observation,
             )
+            await context.send_json(
+                _event_frame(
+                    "taskRun.snapshot.result",
+                    _task_snapshot_payload(completed_task),
+                )
+            )
         except Exception:
             logger.exception("session.message.create background 실행에 실패했습니다.")
             _mark_ws_linked_work_run_failed(context, task=task)
@@ -1298,6 +1304,16 @@ def _event_frame(frame_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         "type": frame_type,
         "serverTime": utc_now().isoformat(),
         "payload": _jsonable(payload),
+    }
+
+
+def _task_snapshot_payload(task: Any) -> dict[str, Any]:
+    task_payload = _jsonable(task)
+    task_payload["displayContext"] = build_task_display_context(task)
+    return {
+        "task": task_payload,
+        "task_run": task_payload,
+        "events": [],
     }
 
 

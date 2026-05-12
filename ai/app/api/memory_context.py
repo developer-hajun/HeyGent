@@ -13,7 +13,7 @@ from app.domain.orchestration.prompts.persistent_memory_prompt import build_pers
 logger = logging.getLogger(__name__)
 
 DEFAULT_MEMORY_RECALL_LIMIT = 5
-DEFAULT_MEMORY_RECALL_PLANNER_TIMEOUT_SECONDS = 3.0
+DEFAULT_MEMORY_RECALL_PLANNER_TIMEOUT_SECONDS = 6.0
 MEMORY_CONTEXT_KEYS = ("persistent_memory_context", "memory_context")
 MEMORY_RECALL_QUERY_KEYS = ("prompt", "message", "query", "content", "text", "subject", "title")
 
@@ -23,9 +23,10 @@ Return strict JSON only, with this shape:
 {"shouldRecall":true,"query":"...","reason":"...","limit":5,"filters":{"storeType":"USER_PROFILE|AGENT_MEMORY|null","memoryType":"PREFERENCE|PROFILE|FACT|INSTRUCTION|PROCEDURE|null","scopeType":"GLOBAL|WORKSPACE|null","metadataCategories":["preference|profile|fact|instruction|procedure|event|reason|task_state"]}}
 
 Rules:
-- Skip recall for greetings, thanks, trivial requests, or requests fully answerable from the current input.
+- Skip recall for greetings, thanks, or trivial requests. If user or project history could change, personalize, or improve the answer, recall it even when the current input is answerable on its own.
 - Use USER_PROFILE/PREFERENCE/GLOBAL/preference for stable user style, format, or preference.
 - Use USER_PROFILE/PROFILE/GLOBAL/profile for user role, identity, or working habit.
+- Do not skip open-ended recommendations, suggestions, choices, or "what should I do/eat/use" questions. These should recall USER_PROFILE/PREFERENCE/GLOBAL/preference because preferences may materially change the answer.
 - Use AGENT_MEMORY/FACT/WORKSPACE/task_state,fact for continuing project implementation or current project state.
 - Use AGENT_MEMORY/PROCEDURE/procedure,instruction for reusable workflow or repeated project procedure.
 - Use reason/event categories when the user asks why, history, records, schedule, or previous event context.
@@ -336,6 +337,17 @@ async def attach_persistent_memory_context(
             scope_type=recall_plan.scope_type,
             metadata_categories=list(recall_plan.metadata_categories) or None,
         )
+        if not memories and _should_retry_recall_without_query(recall_plan):
+            memories = await memory_client.recall(
+                user_id=str(user_id),
+                query=None,
+                limit=recall_plan.limit,
+                workspace_key=recall_plan.workspace_key,
+                store_type=recall_plan.store_type,
+                memory_type=recall_plan.memory_type,
+                scope_type=recall_plan.scope_type,
+                metadata_categories=list(recall_plan.metadata_categories) or None,
+            )
     except BackendMemoryClientError:
         logger.warning("backend memory recall failed; continuing without persistent memory context", exc_info=True)
         _set_recall_meta(
@@ -387,6 +399,15 @@ def _with_recall_plan(recall_meta: dict[str, Any], recall_plan: MemoryRecallPlan
     if recall_plan.planner_latency_ms is not None:
         enriched["planner"]["latency_ms"] = recall_plan.planner_latency_ms
     return enriched
+
+
+def _should_retry_recall_without_query(recall_plan: MemoryRecallPlan) -> bool:
+    return (
+        recall_plan.store_type == "USER_PROFILE"
+        and recall_plan.memory_type in {"PREFERENCE", "PROFILE"}
+        and recall_plan.scope_type in {"GLOBAL", "WORKSPACE", None}
+        and bool(recall_plan.metadata_categories)
+    )
 
 
 def _normalize_llm_recall_plan(

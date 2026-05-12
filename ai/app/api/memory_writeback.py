@@ -75,7 +75,12 @@ async def writeback_persistent_memory_candidates(
             attempted=False,
         )
 
-    reconciler = MemoryOperationReconciler(memory_client)
+    reconciler = getattr(app_state, "memory_operation_reconciler", None)
+    if reconciler is None:
+        reconciler = MemoryOperationReconciler(
+            memory_client,
+            operation_provider=getattr(app_state, "memory_operation_provider", None),
+        )
     candidates = await reconciler.reconcile_candidates(
         candidates=candidates,
         context=MemoryReconciliationContext(

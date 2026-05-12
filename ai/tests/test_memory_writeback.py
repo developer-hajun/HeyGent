@@ -42,6 +42,16 @@ class FakeExtractor:
         return list(self.candidates)
 
 
+class FakeOperationProvider:
+    def __init__(self, decision) -> None:
+        self.calls = []
+        self.decision = decision
+
+    async def reconcile_memory_operation_json(self, **kwargs):
+        self.calls.append(kwargs)
+        return dict(self.decision)
+
+
 @pytest.mark.asyncio
 async def test_writeback_extracts_and_posts_candidates_to_backend():
     candidate = {
@@ -189,6 +199,172 @@ async def test_writeback_reconciles_preference_change_to_update():
     assert saved_candidate["operationType"] == "UPDATE"
     assert saved_candidate["targetMemoryId"] == 10
     assert "갱신" in saved_candidate["updateReason"]
+    assert observation["operation_types"] == ["UPDATE"]
+
+
+@pytest.mark.asyncio
+async def test_writeback_reconciles_changed_lunch_preference_with_filter_retry():
+    candidate = {
+        "memoryType": "PREFERENCE",
+        "storeType": "USER_PROFILE",
+        "scopeType": "GLOBAL",
+        "operationType": "ADD",
+        "content": "사용자는 최근 점심 추천에서 고기보다 가벼운 샐러드나 생선 메뉴를 더 선호한다.",
+        "summary": "점심은 샐러드/생선 우선 선호",
+        "metadata": {"source": "ai.writeback", "category": "preference", "tags": ["food", "lunch", "preference"]},
+        "importance": 0.82,
+        "confidence": 0.95,
+    }
+    memory_client = FakeMemoryClient(
+        memories=[
+            SimpleNamespace(
+                id=3,
+                memory_type="PREFERENCE",
+                store_type="USER_PROFILE",
+                scope_type="GLOBAL",
+                content="사용자는 점심 메뉴로 고기를 가장 좋아하며, 특히 돼지고기나 소고기처럼 든든한 메뉴를 선호한다.",
+                summary="점심에 고기, 특히 돼지고기·소고기 선호",
+                metadata={"source": "ai.writeback", "category": "preference", "tags": ["food", "lunch", "meat", "pork", "beef"]},
+            )
+        ]
+    )
+    extractor = FakeExtractor([candidate])
+    app_state = SimpleNamespace(backend_memory_client=memory_client, memory_extractor=extractor)
+
+    observation = await writeback_persistent_memory_candidates(
+        app_state=app_state,
+        user_id="1",
+        user_message="요즘은 고기보다 가벼운 샐러드나 생선 메뉴가 더 좋아. 점심 추천할 때는 이걸 우선해줘.",
+        assistant_message="알겠습니다.",
+        session_id="session_1",
+    )
+
+    saved_candidate = memory_client.calls[0]["candidates"][0]
+    assert len(memory_client.recall_calls) == 1
+    assert saved_candidate["operationType"] == "UPDATE"
+    assert saved_candidate["targetMemoryId"] == 3
+    assert observation["operation_types"] == ["UPDATE"]
+
+
+@pytest.mark.asyncio
+async def test_writeback_retries_preference_reconciliation_without_query_when_semantic_recall_is_empty():
+    candidate = {
+        "memoryType": "PREFERENCE",
+        "storeType": "USER_PROFILE",
+        "scopeType": "GLOBAL",
+        "operationType": "ADD",
+        "content": "사용자는 최근 점심 추천에서 고기보다 가벼운 샐러드나 생선 메뉴를 더 선호한다.",
+        "summary": "점심은 샐러드/생선 우선 선호",
+        "metadata": {"source": "ai.writeback", "category": "preference", "tags": ["food", "lunch", "preference"]},
+        "importance": 0.82,
+        "confidence": 0.95,
+    }
+
+    class RetryMemoryClient(FakeMemoryClient):
+        async def recall(self, **kwargs):
+            self.recall_calls.append(kwargs)
+            if kwargs.get("query"):
+                return []
+            return [
+                SimpleNamespace(
+                    id=3,
+                    memory_type="PREFERENCE",
+                    store_type="USER_PROFILE",
+                    scope_type="GLOBAL",
+                    content="사용자는 점심 메뉴로 고기를 가장 좋아하며, 특히 돼지고기나 소고기처럼 든든한 메뉴를 선호한다.",
+                    summary="점심에 고기, 특히 돼지고기·소고기 선호",
+                    metadata={"source": "ai.writeback", "category": "preference", "tags": ["food", "lunch", "meat"]},
+                )
+            ]
+
+    memory_client = RetryMemoryClient()
+    extractor = FakeExtractor([candidate])
+    app_state = SimpleNamespace(backend_memory_client=memory_client, memory_extractor=extractor)
+
+    observation = await writeback_persistent_memory_candidates(
+        app_state=app_state,
+        user_id="1",
+        user_message="요즘은 고기보다 가벼운 샐러드나 생선 메뉴가 더 좋아. 점심 추천할 때는 이걸 우선해줘.",
+        assistant_message="알겠습니다.",
+        session_id="session_1",
+    )
+
+    saved_candidate = memory_client.calls[0]["candidates"][0]
+    assert len(memory_client.recall_calls) == 2
+    assert memory_client.recall_calls[0]["query"] == "점심은 샐러드/생선 우선 선호"
+    assert memory_client.recall_calls[1]["query"] is None
+    assert memory_client.recall_calls[1]["tags"] == ["food", "lunch", "preference"]
+    assert saved_candidate["operationType"] == "UPDATE"
+    assert saved_candidate["targetMemoryId"] == 3
+    assert observation["operation_types"] == ["UPDATE"]
+
+
+@pytest.mark.asyncio
+async def test_writeback_uses_llm_operation_reconciliation_decision():
+    candidate = {
+        "memoryType": "PREFERENCE",
+        "storeType": "USER_PROFILE",
+        "scopeType": "GLOBAL",
+        "operationType": "ADD",
+        "content": "사용자는 점심 추천에서 샐러드나 생선 메뉴를 우선 선호한다.",
+        "summary": "점심은 샐러드/생선 우선",
+        "metadata": {"source": "ai.writeback", "category": "preference", "tags": ["food", "lunch", "preference"]},
+        "importance": 0.82,
+        "confidence": 0.95,
+    }
+    memory_client = FakeMemoryClient(
+        memories=[
+            SimpleNamespace(
+                id=3,
+                memory_type="PREFERENCE",
+                store_type="USER_PROFILE",
+                scope_type="GLOBAL",
+                content="사용자는 점심 메뉴로 고기를 가장 좋아한다.",
+                summary="점심에 고기 선호",
+                metadata={"source": "ai.writeback", "category": "preference", "tags": ["food", "lunch", "meat"]},
+            ),
+            SimpleNamespace(
+                id=8,
+                memory_type="PREFERENCE",
+                store_type="USER_PROFILE",
+                scope_type="GLOBAL",
+                content="사용자는 점심 메뉴로 돼지고기나 소고기처럼 든든한 고기 메뉴를 선호한다.",
+                summary="점심에 돼지고기/소고기 선호",
+                metadata={"source": "ai.writeback", "category": "preference", "tags": ["food", "lunch", "meat", "beef"]},
+            )
+        ]
+    )
+    operation_provider = FakeOperationProvider(
+        {
+            "operationType": "UPDATE",
+            "targetMemoryId": 3,
+            "additionalTargetMemoryIds": [8, 999, 3, 8],
+            "reason": "사용자가 최근 점심 선호를 샐러드/생선 우선으로 바꿨다.",
+        }
+    )
+    extractor = FakeExtractor([candidate])
+    app_state = SimpleNamespace(
+        backend_memory_client=memory_client,
+        memory_extractor=extractor,
+        memory_operation_provider=operation_provider,
+    )
+
+    observation = await writeback_persistent_memory_candidates(
+        app_state=app_state,
+        user_id="1",
+        user_message="점심은 이제 가벼운 샐러드나 생선 위주로 추천해줘.",
+        assistant_message="알겠습니다.",
+        session_id="session_1",
+    )
+
+    saved_candidate = memory_client.calls[0]["candidates"][0]
+    assert len(operation_provider.calls) == 1
+    assert operation_provider.calls[0]["candidate"] == candidate
+    assert operation_provider.calls[0]["existing_memories"][0]["id"] == 3
+    assert saved_candidate["operationType"] == "UPDATE"
+    assert saved_candidate["targetMemoryId"] == 3
+    assert saved_candidate["additionalTargetMemoryIds"] == [8]
+    assert saved_candidate["updateReason"] == "사용자가 최근 점심 선호를 샐러드/생선 우선으로 바꿨다."
     assert observation["operation_types"] == ["UPDATE"]
 
 
