@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import asyncio
+import inspect
 import json
 from typing import Any, Literal
 
@@ -381,3 +383,27 @@ class BaseProvider(ABC):
         runtime_context: dict[str, Any] | None = None,
     ) -> AgentModelResponse:
         """agent.loop용 message/tool 기반 응답을 반환한다."""
+
+    async def respond_async(
+        self,
+        messages: list[AgentMessage | ToolResultMessage | dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str,
+        tool_choice: dict[str, Any] | str | None = None,
+        runtime_context: dict[str, Any] | None = None,
+    ) -> AgentModelResponse:
+        """비동기 실행 경로용 응답을 반환한다.
+
+        기존 sync provider는 thread fallback으로 호환하고, event-loop bound provider는 native async로
+        override한다.
+        """
+
+        kwargs: dict[str, Any] = {
+            "messages": messages,
+            "tools": tools,
+            "model": model,
+            "tool_choice": tool_choice,
+        }
+        if "runtime_context" in inspect.signature(self.respond).parameters:
+            kwargs["runtime_context"] = runtime_context
+        return await asyncio.to_thread(self.respond, **kwargs)

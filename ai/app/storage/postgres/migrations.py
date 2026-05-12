@@ -539,6 +539,109 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """,
         ),
     ),
+    PostgresMigration(
+        migration_id="0014_task_run_queue_claims",
+        statements=(
+            """
+            ALTER TABLE run_anchors
+            ADD COLUMN IF NOT EXISTS queue_status TEXT;
+            """,
+            """
+            ALTER TABLE run_anchors
+            ADD COLUMN IF NOT EXISTS claim_owner TEXT;
+            """,
+            """
+            ALTER TABLE run_anchors
+            ADD COLUMN IF NOT EXISTS queued_at TIMESTAMPTZ;
+            """,
+            """
+            ALTER TABLE run_anchors
+            ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
+            """,
+            """
+            ALTER TABLE run_anchors
+            ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ;
+            """,
+            """
+            ALTER TABLE run_anchors
+            ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+            """,
+            """
+            ALTER TABLE run_anchors
+            ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
+            """,
+            """
+            ALTER TABLE run_anchors
+            ADD COLUMN IF NOT EXISTS attempts INTEGER;
+            """,
+            """
+            ALTER TABLE run_anchors
+            ADD COLUMN IF NOT EXISTS last_claim_error TEXT;
+            """,
+            """
+            UPDATE run_anchors
+            SET queue_status = CASE
+                    WHEN anchor_payload->'task'->>'status' = 'PENDING' THEN 'queued'
+                    WHEN anchor_payload->'task'->>'status' = 'RUNNING' THEN 'running'
+                    WHEN anchor_payload->'task'->>'status' = 'WAITING' THEN 'waiting'
+                    WHEN anchor_payload->'task'->>'status' = 'CANCELED' THEN 'canceled'
+                    WHEN anchor_payload->'task'->>'status' IN ('COMPLETED', 'FAILED') THEN 'terminal'
+                    ELSE 'terminal'
+                END,
+                queued_at = COALESCE(queued_at, created_at),
+                attempts = COALESCE(attempts, 0)
+            WHERE queue_status IS NULL OR queued_at IS NULL OR attempts IS NULL;
+            """,
+            """
+            ALTER TABLE run_anchors
+            ALTER COLUMN queue_status SET DEFAULT 'queued';
+            """,
+            """
+            ALTER TABLE run_anchors
+            ALTER COLUMN queue_status SET NOT NULL;
+            """,
+            """
+            ALTER TABLE run_anchors
+            ALTER COLUMN queued_at SET DEFAULT now();
+            """,
+            """
+            ALTER TABLE run_anchors
+            ALTER COLUMN queued_at SET NOT NULL;
+            """,
+            """
+            ALTER TABLE run_anchors
+            ALTER COLUMN attempts SET DEFAULT 0;
+            """,
+            """
+            ALTER TABLE run_anchors
+            ALTER COLUMN attempts SET NOT NULL;
+            """,
+            """
+            ALTER TABLE run_anchors
+            DROP CONSTRAINT IF EXISTS run_anchors_queue_status_check;
+            """,
+            """
+            ALTER TABLE run_anchors
+            ADD CONSTRAINT run_anchors_queue_status_check
+            CHECK (queue_status IN ('queued', 'claimed', 'running', 'waiting', 'terminal', 'failed_retry', 'canceled'));
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_run_anchors_queue_claim
+            ON run_anchors(queue_status, next_attempt_at, queued_at ASC)
+            WHERE queue_status IN ('queued', 'failed_retry');
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_run_anchors_lease_expiry
+            ON run_anchors(lease_expires_at)
+            WHERE queue_status IN ('claimed', 'running') AND lease_expires_at IS NOT NULL;
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_run_anchors_one_active_per_owner_session
+            ON run_anchors(owner_key, session_key)
+            WHERE session_key IS NOT NULL AND queue_status IN ('queued', 'claimed', 'running', 'waiting', 'failed_retry');
+            """,
+        ),
+    ),
 )
 
 

@@ -38,6 +38,23 @@ class FakeProvider:
         return next(self.responses)
 
 
+class AsyncOnlyProvider(FakeProvider):
+    def respond(self, *args, **kwargs):
+        raise AssertionError("sync respond should not be used")
+
+    async def respond_async(self, messages, tools, model, tool_choice=None, runtime_context=None):
+        self.calls.append(
+            {
+                "messages": list(messages),
+                "tools": tools,
+                "model": model,
+                "tool_choice": tool_choice,
+                "runtime_context": runtime_context,
+            }
+        )
+        return next(self.responses)
+
+
 class FakePromptBuilder:
     def build_agent_loop_prompt(self, **kwargs) -> str:
         return "agent loop prompt"
@@ -196,6 +213,23 @@ def test_worker_transcript_session_id_is_reused_without_collapsing_into_parent_s
 
     assert session_id == "agent_session_worker"
     assert "parent_session" not in session_store.sessions_by_key
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_prefers_provider_respond_async():
+    provider = AsyncOnlyProvider([_response(text="async ok")])
+    handler = ToolCallingLoopHandler(
+        provider=provider,
+        prompt_builder=FakePromptBuilder(),
+        tool_runtime=RecordingRuntime(),
+        tool_catalog=FakeToolCatalog(),
+    )
+
+    outcome = await handler.execute_async(task=_task(), step=_step())
+
+    assert outcome["step_status"] == StepStatus.COMPLETED
+    assert outcome["result_payload"]["text"] == "async ok"
+    assert provider.calls[0]["runtime_context"]["task_run_id"] == "task_guard"
 
 
 def _task(input_payload: dict | None = None):

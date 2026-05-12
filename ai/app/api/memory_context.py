@@ -272,6 +272,7 @@ async def attach_persistent_memory_context(
     query: str | None,
     workspace_key: str | None = None,
     limit: int = DEFAULT_MEMORY_RECALL_LIMIT,
+    force_workspace_key: bool = False,
 ) -> None:
     clear_client_memory_context(task_input)
     recall_planner = getattr(app_state, "memory_recall_planner", None)
@@ -279,6 +280,8 @@ async def attach_persistent_memory_context(
         recall_plan = await recall_planner.plan_recall(query, workspace_key=workspace_key, limit=limit)
     else:
         recall_plan = plan_memory_recall(query, workspace_key=workspace_key, limit=limit)
+    if force_workspace_key and workspace_key and recall_plan.workspace_key is None:
+        recall_plan = replace(recall_plan, workspace_key=str(workspace_key).strip() or None)
     if not recall_plan.should_recall:
         _set_recall_meta(
             task_input,

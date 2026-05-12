@@ -1091,6 +1091,12 @@ class WebSocketCommandRouter:
                 completion_expected_version=completion_expected_version,
                 status=completed_status,
             )
+            await context.send_json(
+                _event_frame(
+                    "taskRun.snapshot.result",
+                    _task_snapshot_payload(completed_task),
+                )
+            )
             # 현재 Task Engine에는 토큰 단위 streaming hook이 없으므로 delta를 합성하지 않는다.
             # 프론트에는 durable assistant 메시지가 저장된 뒤 completed frame만 보낸다.
             await context.send_json(
@@ -1135,12 +1141,6 @@ class WebSocketCommandRouter:
                 repository=context.websocket.app.state.repository,
                 writeback=writeback_observation,
                 mark_used=mark_used_observation,
-            )
-            await context.send_json(
-                _event_frame(
-                    "taskRun.snapshot.result",
-                    _task_snapshot_payload(completed_task),
-                )
             )
         except Exception:
             logger.exception("session.message.create background 실행에 실패했습니다.")

@@ -147,8 +147,7 @@ class ToolCallingLoopHandler:
         llm_call_count = 0
 
         for turn_index in range(1, max_iterations + 1):
-            generated = await asyncio.to_thread(
-                self._respond_with_runtime_context,
+            generated = await self._respond_with_runtime_context_async(
                 messages=messages,
                 tools=provider_tools,
                 model=model,
@@ -954,6 +953,41 @@ class ToolCallingLoopHandler:
             tools=tools,
             model=model,
             tool_choice=tool_choice,
+        )
+
+    async def _respond_with_runtime_context_async(
+        self,
+        *,
+        messages: list[AgentMessage | ToolResultMessage | dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str,
+        tool_choice: dict[str, Any] | str | None,
+        runtime_context: dict[str, Any],
+    ):
+        respond_async = getattr(self.provider, "respond_async", None)
+        if callable(respond_async):
+            signature = inspect.signature(respond_async)
+            if "runtime_context" in signature.parameters:
+                return await respond_async(
+                    messages=messages,
+                    tools=tools,
+                    model=model,
+                    tool_choice=tool_choice,
+                    runtime_context=runtime_context,
+                )
+            return await respond_async(
+                messages=messages,
+                tools=tools,
+                model=model,
+                tool_choice=tool_choice,
+            )
+        return await asyncio.to_thread(
+            self._respond_with_runtime_context,
+            messages=messages,
+            tools=tools,
+            model=model,
+            tool_choice=tool_choice,
+            runtime_context=runtime_context,
         )
 
     @staticmethod

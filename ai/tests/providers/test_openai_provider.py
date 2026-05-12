@@ -1,12 +1,9 @@
-import base64
 import httpx
-import json
+import pytest
 
 from app.core.config import Settings
-from app.domain.providers.model import OpenAIOAuthProvider
 from app.domain.providers.model.openai_api import OpenAIAPIProvider
 from app.domain.providers.registry import ProviderRegistry
-from tests.fakes import InMemoryTaskRepository
 
 
 class DummyHTTPResponse:
@@ -21,96 +18,25 @@ class DummyHTTPResponse:
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
-            raise httpx.HTTPStatusError("error", request=self.request, response=httpx.Response(self.status_code, request=self.request, text=self.text))
+            raise httpx.HTTPStatusError(
+                "error",
+                request=self.request,
+                response=httpx.Response(self.status_code, request=self.request, text=self.text),
+            )
 
 
-class DummyStreamResponse:
-    def __init__(self, lines: list[str], status_code: int = 200, url: str = "https://example.test"):
-        self._lines = lines
-        self.status_code = status_code
-        self.is_success = status_code < 400
-        self.reason_phrase = "OK" if self.is_success else "Bad Request"
-        self.request = httpx.Request("POST", url)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb):
-        return None
-
-    def iter_lines(self):
-        for line in self._lines:
-            yield line
-
-    def read(self):
-        return "\n".join(self._lines).encode("utf-8")
-
-
-def _make_test_access_token() -> str:
-    header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).decode().rstrip("=")
-    payload = base64.urlsafe_b64encode(
-        json.dumps({"exp": 4102444800, "scp": ["agent.loop"], "https://api.openai.com/auth": {"chatgpt_account_id": "acct_test"}}).encode()
-    ).decode().rstrip("=")
-    return f"{header}.{payload}.sig"
-
-
-def test_openai_provider_health_and_stub_respond():
-    repository = InMemoryTaskRepository()
-    provider = OpenAIOAuthProvider(Settings(), repository)
+def test_openai_api_provider_health_and_stub_respond():
+    settings = Settings(openai_api_key="")
+    provider = OpenAIAPIProvider(settings)
 
     health = provider.health()
     response = provider.respond(messages=[{"role": "user", "content": "hello backbone"}], tools=[], model="gpt-test")
 
-    assert health.provider_name == "openai_oauth"
+    assert health.provider_name == "openai_api"
     assert health.healthy is True
-    assert health.configured is True
+    assert health.configured is False
     assert health.connected is False
-    assert response.output_text.startswith("[stub:openai_oauth]")
-
-
-def test_openai_provider_imports_local_codex_auth_and_responds_live(monkeypatch, tmp_path):
-    repository = InMemoryTaskRepository()
-    auth_path = tmp_path / "auth.json"
-    auth_path.write_text(
-        json.dumps(
-            {
-                "auth_mode": "chatgpt",
-                "tokens": {
-                    "access_token": _make_test_access_token(),
-                    "refresh_token": "refresh-token",
-                    "account_id": "acct_test",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    settings = Settings(
-        openai_auth_file=auth_path,
-        openai_api_base_url="https://chatgpt.test/backend-api",
-        openai_response_model="gpt-test",
-    )
-    provider = OpenAIOAuthProvider(settings, repository)
-
-    def fake_stream(method, url, headers=None, json=None, timeout=None):
-        if method == "POST" and url == f"{settings.openai_api_base_url}/codex/responses":
-            return DummyStreamResponse(
-                [
-                    'data: {"type":"response.output_text.delta","delta":"로컬 로그인 연결 응답"}',
-                    'data: {"type":"response.completed","response":{"id":"resp_codex","model":"gpt-test","usage":{"input_tokens":3,"output_tokens":3}}}',
-                ],
-                url=url,
-            )
-        raise AssertionError(f"unexpected url: {url}")
-
-    monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.stream", fake_stream)
-    auth = provider.start_auth(force_oauth=False)
-    response = provider.respond(messages=[{"role": "user", "content": "연결 확인"}], tools=[], model="gpt-test")
-
-    assert auth.status == "connected"
-    assert provider.health().configured is True
-    assert provider.health().connected is True
-    assert response.output_text == "로컬 로그인 연결 응답"
-    assert response.metadata["mode"] == "live"
+    assert response.output_text.startswith("[stub:openai_api]")
 
 
 def test_openai_api_provider_respond_preserves_native_tool_call(monkeypatch):
@@ -204,13 +130,13 @@ def test_openai_api_provider_respond_preserves_native_tool_call(monkeypatch):
     assert response.metadata["raw_metadata"] == {"trace": "abc"}
 
 
-def test_openai_api_provider_uses_backend_credential_and_records_usage(monkeypatch):
+@pytest.mark.asyncio
+async def test_openai_api_provider_uses_backend_credential_and_records_usage_async():
     settings = Settings(
         openai_api_key="",
         openai_rest_api_base_url="https://api.openai.test/v1",
         openai_response_model="gpt-fallback",
     )
-    provider = OpenAIAPIProvider(settings)
     issued: list[dict] = []
     recorded: list[dict] = []
     captured: dict = {}
@@ -229,23 +155,29 @@ def test_openai_api_provider_uses_backend_credential_and_records_usage(monkeypat
         async def record_command_usage(self, **kwargs):
             recorded.append(kwargs)
 
-    provider.backend_ai_client = FakeBackendAiClient()
+    class FakeOpenAIHttpClient:
+        async def post(self, url, headers=None, json=None, timeout=None, data=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            captured["timeout"] = timeout
+            return DummyHTTPResponse(
+                {
+                    "id": "resp_usage",
+                    "model": "gpt-agent",
+                    "status": "completed",
+                    "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
+                    "usage": {"input_tokens": 12, "output_tokens": 4, "total_tokens": 16},
+                }
+            )
 
-    def fake_post(url, headers=None, json=None, timeout=None, data=None):
-        captured["headers"] = headers
-        return DummyHTTPResponse(
-            {
-                "id": "resp_usage",
-                "model": "gpt-agent",
-                "status": "completed",
-                "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
-                "usage": {"input_tokens": 12, "output_tokens": 4, "total_tokens": 16},
-            }
-        )
+    provider = OpenAIAPIProvider(
+        settings,
+        http_client=FakeOpenAIHttpClient(),
+        backend_ai_client=FakeBackendAiClient(),
+    )
 
-    monkeypatch.setattr("app.domain.providers.model.openai_api.httpx.post", fake_post)
-
-    response = provider.respond(
+    response = await provider.respond_async(
         messages=[{"role": "user", "content": "hello"}],
         tools=[],
         model="gpt-agent",
@@ -259,7 +191,10 @@ def test_openai_api_provider_uses_backend_credential_and_records_usage(monkeypat
     )
 
     assert issued == [{"user_id": "10", "provider_name": "openai_api_key", "model": "gpt-agent"}]
+    assert captured["url"] == "https://api.openai.test/v1/responses"
     assert captured["headers"]["Authorization"] == "Bearer sk-issued"
+    assert captured["json"]["model"] == "gpt-agent"
+    assert captured["timeout"] == settings.agent_model_request_timeout_seconds
     assert recorded == [
         {
             "user_id": "10",
@@ -280,171 +215,20 @@ def test_openai_api_provider_uses_backend_credential_and_records_usage(monkeypat
     assert response.output_text == "ok"
 
 
-def test_openai_oauth_provider_respond_streams_agent_contract(monkeypatch, tmp_path):
-    repository = InMemoryTaskRepository()
-    auth_path = tmp_path / "auth.json"
-    auth_path.write_text(
-        json.dumps(
-            {
-                "auth_mode": "chatgpt",
-                "tokens": {
-                    "access_token": _make_test_access_token(),
-                    "refresh_token": "refresh-token",
-                    "account_id": "acct_test",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    settings = Settings(
-        openai_auth_file=auth_path,
-        openai_api_base_url="https://chatgpt.test/backend-api",
-        openai_response_model="gpt-test",
-    )
-    provider = OpenAIOAuthProvider(settings, repository)
-    captured: dict = {}
-
-    def fake_stream(method, url, headers=None, json=None, timeout=None):
-        captured["method"] = method
-        captured["url"] = url
-        captured["headers"] = headers
-        captured["json"] = json
-        captured["timeout"] = timeout
-        return DummyStreamResponse(
-            [
-                'data: {"type":"response.completed","response":{"id":"resp_oauth_tool","model":"gpt-test","status":"completed","output":[{"type":"function_call","call_id":"call_1","name":"todo","arguments":"{\\"todos\\":[]}"}],"usage":{"input_tokens":5,"output_tokens":2}}}',
-            ],
-            url=url,
-        )
-
-    monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.stream", fake_stream)
-
-    auth = provider.start_auth(force_oauth=False)
-    response = provider.respond(
-        messages=[
-            {"role": "user", "content": "todo를 읽어줘"},
-            {"role": "tool", "tool_call_id": "call_previous", "content": '{"todos":[]}'},
-        ],
-        tools=[{"type": "function", "name": "todo", "description": "todo list 관리", "parameters": {"type": "object"}}],
-        model="gpt-test",
-    )
-
-    assert auth.status == "connected"
-    assert captured["method"] == "POST"
-    assert captured["url"] == f"{settings.openai_api_base_url}/codex/responses"
-    assert captured["timeout"] == settings.agent_model_stream_timeout_seconds
-    assert captured["json"]["stream"] is True
-    assert captured["json"]["input"][1] == {
-        "type": "function_call_output",
-        "call_id": "call_previous",
-        "output": '{"todos":[]}',
-    }
-    assert response.finish_reason == "tool_calls"
-    assert response.tool_calls[0].id == "call_1"
-    assert response.tool_calls[0].name == "todo"
-    assert response.raw_response["id"] == "resp_oauth_tool"
-
-
-def test_openai_provider_completes_auth_and_responds_live(monkeypatch):
-    repository = InMemoryTaskRepository()
-    settings = Settings(
-        openai_oauth_client_id="client-id",
-        openai_oauth_redirect_uri="http://localhost:1455/auth/callback",
-        openai_oauth_authorize_url="https://auth.openai.test/authorize",
-        openai_oauth_token_url="https://auth.openai.test/token",
-        openai_oauth_scopes=["openid", "profile", "email", "offline_access"],
-        openai_api_base_url="https://chatgpt.test/backend-api",
-        openai_response_model="gpt-test",
-    )
-    provider = OpenAIOAuthProvider(settings, repository)
-    auth = provider.start_auth(force_oauth=True)
-
-    def fake_post(url, data=None, headers=None, timeout=None, json=None):
-        if url == settings.openai_oauth_token_url:
-            return DummyHTTPResponse(
-                {
-                    "access_token": _make_test_access_token(),
-                    "refresh_token": "refresh-token",
-                    "token_type": "Bearer",
-                    "expires_in": 3600,
-                    "scope": "openid profile email offline_access",
-                }
-            )
-        raise AssertionError(f"unexpected url: {url}")
-
-    def fake_stream(method, url, headers=None, json=None, timeout=None):
-        if method == "POST" and url == f"{settings.openai_api_base_url}/codex/responses":
-            return DummyStreamResponse(
-                [
-                    'data: {"type":"response.output_text.delta","delta":"실제 연결 응답"}',
-                    'data: {"type":"response.completed","response":{"id":"resp_123","model":"gpt-test","usage":{"input_tokens":4,"output_tokens":3}}}',
-                ],
-                url=url,
-            )
-        raise AssertionError(f"unexpected url: {url}")
-
-    monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.post", fake_post)
-    monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.stream", fake_stream)
-    connected = provider.complete_auth(code="code-123", state=auth.state)
-    response = provider.respond(messages=[{"role": "user", "content": "연결 확인"}], tools=[], model="gpt-test")
-
-    assert connected.connected is True
-    assert provider.health().connected is True
-    assert response.output_text == "실제 연결 응답"
-    assert response.metadata["mode"] == "live"
-
-
-def test_openai_provider_refresh_and_disconnect(monkeypatch):
-    repository = InMemoryTaskRepository()
-    settings = Settings(
-        openai_oauth_client_id="client-id",
-        openai_oauth_redirect_uri="http://localhost:1455/auth/callback",
-        openai_oauth_authorize_url="https://auth.openai.test/authorize",
-        openai_oauth_token_url="https://auth.openai.test/token",
-        openai_oauth_scopes=["openid", "profile", "email", "offline_access"],
-    )
-    provider = OpenAIOAuthProvider(settings, repository)
-    repository.upsert_provider_token(
-        "openai_oauth",
-        {
-            "access_token": "old-token",
-            "refresh_token": "refresh-token",
-            "token_type": "Bearer",
-            "scope_text": "agent.loop",
-            "expires_at": None,
-            "raw_payload": {"ok": True},
-        },
-    )
-
-    def fake_post(url, data=None, headers=None, timeout=None, json=None):
-        if url == settings.openai_oauth_token_url:
-            return DummyHTTPResponse(
-                {
-                    "access_token": _make_test_access_token(),
-                    "refresh_token": "new-refresh-token",
-                    "token_type": "Bearer",
-                    "expires_in": 3600,
-                    "scope": "openid profile email offline_access",
-                }
-            )
-        raise AssertionError(f"unexpected url: {url}")
-
-    monkeypatch.setattr("app.domain.providers.model.openai_oauth.httpx.post", fake_post)
-    refreshed = provider.refresh_connection()
-    disconnected = provider.disconnect()
-
-    assert refreshed.status == "refreshed"
-    assert refreshed.connected is True
-    assert disconnected.status == "disconnected"
-    assert provider.health().connected is False
-
-
 def test_provider_registry_returns_health_list():
-    repository = InMemoryTaskRepository()
-    registry = ProviderRegistry([OpenAIOAuthProvider(Settings(), repository)])
+    registry = ProviderRegistry([OpenAIAPIProvider(Settings(openai_api_key=""))])
 
     names = registry.list_names()
     health_list = registry.health()
 
-    assert names == ["openai_oauth"]
-    assert health_list[0].provider_name == "openai_oauth"
+    assert names == ["openai_api"]
+    assert health_list[0].provider_name == "openai_api"
+
+
+def test_provider_registry_prefers_api_key_provider_for_runtime_backend_credentials():
+    settings = Settings(openai_api_key="")
+    registry = ProviderRegistry([OpenAIAPIProvider(settings)])
+
+    provider = registry.preferred_model_provider()
+
+    assert provider.name == "openai_api"

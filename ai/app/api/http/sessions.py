@@ -446,19 +446,44 @@ async def _create_message_in_session(
     )
 
     if run_in_background:
-        asyncio.create_task(
-            _run_created_session_message_background(
-                request,
-                payload=payload,
-                session=session,
-                user=user,
-                session_id=sessionId,
-                owner_key=owner_key,
-                task_run_id=task_run_id,
-                task_input=task_input,
-                user_append=user_append,
+        task_execution_supervisor = getattr(request.app.state, "task_execution_supervisor", None)
+        if task_execution_supervisor is not None:
+            async def _finish_background_task(task):
+                await _finish_created_session_message(
+                    request,
+                    payload=payload,
+                    session=session,
+                    user=user,
+                    session_id=sessionId,
+                    owner_key=owner_key,
+                    task_input=task_input,
+                    user_append=user_append,
+                    task=task,
+                )
+
+            await task_execution_supervisor.submit(
+                OrchestrationRequest(
+                    task_run_id=task_run_id,
+                    owner_key=owner_key,
+                    session_key=sessionId,
+                    input_payload=task_input,
+                ),
+                on_complete=_finish_background_task,
             )
-        )
+        else:
+            asyncio.create_task(
+                _run_created_session_message_background(
+                    request,
+                    payload=payload,
+                    session=session,
+                    user=user,
+                    session_id=sessionId,
+                    owner_key=owner_key,
+                    task_run_id=task_run_id,
+                    task_input=task_input,
+                    user_append=user_append,
+                )
+            )
         messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
         return CreateSessionMessageResponse(
             session_id=sessionId,
@@ -525,6 +550,32 @@ async def _run_created_session_message(
         logger.exception("session message orchestration failed", extra={"task_run_id": task_run_id, "session_id": session_id})
         raise
 
+    return await _finish_created_session_message(
+        request,
+        payload=payload,
+        session=session,
+        user=user,
+        session_id=session_id,
+        owner_key=owner_key,
+        task_input=task_input,
+        user_append=user_append,
+        task=task,
+    )
+
+
+async def _finish_created_session_message(
+    request: Request,
+    *,
+    payload: CreateSessionMessageRequest,
+    session: dict[str, Any],
+    user,
+    session_id: str,
+    owner_key: str,
+    task_input: dict[str, Any],
+    user_append: dict[str, Any],
+    task,
+):
+    session_store = request.app.state.session_store
     _apply_linked_work_result(request, task_input=task_input, task=task)
 
     assistant_message_id = None
@@ -867,7 +918,11 @@ async def _drain_work_wake_queue(request: Request, *, user, limit: int = _WORK_W
     claim_wakes = getattr(repository, "claim_work_wakes", None)
     if not callable(claim_wakes):
         return []
-    wakes = claim_wakes(limit=limit)
+    try:
+        wakes = claim_wakes(limit=limit)
+    except AttributeError:
+        logger.debug("work wake queue is not available in this runtime", exc_info=True)
+        return []
     completed = []
     for wake in wakes:
         completed.append(await _dispatch_work_wake(request, user=user, wake=wake))
