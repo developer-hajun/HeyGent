@@ -57,15 +57,14 @@ copy .env.example .env
 `bridge/.env`를 열어서 본인 환경에 맞게 수정:
 
 ```env
-# AI 서버 주소 (compose 기본 그대로면 변경 불필요)
-BRIDGE_AI_WS_URL=ws://localhost:8000/ai/api/v1/internal/bridge/ws
-
-# AI 서버와 공유하는 토큰. ai/.env의 HEYGENT_BRIDGE_TOKEN과 같아야 한다.
-BRIDGE_TOKEN=poc-bridge-shared-token-change-me
+# 환경 (local|prod). GUI 에서도 라디오로 바꿀 수 있음.
+BRIDGE_ENVIRONMENT=local
 
 # 본인 PC 사용자명으로 바꿔주세요. 미리 폴더 만들어둘 것.
 BRIDGE_WORKSPACE_ROOT=C:\Users\YOUR_USER\Desktop\poc-workspace
 ```
+
+`BRIDGE_TOKEN` 은 더 이상 직접 박지 않습니다. 웹에서 페어링 코드를 발급받고 브릿지 GUI 에 입력하면, 토큰이 `%LOCALAPPDATA%\HeyGent\bridge.json` 에 자동 저장됩니다.
 
 워크스페이스 폴더가 없으면 미리 만들어둔다:
 ```powershell
@@ -81,11 +80,13 @@ python -m bridge.tray
 ```
 
 1. **시작 GUI 창**이 뜬다 (다크 테마)
-2. 워크스페이스 폴더 확인 후 [시작] 버튼
-3. 시계 옆 **시스템 트레이에 H 아이콘**이 뜬다 (초록색=연결됨, 빨간색=끊김)
-4. H 우클릭 → 메뉴:
-   - 상태 / 폴더 경로 표시
+2. 환경(로컬/배포) 선택, 페어링 안 됐으면 6자리 코드 + 디바이스 이름 입력 후 [페어링 요청]
+3. 워크스페이스 폴더 확인 후 [시작] 버튼
+4. 시계 옆 **시스템 트레이에 H 아이콘**이 뜬다 (초록색=연결됨, 빨간색=끊김)
+5. H 우클릭 → 메뉴:
+   - 상태 / 사용자 / 폴더 경로 표시
    - 워크스페이스 폴더 열기
+   - 이 디바이스 페어링 해제 (로컬 토큰 삭제 + 트레이 종료)
    - 종료
 
 ### 콘솔 모드 (디버깅용)
@@ -170,9 +171,9 @@ bridge/
 - 위험한 셸 명령(`rm -rf /`, `git reset --hard` 등)은 사전 차단
 - 토큰(`BRIDGE_TOKEN`)은 PoC 단계용 단순 공유 시크릿. 운영 단계에선 backend가 사용자별로 발급하는 구조로 가야 함
 
-## 한계 (PoC 가정)
+## 한계
 
-- **단일 슬롯**: 동시에 1개 브릿지만 허용. 다중 사용자 매핑 X
-- **인증**: 공유 토큰 비교만. backend 검증 미경유 (운영 시 변경 필요)
-- **재시작 시에만 워크스페이스 변경 가능**: 굴러가는 동안엔 못 바꿈
-- **Windows 위주 검증**: macOS/Linux는 별도 확인 필요
+- **한 user → 1 슬롯**: 같은 계정으로 다른 PC 에서 페어링하면 기존 PC 의 브릿지는 자동 폐기.
+- **재시작 시에만 워크스페이스 변경 가능**: 굴러가는 동안엔 못 바꿈.
+- **Windows 위주 검증**: macOS/Linux 는 별도 확인 필요.
+- **인증서**: `wss://` 는 시스템 루트 CA 로 검증. self-signed 인증서를 사용하는 환경이면 `ssl_context.load_verify_locations(...)` 코드 수정 필요.

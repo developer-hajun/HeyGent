@@ -26,7 +26,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class AiInternalAuthenticationFilter extends OncePerRequestFilter {
 
-    private static final String INTERNAL_AI_PATH_PREFIX = "/internal/ai/";
+    private static final String INTERNAL_PATH_PREFIX = "/internal/";
     private static final String BEARER_PREFIX = "Bearer ";
     private static final String AI_INTERNAL_PRINCIPAL = "AI_INTERNAL";
 
@@ -35,7 +35,7 @@ public class AiInternalAuthenticationFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !request.getRequestURI().startsWith(INTERNAL_AI_PATH_PREFIX);
+        return !request.getRequestURI().startsWith(INTERNAL_PATH_PREFIX);
     }
 
     @Override
