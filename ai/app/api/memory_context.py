@@ -13,7 +13,7 @@ from app.domain.orchestration.prompts.persistent_memory_prompt import build_pers
 logger = logging.getLogger(__name__)
 
 DEFAULT_MEMORY_RECALL_LIMIT = 5
-DEFAULT_MEMORY_RECALL_PLANNER_TIMEOUT_SECONDS = 3.0
+DEFAULT_MEMORY_RECALL_PLANNER_TIMEOUT_SECONDS = 6.0
 MEMORY_CONTEXT_KEYS = ("persistent_memory_context", "memory_context")
 MEMORY_RECALL_QUERY_KEYS = ("prompt", "message", "query", "content", "text", "subject", "title")
 
@@ -23,9 +23,10 @@ Return strict JSON only, with this shape:
 {"shouldRecall":true,"query":"...","reason":"...","limit":5,"filters":{"storeType":"USER_PROFILE|AGENT_MEMORY|null","memoryType":"PREFERENCE|PROFILE|FACT|INSTRUCTION|PROCEDURE|null","scopeType":"GLOBAL|WORKSPACE|null","metadataCategories":["preference|profile|fact|instruction|procedure|event|reason|task_state"]}}
 
 Rules:
-- Skip recall for greetings, thanks, trivial requests, or requests fully answerable from the current input.
+- Skip recall for greetings, thanks, or trivial requests. If user or project history could change, personalize, or improve the answer, recall it even when the current input is answerable on its own.
 - Use USER_PROFILE/PREFERENCE/GLOBAL/preference for stable user style, format, or preference.
 - Use USER_PROFILE/PROFILE/GLOBAL/profile for user role, identity, or working habit.
+- Do not skip open-ended recommendations, suggestions, choices, or "what should I do/eat/use" questions. These should recall USER_PROFILE/PREFERENCE/GLOBAL/preference because preferences may materially change the answer.
 - Use AGENT_MEMORY/FACT/WORKSPACE/task_state,fact for continuing project implementation or current project state.
 - Use AGENT_MEMORY/PROCEDURE/procedure,instruction for reusable workflow or repeated project procedure.
 - Use reason/event categories when the user asks why, history, records, schedule, or previous event context.
