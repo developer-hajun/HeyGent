@@ -325,6 +325,11 @@ class ToolCallingLoopHandler:
                     args=tool_call.arguments,
                     result=result,
                 )
+                self._sync_dynamic_runtime_context(
+                    task=task,
+                    task_input=task_input,
+                    tool_runtime=tool_runtime,
+                )
             current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
 
         return self._build_failed_outcome(
@@ -816,6 +821,29 @@ class ToolCallingLoopHandler:
         if callable(binder):
             return binder(workspace_root)
         return self.tool_runtime
+
+    @staticmethod
+    def _sync_dynamic_runtime_context(*, task, task_input: dict[str, Any], tool_runtime) -> None:
+        latest_input = dict(getattr(task, "input_payload", None) or {})
+        dynamic_keys = (
+            "workId",
+            "workIdentifier",
+            "workTitle",
+            "workAssigneeAgentId",
+            "workContext",
+            "workLinkReason",
+        )
+        updates = {
+            key: latest_input[key]
+            for key in dynamic_keys
+            if key in latest_input and task_input.get(key) != latest_input[key]
+        }
+        if not updates:
+            return
+        task_input.update(updates)
+        runtime_context = getattr(tool_runtime, "runtime_context", None)
+        if isinstance(runtime_context, dict):
+            runtime_context.update(updates)
 
     @staticmethod
     def _task_input_for_guard(*, task_input: dict[str, Any], step, resume_payload: dict[str, Any] | None) -> dict[str, Any]:
