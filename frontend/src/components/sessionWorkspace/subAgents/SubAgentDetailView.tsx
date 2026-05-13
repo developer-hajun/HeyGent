@@ -11,10 +11,10 @@ import {
   AgentUsageActivityChart,
   AgentInstructionsBundlePanel,
   AgentInstructionsPanel,
-  AgentRunsPanel,
   AgentSkillsLibraryPanel,
   AgentSkillsPanel,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
+import { AgentRunsPanel } from '@/components/sessionWorkspace/agentRuns/AgentRunsPanel'
 import {
   buildAgentRunUsageMap,
   buildAgentUsageSummaryItems,
@@ -579,7 +579,8 @@ export function SubAgentDetailView({
           <AlertDialogHeader>
             <AlertDialogTitle>에이전트를 삭제할까요?</AlertDialogTitle>
             <AlertDialogDescription>
-              `{item.agent.name}` 에이전트와 저장된 지침 문서가 삭제됩니다. CEO는 삭제되지 않습니다.
+              `{item.agent.name}` 에이전트와 저장된 지침 문서가 삭제됩니다. 팀장 에이전트는 삭제되지
+              않습니다.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {deleteError ? <p className="text-destructive text-sm">{deleteError}</p> : null}
@@ -646,6 +647,14 @@ function buildAgentRunItems(
       tokens: formatAgentRunTokenUsage(usageByTaskRunId.get(item.id)),
       cost: formatAgentRunCostUsage(usageByTaskRunId.get(item.id)),
       adapter: item.adapter,
+      model: item.model,
+      request: item.request,
+      delegationInput: item.delegationInput,
+      result: item.result,
+      transcriptSessionId: item.transcriptSessionId,
+      parentTranscriptSessionId: item.parentTranscriptSessionId,
+      agentName: item.agentName,
+      timeline: item.timeline,
       sortTime: item.sortTime,
     }))
 }
@@ -675,6 +684,8 @@ function buildAgentRunItem(taskRun: RawTaskRun, rawEvents: RawTaskEventPayload[]
   const inputSummary = typeof taskRun.input_summary === 'string' ? taskRun.input_summary : undefined
   const progressSummary =
     typeof taskRun.progress_summary === 'string' ? taskRun.progress_summary : undefined
+  const inputPayload = toRecord(taskRun.input_payload)
+  const resultPayload = toRecord(taskRun.result_payload)
   const sortTime = getRunSortTime(taskRun, events)
 
   return {
@@ -688,6 +699,27 @@ function buildAgentRunItem(taskRun: RawTaskRun, rawEvents: RawTaskEventPayload[]
       compactText(summary.title) ??
       '아직 요약이 없습니다.',
     adapter: 'openai',
+    model: getStringValue(inputPayload, 'model') ?? undefined,
+    request:
+      getStringValue(inputPayload, 'prompt', 'content', 'rawUserInput', 'raw_user_input') ??
+      inputSummary,
+    delegationInput: buildDelegationInput(inputPayload, taskRun.displayContext),
+    result:
+      getStringValue(resultPayload, 'answer', 'content', 'finalAnswer', 'final_answer') ??
+      undefined,
+    transcriptSessionId:
+      getStringValue(
+        inputPayload,
+        'transcript_session_id',
+        'transcriptSessionId',
+        'agentSessionId',
+        'agent_session_id',
+      ) ?? undefined,
+    parentTranscriptSessionId:
+      getStringValue(inputPayload, 'parentTranscriptSessionId', 'parent_transcript_session_id') ??
+      undefined,
+    agentName: agentDisplayName(taskRun),
+    timeline: buildRunTimelineItems(events),
     sortTime,
   }
 }
@@ -745,6 +777,52 @@ function compactText(value?: string | null) {
   const text = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : ''
   if (!text) return undefined
   return text.length > 120 ? `${text.slice(0, 117)}...` : text
+}
+
+function toRecord(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  return value as Record<string, unknown>
+}
+
+function getStringValue(source: unknown, ...keys: string[]) {
+  const record = toRecord(source)
+  if (record === undefined) return undefined
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim() !== '') return value.trim()
+  }
+  return undefined
+}
+
+function buildDelegationInput(
+  inputPayload: Record<string, unknown> | undefined,
+  displayContext: RawTaskRun['displayContext'] | undefined | null,
+) {
+  const parts: string[] = []
+  const agentName = displayContext?.assigneeAgent?.displayName
+  if (agentName) parts.push(`담당 에이전트: ${agentName}`)
+  const workIdentifier = getStringValue(inputPayload, 'workIdentifier', 'work_identifier')
+  if (workIdentifier) parts.push(`작업: ${workIdentifier}`)
+  const workContext = toRecord(inputPayload?.workContext)
+  const workTitle = getStringValue(workContext, 'title')
+  if (workTitle) parts.push(`작업 제목: ${workTitle}`)
+  const expectedDeliverable = getStringValue(
+    workContext,
+    'expectedDeliverable',
+    'expected_deliverable',
+  )
+  if (expectedDeliverable) parts.push(`기대 산출물: ${expectedDeliverable}`)
+  return parts.length > 0 ? parts.join('\n') : undefined
+}
+
+function buildRunTimelineItems(events: RawTaskEventPayload[]) {
+  return events.slice(-12).map((event, index) => ({
+    id: `${event.task_run_id}-${event.sequence ?? index}`,
+    label: event.event_type,
+    message: event.summary_message ?? undefined,
+    status: event.status ?? undefined,
+    time: formatRunTimestamp(getTime(event.occurred_at)),
+  }))
 }
 
 function normalizeRunStatus(status?: string | null) {

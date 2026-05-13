@@ -54,7 +54,15 @@ class PostgresAgentRepository:
         ).fetchall()
         order = {template_key: index for index, template_key in enumerate(DEFAULT_SESSION_TEMPLATE_KEYS)}
         templates = [_template_from_row(row) for row in rows]
-        return sorted(templates, key=lambda item: order.get(str(item.get("templateKey")), len(order)))
+        visible_templates = [
+            template
+            for template in templates
+            if str(template.get("template_key") or template.get("templateKey") or "") in order
+        ]
+        return sorted(
+            visible_templates,
+            key=lambda item: order.get(str(item.get("template_key") or item.get("templateKey") or ""), len(order)),
+        )
 
     def get_template(self, template_key: str) -> dict[str, Any] | None:
         self.ensure_builtin_templates()

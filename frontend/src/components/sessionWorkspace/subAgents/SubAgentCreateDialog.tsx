@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ArrowLeft, Bot } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import { HelpHint } from '@/components/ui/help-hint'
 import { cn } from '@/components/ui/utils'
 import type { AgentTemplate } from '@/apis/agents'
 import { SUB_AGENT_ADAPTER_OPTIONS, type SubAgentAdapterType } from './subAgentConfigOptions'
@@ -43,10 +44,20 @@ export function SubAgentCreateDialog({
       <DialogContent showCloseButton={false} className="gap-0 overflow-hidden p-0 sm:max-w-md">
         <DialogTitle className="sr-only">새 에이전트 추가</DialogTitle>
         <DialogDescription className="sr-only">
-          CEO에게 생성을 요청하거나 직접 세부 설정으로 새 서브에이전트를 추가합니다.
+          팀장 에이전트에게 생성을 요청하거나 직접 세부 설정으로 새 서브에이전트를 추가합니다.
         </DialogDescription>
         <div className="border-border flex items-center justify-between border-b px-4 py-2.5">
-          <span className="text-muted-foreground text-sm">새 에이전트 추가</span>
+          <span className="text-muted-foreground inline-flex items-center gap-1.5 text-sm">
+            새 에이전트 추가
+            <HelpHint label="서브 에이전트 도움말" iconClassName="h-3.5 w-3.5">
+              <p className="text-foreground font-medium">서브 에이전트</p>
+              <p>
+                팀장 에이전트 밑에서 일을 나눠 맡는 <span className="text-foreground">팀원</span>
+                이에요.
+              </p>
+              <p>예) 리서처는 자료 조사, 디자이너는 시안 작업.</p>
+            </HelpHint>
+          </span>
           <Button
             type="button"
             variant="ghost"
@@ -67,13 +78,14 @@ export function SubAgentCreateDialog({
                   <Bot className="text-foreground h-6 w-6" />
                 </div>
                 <p className="text-muted-foreground text-sm">
-                  대화 맥락과 필요한 역할을 잘 아는 CEO에게 에이전트 생성을 맡길 수 있습니다.
+                  대화 맥락과 필요한 역할을 잘 아는 팀장 에이전트에게 에이전트 생성을 맡길 수
+                  있습니다.
                 </p>
               </div>
 
               <Button className="w-full" size="lg" onClick={onAskCeo}>
                 <Bot className="mr-2 h-4 w-4" />
-                CEO에게 새 에이전트 생성 요청
+                팀장 에이전트에게 새 에이전트 생성 요청
               </Button>
 
               <div className="space-y-2">

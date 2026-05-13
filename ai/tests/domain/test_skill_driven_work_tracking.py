@@ -4,9 +4,10 @@ import asyncio
 from copy import deepcopy
 
 from app.domain.orchestration.agent.loop import TaskEngine
+from app.domain.orchestration.prompts.skill_prompt import SkillLoader
 from app.domain.tasks.models import TaskRun
 from app.domain.work.models import WorkItem, WorkRunLink
-from tests.fakes import InMemoryTaskRepository
+from tests.fakes import InMemoryAgentRepository, InMemorySkillRepository, InMemoryTaskRepository
 
 
 class DummyBroadcaster:
@@ -144,11 +145,57 @@ def test_existing_work_context_does_not_create_second_work():
     assert task.input_payload["workId"] == "work-existing"
 
 
+def test_session_agent_child_input_includes_profile_skill_names():
+    task_repository = InMemoryTaskRepository()
+    work_repository = FakeWorkRepository()
+    agent_repository = InMemoryAgentRepository()
+    skill_repository = InMemorySkillRepository()
+    skill_repository.sync_builtin_catalog(SkillLoader().load_builtin())
+    profile = agent_repository.create_session_agent_from_template(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        template_key="k_services",
+    )
+    engine = _engine(
+        task_repository=task_repository,
+        work_repository=work_repository,
+        agent_repository=agent_repository,
+        skill_repository=skill_repository,
+    )
+    work = WorkItem(
+        work_id="work-k",
+        identifier="TASK-1",
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        title="분실물 확인",
+        description="강남역 분실물 확인",
+        status="in_progress",
+        assignee_agent_id=profile["profile_id"],
+        execution_instruction="강남역에서 잃어버린 카드지갑을 찾는 경로를 정리해줘.",
+    )
+    work_repository.create_work(work)
+    child_input = engine._build_session_agent_work_input(
+        parent_task=_task(input_payload={"model": "gpt-5.4"}),
+        work=work,
+    )
+
+    assert child_input["targetAgentProfile"]["configSnapshot"]["name"] == "K-에이전트"
+    assert "subway-lost-property" in child_input["targetAgentProfile"]["configSnapshot"]["skills"]
+    assert "subway-lost-property" in child_input["enabledSkillNames"]
+    assert set(child_input["enabledSkillNames"]).issubset(
+        set(child_input["targetAgentProfile"]["configSnapshot"]["skills"])
+    )
+
+
 def _engine(
     *,
     task_repository: InMemoryTaskRepository,
     work_repository: FakeWorkRepository,
     broadcaster: DummyBroadcaster | None = None,
+    agent_repository: InMemoryAgentRepository | None = None,
+    skill_repository: InMemorySkillRepository | None = None,
 ) -> TaskEngine:
     return TaskEngine(
         task_repository,
@@ -158,6 +205,8 @@ def _engine(
         planner=None,
         tool_registry=DummyToolRegistry(),
         work_repository=work_repository,
+        agent_repository=agent_repository,
+        skill_repository=skill_repository,
     )
 
 

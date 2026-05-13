@@ -1058,13 +1058,14 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
       }
     }
 
-    // ── ORCHESTRATION halo — Stage 1 진행 시 강해지며 코어 형성 인상 ──
+    // ── ORCHESTRATION halo — Stage 1 진행 시 강해지며 코어 형성 인상, Stage 2에서 완전 소멸 ──
     const coreHub = nodes.find((n) => n.clusterId === 0 && n.tier === 'hub')
-    if (coreHub) {
+    const haloVisibility = Math.max(0, 1 - stage2Eased / 0.5)
+    if (coreHub && haloVisibility > 0.001) {
       const isHov = hc === 0
       const breathe = 1 + Math.sin(t * 0.46 + coreHub.phase) * 0.08
-      const formIntensity = stage1Eased * (1 - stage2Eased * 0.85)
-      const ringBase = (isHov ? 0.2 : 0.105) + formIntensity * 0.17
+      const formIntensity = stage1Eased * haloVisibility
+      const ringBase = ((isHov ? 0.2 : 0.105) + formIntensity * 0.17) * haloVisibility
       const haloR = (78 + Math.sin(t * 0.36) * 5 + formIntensity * 42) * breathe
 
       const halo = ctx.createRadialGradient(
@@ -1081,18 +1082,6 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
       ctx.arc(coreHub.x * dpr, coreHub.y * dpr, haloR * dpr, 0, Math.PI * 2)
       ctx.fillStyle = halo
       ctx.fill()
-
-      for (let ri = 0; ri < 3; ri++) {
-        const ringR = (44 + ri * 20 + formIntensity * 20) * breathe
-        const startA = t * (ri === 0 ? 0.15 : -0.1) + ri * 1.1
-        const span = Math.PI * (ri === 0 ? 1.42 : ri === 1 ? 1.0 : 0.62)
-        const rA = (ringBase + (isHov ? 0.06 : 0)) * (ri === 0 ? 1 : ri === 1 ? 0.58 : 0.34)
-        ctx.beginPath()
-        ctx.arc(coreHub.x * dpr, coreHub.y * dpr, ringR * dpr, startA, startA + span)
-        ctx.strokeStyle = `rgba(210,210,214,${rA.toFixed(3)})`
-        ctx.lineWidth = (ri === 0 ? 0.9 : 0.5) * dpr
-        ctx.stroke()
-      }
     }
 
     // ── Stage 2: 버튼 자리 흡수 glow ─────────────────────

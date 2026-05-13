@@ -804,7 +804,7 @@ function WorkPickerDialog({
                 </span>
               </span>
               <span className="text-muted-foreground truncate text-xs">
-                {work.assigneeAgentId ?? 'CEO'}
+                {work.assigneeAgentId ?? '팀장 에이전트'}
               </span>
               <span className="text-muted-foreground text-right text-xs">
                 {workStatusLabel(work.status)}
