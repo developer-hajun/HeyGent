@@ -325,7 +325,7 @@ const MOCK_AGENTS: AgentVisualizationInfo[] = [
   },
   {
     agentId: 'ceo',
-    name: 'CEO',
+    name: '팀장 에이전트',
     role: '최고경영자',
     skills: ['전략 기획', '리더십', '의사결정', '비즈니스 개발'],
     activityStatus: 'working',
@@ -385,7 +385,7 @@ export function createMockAgentInfoMap(): Record<string, AgentVisualizationInfo>
 
 const CEO_CONFIG: AgentConfig = {
   id: 'ceo',
-  name: 'CEO',
+  name: '팀장 에이전트',
   spritePath: '/assets/agents/ceo',
   scale: 1.05,
   stateScales: { walking: 0.85, standing_wait: 0.85, sitting_work: 0.7 },
@@ -728,7 +728,7 @@ export const useAgentVisualizationStore = create<AgentVisualizationState>((set) 
           ceo: {
             ...(state.agentInfoMap.ceo ?? {
               agentId: 'ceo',
-              name: 'CEO',
+              name: '팀장 에이전트',
               role: '',
               skills: [],
               taskHistory: [],
@@ -809,7 +809,7 @@ export const useAgentVisualizationStore = create<AgentVisualizationState>((set) 
           ceo: {
             ...(state.agentInfoMap.ceo ?? {
               agentId: 'ceo',
-              name: 'CEO',
+              name: '팀장 에이전트',
               role: '',
               skills: [],
               taskHistory: [],
@@ -855,7 +855,7 @@ export const useAgentVisualizationStore = create<AgentVisualizationState>((set) 
           ceo: {
             ...(state.agentInfoMap.ceo ?? {
               agentId: 'ceo',
-              name: 'CEO',
+              name: '팀장 에이전트',
               role: '',
               skills: [],
               taskHistory: [],

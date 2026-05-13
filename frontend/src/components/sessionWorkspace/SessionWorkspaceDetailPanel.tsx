@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { PageTabBar } from '@/components/PageTabBar'
 import { Button } from '@/components/ui/button'
+import { HelpHint } from '@/components/ui/help-hint'
 import { Tabs } from '@/components/ui/tabs'
 import {
   AgentDetailHeader,
@@ -63,8 +64,10 @@ import {
   setCachedMainAgentProfile,
   setCachedUsageRecords,
 } from '@/components/sessionWorkspace/sessionWorkspaceDashboardCache'
+import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useChatStore } from '@/store/useChatStore'
+import { useSessionStore } from '@/store/useSessionStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import type { JsonObject, RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
 import type { AiSessionSettingsPatch, ChatMessageView, RawAiSession } from '@/types/aiChat'
@@ -142,6 +145,8 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const taskRunsById = useTaskRunStore((state) => state.taskRunsById)
   const eventsByTaskRunId = useTaskRunStore((state) => state.eventsByTaskRunId)
   const fetchActiveTaskRuns = useTaskRunStore((state) => state.fetchActiveTaskRuns)
+  const updateAgentInfo = useAgentVisualizationStore((state) => state.updateAgentInfo)
+  const setMainAgentNameDraft = useSessionStore((state) => state.setMainAgentNameDraft)
   const [searchParams, setSearchParams] = useSearchParams()
   const [mainAgentProfile, setMainAgentProfile] = useState<AgentProfile | null>(() =>
     getCachedMainAgentProfile(session.session_id),
@@ -163,6 +168,8 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     getString(uiMetadata, 'agentName') ?? getString(mainAgentConfig, 'name') ?? ''
   const currentCallName =
     getString(uiMetadata, 'callName') ?? getString(mainAgentConfig, 'title') ?? ''
+  const currentCapabilities =
+    getString(uiMetadata, 'agentCapabilities') ?? getString(mainAgentConfig, 'description') ?? ''
   const currentSkillIds = normalizeMainAgentSkillIds(
     uiMetadata.agentSkills ?? mainAgentConfig.skills,
   )
@@ -193,6 +200,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   )
   const [agentName, setAgentName] = useState(currentAgentName)
   const [callName, setCallName] = useState(currentCallName)
+  const [capabilities, setCapabilities] = useState(currentCapabilities)
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>(currentSkillIds)
   const [persona, setPersona] = useState(currentPersona)
   const [instructionsEntryFile, setInstructionsEntryFile] = useState(currentInstructionsEntryFile)
@@ -241,8 +249,8 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     0,
     CEO_IMAGE_OPTIONS.findIndex((option) => option.src === profileImage),
   )
-  const displayName = agentName.trim() || '메인 에이전트'
-  const displayRole = callName.trim() || 'CEO'
+  const displayName = agentName.trim() || '팀장 에이전트'
+  const displayRole = callName.trim() || '팀장 에이전트'
   const activeTab = getMainAgentTab(searchParams.get('agentTab'))
   const skillCatalogReady = skillCatalog.length > 0
   const knownSkillIds = new Set(skillCatalog.map((skill) => skill.skillId))
@@ -259,6 +267,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const isDirty =
     agentName.trim() !== currentAgentName ||
     callName.trim() !== currentCallName ||
+    capabilities.trim() !== currentCapabilities ||
     !stringArraysEqual(selectedSkillIds, currentSkillIds) ||
     persona.trim() !== currentPersona ||
     instructionsEntryFile.trim() !== currentInstructionsEntryFile ||
@@ -328,8 +337,15 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
         setCachedMainAgentProfile(sessionId, profile)
         const config = toJsonObject(profile.configSnapshot)
         const files = getInstructionFilesFromDocuments(config.documents)
-        setAgentName(getString(uiMetadata, 'agentName') ?? getString(config, 'name') ?? 'CEO')
-        setCallName(getString(uiMetadata, 'callName') ?? getString(config, 'title') ?? 'CEO')
+        setAgentName(
+          getString(uiMetadata, 'agentName') ?? getString(config, 'name') ?? '팀장 에이전트',
+        )
+        setCallName(
+          getString(uiMetadata, 'callName') ?? getString(config, 'title') ?? '팀장 에이전트',
+        )
+        setCapabilities(
+          getString(uiMetadata, 'agentCapabilities') ?? getString(config, 'description') ?? '',
+        )
         setSelectedSkillIds(normalizeMainAgentSkillIds(uiMetadata.agentSkills ?? config.skills))
         const entryDocumentKey = getString(config, 'entryDocumentKey') ?? 'AGENTS.md'
         const nextEntryFile = getString(uiMetadata, 'instructionsEntryFile') ?? entryDocumentKey
@@ -446,6 +462,12 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   }, [authenticatedReady, commandClient, currentModel, fetchModelOptions, sessionId])
 
   useEffect(() => {
+    return () => {
+      setMainAgentNameDraft(sessionId, null)
+    }
+  }, [sessionId, setMainAgentNameDraft])
+
+  useEffect(() => {
     if (!showConfigActionBar) return
 
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -474,7 +496,9 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
 
   const resetDraft = () => {
     setAgentName(currentAgentName)
+    setMainAgentNameDraft(sessionId, null)
     setCallName(currentCallName)
+    setCapabilities(currentCapabilities)
     setSelectedSkillIds(currentSkillIds)
     setPersona(currentPersona)
     setInstructionsEntryFile(currentInstructionsEntryFile)
@@ -506,7 +530,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     const nextUiMetadata: JsonObject = { ...uiMetadata }
     setOptionalUiString(nextUiMetadata, 'agentName', agentName)
     setOptionalUiString(nextUiMetadata, 'callName', callName)
-    delete nextUiMetadata.agentCapabilities
+    setOptionalUiString(nextUiMetadata, 'agentCapabilities', capabilities)
     if (selectedSkillIds.length === 0) {
       delete nextUiMetadata.agentSkills
     } else {
@@ -552,10 +576,10 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
           [documentKey]: persona.trim(),
         }
         const profile = await updateSessionAgent(sessionId, mainAgentProfile.profileId, {
-          name: agentName.trim() || 'CEO',
+          name: agentName.trim() || '팀장 에이전트',
           role: 'ceo',
-          title: callName.trim() || 'CEO',
-          description: '',
+          title: callName.trim() || '팀장 에이전트',
+          description: capabilities.trim(),
           adapterType: 'openai',
           model: selectedModel,
           profileImage,
@@ -570,9 +594,15 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
       }
       setAgentName(agentName.trim())
       setCallName(callName.trim())
+      setCapabilities(capabilities.trim())
       setPersona(nextPersona)
       setInstructionsEntryFile(instructionsEntryFile.trim() || 'AGENTS.md')
       setInstructionsRootPath(instructionsRootPath.trim())
+      updateAgentInfo('ceo', {
+        name: agentName.trim() || '팀장 에이전트',
+        ...(profileImage ? { profileImage } : {}),
+      })
+      setMainAgentNameDraft(sessionId, null)
       setSaved(true)
       window.setTimeout(() => setSaved(false), 1400)
     } catch (error) {
@@ -583,7 +613,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   }
 
   return (
-    <WorkspacePageShell title="메인 에이전트" eyebrow="CEO" hideHeader>
+    <WorkspacePageShell title="팀장 에이전트" eyebrow="팀장 에이전트" hideHeader>
       <div className={`space-y-6 ${showConfigActionBar ? 'pb-24 sm:pb-0' : ''}`}>
         <MainAgentHeader
           callName={displayRole}
@@ -740,6 +770,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                         <DraftInput
                           onChange={(value) => {
                             setAgentName(value)
+                            setMainAgentNameDraft(sessionId, value)
                             markDirty()
                           }}
                           placeholder="예: 기획 도우미"
@@ -756,6 +787,18 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                           value={callName}
                         />
                       </Field>
+                      <Field label="할 수 있는 일">
+                        <textarea
+                          value={capabilities}
+                          onChange={(event) => {
+                            setCapabilities(event.target.value)
+                            markDirty()
+                          }}
+                          rows={3}
+                          placeholder="이 에이전트가 할 수 있는 일을 적어주세요."
+                          className={`${inputClass} min-h-[72px] resize-y leading-6`}
+                        />
+                      </Field>
                     </div>
                   </div>
                 </AgentSectionCard>
@@ -769,7 +812,20 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                       onChange={() => undefined}
                     />
                   </Field>
-                  <Field label="모델">
+                  <Field
+                    label="모델"
+                    hint={
+                      <>
+                        <p className="text-foreground font-medium">모델</p>
+                        <p>
+                          에이전트의 <span className="text-foreground">두뇌</span>를 고르는
+                          항목이에요.
+                        </p>
+                        <p>모델마다 속도·정확도·비용이 다릅니다.</p>
+                        <p>잘 모르겠으면 기본값을 그대로 두세요.</p>
+                      </>
+                    }
+                  >
                     {authenticatedReady && modelOptionsLoading && (
                       <span className="text-muted-foreground mb-1 inline-flex items-center gap-1.5 text-xs">
                         <Loader2 className="h-3 w-3 animate-spin" />
@@ -1208,10 +1264,25 @@ function MainAgentHeader({
   )
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({
+  label,
+  children,
+  hint,
+}: {
+  label: string
+  children: ReactNode
+  hint?: ReactNode
+}) {
   return (
     <label className="block space-y-1.5">
-      <span className="text-muted-foreground text-xs">{label}</span>
+      <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+        {label}
+        {hint ? (
+          <HelpHint label={`${label} 도움말`} iconClassName="h-3 w-3">
+            {hint}
+          </HelpHint>
+        ) : null}
+      </span>
       {children}
     </label>
   )

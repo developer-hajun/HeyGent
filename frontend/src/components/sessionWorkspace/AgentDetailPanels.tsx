@@ -24,6 +24,7 @@ import {
   Copy,
   FolderOpen,
   GripVertical,
+  HelpCircle,
   Loader2,
   MoreHorizontal,
   Pause,
@@ -32,6 +33,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { HelpHint } from '@/components/ui/help-hint'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 export interface AgentSummaryItemData {
@@ -304,11 +306,74 @@ export function AgentDashboardPanel({
 }
 
 export function AgentInstructionsPanel({ children }: { children: ReactNode }) {
-  return <div className="max-w-5xl space-y-6 pt-2">{children}</div>
+  return (
+    <div className="max-w-5xl space-y-6 pt-2">
+      <InstructionsHelp />
+      {children}
+    </div>
+  )
+}
+
+function InstructionsHelp() {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="border-border bg-muted/30 rounded-lg border">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="hover:bg-muted/50 flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition-colors"
+      >
+        <HelpCircle className="text-muted-foreground h-4 w-4 shrink-0" />
+        <span className="text-foreground flex-1 font-medium">지침이란?</span>
+        <ChevronDown
+          className={`text-muted-foreground h-4 w-4 shrink-0 transition-transform ${
+            open ? 'rotate-180' : ''
+          }`}
+        />
+      </button>
+      {open && (
+        <div className="border-border space-y-2.5 border-t px-4 py-3 text-sm leading-relaxed break-keep">
+          <p className="text-muted-foreground">
+            에이전트에게 주는 <span className="text-foreground">업무 안내서</span>예요.
+          </p>
+          <p className="text-muted-foreground">
+            역할·말투·해야 할 일을 적어두면, 매번 다시 설명하지 않아도 그대로 따라줍니다.
+          </p>
+          <p className="text-muted-foreground">
+            <span className="text-foreground font-mono">.md</span> 파일은 메모장처럼 글을 적는
+            파일이에요. 한국어 문장 그대로 편하게 적으시면 됩니다.
+          </p>
+          <p className="text-muted-foreground">
+            왼쪽 목록의 <span className="text-foreground">대표</span> 파일이 표지 안내서, 나머지는
+            주제별 부록입니다.
+          </p>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function AgentSkillsPanel({ children }: { children: ReactNode }) {
-  return <div className="max-w-4xl space-y-5 pt-2">{children}</div>
+  return (
+    <div className="max-w-4xl space-y-5 pt-2">
+      <div className="text-muted-foreground inline-flex items-center gap-1.5 text-xs">
+        <span>스킬이란?</span>
+        <HelpHint label="스킬 도움말">
+          <p className="text-foreground font-medium">스킬</p>
+          <p>
+            에이전트가 쓸 수 있는 <span className="text-foreground">도구</span>예요.
+          </p>
+          <p>체크하면 켜지고, 해제하면 꺼집니다.</p>
+          <p>
+            예) <span className="text-foreground">웹 검색</span>을 켜면 인터넷에서 자료를
+            찾아옵니다.
+          </p>
+        </HelpHint>
+      </div>
+      {children}
+    </div>
+  )
 }
 
 export function AgentConfigurationPanel({ children }: { children: ReactNode }) {
