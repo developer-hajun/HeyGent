@@ -578,7 +578,7 @@ const createMainAgentDisplayContext = (
     id: 'ceo',
     kind: 'main' as const,
     profileKey: 'ceo',
-    displayName: 'CEO',
+    displayName: '팀장 에이전트',
   }
 
   return {

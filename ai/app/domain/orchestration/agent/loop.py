@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from app.contracts.task.step_status import StepStatus
@@ -43,6 +44,7 @@ from app.domain.tasks.repository import TaskRepository
 from app.domain.tasks.models import StepRun, TaskRun
 
 
+logger = logging.getLogger(__name__)
 TRACKED_SKILL_TOOL_NAMES = {"skill.execute"}
 
 
@@ -62,6 +64,7 @@ class TaskEngine:
         agent_repository=None,
         skill_repository=None,
         settings=None,
+        iot_display_adapter=None,
     ) -> None:
         self.repository = repository
         self.broadcaster = broadcaster
@@ -74,6 +77,7 @@ class TaskEngine:
         self.agent_repository = agent_repository
         self.skill_repository = skill_repository
         self.settings = settings
+        self.iot_display_adapter = iot_display_adapter
         self.approval_runtime = ApprovalRuntime()
         self.delegate_runtime = DelegateRuntime(child_session_launcher, session_store=session_store)
         self.outcome_inspector = OutcomeInspector()
@@ -1359,6 +1363,18 @@ class TaskEngine:
         )
         saved_event = self.repository.append_event(event)
         await self.broadcaster.publish(saved_event)
+        if self.iot_display_adapter is not None:
+            try:
+                await self.iot_display_adapter.publish(
+                    event_type=event_type,
+                    task=task,
+                    step=step,
+                    status=event_status,
+                    summary_message=event_summary,
+                    payload=event_payload,
+                )
+            except Exception:
+                logger.exception("failed to publish iot display event")
 
     @staticmethod
     def _event_status(*, event_type: str, task: TaskRun, step: StepRun | None = None) -> str:
