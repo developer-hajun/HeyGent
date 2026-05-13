@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-export const DEFAULT_SIDEBAR_WIDTH = 260
+export const DEFAULT_SIDEBAR_WIDTH = 236
 export const DEFAULT_SIDEBAR_COLLAPSED_WIDTH = 64
 export const MIN_SIDEBAR_WIDTH = 200
 export const MAX_SIDEBAR_WIDTH = 480

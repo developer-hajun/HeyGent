@@ -28,7 +28,7 @@ import {
 import { SubAgentProfileImage } from '@/components/sessionWorkspace/subAgents'
 import { useChatStore } from '@/store/useChatStore'
 import { useSessionStore } from '@/store/useSessionStore'
-import { DEFAULT_SIDEBAR_COLLAPSED_WIDTH, DEFAULT_SIDEBAR_WIDTH } from '@/store/useUIStore'
+import { DEFAULT_SIDEBAR_COLLAPSED_WIDTH, useUIStore } from '@/store/useUIStore'
 import type { RawAiSession } from '@/types/aiChat'
 import { getString, getWorkspaceConnectionText, toJsonObject } from './sessionWorkspaceUtils'
 import type { WorkspaceConnectionState } from './sessionWorkspaceUtils'
@@ -74,6 +74,8 @@ export function SessionWorkspaceMenu({
   onSelectPanel,
 }: SessionWorkspaceMenuProps) {
   const updateSession = useChatStore((state) => state.updateSession)
+  const sidebarWidth = useUIStore((state) => state.sidebarWidth)
+  const setSidebarWidth = useUIStore((state) => state.setSidebarWidth)
   const { agentPanelsBySessionId } = useSessionStore()
   const agentPanels = agentPanelsBySessionId[sessionId] ?? []
   const title = getSessionTitle(session)
@@ -120,6 +122,32 @@ export function SessionWorkspaceMenu({
     }
   }
 
+  const handleSidebarResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (collapsed) return
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = sidebarWidth
+    const previousCursor = document.body.style.cursor
+    const previousUserSelect = document.body.style.userSelect
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      setSidebarWidth(startWidth + moveEvent.clientX - startX)
+    }
+
+    const handlePointerUp = () => {
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousUserSelect
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+  }
+
   if (collapsed) {
     return (
       <aside
@@ -163,10 +191,10 @@ export function SessionWorkspaceMenu({
 
   return (
     <aside
-      className="bg-background border-border flex h-full shrink-0 flex-col border-r"
-      style={{ width: DEFAULT_SIDEBAR_WIDTH }}
+      className="bg-background border-border relative flex h-full shrink-0 flex-col border-r"
+      style={{ width: sidebarWidth }}
     >
-      <div className="flex h-14 shrink-0 items-center gap-1 px-5 pt-2">
+      <div className="flex h-14 shrink-0 items-center gap-1 px-4 pt-2">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
           {editingTitle ? (
             <input
@@ -218,7 +246,7 @@ export function SessionWorkspaceMenu({
         </button>
       </div>
 
-      <nav className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-3">
+      <nav className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3 py-3">
         <div>
           <ConnectionStatusRow state={connectionState} />
           <div className="mt-0.5 flex flex-col gap-0.5">
@@ -231,7 +259,7 @@ export function SessionWorkspaceMenu({
                   key={item.id}
                   type="button"
                   onClick={() => onSelectPanel(item.id)}
-                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+                  className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm font-medium transition-colors ${
                     isActive
                       ? 'bg-accent text-foreground'
                       : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
@@ -251,7 +279,7 @@ export function SessionWorkspaceMenu({
             <button
               type="button"
               onClick={() => onSelectPanel('ceo')}
-              className={`flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5 pr-8 text-left text-sm font-medium transition-colors ${
+              className={`flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2.5 py-2.5 pr-8 text-left text-sm font-medium transition-colors ${
                 activePanel === 'ceo'
                   ? 'bg-accent text-foreground'
                   : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
@@ -276,7 +304,7 @@ export function SessionWorkspaceMenu({
             <button
               type="button"
               onClick={() => onSelectPanel('subAgents')}
-              className="flex min-w-0 flex-1 items-center gap-1 rounded-lg px-3 py-1.5 text-left"
+              className="flex min-w-0 flex-1 items-center gap-1 rounded-lg px-2.5 py-1.5 text-left"
             >
               <ChevronRight className="text-muted-foreground/60 h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
               <span className="text-muted-foreground/60 font-mono text-[10px] font-medium tracking-widest uppercase">
@@ -294,7 +322,7 @@ export function SessionWorkspaceMenu({
           </div>
           <div className="mt-0.5">
             {agentPanels.length === 0 ? (
-              <p className="text-muted-foreground px-3 py-2.5 text-sm font-medium">
+              <p className="text-muted-foreground px-2.5 py-2.5 text-sm font-medium">
                 추가된 에이전트 없음
               </p>
             ) : (
@@ -304,7 +332,7 @@ export function SessionWorkspaceMenu({
                     key={item.id}
                     type="button"
                     onClick={() => onOpenSubAgent(item.id)}
-                    className={`flex min-w-0 items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
+                    className={`flex min-w-0 items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm font-medium transition-colors ${
                       activePanel === 'subAgents' && activeSubAgentId === item.id
                         ? 'bg-accent text-foreground'
                         : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
@@ -323,16 +351,22 @@ export function SessionWorkspaceMenu({
           </div>
         </section>
       </nav>
-      <div className="border-border/70 shrink-0 border-t px-4 py-3">
+      <div className="border-border/70 shrink-0 border-t px-3 py-3">
         <button
           type="button"
           onClick={() => setDeleteDialogOpen(true)}
-          className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors"
+          className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm font-medium transition-colors"
         >
           <Trash2 className="h-4 w-4 shrink-0" />
           <span className="truncate">대화 삭제</span>
         </button>
       </div>
+      <div
+        role="separator"
+        aria-label="사이드바 너비 조절"
+        className="hover:bg-primary/40 absolute top-0 right-0 z-20 h-full w-1 cursor-col-resize touch-none transition-colors"
+        onPointerDown={handleSidebarResizeStart}
+      />
       <DeleteSessionDialog
         deleteError={deleteError}
         deleting={deleting}
