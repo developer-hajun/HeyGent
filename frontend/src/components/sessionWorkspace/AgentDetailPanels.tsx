@@ -33,6 +33,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import type { AgentRunItemData } from '@/components/sessionWorkspace/agentRuns/types'
 
 export interface AgentSummaryItemData {
   label: string
@@ -46,19 +47,6 @@ export interface AgentMetricItem {
   value: ReactNode
   description?: ReactNode
   chart?: ReactNode
-}
-
-export interface AgentRunItemData {
-  id: string
-  status: string
-  source?: string
-  createdAt?: string
-  sortTime?: number
-  summary?: string
-  tokens?: string
-  cost?: string
-  adapter?: string
-  model?: string
 }
 
 export interface AgentUsageMetricRecord {
@@ -512,41 +500,6 @@ export function AgentInstructionsBundlePanel({
           />
         </div>
       </div>
-    </div>
-  )
-}
-
-export function AgentRunsPanel({
-  items,
-  emptyText,
-}: {
-  items: AgentRunItemData[]
-  emptyText: string
-}) {
-  const [selectedRunId, setSelectedRunId] = useState('')
-  const selectedRun = items.find((item) => item.id === selectedRunId) ?? items[0] ?? null
-  return (
-    <div className="space-y-4 pt-2">
-      {items.length === 0 ? (
-        <p className="text-muted-foreground text-sm">{emptyText}</p>
-      ) : (
-        <div className="grid gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
-          <div className="border-border overflow-hidden rounded-lg border">
-            {items.map((run, index) => (
-              <AgentRunListItem
-                key={run.id}
-                run={run}
-                selected={
-                  (selectedRun?.id ?? items[0]?.id) === run.id ||
-                  (selectedRun === null && index === 0)
-                }
-                onSelect={() => setSelectedRunId(run.id)}
-              />
-            ))}
-          </div>
-          <AgentRunDetailCard run={selectedRun} />
-        </div>
-      )}
     </div>
   )
 }
@@ -1496,73 +1449,6 @@ function getRunSummaryExcerpt(summary: string | undefined) {
   return excerpt.join(' ')
 }
 
-function AgentRunListItem({
-  onSelect,
-  run,
-  selected,
-}: {
-  onSelect: () => void
-  run: AgentRunItemData
-  selected: boolean
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={`hover:bg-accent/20 border-border flex w-full flex-col gap-1.5 border-b px-3 py-3 text-left text-sm last:border-b-0 ${
-        selected ? 'bg-accent/40' : ''
-      }`}
-    >
-      <span className="flex items-center gap-2">
-        <AgentStatusDot status={run.status} />
-        <span className="truncate text-xs font-medium">{run.summary || shortRunId(run.id)}</span>
-      </span>
-      <span className="text-muted-foreground flex items-center justify-between gap-2 pl-4.5 text-[11px]">
-        <span className="font-mono">{shortRunId(run.id)}</span>
-        <span>{run.createdAt ?? '방금 전'}</span>
-      </span>
-    </button>
-  )
-}
-
-function AgentRunDetailCard({ run }: { run: AgentRunItemData | null }) {
-  if (!run) return null
-  return (
-    <div className="space-y-4">
-      <div className="border-border overflow-hidden rounded-lg border">
-        <div className="space-y-3 p-4">
-          <div className="flex items-center gap-2">
-            <AgentStatusPill status={run.status} />
-            <span className="text-muted-foreground font-mono text-xs">{run.id}</span>
-          </div>
-          <div className="text-muted-foreground flex flex-wrap items-center gap-1.5 font-mono text-[11px]">
-            {run.adapter ? (
-              <span className="bg-muted rounded px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase">
-                {run.adapter}
-              </span>
-            ) : null}
-            {run.model ? <span>{run.model}</span> : null}
-          </div>
-          <AgentSummaryGrid
-            items={[
-              { label: '시작', value: run.createdAt ?? '-' },
-              { label: '토큰', value: run.tokens ?? '-' },
-              { label: '비용', value: run.cost ?? '-' },
-              { label: '출처', value: run.source ?? '-' },
-            ]}
-          />
-        </div>
-      </div>
-      <div className="border-border rounded-lg border p-4">
-        <h4 className="text-sm font-medium">결과</h4>
-        <p className="text-muted-foreground mt-2 text-sm">
-          {run.summary || '아직 결과가 없습니다.'}
-        </p>
-      </div>
-    </div>
-  )
-}
-
 function AgentSkillTransferColumn({
   countLabel,
   emptyLabel,
@@ -1811,24 +1697,78 @@ function AgentInlineSummary({ label, value }: { label: string; value: ReactNode 
   )
 }
 
-function AgentStatusDot({ status }: { status: string }) {
-  const tone =
-    status === 'failed'
-      ? 'bg-red-500'
-      : status === 'running'
-        ? 'bg-blue-500'
-        : status === 'waiting' || status === 'pending'
-          ? 'bg-amber-500'
-          : status === 'succeeded'
-            ? 'bg-emerald-500'
-            : 'bg-muted-foreground/50'
-  return <span className={`h-2 w-2 rounded-full ${tone}`} />
+function getRunStatusView(status: string) {
+  const normalized = normalizeRunStatusValue(status)
+  switch (normalized) {
+    case 'failed':
+      return {
+        label: '오류',
+        dotClassName: 'bg-red-500',
+        pillClassName: 'border-red-200 bg-red-50 text-red-700',
+      }
+    case 'running':
+      return {
+        label: '실행 중',
+        dotClassName: 'bg-blue-500',
+        pillClassName: 'border-blue-200 bg-blue-50 text-blue-700',
+      }
+    case 'waiting':
+      return {
+        label: '대기 중',
+        dotClassName: 'bg-amber-500',
+        pillClassName: 'border-amber-200 bg-amber-50 text-amber-700',
+      }
+    case 'succeeded':
+      return {
+        label: '완료',
+        dotClassName: 'bg-emerald-500',
+        pillClassName: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+      }
+    default:
+      return {
+        label: '준비 중',
+        dotClassName: 'bg-muted-foreground/50',
+        pillClassName: 'border-border bg-muted text-muted-foreground',
+      }
+  }
+}
+
+function normalizeRunStatusValue(status: string) {
+  switch (status) {
+    case 'failed':
+    case 'FAILED':
+    case 'blocked':
+    case 'BLOCKED':
+    case 'cancelled':
+    case 'CANCELLED':
+    case 'canceled':
+    case 'CANCELED':
+      return 'failed'
+    case 'running':
+    case 'RUNNING':
+      return 'running'
+    case 'waiting':
+    case 'WAITING':
+      return 'waiting'
+    case 'succeeded':
+    case 'completed':
+    case 'COMPLETED':
+      return 'succeeded'
+    case 'pending':
+    case 'PENDING':
+      return 'pending'
+    default:
+      return 'pending'
+  }
 }
 
 function AgentStatusPill({ status }: { status: string }) {
+  const statusView = getRunStatusView(status)
   return (
-    <span className="bg-muted text-muted-foreground inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium tracking-wide uppercase">
-      {runStatusLabel(status)}
+    <span
+      className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-wide uppercase ${statusView.pillClassName}`}
+    >
+      {statusView.label}
     </span>
   )
 }
@@ -1841,29 +1781,6 @@ function statusLabel(status: AgentBudgetSummaryData['status']) {
   if (status === 'hard_stop') return '사용 중지'
   if (status === 'warning') return '주의'
   return '정상'
-}
-
-function runStatusLabel(status: string) {
-  switch (status) {
-    case 'succeeded':
-    case 'completed':
-    case 'COMPLETED':
-      return '완료'
-    case 'running':
-    case 'RUNNING':
-      return '실행 중'
-    case 'waiting':
-    case 'WAITING':
-      return '대기 중'
-    case 'pending':
-    case 'PENDING':
-      return '준비 중'
-    case 'failed':
-    case 'FAILED':
-      return '오류'
-    default:
-      return status
-  }
 }
 
 function normalizeInstructionPath(value: string) {

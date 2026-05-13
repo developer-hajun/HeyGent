@@ -21,17 +21,17 @@ import {
   AgentRunStatusChart,
   AgentRunSuccessRateChart,
   AgentUsageActivityChart,
-  type AgentRunItemData,
   AgentConfigurationPanel,
   AgentDashboardPanel,
   AgentInstructionsBundlePanel,
   AgentInstructionsPanel,
   AgentModelDropdown,
-  AgentRunsPanel,
   AgentSectionCard,
   AgentSkillsLibraryPanel,
   AgentSkillsPanel,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
+import { AgentRunsPanel } from '@/components/sessionWorkspace/agentRuns/AgentRunsPanel'
+import type { AgentRunItemData } from '@/components/sessionWorkspace/agentRuns/types'
 import { AgentSkillDetailDialog } from '@/components/sessionWorkspace/AgentSkillDetailDialog'
 import {
   type AgentRunUsageSummary,
@@ -967,11 +967,15 @@ function buildSessionRunItem(
   const answer = [...relatedMessages]
     .reverse()
     .find((message) => message.role === 'assistant')?.content
+  const inputPayload = toJsonObject(taskRun?.input_payload)
+  const resultPayload = toJsonObject(taskRun?.result_payload)
   const sortTime = getRunSortTime(taskRun, events, relatedMessages, session)
 
   return {
     id: taskRunId,
-    status: normalizeRunStatus(summary.tone),
+    status: normalizeRunStatus(
+      taskRun?.status ?? summary.tone ?? (answer ? 'COMPLETED' : undefined),
+    ),
     source: 'chat',
     createdAt: formatRunTimestamp(sortTime),
     summary:
@@ -983,6 +987,25 @@ function buildSessionRunItem(
     cost: '-',
     adapter: 'openai',
     model: getString(toJsonObject(session.settings), 'model') ?? undefined,
+    request:
+      prompt ??
+      getFirstString(inputPayload, 'prompt', 'content', 'rawUserInput', 'raw_user_input') ??
+      undefined,
+    delegationInput: buildRunDelegationInput(inputPayload, taskRun?.displayContext),
+    result:
+      answer ??
+      getFirstString(resultPayload, 'summary_message', 'summaryMessage', 'content', 'answer') ??
+      getFirstString(taskRun, 'progress_summary') ??
+      undefined,
+    transcriptSessionId:
+      getFirstString(
+        inputPayload,
+        'transcript_session_id',
+        'transcriptSessionId',
+        'agentSessionId',
+        'agent_session_id',
+      ) ?? undefined,
+    timeline: buildRunTimelineItems(events),
     sortTime,
   }
 }
@@ -1002,6 +1025,14 @@ function toAgentRunItem(
     cost: formatAgentRunCostUsage(usage),
     adapter: item.adapter,
     model: item.model,
+    request: item.request,
+    delegationInput: item.delegationInput,
+    handoff: item.handoff,
+    result: item.result,
+    transcriptSessionId: item.transcriptSessionId,
+    parentTranscriptSessionId: item.parentTranscriptSessionId,
+    agentName: item.agentName,
+    timeline: item.timeline,
     sortTime: item.sortTime,
   }
 }
@@ -1048,6 +1079,42 @@ function getCompactRunSummary(value?: string | null) {
   const text = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : ''
   if (!text) return undefined
   return text.length > 120 ? `${text.slice(0, 117)}...` : text
+}
+
+function getFirstString(source: unknown, ...keys: string[]) {
+  const record = toJsonObject(source)
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim() !== '') return value.trim()
+  }
+  return null
+}
+
+function buildRunDelegationInput(
+  inputPayload: JsonObject,
+  displayContext: RawTaskRun['displayContext'] | undefined | null,
+) {
+  const parts: string[] = []
+  const agentName = displayContext?.assigneeAgent?.displayName
+  if (agentName && displayContext?.assigneeAgent?.kind !== 'main') {
+    parts.push(`담당 에이전트: ${agentName}`)
+  }
+  const workIdentifier = getFirstString(inputPayload, 'workIdentifier', 'work_identifier')
+  if (workIdentifier) parts.push(`작업: ${workIdentifier}`)
+  const workContext = toJsonObject(inputPayload.workContext)
+  const workTitle = getFirstString(workContext, 'title')
+  if (workTitle) parts.push(`작업 제목: ${workTitle}`)
+  return parts.length > 0 ? parts.join('\n') : undefined
+}
+
+function buildRunTimelineItems(events: RawTaskEventPayload[]) {
+  return events.slice(-12).map((event, index) => ({
+    id: `${event.task_run_id}-${event.sequence ?? index}`,
+    label: event.event_type,
+    message: event.summary_message ?? undefined,
+    status: event.status ?? undefined,
+    time: formatRunTimestamp(getTime(event.occurred_at)),
+  }))
 }
 
 function formatRunTimestamp(time: number) {
