@@ -1,12 +1,9 @@
 package com.example.mob.feature.chat
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Bundle
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
+import android.media.MediaRecorder
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
@@ -47,8 +44,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.example.mob.BuildConfig
 import com.example.mob.ui.theme.*
-import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
+import org.json.JSONObject
+import java.io.File
+import java.util.concurrent.TimeUnit
 
 private val BotBubbleColor = Color(0xFF1C1C1E)
 
@@ -206,110 +215,86 @@ fun ChatInputBar(
     placeholder: String = "젠틀맨 어시스턴트에게 질문하세요..."
 ) {
     var isRecording by remember { mutableStateOf(false) }
+    var isTranscribing by remember { mutableStateOf(false) }
     var amplitude by remember { mutableStateOf(0f) }
     val context = LocalContext.current
+
+    val recorderRef = remember { mutableStateOf<MediaRecorder?>(null) }
+    val audioFileRef = remember { mutableStateOf<File?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) isRecording = true }
 
-    val speechRecognizer = remember {
-        if (SpeechRecognizer.isRecognitionAvailable(context))
-            SpeechRecognizer.createSpeechRecognizer(context)
-        else null
-    }
-    // 이전 세션에서 확정된 텍스트 누적용
-    val committedText = remember { mutableStateOf("") }
-    // 콜백에서 현재 녹음 중인지 확인하기 위한 ref (Compose 상태보다 빠르게 읽힘)
-    val activeRef = remember { mutableStateOf(false) }
-
-    val recognizerIntent = remember {
-        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.KOREAN.toLanguageTag())
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
+    // 화면 이탈 시 정리
+    DisposableEffect(Unit) {
+        onDispose {
+            recorderRef.value?.let {
+                try { it.stop(); it.release() } catch (_: Exception) {}
+            }
+            recorderRef.value = null
         }
     }
 
-    DisposableEffect(Unit) {
-        onDispose { speechRecognizer?.destroy() }
-    }
-
+    // 녹음 시작/종료 + Whisper 전사
     LaunchedEffect(isRecording) {
         if (isRecording) {
-            committedText.value = ""
-            activeRef.value = true
-            speechRecognizer?.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {}
-                override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {
-                    amplitude = ((rmsdB + 2f) * 8f / 100f).coerceIn(0f, 1f)
+            // --- 녹음 시작 ---
+            val file = File(context.cacheDir, "whisper_input.m4a")
+            if (file.exists()) file.delete()
+            audioFileRef.value = file
+
+            @Suppress("DEPRECATION")
+            val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(context)
+            } else {
+                MediaRecorder()
+            }
+            try {
+                recorder.apply {
+                    setAudioSource(MediaRecorder.AudioSource.MIC)
+                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                    setAudioSamplingRate(16000)
+                    setAudioChannels(1)
+                    setOutputFile(file.absolutePath)
+                    prepare()
+                    start()
                 }
-                override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() {}
-                override fun onError(error: Int) {
-                    amplitude = 0f
-                    if (!activeRef.value) return
-                    val recoverable = error in setOf(
-                        SpeechRecognizer.ERROR_NO_MATCH,
-                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
-                        SpeechRecognizer.ERROR_AUDIO,
-                        SpeechRecognizer.ERROR_CLIENT,
-                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
-                    )
-                    if (recoverable) {
-                        // 짧은 무음/타임아웃이면 계속 듣기
-                        speechRecognizer?.startListening(recognizerIntent)
-                    } else {
-                        activeRef.value = false
-                        isRecording = false
-                    }
+                recorderRef.value = recorder
+                // 진폭 폴링 (파형 애니메이션용)
+                while (isActive) {
+                    delay(80)
+                    val amp = recorderRef.value?.maxAmplitude ?: 0
+                    amplitude = (amp.toFloat() / 8000f).coerceIn(0f, 1f)
                 }
-                override fun onResults(results: Bundle?) {
-                    amplitude = 0f
-                    val text = results
-                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        ?.firstOrNull()
-                    if (!text.isNullOrBlank()) {
-                        val next = buildString {
-                            if (committedText.value.isNotEmpty()) {
-                                append(committedText.value)
-                                append(" ")
-                            }
-                            append(text)
-                        }
-                        committedText.value = next
-                        onInputChange(next)
-                    }
-                    // 수동 중지 전까지 계속 듣기
-                    if (activeRef.value) {
-                        speechRecognizer?.startListening(recognizerIntent)
-                    }
-                }
-                override fun onPartialResults(partialResults: Bundle?) {
-                    val partial = partialResults
-                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        ?.firstOrNull()
-                    if (!partial.isNullOrBlank()) {
-                        val display = buildString {
-                            if (committedText.value.isNotEmpty()) {
-                                append(committedText.value)
-                                append(" ")
-                            }
-                            append(partial)
-                        }
-                        onInputChange(display)
-                    }
-                }
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            })
-            speechRecognizer?.startListening(recognizerIntent)
+            } catch (e: Exception) {
+                try { recorder.release() } catch (_: Exception) {}
+                recorderRef.value = null
+                isRecording = false
+            }
         } else {
-            activeRef.value = false
-            speechRecognizer?.stopListening()
+            // --- 녹음 종료 → Whisper API 전사 ---
             amplitude = 0f
+            val recorder = recorderRef.value
+            val file = audioFileRef.value
+            recorderRef.value = null
+
+            if (recorder != null) {
+                try { recorder.stop(); recorder.release() } catch (_: Exception) {}
+
+                // 유효한 녹음 파일이 있으면 Whisper API 호출
+                if (file != null && file.exists() && file.length() > 1024L) {
+                    isTranscribing = true
+                    withContext(Dispatchers.IO) {
+                        val result = callWhisperApi(file)
+                        withContext(Dispatchers.Main) {
+                            if (result.isNotBlank()) onInputChange(result)
+                            isTranscribing = false
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -320,7 +305,7 @@ fun ChatInputBar(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (!isRecording) {
+            if (!isRecording && !isTranscribing) {
                 IconButton(onClick = onPlusClick, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Default.Add, contentDescription = null, tint = TextSecondary)
                 }
@@ -337,6 +322,15 @@ fun ChatInputBar(
             ) {
                 when {
                     isRecording && inputText.isEmpty() -> RecordingWaveform(amplitude)
+                    isTranscribing -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = NavyPrimary
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("변환 중...", color = TextSecondary, fontSize = 14.sp)
+                    }
                     isProcessing -> Text("응답을 기다리는 중...", color = TextSecondary, fontSize = 14.sp)
                     else -> BasicTextField(
                         value = inputText,
@@ -359,17 +353,23 @@ fun ChatInputBar(
 
             Spacer(modifier = Modifier.width(6.dp))
 
+            // 마이크 버튼 (전사 중에는 비활성)
             if (!isProcessing) {
                 IconButton(
                     onClick = {
+                        if (isTranscribing) return@IconButton
                         if (isRecording) {
                             isRecording = false
                         } else {
                             val granted = ContextCompat.checkSelfPermission(
                                 context, Manifest.permission.RECORD_AUDIO
                             ) == PackageManager.PERMISSION_GRANTED
-                            if (granted) isRecording = true
-                            else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            if (granted) {
+                                onInputChange("")
+                                isRecording = true
+                            } else {
+                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
                         }
                     },
                     modifier = Modifier.size(36.dp)
@@ -377,12 +377,17 @@ fun ChatInputBar(
                     Icon(
                         Icons.Default.Mic,
                         contentDescription = null,
-                        tint = if (isRecording) HealthRed else TextSecondary
+                        tint = when {
+                            isTranscribing -> TextHint
+                            isRecording -> HealthRed
+                            else -> TextSecondary
+                        }
                     )
                 }
                 Spacer(modifier = Modifier.width(4.dp))
             }
 
+            // 우측 액션 버튼
             when {
                 isProcessing -> Box(
                     modifier = Modifier
@@ -403,6 +408,19 @@ fun ChatInputBar(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "전송", tint = Color.White, modifier = Modifier.size(18.dp))
+                }
+                isTranscribing -> Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(NavyPrimary.copy(alpha = 0.4f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = Color.White
+                    )
                 }
                 inputText.isNotBlank() -> Box(
                     modifier = Modifier
@@ -429,9 +447,41 @@ fun ChatInputBar(
     }
 }
 
+/** OpenAI Whisper API 호출 — IO 스레드에서 호출할 것 */
+private fun callWhisperApi(file: File): String {
+    return try {
+        val client = OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
+
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart(
+                "file", file.name,
+                file.asRequestBody("audio/m4a".toMediaType())
+            )
+            .addFormDataPart("model", "whisper-1")
+            .addFormDataPart("language", "ko")
+            .build()
+
+        val request = Request.Builder()
+            .url("https://api.openai.com/v1/audio/transcriptions")
+            .header("Authorization", "Bearer ${BuildConfig.OPENAI_API_KEY}")
+            .post(body)
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            val raw = response.body?.string() ?: return ""
+            JSONObject(raw).optString("text", "")
+        }
+    } catch (e: Exception) {
+        ""
+    }
+}
+
 @Composable
 private fun RecordingWaveform(amplitude: Float) {
-    // 산 모양 배율: 중앙 바가 가장 높고 양 끝이 낮음
     val multipliers = remember { listOf(0.4f, 0.62f, 0.82f, 1.0f, 0.82f, 0.62f, 0.4f) }
 
     val animatedHeights = multipliers.map { mult ->
@@ -449,7 +499,9 @@ private fun RecordingWaveform(amplitude: Float) {
     ) {
         Text("녹음 중", fontSize = 13.sp, color = HealthRed)
         Spacer(Modifier.width(10.dp))
-        Canvas(modifier = Modifier.width(64.dp).height(24.dp)) {
+        Canvas(modifier = Modifier
+            .width(64.dp)
+            .height(24.dp)) {
             val barW = 4.dp.toPx()
             val gap = 4.dp.toPx()
             val total = 7 * barW + 6 * gap
@@ -531,7 +583,6 @@ fun VoiceModeOverlay(onStop: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(40.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 마이크 켜기/끄기
             Box(
                 modifier = Modifier
                     .size(64.dp)
@@ -548,7 +599,6 @@ fun VoiceModeOverlay(onStop: () -> Unit) {
                 )
             }
 
-            // 음성 모드 종료
             Box(
                 modifier = Modifier
                     .size(64.dp)

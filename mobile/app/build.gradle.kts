@@ -33,6 +33,10 @@ android {
         val baseUrl = if (rawBaseUrl.endsWith("/")) rawBaseUrl else "$rawBaseUrl/"
         buildConfigField("String", "BASE_URL", "\"$baseUrl\"")
 
+        // OpenAI API 키
+        val openAiKey = secrets.getProperty("OPENAI_API_KEY", "")
+        buildConfigField("String", "OPENAI_API_KEY", "\"$openAiKey\"")
+
         // 카카오 키: secrets.properties → string 리소스로 주입
         val kakaoKey = secrets.getProperty("KAKAO_NATIVE_APP_KEY", "")
         resValue("string", "kakao_app_key", kakaoKey)
