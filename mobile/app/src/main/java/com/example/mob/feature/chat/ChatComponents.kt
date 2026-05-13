@@ -218,6 +218,20 @@ fun ChatInputBar(
             SpeechRecognizer.createSpeechRecognizer(context)
         else null
     }
+    // 이전 세션에서 확정된 텍스트 누적용
+    val committedText = remember { mutableStateOf("") }
+    // 콜백에서 현재 녹음 중인지 확인하기 위한 ref (Compose 상태보다 빠르게 읽힘)
+    val activeRef = remember { mutableStateOf(false) }
+
+    val recognizerIntent = remember {
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.KOREAN.toLanguageTag())
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose { speechRecognizer?.destroy() }
@@ -225,6 +239,8 @@ fun ChatInputBar(
 
     LaunchedEffect(isRecording) {
         if (isRecording) {
+            committedText.value = ""
+            activeRef.value = true
             speechRecognizer?.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {}
                 override fun onBeginningOfSpeech() {}
@@ -234,35 +250,64 @@ fun ChatInputBar(
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() {}
                 override fun onError(error: Int) {
-                    isRecording = false
                     amplitude = 0f
+                    if (!activeRef.value) return
+                    val recoverable = error in setOf(
+                        SpeechRecognizer.ERROR_NO_MATCH,
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
+                        SpeechRecognizer.ERROR_AUDIO,
+                        SpeechRecognizer.ERROR_CLIENT,
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
+                    )
+                    if (recoverable) {
+                        // 짧은 무음/타임아웃이면 계속 듣기
+                        speechRecognizer?.startListening(recognizerIntent)
+                    } else {
+                        activeRef.value = false
+                        isRecording = false
+                    }
                 }
                 override fun onResults(results: Bundle?) {
+                    amplitude = 0f
                     val text = results
                         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         ?.firstOrNull()
-                    if (!text.isNullOrBlank()) onInputChange(text)
-                    isRecording = false
-                    amplitude = 0f
+                    if (!text.isNullOrBlank()) {
+                        val next = buildString {
+                            if (committedText.value.isNotEmpty()) {
+                                append(committedText.value)
+                                append(" ")
+                            }
+                            append(text)
+                        }
+                        committedText.value = next
+                        onInputChange(next)
+                    }
+                    // 수동 중지 전까지 계속 듣기
+                    if (activeRef.value) {
+                        speechRecognizer?.startListening(recognizerIntent)
+                    }
                 }
                 override fun onPartialResults(partialResults: Bundle?) {
-                    val text = partialResults
+                    val partial = partialResults
                         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         ?.firstOrNull()
-                    if (!text.isNullOrBlank()) onInputChange(text)
+                    if (!partial.isNullOrBlank()) {
+                        val display = buildString {
+                            if (committedText.value.isNotEmpty()) {
+                                append(committedText.value)
+                                append(" ")
+                            }
+                            append(partial)
+                        }
+                        onInputChange(display)
+                    }
                 }
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
-            speechRecognizer?.startListening(
-                Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.KOREAN.toLanguageTag())
-                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                    putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-                }
-            )
+            speechRecognizer?.startListening(recognizerIntent)
         } else {
+            activeRef.value = false
             speechRecognizer?.stopListening()
             amplitude = 0f
         }
