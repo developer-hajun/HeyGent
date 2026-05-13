@@ -89,9 +89,7 @@ public class DeviceDisplayStateRedisRepository {
             return;
         }
 
-        if (taskRunIds.size() < 3) {
-            taskRunIds.add(payload.taskRunId());
-        }
+        taskRunIds.add(payload.taskRunId());
         saveActiveTaskRunIds(userId, taskRunIds);
     }
 
