@@ -36,6 +36,10 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
         description="Web research, extraction, and crawl tools.",
         tools=("web_search", "web_extract", "web_crawl", "http_get"),
     ),
+    "messaging": RuntimeToolsetDefinition(
+        description="Outbound messaging tools.",
+        tools=("mattermost.send",),
+    ),
     "browser": RuntimeToolsetDefinition(
         description="Browser automation tools.",
         tools=(
