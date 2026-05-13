@@ -204,6 +204,43 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     );
     """,
     """
+    CREATE TABLE IF NOT EXISTS ai_skill_catalog (
+        skill_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        display_name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        source_type TEXT NOT NULL DEFAULT 'builtin' CHECK (source_type IN ('builtin', 'custom')),
+        source_path TEXT,
+        version INTEGER NOT NULL DEFAULT 1,
+        default_enabled BOOLEAN NOT NULL DEFAULT true,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS ai_user_skill_settings (
+        owner_key TEXT NOT NULL,
+        owner_user_id BIGINT REFERENCES users(id),
+        skill_id TEXT NOT NULL REFERENCES ai_skill_catalog(skill_id) ON DELETE CASCADE,
+        enabled BOOLEAN NOT NULL,
+        config_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (owner_key, skill_id)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS ai_agent_skill_settings (
+        profile_id TEXT NOT NULL REFERENCES ai_agent_profiles(profile_id) ON DELETE CASCADE,
+        skill_id TEXT NOT NULL REFERENCES ai_skill_catalog(skill_id) ON DELETE CASCADE,
+        enabled BOOLEAN NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (profile_id, skill_id)
+    );
+    """,
+    """
     CREATE TABLE IF NOT EXISTS provider_oauth_states (
         provider_name TEXT NOT NULL,
         state TEXT NOT NULL,
@@ -558,6 +595,18 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_ai_agent_instruction_documents_bundle
     ON ai_agent_instruction_documents(bundle_id, document_key);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_ai_skill_catalog_source
+    ON ai_skill_catalog(source_type, name);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_ai_user_skill_settings_owner_enabled
+    ON ai_user_skill_settings(owner_key, enabled);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_ai_agent_skill_settings_profile_enabled
+    ON ai_agent_skill_settings(profile_id, enabled);
     """,
     """
     INSERT INTO ai_agent_profiles (

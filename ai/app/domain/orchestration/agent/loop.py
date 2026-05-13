@@ -43,7 +43,7 @@ from app.domain.tasks.repository import TaskRepository
 from app.domain.tasks.models import StepRun, TaskRun
 
 
-TRACKED_SKILL_TOOL_NAMES = {"skills.read", "skill.execute"}
+TRACKED_SKILL_TOOL_NAMES = {"skill.execute"}
 
 
 class TaskEngine:

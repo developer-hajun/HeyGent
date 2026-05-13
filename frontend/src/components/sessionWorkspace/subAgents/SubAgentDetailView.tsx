@@ -42,6 +42,12 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tabs } from '@/components/ui/tabs'
 import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
+import {
+  getUserSkillDetail,
+  listUserSkills,
+  type SkillCatalogDetail,
+  type SkillCatalogItem,
+} from '@/apis/agents'
 import { listTaskRuns } from '@/apis/taskRuns'
 import {
   getCachedTaskRuns,
@@ -57,9 +63,9 @@ import type { RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
 import type { RawTaskRun, TaskRunAgentRef } from '@/types/taskRuns'
 import { isInternalStepAnchorEvent, toTaskRunSummaryView } from '@/utils/taskRunStatusView'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
+import { AgentSkillDetailDialog } from '@/components/sessionWorkspace/AgentSkillDetailDialog'
 import { SubAgentDraftForm } from './SubAgentDraftForm'
 import { SubAgentProfileImage } from './SubAgentProfileImage'
-import { SUB_AGENT_SKILLS } from './subAgentOptions'
 
 type SubAgentDetailTab = 'dashboard' | 'instructions' | 'skills' | 'configuration' | 'runs'
 
@@ -117,7 +123,32 @@ export function SubAgentDetailView({
     () => getCachedUsageRecords(sessionId) ?? [],
   )
   const [usageError, setUsageError] = useState<string | null>(null)
-  const selectedSkills = SUB_AGENT_SKILLS.filter((skill) => item.agent.skills?.includes(skill.id))
+  const [skillCatalog, setSkillCatalog] = useState<SkillCatalogItem[]>([])
+  const [skillCatalogError, setSkillCatalogError] = useState<string | null>(null)
+  const [skillDetail, setSkillDetail] = useState<SkillCatalogDetail | null>(null)
+  const [skillDetailOpen, setSkillDetailOpen] = useState(false)
+  const [skillDetailLoading, setSkillDetailLoading] = useState(false)
+  const [skillDraftState, setSkillDraftState] = useState<{
+    itemId: string
+    skills: string[]
+  }>(() => ({
+    itemId: item.id,
+    skills: item.agent.skills ?? [],
+  }))
+  const skillDraft =
+    skillDraftState.itemId === item.id ? skillDraftState.skills : (item.agent.skills ?? [])
+  const skillCatalogReady = skillCatalog.length > 0
+  const knownSkillIds = new Set(skillCatalog.map((skill) => skill.skillId))
+  const selectedKnownSkillIds = skillCatalogReady
+    ? skillDraft.filter((skillId) => knownSkillIds.has(skillId))
+    : skillDraft
+  const missingSkillIds = skillCatalogReady
+    ? skillDraft.filter((skillId) => !knownSkillIds.has(skillId))
+    : []
+  const orderedSkillCatalog = useMemo(
+    () => orderSkillCatalogBySelectedIds(skillCatalog, selectedKnownSkillIds),
+    [skillCatalog, selectedKnownSkillIds],
+  )
   const profileId = item.agent.profileId ?? item.id
   const agentTaskRuns = useMemo(
     () => buildAgentTaskRuns(sessionId, profileId, loadedTaskRuns, taskRunsById),
@@ -151,6 +182,7 @@ export function SubAgentDetailView({
     !shallowStringRecordEqual(instructionsFiles, item.agent.instructionsFiles ?? {}) ||
     instructionsMode !== (item.agent.instructionsMode ?? 'managed') ||
     instructionsRootPath.trim() !== (item.agent.instructionsRootPath ?? '')
+  const skillsDirty = !stringArraysEqual(skillDraft, item.agent.skills ?? [])
 
   useEffect(() => {
     if (!authenticatedReady || commandClient === null || sessionId.startsWith('pending_session_')) {
@@ -199,6 +231,27 @@ export function SubAgentDetailView({
     }
   }, [authenticatedReady, commandClient, sessionId])
 
+  useEffect(() => {
+    if (!authenticatedReady || commandClient === null) {
+      return
+    }
+
+    let alive = true
+    void listUserSkills()
+      .then((items) => {
+        if (!alive) return
+        setSkillCatalog(items)
+        setSkillCatalogError(null)
+      })
+      .catch(() => {
+        if (alive) setSkillCatalogError('스킬 목록을 불러오지 못했습니다.')
+      })
+
+    return () => {
+      alive = false
+    }
+  }, [authenticatedReady, commandClient])
+
   const selectTab = (nextTab: SubAgentDetailTab) => {
     setTab(nextTab)
     onTabChange?.(nextTab)
@@ -229,13 +282,42 @@ export function SubAgentDetailView({
   }
 
   const toggleSkill = (skillId: string, checked: boolean) => {
-    const currentSkills = item.agent.skills ?? []
+    const catalogItem = skillCatalog.find((skill) => skill.skillId === skillId)
+    if (catalogItem && !catalogItem.enabled) return
     const nextSkills = checked
-      ? Array.from(new Set([...currentSkills, skillId]))
-      : currentSkills.filter((id) => id !== skillId)
+      ? Array.from(new Set([...skillDraft, skillId]))
+      : skillDraft.filter((id) => id !== skillId)
+    setSkillDraftState({ itemId: item.id, skills: nextSkills })
+    setSaved(false)
+  }
+
+  const saveSkillDraft = () => {
+    if (!skillsDirty) return
     setSkillSaving(true)
-    onSave({ ...item.agent, skills: nextSkills })
-    window.setTimeout(() => setSkillSaving(false), 500)
+    onSave({ ...item.agent, skills: selectedKnownSkillIds })
+    setSaved(true)
+    window.setTimeout(() => {
+      setSkillSaving(false)
+      setSaved(false)
+    }, 800)
+  }
+
+  const resetSkillDraft = () => {
+    setSkillDraftState({ itemId: item.id, skills: item.agent.skills ?? [] })
+    setSaved(false)
+  }
+
+  const openSkillDetail = (skillId: string) => {
+    setSkillDetailOpen(true)
+    setSkillDetailLoading(true)
+    void getUserSkillDetail(skillId)
+      .then((detail) => {
+        setSkillDetail(detail)
+      })
+      .catch(() => {
+        setSkillCatalogError('스킬 상세를 불러오지 못했습니다.')
+      })
+      .finally(() => setSkillDetailLoading(false))
   }
 
   const handleDelete = async () => {
@@ -252,7 +334,7 @@ export function SubAgentDetailView({
   }
 
   return (
-    <div className={`space-y-6 ${instructionsDirty ? 'pb-24 sm:pb-0' : ''}`}>
+    <div className={`space-y-6 ${instructionsDirty || skillsDirty ? 'pb-24 sm:pb-0' : ''}`}>
       <AgentDetailHeader
         actionsMenu={
           <DropdownMenu>
@@ -408,22 +490,60 @@ export function SubAgentDetailView({
           <AgentSkillsLibraryPanel
             adapterLabel={item.agent.adapterType ?? 'local'}
             applicationLabel="에이전트 실행 시 적용"
-            rows={SUB_AGENT_SKILLS.map((skill) => ({
-              key: skill.id,
-              name: skill.label,
+            rows={orderedSkillCatalog.map((skill) => ({
+              key: skill.skillId,
+              name: skill.displayName,
               description: skill.description,
-              checked: item.agent.skills?.includes(skill.id) ?? false,
-              linkLabel: '보기',
+              checked: skillDraft.includes(skill.skillId),
+              disabled: !skill.enabled,
+              detail: skill.enabled
+                ? undefined
+                : '사용자 설정에서 꺼져 있어 이 에이전트에 적용할 수 없습니다.',
+              locationLabel: skill.sourcePath ?? undefined,
             }))}
-            selectedCount={selectedSkills.length}
+            missingSkills={missingSkillIds}
+            selectedCount={selectedKnownSkillIds.length}
             saving={skillSaving}
+            onSkillReorder={(orderedSkillIds) => {
+              setSkillDraftState({
+                itemId: item.id,
+                skills: [...orderedSkillIds, ...missingSkillIds],
+              })
+              setSaved(false)
+            }}
             onSkillToggle={toggleSkill}
+            onSkillOpen={openSkillDetail}
+            warnings={skillCatalogError ? [skillCatalogError] : []}
           />
         </AgentSkillsPanel>
       )}
 
       {tab === 'runs' && <AgentRunsPanel emptyText="아직 실행 기록이 없습니다." items={runItems} />}
 
+      {tab === 'skills' && skillsDirty && (
+        <div className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-sm sm:hidden">
+          <div className="flex items-center justify-end gap-2 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
+            <Button variant="ghost" size="sm" onClick={resetSkillDraft} disabled={skillSaving}>
+              취소
+            </Button>
+            <Button size="sm" onClick={saveSkillDraft} disabled={skillSaving}>
+              {skillSaving ? '저장 중' : '저장'}
+            </Button>
+          </div>
+        </div>
+      )}
+      {tab === 'skills' && skillsDirty && (
+        <div className="fixed right-6 bottom-6 z-30 hidden sm:block">
+          <div className="bg-background/90 border-border flex items-center gap-2 rounded-lg border px-3 py-1.5 shadow-lg backdrop-blur-sm">
+            <Button variant="ghost" size="sm" onClick={resetSkillDraft} disabled={skillSaving}>
+              취소
+            </Button>
+            <Button size="sm" onClick={saveSkillDraft} disabled={skillSaving}>
+              {skillSaving ? '저장 중' : '저장'}
+            </Button>
+          </div>
+        </div>
+      )}
       {tab === 'instructions' && instructionsDirty && (
         <div className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-sm sm:hidden">
           <div className="flex items-center justify-end gap-2 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
@@ -478,6 +598,12 @@ export function SubAgentDetailView({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <AgentSkillDetailDialog
+        detail={skillDetail}
+        loading={skillDetailLoading}
+        open={skillDetailOpen}
+        onOpenChange={setSkillDetailOpen}
+      />
     </div>
   )
 }
@@ -671,4 +797,21 @@ function shallowStringRecordEqual(left: Record<string, string>, right: Record<st
   const rightEntries = Object.entries(right)
   if (leftEntries.length !== rightEntries.length) return false
   return leftEntries.every(([key, value]) => right[key] === value)
+}
+
+function stringArraysEqual(left: string[], right: string[]) {
+  if (left.length !== right.length) return false
+  return left.every((value, index) => right[index] === value)
+}
+
+function orderSkillCatalogBySelectedIds(
+  catalog: SkillCatalogItem[],
+  selectedSkillIds: string[],
+): SkillCatalogItem[] {
+  const byId = new Map(catalog.map((skill) => [skill.skillId, skill]))
+  const selected = selectedSkillIds
+    .map((skillId) => byId.get(skillId))
+    .filter((skill): skill is SkillCatalogItem => skill !== undefined)
+  const selectedIds = new Set(selected.map((skill) => skill.skillId))
+  return [...selected, ...catalog.filter((skill) => !selectedIds.has(skill.skillId))]
 }

@@ -187,22 +187,61 @@ def test_runtime_exposes_heygent_web_tool_definitions():
     schema_by_name = {definition["name"]: definition["schema"] for definition in definitions}
     assert schema_by_name["http_get"]["parameters"]["properties"]["url"]["type"] == "string"
     assert schema_by_name["web_search"]["parameters"]["properties"]["query"]["type"] == "string"
-    assert "Korean weather" in schema_by_name["web_search"]["description"]
-    assert "skills.read" in schema_by_name["web_search"]["description"]
+    assert "skills.read" not in schema_by_name["web_search"]["description"]
     assert schema_by_name["web_extract"]["parameters"]["properties"]["urls"]["items"]["type"] == "string"
     assert schema_by_name["web_crawl"]["parameters"]["properties"]["url"]["type"] == "string"
 
 
-def test_skills_list_includes_frontmatter_descriptions():
+def test_skill_catalog_descriptions_remain_available_to_prompt_builder():
     registry = SkillRegistry()
     registry.register_many(SkillLoader().load_builtin())
-    runtime = LocalToolRuntime(skill_registry=registry, session_store=DummySessionStore())
 
-    result = runtime.run_call(name="skills.list", args={}, enabled_toolsets=("skills",))
+    descriptions = {item["name"]: item["description"] for item in registry.catalog_items()}
 
-    descriptions = {item["name"]: item["description"] for item in result["skills"]}
-    assert "korea-weather" in result["items"]
+    assert "korea-weather" in descriptions
     assert "한국 날씨를 기상청 단기예보 조회서비스" in descriptions["korea-weather"]
+
+
+def test_skills_toolset_is_not_exposed_to_runtime_tools():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    definitions = runtime.list_tool_definitions(enabled_toolsets=("skills",))
+
+    assert definitions == []
+
+
+def test_disabled_skill_readers_are_unavailable_even_with_enabled_skill_context():
+    registry = SkillRegistry()
+    registry.register_many(
+        [
+            {"name": "korea-weather", "description": "한국 날씨 조회", "body": "# Weather"},
+            {"name": "zipcode-search", "description": "우편번호 조회", "body": "# Zipcode"},
+        ]
+    )
+    runtime = LocalToolRuntime(
+        skill_registry=registry,
+        session_store=DummySessionStore(),
+        runtime_context={"enabledSkillNames": ["korea-weather"]},
+    )
+
+    listed = runtime.run_call(name="skills.list", args={}, enabled_toolsets=("skills",))
+    read_result = runtime.run_call(
+        name="skills.read",
+        args={"skill_name": "korea-weather"},
+        enabled_toolsets=("skills",),
+    )
+    file_result = runtime.run_call(
+        name="skills.read",
+        args={"skill_name": "zipcode-search"},
+        enabled_toolsets=("skills",),
+    )
+
+    assert listed["ok"] is False
+    assert read_result["ok"] is False
+    assert file_result["ok"] is False
+    assert listed["error"]["code"] == "tool_unavailable"
+    assert read_result["error"]["code"] == "tool_unavailable"
+    assert file_result["error"]["code"] == "tool_unavailable"
 
 
 def test_runtime_exposes_heygent_browser_tool_definitions():
