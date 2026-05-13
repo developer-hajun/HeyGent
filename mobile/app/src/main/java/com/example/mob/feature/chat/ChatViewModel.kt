@@ -1,5 +1,6 @@
 package com.example.mob.feature.chat
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.mob.data.remote.ChatSessionMessageResponse
@@ -38,7 +39,9 @@ class ChatViewModel : ViewModel() {
             try {
                 val resp = RetrofitClient.aiApiService.getChatSessions()
                 _sessions.value = resp.items
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "loadSessions 실패: ${e.javaClass.simpleName} ${e.message}", e)
+            }
             _isLoadingSessions.value = false
         }
     }
@@ -50,7 +53,9 @@ class ChatViewModel : ViewModel() {
             try {
                 val resp = RetrofitClient.aiApiService.getChatSessionMessages(sessionId)
                 _messages.value = resp.items.mapNotNull { it.toChatMessage() }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "openSession 실패: ${e.javaClass.simpleName} ${e.message}", e)
+            }
         }
     }
 
@@ -78,7 +83,9 @@ class ChatViewModel : ViewModel() {
                     _messages.value = _messages.value + it
                 }
                 loadSessions()
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "sendMessage 실패: ${e.javaClass.simpleName} ${e.message}", e)
+            }
             _isProcessing.value = false
         }
     }

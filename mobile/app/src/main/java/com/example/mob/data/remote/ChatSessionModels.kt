@@ -34,7 +34,6 @@ data class SendChatMessageRequest(
     @SerializedName("content") val content: String,
     @SerializedName("sessionId") val sessionId: String? = null,
     @SerializedName("model") val model: String? = null,
-    @SerializedName("intentType") val intentType: String = "agent.loop",
 )
 
 data class SendChatMessageResponse(
