@@ -9,6 +9,7 @@ from app.api.router import build_api_router
 from app.api.ws.gateway import build_websocket_auth_rate_limiter
 from app.bridge import BridgeSessionManager
 from app.clients.backend_auth import BackendAuthClient
+from app.clients.backend_iot_display import BackendIotDisplayClient
 from app.clients.backend_memory import BackendMemoryClient
 from app.core.cors import configure_cors
 from app.core.config import get_settings
@@ -25,6 +26,7 @@ from app.domain.orchestration.approval.queue import ApprovalQueue
 from app.domain.orchestration.approval.service import ApprovalService
 from app.domain.orchestration.agent.runner import AgentLoopRunner
 from app.domain.orchestration.agent.loop import TaskEngine
+from app.domain.orchestration.agent.iot_display import IotDisplayEventAdapter
 from app.domain.orchestration.agent.memory.memory_extraction_provider import ProviderMemoryExtractionClient
 from app.domain.orchestration.agent.memory.memory_extractor import LlmMemoryExtractor
 from app.domain.orchestration.agent.memory.memory_reconciler import MemoryOperationReconciler
@@ -107,7 +109,9 @@ async def lifespan(app: FastAPI):
     )
     broadcaster = EventBroadcaster(ws_manager, topic_router, fanout_publisher=fanout_publisher)
     backend_auth_client = BackendAuthClient(settings=settings)
+    backend_iot_display_client = BackendIotDisplayClient(settings=settings)
     backend_memory_client = BackendMemoryClient(settings=settings)
+    iot_display_adapter = IotDisplayEventAdapter(backend_iot_display_client)
     approval_service = ApprovalService(repository, ApprovalQueue())
     provider_registry = ProviderRegistry(
         [
@@ -165,6 +169,7 @@ async def lifespan(app: FastAPI):
         work_repository=work_repository,
         agent_repository=agent_repository,
         settings=settings,
+        iot_display_adapter=iot_display_adapter,
     )
     loop_runner = AgentLoopRunner(
         repository=repository,
@@ -196,6 +201,8 @@ async def lifespan(app: FastAPI):
     app.state.ws_auth_rate_limiter = build_websocket_auth_rate_limiter(settings)
     app.state.session_service = session_service
     app.state.backend_auth_client = backend_auth_client
+    app.state.backend_iot_display_client = backend_iot_display_client
+    app.state.iot_display_adapter = iot_display_adapter
     app.state.backend_memory_client = backend_memory_client
     app.state.memory_extractor = memory_extractor
     app.state.memory_operation_provider = memory_extraction_provider
@@ -236,6 +243,7 @@ async def lifespan(app: FastAPI):
         with suppress(asyncio.CancelledError):
             await redis_fanout_task
     await backend_auth_client.aclose()
+    await backend_iot_display_client.aclose()
     await backend_memory_client.aclose()
     await provider_registry.aclose()
     await connection_registry.aclose()

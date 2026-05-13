@@ -59,6 +59,19 @@ class FakeBackendMemoryClient:
         return None
 
 
+class FakeBackendIotDisplayClient:
+    enabled = False
+
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def publish(self, payload) -> None:
+        self.calls.append(payload)
+
+    async def aclose(self) -> None:
+        return None
+
+
 class FakeMemoryExtractor:
     def __init__(self) -> None:
         self.calls = []
@@ -173,6 +186,7 @@ def _patch_app_runtime(app_main, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_main, "PostgresWorkRepository", lambda _connection_factory: NoopWorkRepository())
     monkeypatch.setattr(app_main, "build_task_projection_store", lambda **_kwargs: RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60))
     monkeypatch.setattr(app_main, "BackendAuthClient", lambda settings: FakeBackendAuthClient())
+    monkeypatch.setattr(app_main, "BackendIotDisplayClient", lambda settings: FakeBackendIotDisplayClient())
     monkeypatch.setattr(app_main, "BackendMemoryClient", lambda settings: FakeBackendMemoryClient())
     monkeypatch.setattr(app_main, "ProviderMemoryExtractionClient", lambda **_kwargs: object())
     monkeypatch.setattr(app_main, "LlmMemoryExtractor", lambda **_kwargs: FakeMemoryExtractor())
