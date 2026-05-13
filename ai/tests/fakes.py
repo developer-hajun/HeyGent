@@ -602,6 +602,96 @@ class InMemoryTranscriptStore:
         return results
 
 
+class InMemorySkillRepository:
+    storage_backend = "memory"
+
+    def __init__(self) -> None:
+        self.catalog: dict[str, dict[str, Any]] = {}
+        self.user_settings: dict[tuple[str, str], bool] = {}
+        self.agent_settings: dict[str, list[str]] = {}
+
+    def sync_builtin_catalog(self, skills: list[dict[str, Any]]) -> None:
+        for skill in skills:
+            name = str(skill.get("name") or "").strip()
+            if not name:
+                continue
+            self.catalog[name] = {
+                "skill_id": name,
+                "name": name,
+                "display_name": name.replace("-", " ").strip().title() or name,
+                "description": str(skill.get("description") or ""),
+                "source_type": "builtin",
+                "source_path": str(skill.get("path") or "") or None,
+                "version": 1,
+                "default_enabled": True,
+                "enabled": True,
+                "metadata": {"hasBody": bool(str(skill.get("body") or "").strip())},
+                "config_snapshot": {},
+                "body": str(skill.get("body") or ""),
+                "files": [],
+            }
+
+    def list_user_skills(self, *, owner_key: str, owner_user_id: int | None) -> list[dict[str, Any]]:
+        return [self._with_user_enabled(owner_key, item) for item in sorted(self.catalog.values(), key=lambda row: row["name"])]
+
+    def set_user_skill_enabled(
+        self,
+        *,
+        owner_key: str,
+        owner_user_id: int | None,
+        skill_id: str,
+        enabled: bool,
+    ) -> dict[str, Any] | None:
+        if skill_id not in self.catalog:
+            return None
+        self.user_settings[(owner_key, skill_id)] = bool(enabled)
+        return self.get_user_skill(owner_key=owner_key, skill_id=skill_id)
+
+    def get_user_skill(self, *, owner_key: str, skill_id: str) -> dict[str, Any] | None:
+        item = self.catalog.get(skill_id)
+        if item is None:
+            return None
+        return self._with_user_enabled(owner_key, item)
+
+    def get_user_skill_detail(self, *, owner_key: str, skill_id: str) -> dict[str, Any] | None:
+        item = self.get_user_skill(owner_key=owner_key, skill_id=skill_id)
+        return dict(item) if item is not None else None
+
+    def set_agent_skill_settings(self, *, profile_id: str, skill_ids: list[str]) -> None:
+        self.agent_settings[profile_id] = [skill_id for skill_id in dict.fromkeys(skill_ids) if skill_id in self.catalog]
+
+    def effective_skill_names(
+        self,
+        *,
+        owner_key: str,
+        profile_id: str | None = None,
+        requested_skill_names: list[str] | None = None,
+        explicit_agent_selection: bool = False,
+    ) -> list[str]:
+        enabled = {
+            name
+            for name in self.catalog
+            if self.user_settings.get((owner_key, name), self.catalog[name].get("default_enabled", True))
+        }
+        requested = {str(item).strip() for item in requested_skill_names or [] if str(item).strip()}
+        if explicit_agent_selection:
+            return sorted(enabled.intersection(requested))
+        if requested:
+            matched = enabled.intersection(requested)
+            if matched:
+                return sorted(matched)
+        if profile_id and self.agent_settings.get(profile_id):
+            return sorted(enabled.intersection(self.agent_settings[profile_id]))
+        if profile_id:
+            return []
+        return sorted(enabled)
+
+    def _with_user_enabled(self, owner_key: str, item: dict[str, Any]) -> dict[str, Any]:
+        copied = deepcopy(item)
+        copied["enabled"] = bool(self.user_settings.get((owner_key, copied["skill_id"]), copied.get("default_enabled", True)))
+        return copied
+
+
 class InMemoryAgentRepository:
     storage_backend = "memory"
 

@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { X, Bot, Sparkles, SlidersHorizontal, ChevronLeft, ChevronRight } from 'lucide-react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { HelpHint } from '@/components/ui/help-hint'
 import {
+  AgentAdapterTypeDropdown,
   AgentInstructionsBundlePanel,
   AgentModelDropdown,
   AgentSectionCard,
@@ -49,7 +51,6 @@ export function NewSessionModal({
   const [agentName, setAgentName] = useState('')
   const [persona, setPersona] = useState('')
   const [callName, setCallName] = useState('')
-  const [capabilities, setCapabilities] = useState('')
   const [profileImage, setProfileImage] = useState<string>(CEO_IMAGE_OPTIONS[0].src)
   const [instructionsEntryFile, setInstructionsEntryFile] = useState('AGENTS.md')
   const [instructionsMode, setInstructionsMode] = useState<'managed' | 'external'>('managed')
@@ -71,7 +72,6 @@ export function NewSessionModal({
       setAgentName('')
       setPersona('')
       setCallName('')
-      setCapabilities('')
       setProfileImage(CEO_IMAGE_OPTIONS[0].src)
       setInstructionsEntryFile('AGENTS.md')
       setInstructionsMode('managed')
@@ -87,7 +87,7 @@ export function NewSessionModal({
       agentName,
       persona,
       callName,
-      capabilities,
+      capabilities: '',
       profileImage,
       model,
       delegationPolicy: { canDelegate },
@@ -102,7 +102,6 @@ export function NewSessionModal({
       setAgentName('')
       setPersona('')
       setCallName('')
-      setCapabilities('')
       setProfileImage(CEO_IMAGE_OPTIONS[0].src)
       setInstructionsEntryFile('AGENTS.md')
       setInstructionsMode('managed')
@@ -136,7 +135,18 @@ export function NewSessionModal({
               {/* Header */}
               <div className="border-border flex items-center justify-between border-b px-6 py-4">
                 <div>
-                  <h2 className="text-foreground text-base font-semibold">새 대화 시작</h2>
+                  <div className="flex items-center gap-1.5">
+                    <h2 className="text-foreground text-base font-semibold">새 대화 시작</h2>
+                    <HelpHint label="세션 도움말" iconClassName="h-3.5 w-3.5">
+                      <p className="text-foreground font-medium">세션 (대화방)</p>
+                      <p>
+                        한 가지 주제로 진행하는 <span className="text-foreground">대화방</span>
+                        이에요.
+                      </p>
+                      <p>주제별로 따로 만들면 기록이 섞이지 않습니다.</p>
+                      <p>예) “3월 마케팅”, “신입 교육 자료”.</p>
+                    </HelpHint>
+                  </div>
                   <p className="text-muted-foreground mt-0.5 text-xs">대화 유형을 선택하세요</p>
                 </div>
                 <button
@@ -159,7 +169,17 @@ export function NewSessionModal({
                     <Bot className="text-foreground/70 h-5 w-5" />
                   </div>
                   <div>
-                    <p className="text-foreground text-sm font-semibold">기본 제공 에이전트</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-foreground text-sm font-semibold">기본 제공 에이전트</p>
+                      <HelpHint label="기본 제공 에이전트 도움말" iconClassName="h-3 w-3">
+                        <p className="text-foreground font-medium">기본 제공 에이전트</p>
+                        <p>
+                          팀장과 자주 쓰는 <span className="text-foreground">팀원 에이전트</span>가
+                          미리 준비된 묶음이에요.
+                        </p>
+                        <p>설정이 어렵게 느껴진다면 이 옵션을 선택하세요.</p>
+                      </HelpHint>
+                    </div>
                     <p className="text-muted-foreground mt-0.5 text-xs leading-relaxed">
                       미리 설정된 전문 에이전트를 바로 사용합니다
                     </p>
@@ -256,17 +276,8 @@ export function NewSessionModal({
                                 type="text"
                                 value={callName}
                                 onChange={(event) => setCallName(event.target.value)}
-                                placeholder="CEO"
+                                placeholder="팀장 에이전트"
                                 className={inputClass}
-                              />
-                            </Field>
-                            <Field label="할 수 있는 일">
-                              <textarea
-                                value={capabilities}
-                                onChange={(event) => setCapabilities(event.target.value)}
-                                rows={2}
-                                placeholder="이 에이전트가 할 수 있는 일을 적어주세요."
-                                className={`${inputClass} resize-none leading-6`}
                               />
                             </Field>
                           </div>
@@ -276,6 +287,13 @@ export function NewSessionModal({
 
                     <div className="space-y-3">
                       <AgentSectionCard title="모델">
+                        <Field label="공급자">
+                          <AgentAdapterTypeDropdown
+                            value="openai"
+                            options={[{ value: 'openai', label: 'OpenAI' }]}
+                            onChange={() => undefined}
+                          />
+                        </Field>
                         <Field label="모델">
                           <AgentModelDropdown
                             value={model}
@@ -370,9 +388,9 @@ export function NewSessionModal({
 function defaultAgentSessionConfig(): CustomAgentConfig {
   return {
     seedDefaultAgents: true,
-    agentName: 'CEO',
+    agentName: '팀장 에이전트',
     persona: '',
-    callName: 'CEO',
+    callName: '팀장 에이전트',
     capabilities: '',
     profileImage: CEO_IMAGE_OPTIONS[0].src,
     model: 'gpt-5.4',

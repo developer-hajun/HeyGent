@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { HelpHint } from '@/components/ui/help-hint'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/components/ui/utils'
 import type { IssueBoardIssue } from '../model/issueBoardModel'
@@ -327,7 +328,33 @@ export function WorkFlowDiagram({
 
         <div className="border-border/70 flex h-12 items-center gap-2 border-b px-3">
           <ListTree className="text-muted-foreground h-4 w-4" />
-          <span className="text-sm font-semibold">CEO 작업</span>
+          <span className="inline-flex items-center gap-1.5 text-sm font-semibold">
+            팀장 에이전트 작업
+            <HelpHint label="작업 보드 도움말" iconClassName="h-3.5 w-3.5">
+              <p className="text-foreground font-medium">작업 보드</p>
+              <p>
+                에이전트들의 <span className="text-foreground">할 일 목록</span>이에요.
+              </p>
+              <p>회사 화이트보드처럼 진행 상황을 한눈에 보여줍니다.</p>
+              <ul className="text-muted-foreground mt-1 space-y-0.5 pl-3">
+                <li>
+                  · <span className="text-foreground">진행 중</span> — 작업 중
+                </li>
+                <li>
+                  · <span className="text-foreground">대기</span> — 시작 전
+                </li>
+                <li>
+                  · <span className="text-foreground">차단됨</span> — 다른 일이 먼저 끝나야 함
+                </li>
+                <li>
+                  · <span className="text-foreground">검토</span> — 결과 확인 단계
+                </li>
+                <li>
+                  · <span className="text-foreground">완료</span> — 끝난 일
+                </li>
+              </ul>
+            </HelpHint>
+          </span>
         </div>
         <div className="min-h-0 space-y-1 overflow-y-auto p-2">
           {rootIssues.map((issue, index) => (
@@ -352,9 +379,11 @@ export function WorkFlowDiagram({
           ))}
           <button
             type="button"
-            onClick={() => openDraft({ agentName: 'CEO', assigneeAgentId: null, parentId: null })}
+            onClick={() =>
+              openDraft({ agentName: '팀장 에이전트', assigneeAgentId: null, parentId: null })
+            }
             className="border-primary/60 bg-primary/5 text-primary hover:bg-primary/10 mt-1 flex h-11 w-full items-center justify-center gap-1.5 rounded-md border border-dashed text-xs font-semibold transition-colors"
-            aria-label="CEO 작업 추가"
+            aria-label="팀장 에이전트 작업 추가"
           >
             <Plus className="h-4 w-4" />
             작업 추가
@@ -657,7 +686,7 @@ function CeoCard({ label = '메인 에이전트' }: { label?: string }) {
       </div>
       <div className="min-w-0">
         <div className="text-muted-foreground text-[11px] font-semibold tracking-widest uppercase">
-          CEO
+          팀장 에이전트
         </div>
         <div className="truncate text-sm font-semibold">{label}</div>
       </div>
@@ -710,7 +739,7 @@ function WorkFlowNode({ data }: NodeProps<FlowNode>) {
         style={{ left: '68%' }}
       />
       <WorkCard
-        assigneeName={typeof data.assigneeName === 'string' ? data.assigneeName : 'CEO'}
+        assigneeName={typeof data.assigneeName === 'string' ? data.assigneeName : '팀장 에이전트'}
         issue={issue}
         onConnectSelect={data.onConnectSelect as (() => void) | undefined}
         onOpen={(data.onOpen as () => void) ?? (() => undefined)}
@@ -994,7 +1023,7 @@ function ConnectionChoiceDialog({
 
 function getDraftAssigneeName(target: DraftTarget, assignees: BoardAssignee[]) {
   if (target.agentName) return target.agentName
-  if (target.parentId === null && target.assigneeAgentId === null) return 'CEO'
+  if (target.parentId === null && target.assigneeAgentId === null) return '팀장 에이전트'
   return assigneeLabel(target.assigneeAgentId, assignees)
 }
 

@@ -3,7 +3,9 @@ import type { ReactNode } from 'react'
 import { ChevronDown, ChevronLeft, ChevronRight, Shield } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
+import { HelpHint } from '@/components/ui/help-hint'
 import {
+  AgentAdapterTypeDropdown,
   AgentModelDropdown,
   AgentSectionCard,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
@@ -18,6 +20,7 @@ import {
   type ModelFamily,
 } from '../sessionWorkspaceUtils'
 import {
+  SUB_AGENT_ADAPTER_OPTIONS,
   getDefaultModel,
   normalizeSubAgentAdapterType,
   type SubAgentAdapterType,
@@ -55,7 +58,7 @@ export function SubAgentDraftForm({
   const [titleDraft, setTitleDraft] = useState(initialAgent?.title ?? initialAgent?.role ?? '')
   const [roleDraft, setRoleDraft] = useState(initialAgent?.role ?? 'general')
   const [descriptionDraft, setDescriptionDraft] = useState(initialAgent?.description ?? '')
-  const [adapterType] = useState<SubAgentAdapterType>(
+  const [adapterType, setAdapterType] = useState<SubAgentAdapterType>(
     normalizeSubAgentAdapterType(initialAgent?.adapterType ?? initialAdapterType),
   )
   const [commandDraft] = useState(initialAgent?.command ?? '')
@@ -178,7 +181,18 @@ export function SubAgentDraftForm({
                     </p>
                   )}
                 </Field>
-                <Field label="호칭">
+                <Field
+                  label="호칭"
+                  hint={
+                    <>
+                      <p className="text-foreground font-medium">호칭</p>
+                      <p>
+                        대화에서 부르는 <span className="text-foreground">별명·직함</span>이에요.
+                      </p>
+                      <p>예) “디자이너님”, “마케팅 담당자”.</p>
+                    </>
+                  }
+                >
                   <input
                     value={titleDraft}
                     onChange={(event) => setTitleDraft(event.target.value)}
@@ -192,7 +206,18 @@ export function SubAgentDraftForm({
 
           <AgentSectionCard title="역할과 능력">
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="역할">
+              <Field
+                label="역할"
+                hint={
+                  <>
+                    <p className="text-foreground font-medium">역할</p>
+                    <p>
+                      이 에이전트가 팀에서 맡는 <span className="text-foreground">자리</span>예요.
+                    </p>
+                    <p>예) 리서처, 디자이너처럼 담당 분야를 정해 줍니다.</p>
+                  </>
+                }
+              >
                 <Popover open={roleOpen} onOpenChange={setRoleOpen}>
                   <PopoverTrigger asChild>
                     <button className={`${inputClass} flex items-center justify-between gap-2`}>
@@ -222,11 +247,41 @@ export function SubAgentDraftForm({
                   </PopoverContent>
                 </Popover>
               </Field>
-              <Field label="상위 에이전트">
-                <input className={`${inputClass} opacity-70`} value="CEO" disabled readOnly />
+              <Field
+                label="상위 에이전트"
+                hint={
+                  <>
+                    <p className="text-foreground font-medium">상위 에이전트</p>
+                    <p>
+                      이 에이전트에게 일을 시키는 <span className="text-foreground">상사</span>예요.
+                    </p>
+                    <p>
+                      지금은 모두 <span className="text-foreground">팀장 에이전트</span>가 맡습니다.
+                    </p>
+                  </>
+                }
+              >
+                <input
+                  className={`${inputClass} opacity-70`}
+                  value="팀장 에이전트"
+                  disabled
+                  readOnly
+                />
               </Field>
             </div>
-            <Field label="할 수 있는 일">
+            <Field
+              label="할 수 있는 일"
+              hint={
+                <>
+                  <p className="text-foreground font-medium">할 수 있는 일</p>
+                  <p>
+                    이 에이전트의 <span className="text-foreground">담당 업무 설명</span>이에요.
+                  </p>
+                  <p>팀장이 누구에게 일을 맡길지 정할 때 참고합니다.</p>
+                  <p>예) “회의록 요약, 다음 일정 정리”.</p>
+                </>
+              }
+            >
               <textarea
                 value={descriptionDraft}
                 onChange={(event) => setDescriptionDraft(event.target.value)}
@@ -240,27 +295,40 @@ export function SubAgentDraftForm({
 
         <div className="space-y-4">
           <AgentSectionCard title="모델">
-            <Field label="모델">
-              {authenticatedReady && modelOptionsLoading && (
-                <span className="text-muted-foreground mb-1 inline-flex items-center gap-1.5 text-xs">
-                  조회 중
-                </span>
-              )}
-              {authenticatedReady && modelOptionsError ? (
-                <p className="text-destructive text-sm">{modelOptionsError}</p>
-              ) : (
-                <AgentModelDropdown
-                  value={modelDraft}
-                  options={visibleModelOptions}
-                  onChange={(modelId) => {
-                    setModelDraft(modelId)
-                    setSelectedFamily(inferModelFamily(modelId))
-                  }}
-                  allowDefault
-                  placeholder={getDefaultModel()}
-                />
-              )}
+            <Field label="공급자">
+              <AgentAdapterTypeDropdown
+                value={adapterType}
+                options={SUB_AGENT_ADAPTER_OPTIONS.map((option) => ({
+                  value: option.id,
+                  label: option.label,
+                  description: option.description,
+                }))}
+                onChange={(value) => setAdapterType(normalizeSubAgentAdapterType(value))}
+              />
             </Field>
+            {adapterType === 'openai' ? (
+              <Field label="모델">
+                {authenticatedReady && modelOptionsLoading && (
+                  <span className="text-muted-foreground mb-1 inline-flex items-center gap-1.5 text-xs">
+                    조회 중
+                  </span>
+                )}
+                {authenticatedReady && modelOptionsError ? (
+                  <p className="text-destructive text-sm">{modelOptionsError}</p>
+                ) : (
+                  <AgentModelDropdown
+                    value={modelDraft}
+                    options={visibleModelOptions}
+                    onChange={(modelId) => {
+                      setModelDraft(modelId)
+                      setSelectedFamily(inferModelFamily(modelId))
+                    }}
+                    allowDefault
+                    placeholder={getDefaultModel()}
+                  />
+                )}
+              </Field>
+            ) : null}
           </AgentSectionCard>
         </div>
       </div>
@@ -282,10 +350,25 @@ export function SubAgentDraftForm({
 const inputClass =
   'border-border placeholder:text-muted-foreground/40 focus-visible:ring-ring w-full rounded-md border bg-transparent px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2'
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({
+  label,
+  children,
+  hint,
+}: {
+  label: string
+  children: ReactNode
+  hint?: ReactNode
+}) {
   return (
     <label className="block space-y-1.5">
-      <span className="text-muted-foreground text-xs">{label}</span>
+      <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+        {label}
+        {hint ? (
+          <HelpHint label={`${label} 도움말`} iconClassName="h-3 w-3">
+            {hint}
+          </HelpHint>
+        ) : null}
+      </span>
       {children}
     </label>
   )
