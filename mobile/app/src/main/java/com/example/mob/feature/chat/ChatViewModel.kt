@@ -1,5 +1,6 @@
 package com.example.mob.feature.chat
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.mob.data.remote.ChatSessionMessageResponse
@@ -37,8 +38,10 @@ class ChatViewModel : ViewModel() {
             _isLoadingSessions.value = true
             try {
                 val resp = RetrofitClient.aiApiService.getChatSessions()
-                if (resp.status == 200) _sessions.value = resp.data?.items ?: emptyList()
-            } catch (_: Exception) {}
+                _sessions.value = resp.items
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "loadSessions 실패: ${e.javaClass.simpleName} ${e.message}", e)
+            }
             _isLoadingSessions.value = false
         }
     }
@@ -49,10 +52,10 @@ class ChatViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val resp = RetrofitClient.aiApiService.getChatSessionMessages(sessionId)
-                if (resp.status == 200) {
-                    _messages.value = resp.data?.items?.mapNotNull { it.toChatMessage() } ?: emptyList()
-                }
-            } catch (_: Exception) {}
+                _messages.value = resp.items.mapNotNull { it.toChatMessage() }
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "openSession 실패: ${e.javaClass.simpleName} ${e.message}", e)
+            }
         }
     }
 
@@ -75,14 +78,14 @@ class ChatViewModel : ViewModel() {
                 } else {
                     RetrofitClient.aiApiService.sendChatMessageNewSession(request)
                 }
-                if (resp.status == 200 && resp.data != null) {
-                    if (_activeSessionId.value == null) _activeSessionId.value = resp.data.sessionId
-                    resp.data.assistantMessage?.toChatMessage()?.let {
-                        _messages.value = _messages.value + it
-                    }
-                    loadSessions()
+                if (_activeSessionId.value == null) _activeSessionId.value = resp.sessionId
+                resp.assistantMessage?.toChatMessage()?.let {
+                    _messages.value = _messages.value + it
                 }
-            } catch (_: Exception) {}
+                loadSessions()
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "sendMessage 실패: ${e.javaClass.simpleName} ${e.message}", e)
+            }
             _isProcessing.value = false
         }
     }

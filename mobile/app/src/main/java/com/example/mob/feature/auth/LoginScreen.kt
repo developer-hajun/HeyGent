@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.mob.BuildConfig
 import com.example.mob.data.remote.KakaoLoginRequest
 import com.example.mob.data.remote.RetrofitClient
 import com.example.mob.ui.theme.TextSecondary
@@ -84,6 +85,30 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 errorMessage = "로그인 중 오류가 발생했습니다."
             } finally {
                 isLoading = false
+            }
+        }
+    }
+
+    val handleDevLogin: () -> Unit = {
+        if (!isLoading) {
+            scope.launch {
+                isLoading = true
+                errorMessage = null
+                try {
+                    val response = RetrofitClient.authApiService.devLogin()
+                    if (response.status == 200 && response.data != null) {
+                        RetrofitClient.setToken(response.data.accessToken)
+                        RetrofitClient.setRefreshToken(response.data.refreshToken)
+                        onLoginSuccess()
+                    } else {
+                        errorMessage = response.message ?: "개발자 로그인 실패"
+                    }
+                } catch (e: Exception) {
+                    Log.e("DEV_LOGIN", "개발자 로그인 오류: ${e.javaClass.simpleName}", e)
+                    errorMessage = "개발자 로그인 중 오류가 발생했습니다."
+                } finally {
+                    isLoading = false
+                }
             }
         }
     }
@@ -155,6 +180,10 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 CircularProgressIndicator(color = Color(0xFFFEE500))
             } else {
                 KakaoLoginButton(onClick = onKakaoLoginClick)
+                if (BuildConfig.DEBUG) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    DevLoginButton(onClick = handleDevLogin)
+                }
             }
 
             if (errorMessage != null) {
@@ -175,6 +204,30 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 32.dp),
+        )
+    }
+}
+
+@Composable
+private fun DevLoginButton(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .width(280.dp)
+            .height(52.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF222222))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "🛠 개발자 테스트 로그인",
+            color = Color.White,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
         )
     }
 }
