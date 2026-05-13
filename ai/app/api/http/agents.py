@@ -97,6 +97,7 @@ async def list_session_agents(
         session_id=sessionId,
         owner_key=str(user.user_id),
     )
+    items = _sanitize_profile_skill_configs(request, items=items, user=user)
     return AgentProfileListResponse(items=[_profile_response(item) for item in items])
 
 
@@ -117,6 +118,7 @@ async def get_session_main_agent(
         owner_key=str(user.user_id),
         owner_user_id=_int_or_none(user.user_id),
     )
+    item = _sanitize_profile_skill_config(request, item=item, user=user)
     return _profile_response(item)
 
 
@@ -141,6 +143,7 @@ async def create_session_agent(
         owner_user_id=_int_or_none(user.user_id),
         config_snapshot=_custom_agent_config_snapshot(payload),
     )
+    item = _sanitize_profile_skill_config(request, item=item, user=user)
     _sync_agent_skill_settings(request, item)
     return _profile_response(item)
 
@@ -174,6 +177,7 @@ async def update_session_agent(
     )
     if item is None:
         raise HTTPException(status_code=404, detail="agent profile not found")
+    item = _sanitize_profile_skill_config(request, item=item, user=user)
     _sync_agent_skill_settings(request, item)
     return _profile_response(item)
 
@@ -200,6 +204,7 @@ async def create_session_agent_from_template(
         )
     except KeyError as error:
         raise HTTPException(status_code=404, detail="agent template not found") from error
+    item = _sanitize_profile_skill_config(request, item=item, user=user)
     return _profile_response(item)
 
 
@@ -220,6 +225,7 @@ async def create_default_session_agents(
         owner_key=str(user.user_id),
         owner_user_id=_int_or_none(user.user_id),
     )
+    items = _sanitize_profile_skill_configs(request, items=items, user=user)
     return AgentProfileListResponse(items=[_profile_response(item) for item in items])
 
 
@@ -301,6 +307,71 @@ def _skill_repository_or_404(request: Request) -> Any:
     if repository is None:
         raise HTTPException(status_code=503, detail="skill repository is not configured")
     return repository
+
+
+def _sanitize_profile_skill_configs(
+    request: Request,
+    *,
+    items: list[dict[str, Any]],
+    user: Any,
+) -> list[dict[str, Any]]:
+    known_skill_ids = _known_skill_ids(request, user=user)
+    if known_skill_ids is None:
+        return items
+    return [
+        _sanitize_profile_skill_config(
+            request,
+            item=item,
+            user=user,
+            known_skill_ids=known_skill_ids,
+        )
+        for item in items
+    ]
+
+
+def _sanitize_profile_skill_config(
+    request: Request,
+    *,
+    item: dict[str, Any],
+    user: Any,
+    known_skill_ids: set[str] | None = None,
+) -> dict[str, Any]:
+    known_ids = known_skill_ids if known_skill_ids is not None else _known_skill_ids(request, user=user)
+    if known_ids is None:
+        return item
+    config = item.get("config_snapshot") if isinstance(item.get("config_snapshot"), dict) else {}
+    skills = [str(skill).strip() for skill in list(config.get("skills") or []) if str(skill).strip()]
+    filtered_skills = [skill for skill in skills if skill in known_ids]
+    if filtered_skills == skills:
+        return item
+    session_id = str(item.get("session_id") or "")
+    profile_id = str(item.get("profile_id") or "")
+    next_config = dict(config)
+    next_config["skills"] = filtered_skills
+    if not session_id or not profile_id:
+        return {**item, "config_snapshot": next_config}
+    updated = request.app.state.agent_repository.update_session_agent(
+        session_id=session_id,
+        owner_key=str(user.user_id),
+        profile_id=profile_id,
+        config_snapshot=next_config,
+    )
+    return updated or {**item, "config_snapshot": next_config}
+
+
+def _known_skill_ids(request: Request, *, user: Any) -> set[str] | None:
+    repository = getattr(request.app.state, "skill_repository", None)
+    if repository is None:
+        return None
+    items = repository.list_user_skills(
+        owner_key=str(user.user_id),
+        owner_user_id=_int_or_none(user.user_id),
+    )
+    return {
+        skill_id
+        for item in items
+        if (skill_id := str(item.get("skill_id") or item.get("name") or "").strip())
+    }
 
 
 def _sync_agent_skill_settings(request: Request, item: dict[str, Any]) -> None:

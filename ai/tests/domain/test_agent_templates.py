@@ -1,5 +1,16 @@
-from app.domain.agents.templates import MAIN_AGENT_TEMPLATE
-from app.api.http.agents import _bundle_response, _custom_agent_config_snapshot
+from types import SimpleNamespace
+
+from app.api.http.agents import (
+    _bundle_response,
+    _custom_agent_config_snapshot,
+    _sanitize_profile_skill_config,
+)
+from app.domain.orchestration.prompts.skill_prompt import SkillLoader
+from app.domain.agents.templates import (
+    BUILTIN_AGENT_TEMPLATES,
+    LEGACY_AGENT_SKILL_IDS,
+    MAIN_AGENT_TEMPLATE,
+)
 from app.contracts.agents import CreateSessionAgentRequest
 
 
@@ -7,6 +18,19 @@ def test_main_agent_template_does_not_include_heartbeat_document():
     document_keys = {document_key for document_key, _, _ in MAIN_AGENT_TEMPLATE.documents}
 
     assert "HEARTBEAT.md" not in document_keys
+
+
+def test_builtin_agent_template_skills_exist_in_builtin_catalog():
+    catalog_skill_names = {skill["name"] for skill in SkillLoader().load_builtin()}
+    template_skills = {
+        skill
+        for template in (MAIN_AGENT_TEMPLATE, *BUILTIN_AGENT_TEMPLATES)
+        for skill in template.skills
+    }
+
+    assert template_skills
+    assert template_skills.isdisjoint(LEGACY_AGENT_SKILL_IDS)
+    assert template_skills.issubset(catalog_skill_names)
 
 
 def test_instruction_bundle_response_omits_removed_run_loop_document():
@@ -52,3 +76,63 @@ def test_custom_agent_snapshot_falls_back_when_removed_document_is_entry():
 
     assert snapshot["entryDocumentKey"] == "AGENTS.md"
     assert [document["documentKey"] for document in snapshot["documents"]] == ["AGENTS.md"]
+
+
+def test_agent_profile_skill_sanitizer_removes_catalog_missing_skills():
+    item = {
+        "profile_id": "agent-1",
+        "session_id": "session-1",
+        "config_snapshot": {
+            "name": "개발 에이전트",
+            "skills": ["notion", "subagent-driven-development", "missing-skill"],
+            "documents": [
+                {"documentKey": "AGENTS.md", "displayName": "기본 지침", "content": "base"}
+            ],
+        },
+    }
+    agent_repository = _FakeAgentRepository()
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                agent_repository=agent_repository,
+                skill_repository=_FakeSkillRepository(["subagent-driven-development"]),
+            )
+        )
+    )
+
+    sanitized = _sanitize_profile_skill_config(
+        request,
+        item=item,
+        user=SimpleNamespace(user_id=1),
+    )
+
+    assert sanitized["config_snapshot"]["skills"] == ["subagent-driven-development"]
+    assert agent_repository.updated_config["skills"] == ["subagent-driven-development"]
+
+
+class _FakeSkillRepository:
+    def __init__(self, skill_ids: list[str]) -> None:
+        self.skill_ids = skill_ids
+
+    def list_user_skills(self, *, owner_key: str, owner_user_id: int | None):
+        return [{"skill_id": skill_id, "name": skill_id} for skill_id in self.skill_ids]
+
+
+class _FakeAgentRepository:
+    def __init__(self) -> None:
+        self.updated_config = {}
+
+    def update_session_agent(
+        self,
+        *,
+        session_id: str,
+        owner_key: str,
+        profile_id: str,
+        config_snapshot: dict,
+    ):
+        self.updated_config = dict(config_snapshot)
+        return {
+            "profile_id": profile_id,
+            "session_id": session_id,
+            "config_snapshot": self.updated_config,
+        }

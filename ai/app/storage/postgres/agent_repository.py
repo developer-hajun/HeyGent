@@ -4,7 +4,12 @@ import json
 from typing import Any, Callable
 
 from app.core.utils.ids import new_id
-from app.domain.agents import BUILTIN_AGENT_TEMPLATES, DEFAULT_SESSION_TEMPLATE_KEYS, MAIN_AGENT_TEMPLATE
+from app.domain.agents import (
+    BUILTIN_AGENT_TEMPLATES,
+    DEFAULT_SESSION_TEMPLATE_KEYS,
+    LEGACY_AGENT_SKILL_IDS,
+    MAIN_AGENT_TEMPLATE,
+)
 
 
 class PostgresAgentRepository:
@@ -82,6 +87,21 @@ class PostgresAgentRepository:
                 template_key=template_key,
             )
             if existing is not None:
+                template = self.get_template(template_key)
+                if template is not None:
+                    self._sync_profile_documents(
+                        profile=existing,
+                        config_snapshot=_merge_config_defaults(
+                            existing.get("config_snapshot") or {},
+                            template.get("default_config_snapshot") or {},
+                        ),
+                        delegation_policy=template.get("default_policy") or {"canDelegate": False},
+                    )
+                    existing = self.get_session_agent_by_template(
+                        session_id=session_id,
+                        owner_key=owner_key,
+                        template_key=template_key,
+                    )
                 created.append(existing)
                 continue
             created.append(
@@ -600,6 +620,7 @@ def _profile_from_row(row: Any) -> dict[str, Any]:
 def _merge_config_defaults(current: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
     merged = dict(defaults or {})
     merged.update(dict(current or {}))
+    merged["skills"] = _merge_template_skills(current=current, defaults=defaults)
     default_documents = [
         document
         for document in list((defaults or {}).get("documents") or [])
@@ -622,6 +643,27 @@ def _merge_config_defaults(current: dict[str, Any], defaults: dict[str, Any]) ->
     merged["documents"] = list(documents_by_key.values())
     merged["entryDocumentKey"] = str(merged.get("entryDocumentKey") or "AGENTS.md")
     return merged
+
+
+def _merge_template_skills(current: dict[str, Any], defaults: dict[str, Any]) -> list[str]:
+    default_skills = _unique_texts(list((defaults or {}).get("skills") or []))
+    current_skills = _unique_texts(list((current or {}).get("skills") or []))
+    if not current_skills:
+        return default_skills
+    cleaned = [skill for skill in current_skills if skill not in LEGACY_AGENT_SKILL_IDS]
+    return cleaned if cleaned else default_skills
+
+
+def _unique_texts(values: list[Any]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value).strip()
+        if not text or text in seen:
+            continue
+        result.append(text)
+        seen.add(text)
+    return result
 
 
 def _document_from_row(row: Any) -> dict[str, Any]:
