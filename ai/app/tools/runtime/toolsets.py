@@ -36,6 +36,10 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
         description="Web research, extraction, and crawl tools.",
         tools=("web_search", "web_extract", "web_crawl", "http_get"),
     ),
+    "messaging": RuntimeToolsetDefinition(
+        description="Outbound messaging tools.",
+        tools=("mattermost.send",),
+    ),
     "browser": RuntimeToolsetDefinition(
         description="Browser automation tools.",
         tools=(
@@ -74,7 +78,7 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "local-core": RuntimeToolsetDefinition(
         description="Current minimal local runtime tool bundle.",
-        includes=("skills", "session", "planning", "terminal", "file", "web", "work"),
+        includes=("skills", "session", "planning", "terminal", "file", "web", "work", "messaging"),
     ),
 }
 

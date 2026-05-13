@@ -8,6 +8,7 @@ from app.domain.orchestration.prompts.compression import compress_prompt_section
 from app.domain.orchestration.prompts.gateway_context_prompt import build_gateway_context_prompt
 from app.domain.orchestration.prompts.project_context_prompt import build_project_context_prompt
 from app.domain.orchestration.prompts.skill_prompt import SkillPromptBuilder
+from app.domain.orchestration.prompts.skill_router import route_skill_hints
 from app.domain.orchestration.prompts.step_context_prompt import build_step_context_prompt
 from app.domain.orchestration.prompts.step_run_boundary_prompt import build_step_run_boundary_prompt
 from app.domain.orchestration.prompts.step_run_prompt import build_step_run_prompt
@@ -69,22 +70,23 @@ class PromptBuilder:
         self.skill_prompt_builder = skill_prompt_builder
 
     def build_model_prompt(self, *, input_payload: dict) -> str:
-        base_prompt = str(input_payload.get("prompt", "")).strip() or "안녕하세요. 현재 연결 상태를 짧게 요약해 주세요."
+        payload = route_skill_hints(input_payload)
+        base_prompt = str(payload.get("prompt", "")).strip() or "안녕하세요. 현재 연결 상태를 짧게 요약해 주세요."
         parts = compress_prompt_sections(
             [
-                self.skill_prompt_builder.build(input_payload=input_payload),
+                self.skill_prompt_builder.build(input_payload=payload),
                 self.skill_prompt_builder.build_catalog(),
-                build_project_context_prompt(input_payload=input_payload),
-                build_gateway_context_prompt(input_payload=input_payload),
-                build_work_context_prompt(input_payload=input_payload),
+                build_project_context_prompt(input_payload=payload),
+                build_gateway_context_prompt(input_payload=payload),
+                build_work_context_prompt(input_payload=payload),
                 base_prompt,
-                str(input_payload.get("persistent_memory_context", "")).strip(),
+                str(payload.get("persistent_memory_context", "")).strip(),
             ]
         )
         return "\n\n".join(parts)
 
     def build_runtime_prompt(self, *, task=None, step=None, input_payload: dict | None = None) -> str:
-        payload = input_payload or {}
+        payload = route_skill_hints(input_payload or {})
         parts = compress_prompt_sections(
             [
                 self.skill_prompt_builder.build(input_payload=payload),
