@@ -26,6 +26,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { SubAgentProfileImage } from '@/components/sessionWorkspace/subAgents'
+import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { DEFAULT_SIDEBAR_COLLAPSED_WIDTH, useUIStore } from '@/store/useUIStore'
@@ -74,15 +75,28 @@ export function SessionWorkspaceMenu({
   onSelectPanel,
 }: SessionWorkspaceMenuProps) {
   const updateSession = useChatStore((state) => state.updateSession)
+  const updateAgentInfo = useAgentVisualizationStore((state) => state.updateAgentInfo)
   const sidebarWidth = useUIStore((state) => state.sidebarWidth)
   const setSidebarWidth = useUIStore((state) => state.setSidebarWidth)
   const { agentPanelsBySessionId } = useSessionStore()
+  const sessionDraftName = useSessionStore(
+    (state) => state.mainAgentNameDraftBySessionId[sessionId],
+  )
   const agentPanels = agentPanelsBySessionId[sessionId] ?? []
   const title = getSessionTitle(session)
-  const mainAgentName = getMainAgentName(session)
+  const persistedMainAgentName = getMainAgentName(session)
+  const mainAgentName = sessionDraftName?.trim() ? sessionDraftName : persistedMainAgentName
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState(title)
   const [titleSaving, setTitleSaving] = useState(false)
+  const [editingMainAgent, setEditingMainAgent] = useState(false)
+  const [mainAgentDraft, setMainAgentDraft] = useState(mainAgentName)
+  const [mainAgentSaving, setMainAgentSaving] = useState(false)
+  const [lastSyncedMainAgentName, setLastSyncedMainAgentName] = useState(mainAgentName)
+  if (!editingMainAgent && lastSyncedMainAgentName !== mainAgentName) {
+    setLastSyncedMainAgentName(mainAgentName)
+    setMainAgentDraft(mainAgentName)
+  }
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
@@ -106,6 +120,29 @@ export function SessionWorkspaceMenu({
       setEditingTitle(false)
     } finally {
       setTitleSaving(false)
+    }
+  }
+
+  const handleSaveMainAgentName = async () => {
+    const trimmed = mainAgentDraft.trim()
+    if (session === null || trimmed === '' || trimmed === mainAgentName) {
+      setMainAgentDraft(mainAgentName)
+      setEditingMainAgent(false)
+      return
+    }
+
+    const metadata = toJsonObject(session.metadata)
+    const uiMetadata = toJsonObject(metadata.ui)
+    setMainAgentSaving(true)
+    try {
+      await updateSession({
+        sessionId: session.session_id,
+        metadataPatch: { ui: { ...uiMetadata, agentName: trimmed } },
+      })
+      updateAgentInfo('ceo', { name: trimmed })
+      setEditingMainAgent(false)
+    } finally {
+      setMainAgentSaving(false)
     }
   }
 
@@ -274,28 +311,78 @@ export function SessionWorkspaceMenu({
         </div>
 
         <section>
-          <SectionHeader label="CEO" />
+          <SectionHeader label="팀장 에이전트" />
           <div className="group/main relative flex items-center">
-            <button
-              type="button"
-              onClick={() => onSelectPanel('ceo')}
-              className={`flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2.5 py-2.5 pr-8 text-left text-sm font-medium transition-colors ${
-                activePanel === 'ceo'
-                  ? 'bg-accent text-foreground'
-                  : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
-              }`}
-            >
-              <Bot className="text-muted-foreground h-5 w-5 shrink-0" />
-              <span className="truncate">{mainAgentName}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onSelectPanel('ceo')}
-              className="text-muted-foreground hover:bg-accent/50 hover:text-foreground absolute top-1/2 right-1 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg opacity-0 transition-opacity group-focus-within/main:opacity-100 group-hover/main:opacity-100 data-[state=open]:opacity-100"
-              aria-label={`${mainAgentName} 메인 에이전트 편집`}
-            >
-              <Edit3 className="h-4 w-4" />
-            </button>
+            {editingMainAgent ? (
+              <div
+                className={`flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2.5 py-2.5 pr-8 text-left text-sm font-medium ${
+                  activePanel === 'ceo' ? 'bg-accent text-foreground' : 'text-foreground/80'
+                }`}
+              >
+                <Bot className="text-muted-foreground h-5 w-5 shrink-0" />
+                <input
+                  autoFocus
+                  value={mainAgentDraft}
+                  onChange={(event) => setMainAgentDraft(event.target.value)}
+                  onBlur={() => void handleSaveMainAgentName()}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.currentTarget.blur()
+                    }
+                    if (event.key === 'Escape') {
+                      setMainAgentDraft(mainAgentName)
+                      setEditingMainAgent(false)
+                    }
+                  }}
+                  className="border-border bg-background text-foreground focus:ring-ring h-7 min-w-0 flex-1 border px-2 text-sm font-medium outline-none focus:ring-1"
+                />
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onSelectPanel('ceo')}
+                className={`flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2.5 py-2.5 pr-8 text-left text-sm font-medium transition-colors ${
+                  activePanel === 'ceo'
+                    ? 'bg-accent text-foreground'
+                    : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
+                }`}
+              >
+                <Bot className="text-muted-foreground h-5 w-5 shrink-0" />
+                <span className="truncate">{mainAgentName}</span>
+              </button>
+            )}
+            {session !== null && (
+              <button
+                type="button"
+                onMouseDown={(event) => {
+                  if (editingMainAgent) {
+                    event.preventDefault()
+                  }
+                }}
+                onClick={() => {
+                  if (editingMainAgent) {
+                    void handleSaveMainAgentName()
+                  } else {
+                    setMainAgentDraft(mainAgentName)
+                    setEditingMainAgent(true)
+                  }
+                }}
+                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground absolute top-1/2 right-1 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg transition-colors"
+                aria-label={
+                  editingMainAgent
+                    ? '팀장 에이전트 이름 저장'
+                    : `${mainAgentName} 팀장 에이전트 이름 편집`
+                }
+              >
+                {mainAgentSaving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : editingMainAgent ? (
+                  <Check className="h-4 w-4" />
+                ) : (
+                  <Edit3 className="h-4 w-4" />
+                )}
+              </button>
+            )}
           </div>
         </section>
 
@@ -436,11 +523,11 @@ function getSessionTitle(session: RawAiSession | null) {
 
 function getMainAgentName(session: RawAiSession | null) {
   if (session === null) {
-    return '메인 에이전트'
+    return '팀장 에이전트'
   }
   const metadata = toJsonObject(session.metadata)
   const uiMetadata = toJsonObject(metadata.ui)
-  return getString(uiMetadata, 'agentName') ?? '메인 에이전트'
+  return getString(uiMetadata, 'agentName') ?? '팀장 에이전트'
 }
 
 function SectionHeader({ label }: { label: string }) {

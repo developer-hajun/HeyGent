@@ -49,6 +49,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { HelpHint } from '@/components/ui/help-hint'
 import { Switch } from '@/components/ui/switch'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { motion, AnimatePresence } from 'motion/react'
@@ -1048,7 +1049,21 @@ function ApiKeysContent() {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-foreground mb-2 text-xl font-semibold">API 키</h3>
+        <div className="mb-2 flex items-center gap-2">
+          <h3 className="text-foreground text-xl font-semibold">API 키</h3>
+          <HelpHint label="API 키 도움말" iconClassName="h-4 w-4">
+            <p className="text-foreground font-medium">API 키</p>
+            <p>
+              외부 AI 서비스를 사용하기 위한 <span className="text-foreground">출입증</span>이에요.
+            </p>
+            <p>각 서비스 홈페이지에 로그인해 발급받아 붙여넣어 주세요.</p>
+            <p>예) OpenAI: platform.openai.com → API keys.</p>
+            <p>
+              비밀번호처럼 다뤄야 하니{' '}
+              <span className="text-foreground">남과 공유하지 마세요.</span>
+            </p>
+          </HelpHint>
+        </div>
         <p className="text-muted-foreground text-sm">
           외부 서비스 연동을 위한 API 키를 입력해 주세요
         </p>

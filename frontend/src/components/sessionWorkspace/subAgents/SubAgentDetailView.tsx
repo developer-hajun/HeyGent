@@ -579,7 +579,8 @@ export function SubAgentDetailView({
           <AlertDialogHeader>
             <AlertDialogTitle>에이전트를 삭제할까요?</AlertDialogTitle>
             <AlertDialogDescription>
-              `{item.agent.name}` 에이전트와 저장된 지침 문서가 삭제됩니다. CEO는 삭제되지 않습니다.
+              `{item.agent.name}` 에이전트와 저장된 지침 문서가 삭제됩니다. 팀장 에이전트는 삭제되지
+              않습니다.
             </AlertDialogDescription>
           </AlertDialogHeader>
           {deleteError ? <p className="text-destructive text-sm">{deleteError}</p> : null}

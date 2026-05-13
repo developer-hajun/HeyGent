@@ -230,7 +230,7 @@ export function OfficeMap({
               >
                 <img
                   src={sprite.src}
-                  alt="CEO"
+                  alt="팀장 에이전트"
                   draggable={false}
                   style={{ width: '100%', height: '100%', userSelect: 'none' }}
                 />

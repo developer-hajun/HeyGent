@@ -22,6 +22,7 @@ import { useNavigate } from 'react-router'
 import { useUIStore } from '@/store/useUIStore'
 import { getIotDevices, deleteIotDevice, pairIotDevice, type IotDevice } from '@/apis/iot'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { HelpHint } from '@/components/ui/help-hint'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { NewSessionModal, type CustomAgentConfig } from '@/components/session/NewSessionModal'
 
@@ -149,7 +150,17 @@ function IotCard({ loading, device, onRegister, onDeregister }: IotCardProps) {
         <div className="text-muted-foreground bg-muted/60 flex h-8 w-8 items-center justify-center rounded-lg">
           <Wifi className="h-4 w-4" />
         </div>
-        <p className="text-muted-foreground text-xs">IoT 연결</p>
+        <p className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+          IoT 연결
+          <HelpHint label="IoT 연결 도움말" iconClassName="h-3 w-3">
+            <p className="text-foreground font-medium">IoT 연결</p>
+            <p>
+              HeyGent 전용 <span className="text-foreground">기기</span>를 내 계정에 등록하는
+              단계예요.
+            </p>
+            <p>스마트폰에 무선 이어폰을 처음 연결하는 과정과 비슷합니다.</p>
+          </HelpHint>
+        </p>
       </div>
 
       {loading && (
@@ -455,7 +466,18 @@ function PairingModal({ open, onOpenChange, onSuccess }: PairingModalProps) {
 
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <label className="text-foreground text-sm font-medium">페어링 코드</label>
+            <label className="text-foreground inline-flex items-center gap-1.5 text-sm font-medium">
+              페어링 코드
+              <HelpHint label="페어링 코드 도움말" iconClassName="h-3.5 w-3.5">
+                <p className="text-foreground font-medium">페어링 코드</p>
+                <p>
+                  기기 화면에 잠깐 표시되는{' '}
+                  <span className="text-foreground">6자리 일회용 비밀번호</span>예요.
+                </p>
+                <p>이 코드를 맞춰 넣어야 내 계정과 기기가 짝이 됩니다.</p>
+                <p>시간이 지나면 자동으로 새 코드로 바뀝니다.</p>
+              </HelpHint>
+            </label>
             <input
               type="text"
               inputMode="numeric"
@@ -872,8 +894,8 @@ export function DashboardPage() {
   ]
 
   return (
-    <div className="bg-background flex-1 overflow-y-auto">
-      <div className="mx-auto grid w-full max-w-[1290px] grid-cols-1 gap-6 px-6 py-10 xl:translate-x-8 xl:grid-cols-[minmax(0,56rem)_18rem] xl:items-start 2xl:translate-x-12">
+    <div className="bg-background flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+      <div className="mx-auto grid w-full max-w-[1290px] grid-cols-1 gap-6 px-6 py-10 xl:grid-cols-[minmax(0,56rem)_18rem] xl:items-start">
         <div className="space-y-8">
           {/* 섹션: 시스템 상태 */}
           <motion.section
