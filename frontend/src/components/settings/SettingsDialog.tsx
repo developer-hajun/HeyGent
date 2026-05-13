@@ -581,20 +581,6 @@ const API_KEY_GUIDES = {
       { text: '생성된 키를 복사해 안전한 곳에 저장하세요.' },
     ],
   },
-  claude_api_key: {
-    placeholder: 'sk-ant-...',
-    steps: [
-      {
-        before: '',
-        linkLabel: 'Anthropic Console',
-        href: 'https://console.anthropic.com',
-        after: '에 접속합니다.',
-      },
-      { text: '로그인 후 좌측 메뉴에서 API Keys를 선택합니다.' },
-      { text: 'Create Key 버튼을 눌러 키를 생성합니다.' },
-      { text: '생성된 키는 한 번만 표시됩니다. 바로 복사해 안전한 곳에 저장하세요.' },
-    ],
-  },
 } as const
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
@@ -603,7 +589,6 @@ function ApiKeysContent() {
   const [apiKeys, setApiKeys] = useState([
     { id: 'openai_api_key' as const, name: 'OpenAI API', value: '', visible: false },
     { id: 'gemini_api_key' as const, name: 'Gemini API', value: '', visible: false },
-    { id: 'claude_api_key' as const, name: 'Claude API', value: '', visible: false },
   ])
   const [connectedProviders, setConnectedProviders] = useState<Record<string, boolean>>({})
 
@@ -695,7 +680,7 @@ function ApiKeysContent() {
       <div className="space-y-3">
         {apiKeys.map(
           (key: {
-            id: 'openai_api_key' | 'gemini_api_key' | 'claude_api_key'
+            id: 'openai_api_key' | 'gemini_api_key'
             name: string
             value: string
             visible: boolean

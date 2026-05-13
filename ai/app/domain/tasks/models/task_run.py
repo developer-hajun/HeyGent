@@ -47,6 +47,17 @@ class TaskRun:
     # 진행 상황을 한 줄로 요약한 텍스트.
     # 긴 payload 를 열지 않아도 현재 어디까지 왔는지 보여 주려고 저장한다.
     progress_summary: str | None = None
+    # DB queue/claim 메타데이터. TaskRun.status는 사용자에게 보이는 실행 상태이고,
+    # queue_status는 supervisor가 어떤 worker가 실행권을 갖는지 판단하는 durable lease 상태다.
+    queue_status: str | None = None
+    claim_owner: str | None = None
+    queued_at: datetime | None = None
+    claimed_at: datetime | None = None
+    lease_expires_at: datetime | None = None
+    heartbeat_at: datetime | None = None
+    next_attempt_at: datetime | None = None
+    attempts: int = 0
+    last_claim_error: str | None = None
     # 낙관적 갱신이나 변경 추적용 버전 값.
     # 여러 번 상태가 바뀌는 TaskRun 이 최신인지 판단하는 기준으로 쓸 수 있다.
     revision: int = 0

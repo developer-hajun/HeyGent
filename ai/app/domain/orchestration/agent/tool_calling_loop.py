@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
 from typing import Any
@@ -146,12 +147,12 @@ class ToolCallingLoopHandler:
         llm_call_count = 0
 
         for turn_index in range(1, max_iterations + 1):
-            generated = await asyncio.to_thread(
-                self.provider.respond,
+            generated = await self._respond_with_runtime_context_async(
                 messages=messages,
                 tools=provider_tools,
                 model=model,
                 tool_choice=None,
+                runtime_context=self._model_runtime_context(task=task, step=step, task_input=task_input),
             )
             llm_call_count += 1
             messages.append(generated.message)
@@ -323,6 +324,11 @@ class ToolCallingLoopHandler:
                     tool_name=runtime_tool_name,
                     args=tool_call.arguments,
                     result=result,
+                )
+                self._sync_dynamic_runtime_context(
+                    task=task,
+                    task_input=task_input,
+                    tool_runtime=tool_runtime,
                 )
             current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
 
@@ -817,6 +823,29 @@ class ToolCallingLoopHandler:
         return self.tool_runtime
 
     @staticmethod
+    def _sync_dynamic_runtime_context(*, task, task_input: dict[str, Any], tool_runtime) -> None:
+        latest_input = dict(getattr(task, "input_payload", None) or {})
+        dynamic_keys = (
+            "workId",
+            "workIdentifier",
+            "workTitle",
+            "workAssigneeAgentId",
+            "workContext",
+            "workLinkReason",
+        )
+        updates = {
+            key: latest_input[key]
+            for key in dynamic_keys
+            if key in latest_input and task_input.get(key) != latest_input[key]
+        }
+        if not updates:
+            return
+        task_input.update(updates)
+        runtime_context = getattr(tool_runtime, "runtime_context", None)
+        if isinstance(runtime_context, dict):
+            runtime_context.update(updates)
+
+    @staticmethod
     def _task_input_for_guard(*, task_input: dict[str, Any], step, resume_payload: dict[str, Any] | None) -> dict[str, Any]:
         guard_input = dict(task_input)
         if not bool((resume_payload or {}).get("approved", False)) or step is None:
@@ -928,6 +957,80 @@ class ToolCallingLoopHandler:
         if isinstance(decision, ToolGuardDecision):
             return decision
         return ToolGuardDecision(str(decision))
+
+    def _respond_with_runtime_context(
+        self,
+        *,
+        messages: list[AgentMessage | ToolResultMessage | dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str,
+        tool_choice: dict[str, Any] | str | None,
+        runtime_context: dict[str, Any],
+    ):
+        signature = inspect.signature(self.provider.respond)
+        if "runtime_context" in signature.parameters:
+            return self.provider.respond(
+                messages=messages,
+                tools=tools,
+                model=model,
+                tool_choice=tool_choice,
+                runtime_context=runtime_context,
+            )
+        return self.provider.respond(
+            messages=messages,
+            tools=tools,
+            model=model,
+            tool_choice=tool_choice,
+        )
+
+    async def _respond_with_runtime_context_async(
+        self,
+        *,
+        messages: list[AgentMessage | ToolResultMessage | dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str,
+        tool_choice: dict[str, Any] | str | None,
+        runtime_context: dict[str, Any],
+    ):
+        respond_async = getattr(self.provider, "respond_async", None)
+        if callable(respond_async):
+            signature = inspect.signature(respond_async)
+            if "runtime_context" in signature.parameters:
+                return await respond_async(
+                    messages=messages,
+                    tools=tools,
+                    model=model,
+                    tool_choice=tool_choice,
+                    runtime_context=runtime_context,
+                )
+            return await respond_async(
+                messages=messages,
+                tools=tools,
+                model=model,
+                tool_choice=tool_choice,
+            )
+        return await asyncio.to_thread(
+            self._respond_with_runtime_context,
+            messages=messages,
+            tools=tools,
+            model=model,
+            tool_choice=tool_choice,
+            runtime_context=runtime_context,
+        )
+
+    @staticmethod
+    def _model_runtime_context(*, task, step, task_input: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "user_id": getattr(task, "owner_key", None),
+            "provider_name": task_input.get("provider_name")
+            or task_input.get("providerName")
+            or "openai_api_key",
+            "task_run_id": getattr(task, "task_run_id", None),
+            "step_run_id": getattr(step, "step_run_id", None),
+            "session_id": getattr(task, "session_key", None)
+            or task_input.get("session_id")
+            or task_input.get("sessionId"),
+        }
 
     @staticmethod
     def _guard_payload(guard_result: ToolGuardResult) -> dict[str, Any]:

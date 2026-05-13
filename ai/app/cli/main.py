@@ -8,11 +8,6 @@ import uvicorn
 
 from app.cli.constants import COMMAND_PARSERS_ATTR, DEFAULT_MODEL_CHECK_PROMPT, OPENAI_PROVIDER_NAME, SHELL_SLASH_COMMANDS
 from app.cli.core.transport import LocalCLIClient, RemoteCLIClient, request_path as _request_path, response_url as _response_url
-from app.cli.oauth.callback import (
-    parse_manual_callback_input as _parse_manual_callback_input,
-    start_local_oauth_callback_listener as _start_local_oauth_callback_listener,
-    uses_service_callback_redirect as _uses_service_callback_redirect,
-)
 from app.cli.ui.output import (
     print_model_check_summary as _print_model_check_summary,
     print_openai_onboarding_intro as _print_openai_onboarding_intro,
@@ -56,8 +51,8 @@ def _build_examples() -> str:
         "  python -m app.cli health\n"
         "  python -m app.cli status\n"
         "  python -m app.cli onboard-openai\n"
-        "  python -m app.cli provider-refresh --provider openai_oauth\n"
-        "  python -m app.cli provider-disconnect --provider openai_oauth\n"
+        "  python -m app.cli provider-refresh --provider openai_api\n"
+        "  python -m app.cli provider-disconnect --provider openai_api\n"
         "  python -m app.cli list-providers\n"
         "  python -m app.cli create-task --prompt \"안녕하세요\"\n"
         "  python -m app.cli tasks --status WAITING\n"
@@ -127,12 +122,12 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     onboard_parser = subparsers.add_parser(
         "onboard-openai",
         help="사용자 기준으로 OpenAI 연결을 가장 쉬운 경로부터 자동 시도합니다",
-        description="브라우저 OAuth 기준으로 OpenClaw와 같은 localhost callback, 연결 상태 확인, 모델 테스트까지 한 번에 수행할 수 있습니다.",
+        description="API key provider 설정 상태 확인과 모델 테스트를 한 번에 수행할 수 있습니다.",
     )
-    onboard_parser.add_argument("--redirect-uri", default=None, help="요청 시점에 redirect URI 를 덮어쓸 수 있습니다")
-    onboard_parser.add_argument("--state", default=None, help="직접 관리할 OAuth state 값")
-    onboard_parser.add_argument("--force-oauth", dest="force_oauth", action="store_true", default=True, help="브라우저 OAuth 를 우선 사용합니다 (기본값)")
-    onboard_parser.add_argument("--allow-local-auth-fallback", dest="force_oauth", action="store_false", help="개발용으로 로컬 ChatGPT/Codex 로그인 재사용을 허용합니다")
+    onboard_parser.add_argument("--redirect-uri", default=None, help=argparse.SUPPRESS)
+    onboard_parser.add_argument("--state", default=None, help=argparse.SUPPRESS)
+    onboard_parser.add_argument("--force-oauth", dest="force_oauth", action="store_true", default=False, help=argparse.SUPPRESS)
+    onboard_parser.add_argument("--allow-local-auth-fallback", dest="force_oauth", action="store_false", help=argparse.SUPPRESS)
     onboard_parser.add_argument("--yes", action="store_true", help="브라우저 열기 확인을 묻지 않고 바로 진행합니다")
     onboard_parser.add_argument("--no-open-browser", action="store_true", help="브라우저를 자동으로 열지 않습니다")
     onboard_parser.add_argument("--no-wait", action="store_true", help="callback 완료까지 기다리지 않고 URL 만 출력합니다")
@@ -145,7 +140,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     refresh_parser = subparsers.add_parser(
         "provider-refresh",
         help="저장된 refresh token 으로 provider 연결을 갱신합니다",
-        description="토큰 만료 또는 만료 예정 시 저장된 refresh token 으로 access token 을 새로 갱신합니다.",
+        description="API key provider 는 별도 갱신 없이 현재 설정 상태를 확인합니다.",
     )
     refresh_parser.add_argument("--provider", default=OPENAI_PROVIDER_NAME, help="갱신할 provider 이름")
     command_parsers["provider-refresh"] = refresh_parser
@@ -153,7 +148,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     disconnect_parser = subparsers.add_parser(
         "provider-disconnect",
         help="저장된 provider 연결 정보를 제거합니다",
-        description="access token, refresh token, 남은 OAuth state 를 정리하고 다시 연결 가능한 상태로 돌립니다.",
+        description="환경 변수로 관리되는 provider 연결 해제 동작을 확인합니다.",
     )
     disconnect_parser.add_argument("--provider", default=OPENAI_PROVIDER_NAME, help="연결 해제할 provider 이름")
     command_parsers["provider-disconnect"] = disconnect_parser
@@ -228,14 +223,14 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
 
     auth_parser = subparsers.add_parser(
         "provider-auth",
-        help="모델 프로바이더 OAuth 시작 정보를 확인합니다",
-        description="authorization URL 과 누락된 env 를 JSON 형태로 확인하는 저수준 명령입니다.",
+        help="모델 프로바이더 설정 상태를 확인합니다",
+        description="API key provider 의 설정 여부와 누락된 env 를 JSON 형태로 확인하는 저수준 명령입니다.",
     )
     auth_parser.add_argument("--provider", default=OPENAI_PROVIDER_NAME, help="인증을 시작할 provider 이름")
-    auth_parser.add_argument("--redirect-uri", default=None, help="요청 시점에 redirect URI 를 덮어쓸 수 있습니다")
-    auth_parser.add_argument("--state", default=None, help="직접 관리할 OAuth state 값")
-    auth_parser.add_argument("--force-oauth", dest="force_oauth", action="store_true", default=True, help="브라우저 OAuth 를 우선 사용합니다 (기본값)")
-    auth_parser.add_argument("--allow-local-auth-fallback", dest="force_oauth", action="store_false", help="개발용으로 로컬 ChatGPT/Codex 로그인 재사용을 허용합니다")
+    auth_parser.add_argument("--redirect-uri", default=None, help=argparse.SUPPRESS)
+    auth_parser.add_argument("--state", default=None, help=argparse.SUPPRESS)
+    auth_parser.add_argument("--force-oauth", dest="force_oauth", action="store_true", default=False, help=argparse.SUPPRESS)
+    auth_parser.add_argument("--allow-local-auth-fallback", dest="force_oauth", action="store_false", help=argparse.SUPPRESS)
     command_parsers["provider-auth"] = auth_parser
 
     help_parser = subparsers.add_parser(
@@ -496,100 +491,11 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
         except Exception as error:
             print(f"\n연결 정보는 저장했지만 라이브 모델 테스트에서 오류가 났어: {error}")
             print("- 연결 상태 확인: py -3.11 -m app.cli status")
-            print("- 필요하면 다시 연결: py -3.11 -m app.cli provider-disconnect --provider openai_oauth")
+            print(f"- 필요하면 설정을 확인: py -3.11 -m app.cli provider-auth --provider {OPENAI_PROVIDER_NAME}")
             return 1
 
     if status != "authorization_required" or not response_json.get("authorization_url"):
         return 0
-
-    if args.no_open_browser:
-        print("\n브라우저 자동 열기는 건너뛸게. 위 Login URL 을 직접 열면 돼.")
-    elif not args.yes and not _confirm_yes_no("브라우저를 열어 로그인할게요.", default=True):
-        print("\n브라우저 열기를 취소했어. 나중에 위 Login URL 을 직접 열면 돼.")
-        return 0
-
-    listener = None
-    provider_state = None
-    uses_service_callback = bool(response_json.get("redirect_uri")) and _uses_service_callback_redirect(
-        response_json["redirect_uri"],
-        settings,
-        OPENAI_PROVIDER_NAME,
-    )
-    if not args.no_wait and response_json.get("redirect_uri") and response_json.get("state") and not uses_service_callback:
-        listener = _start_local_oauth_callback_listener(
-            client,
-            settings,
-            OPENAI_PROVIDER_NAME,
-            response_json["redirect_uri"],
-            response_json.get("state"),
-        )
-
-    if not args.no_open_browser:
-        opened = _open_browser(response_json["authorization_url"])
-        if opened:
-            print("\n브라우저를 열었어. 로그인 후 돌아오면 이어서 처리할게.")
-        else:
-            print("\n브라우저 자동 열기에 실패했어. 위 Login URL 을 직접 열어줘.")
-
-    if args.no_wait:
-        print("\n대기 없이 종료할게. 로그인 후 다시 onboard-openai 를 실행하거나 status 로 확인하면 돼.")
-        return 0
-
-    callback_result = None
-    try:
-        if listener is not None:
-            print("\nWaiting for authentication...")
-            callback_result = listener.wait(args.wait_seconds, poll_interval=0.2)
-    except KeyboardInterrupt:
-        print("\n로그인을 취소하고 종료할게.")
-        return 130
-    finally:
-        if listener is not None:
-            listener.close()
-
-    if uses_service_callback:
-        print("\nWaiting for authentication...")
-        try:
-            provider_state = _wait_for_provider_connection(
-                client,
-                settings,
-                OPENAI_PROVIDER_NAME,
-                wait_seconds=args.wait_seconds,
-                poll_interval=min(args.poll_interval, 0.2),
-            )
-        except KeyboardInterrupt:
-            print("\n로그인을 취소하고 종료할게.")
-            return 130
-        if provider_state is None:
-            print("\n아직 연결 완료를 확인하지 못했어. 브라우저 로그인 완료 후 다시 status 로 확인해 줘.")
-            return 1
-    else:
-        if callback_result is None:
-            print("\n자동 callback 을 아직 못 받았어.")
-            try:
-                manual = input("로그인 후 브라우저 주소창의 전체 redirect URL 또는 code를 붙여넣어 줘: ").strip()
-            except (EOFError, KeyboardInterrupt):
-                manual = ""
-            code, callback_state = _parse_manual_callback_input(manual, response_json.get("state"))
-            if not code:
-                print("- code 를 확인하지 못했어. 다시 onboard-openai --force-oauth 로 시도해 줘.")
-                return 1
-            callback_response = client.request(
-                "POST",
-                _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}/callback"),
-                json_body={"code": code, "state": callback_state or response_json.get("state")},
-            )
-            callback_result = {"ok": callback_response.is_success, "payload": callback_response.json()}
-
-        if args.json:
-            _print_response("provider-auth", callback_result["payload"], settings, as_json=True)
-        if not callback_result.get("ok"):
-            print("\nOAuth callback 처리에는 도달했지만 token 교환이 실패했어.")
-            return 1
-        provider_state = client.request("GET", _request_path(settings, f"/providers/{OPENAI_PROVIDER_NAME}")).json()
-
-    print("\nConnected ✓")
-    _print_response("status", [provider_state], settings, as_json=args.json)
 
     if args.no_run_check:
         return 0
@@ -608,7 +514,7 @@ def _handle_openai_onboarding(args, settings: Settings, client) -> int:
     except Exception as error:
         print(f"\n연결은 완료됐지만 라이브 모델 테스트에서 오류가 났어: {error}")
         print("- 연결 상태 확인: py -3.11 -m app.cli status")
-        print("- 필요하면 다시 연결: py -3.11 -m app.cli provider-disconnect --provider openai_oauth")
+        print(f"- 필요하면 설정을 확인: py -3.11 -m app.cli provider-auth --provider {OPENAI_PROVIDER_NAME}")
         return 1
 
 

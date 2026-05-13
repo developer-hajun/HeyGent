@@ -21,8 +21,6 @@ export interface Agent {
   extraArgs?: string
   webSearchEnabled?: boolean
   bypassSandbox?: boolean
-  heartbeatEnabled?: boolean
-  intervalSec?: number
   profileImage?: string
   spriteId?: string
   reportsToAgentId?: string

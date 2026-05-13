@@ -50,7 +50,6 @@ def _openai_base_url() -> str | None:
     value = (
         os.getenv("OPENAI_BASE_URL")
         or os.getenv("HEYGENT_OPENAI_REST_API_BASE_URL")
-        or os.getenv("HEYGENT_OPENAI_API_BASE_URL")
     )
     if not isinstance(value, str) or not value.strip():
         return None

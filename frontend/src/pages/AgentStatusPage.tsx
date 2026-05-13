@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { OfficeMap } from '@/components/office/OfficeMap'
 import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
+import { useTaskRunStore } from '@/store/useTaskRunStore'
 import { getCommandUsage } from '@/apis/aiCommandUsage'
 import type { CommandUsageSummary } from '@/apis/aiCommandUsage'
 import type {
@@ -161,7 +162,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1545, y: 285 },
       meeting: { x: 415, y: 130 },
       calling: { x: 1110, y: 660 },
-      work: { x: 470, y: 395 },
     },
   },
   {
@@ -176,7 +176,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1070, y: 285 },
       meeting: { x: 925, y: 90 },
       calling: { x: 840, y: 350 },
-      work: { x: 650, y: 458 },
     },
   },
   {
@@ -191,7 +190,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1215, y: 370 },
       meeting: { x: 715, y: 215 },
       calling: { x: 990, y: 750 },
-      work: { x: 470, y: 395 },
     },
   },
   {
@@ -207,7 +205,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1415, y: 360 },
       meeting: { x: 920, y: 220 },
       calling: { x: 1110, y: 655 },
-      work: { x: 465, y: 595 },
     },
   },
   {
@@ -227,7 +224,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1535, y: 425 },
       meeting: { x: 415, y: 130 },
       calling: { x: 1334, y: 665 },
-      work: { x: 825, y: 520 },
     },
   },
   {
@@ -247,7 +243,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1290, y: 260 },
       meeting: { x: 925, y: 90 },
       calling: { x: 1070, y: 658 },
-      work: { x: 825, y: 520 },
     },
   },
   {
@@ -267,7 +262,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1340, y: 280 },
       meeting: { x: 850, y: 75 },
       calling: { x: 1430, y: 840 },
-      work: { x: 465, y: 595 },
     },
   },
   {
@@ -283,7 +277,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 995, y: 340 },
       meeting: { x: 670, y: 105 },
       calling: { x: 240, y: 710 },
-      work: { x: 650, y: 458 },
     },
   },
   {
@@ -299,7 +292,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1380, y: 490 },
       meeting: { x: 785, y: 245 },
       calling: { x: 1200, y: 658 },
-      work: { x: 650, y: 685 },
     },
   },
   {
@@ -314,7 +306,6 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1310, y: 460 },
       meeting: { x: 920, y: 220 },
       calling: { x: 1250, y: 660 },
-      work: { x: 650, y: 685 },
     },
   },
   {
@@ -669,26 +660,6 @@ const DESTINATION_MAP: Record<UIDestination, { targetState: SittingState; label:
   work: { targetState: 'sitting_work', label: '작업' },
 }
 
-const STATE_LABELS: Record<string, string> = {
-  idle: '대기 중',
-  walking: '이동 중',
-  sitting_desk: '작업 중',
-  sitting_sofa: '휴식 중',
-  sitting_floor_lean: '휴식 중',
-  sitting_meeting: '회의 중',
-  sitting_calling: '통화 중',
-  sitting_work: '작업 중',
-  standing_wait: '대기 중',
-}
-
-function stateColor(state: string) {
-  if (state === 'sitting_calling') return 'bg-blue-400'
-  if (state.startsWith('sitting')) return 'bg-green-400'
-  if (state === 'walking') return 'bg-yellow-400'
-  if (state === 'standing_wait') return 'bg-orange-400'
-  return 'bg-slate-500'
-}
-
 function calcDuration(from: { x: number; y: number }, to: { x: number; y: number }): number {
   const dx = to.x - from.x
   const dy = to.y - from.y
@@ -771,8 +742,6 @@ function isSpotOccupied(
   })
 }
 
-const DESTINATIONS: UIDestination[] = ['desk', 'rest', 'meeting', 'calling']
-
 function playSpawnSound() {
   try {
     const ctx = new AudioContext()
@@ -800,9 +769,9 @@ function playSpawnSound() {
 }
 
 export function AgentStatusPage() {
-  const [agents, setAgents] = useState<AgentRuntime[]>([])
-  const [selectedId, setSelectedId] = useState('agent01')
-  const [panelTop, setPanelTop] = useState(false)
+  const agents = useAgentVisualizationStore((s) => s.agentRuntimes)
+  const setAgents = useAgentVisualizationStore((s) => s.setAgentRuntimes)
+  const addSpawnedKey = useAgentVisualizationStore((s) => s.addSpawnedKey)
   const [navmeshGrid, setNavmeshGrid] = useState<boolean[][] | null>(null)
   const [spawningIds, setSpawningIds] = useState<ReadonlySet<string>>(new Set())
   const [tokenUsageSummary, setTokenUsageSummary] = useState<CommandUsageSummary | null>(null)
@@ -828,7 +797,39 @@ export function AgentStatusPage() {
   const walkTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({})
 
   const { agentInfoMap, selectedAgentId, selectAgent } = useAgentVisualizationStore()
-  const spawnedKeysRef = useRef<Set<string>>(new Set())
+  const fetchActiveTaskRuns = useTaskRunStore((s) => s.fetchActiveTaskRuns)
+
+  // 시각화 페이지 마운트 시 현재 활성 task run을 즉시 조회해 displayContext(profileKey)를 채운다.
+  useEffect(() => {
+    void fetchActiveTaskRuns().catch(() => {})
+  }, [fetchActiveTaskRuns])
+
+  // 페이지 재진입 시 walk 중이던 에이전트를 최종 상태로 정착시키고,
+  // 언마운트 시에도 동일하게 처리해 다음 진입 때 clean한 상태로 시작한다.
+  useEffect(() => {
+    const finalizeWalking = () => {
+      useAgentVisualizationStore.getState().setAgentRuntimes((prev) =>
+        prev.map((a) => {
+          if (a.state !== 'walking') return a
+          return {
+            ...a,
+            position: a.targetPosition ? { ...a.targetPosition } : a.position,
+            state: a.targetState,
+            walkFrame: 0,
+            pendingWaypoints: [],
+            targetPosition: null,
+            standWaitTarget: null,
+          }
+        }),
+      )
+    }
+    finalizeWalking()
+    return () => {
+      Object.values(walkTimersRef.current).forEach((t) => clearTimeout(t))
+      walkTimersRef.current = {}
+      finalizeWalking()
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -849,7 +850,26 @@ export function AgentStatusPage() {
 
   useEffect(() => {
     runtimeGridRef.current = (navmeshGrid ?? OBSTACLE_GRID).map((r) => [...r])
-  }, [navmeshGrid])
+    if (navmeshGrid === null) return
+    // navmesh 로드 완료 — OBSTACLE_GRID로 이미 이동 중이던 에이전트가 있으면
+    // navmesh 기준으로 경로를 재계산해 장애물 회피를 정확히 적용한다.
+    setAgents((prev) => {
+      if (!prev.some((a) => a.state === 'walking')) return prev
+      return prev.map((a) => {
+        if (a.state !== 'walking' || !a.targetPosition) return a
+        const pathGrid = withAgentBlockers(runtimeGridRef.current, prev, a.config.id)
+        const newWaypoints = findPath(a.position, a.targetPosition, undefined, pathGrid, undefined)
+        const first = newWaypoints[0]
+        if (!first) return a
+        return {
+          ...a,
+          position: { ...first },
+          transitionDuration: calcDuration(a.position, first),
+          pendingWaypoints: newWaypoints.slice(1),
+        }
+      })
+    })
+  }, [navmeshGrid, setAgents])
 
   const clearWalkTimer = (agentId: string) => {
     const timer = walkTimersRef.current[agentId]
@@ -859,10 +879,21 @@ export function AgentStatusPage() {
     }
   }
 
-  const handleMove = (agentId: string, destination: UIDestination) => {
+  const handleMove = (agentId: string, rawDestination: UIDestination) => {
+    // CEO 전용 목적지 매핑
+    //   작업 중(desk) → work 좌표에서 ceo_work 스프라이트
+    //   완료(rest)   → desk 좌표에서 ceo_desk 스프라이트
+    const destination: UIDestination =
+      agentId === 'ceo' && rawDestination === 'desk'
+        ? 'work'
+        : agentId === 'ceo' && rawDestination === 'rest'
+          ? 'desk'
+          : rawDestination
+
     // 미등록 에이전트 자동 스폰 — task run에서 처음 등장하는 경우
-    if (!spawnedKeysRef.current.has(agentId) && AGENT_CONFIGS.some((c) => c.id === agentId)) {
-      spawnedKeysRef.current.add(agentId)
+    const spawnedKeys = useAgentVisualizationStore.getState().spawnedKeys
+    if (!spawnedKeys.includes(agentId) && AGENT_CONFIGS.some((c) => c.id === agentId)) {
+      addSpawnedKey(agentId)
       setSpawningIds((s) => new Set([...s, agentId]))
       playSpawnSound()
       setTimeout(() => {
@@ -875,13 +906,15 @@ export function AgentStatusPage() {
     }
 
     setAgents((prevAgents) => {
-      // 아직 agents 배열에 없으면 initialPosition에 추가
-      let prev = prevAgents
-      if (!prev.some((a) => a.config.id === agentId)) {
+      // 아직 agents 배열에 없으면 initialPosition에 먼저 렌더링한 뒤 다음 프레임에서 이동 시작
+      // — 같은 렌더에서 spawn + walk를 동시에 처리하면 CSS transform 전환의 "from" 상태가 없어
+      //   onTransitionEnd가 발화하지 않아 walking 애니메이션이 멈추지 않는다.
+      if (!prevAgents.some((a) => a.config.id === agentId)) {
         const config = AGENT_CONFIGS.find((c) => c.id === agentId)
-        if (!config) return prev
-        prev = [
-          ...prev,
+        if (!config) return prevAgents
+        requestAnimationFrame(() => handleMove(agentId, rawDestination))
+        return [
+          ...prevAgents,
           {
             config,
             position: { ...config.initialPosition },
@@ -896,9 +929,49 @@ export function AgentStatusPage() {
           },
         ]
       }
+      const prev = prevAgents
 
       const agent = prev.find((a) => a.config.id === agentId)
-      if (!agent || agent.state === 'walking') return prev
+      if (!agent) return prev
+      if (agent.state === 'walking') {
+        // 이동 중 목적지 변경: 경로는 유지하고 도착 시 전환할 targetState만 갱신
+        // rest는 소파 빈 자리 탐색이 필요해 mid-walk 갱신 불가 — 나머지만 처리
+        if (destination !== 'rest') {
+          const newTargetState = DESTINATION_MAP[destination as UIDestination]?.targetState
+          if (newTargetState && agent.targetState !== newTargetState) {
+            return prev.map((a) =>
+              a.config.id === agentId ? { ...a, targetState: newTargetState } : a,
+            )
+          }
+        }
+        return prev
+      }
+
+      // CEO: sitting_work ↔ sitting_desk 즉시 전환 (걷기 없이)
+      // — 두 좌표가 근접해 걸어가기 어색하며, idle(첫 등장) 상태는 통과시켜 정상 walk 처리
+      if (
+        agentId === 'ceo' &&
+        (destination === 'desk' || destination === 'work') &&
+        (agent.state === 'sitting_work' || agent.state === 'sitting_desk')
+      ) {
+        const newTargetState = DESTINATION_MAP[destination as UIDestination]?.targetState
+        if (!newTargetState || agent.state === newTargetState) return prev
+        clearWalkTimer('ceo')
+        return prev.map((a) =>
+          a.config.id === 'ceo'
+            ? {
+                ...a,
+                position: { ...a.config.destinations[destination as Destination]! },
+                state: newTargetState,
+                targetState: newTargetState,
+                walkFrame: 0,
+                pendingWaypoints: [],
+                targetPosition: null,
+                standWaitTarget: null,
+              }
+            : a,
+        )
+      }
 
       // ── rest → 소파 빈 자리 우선 배정, 둘 다 차면 floorLean ──────────────
       let internalDest: Destination
@@ -910,20 +983,22 @@ export function AgentStatusPage() {
           destPoint = { ...freeSofaSpot }
         } else {
           internalDest = 'floorLean'
-          destPoint = { ...agent.config.destinations.floorLean }
+          destPoint = { ...agent.config.destinations.floorLean! }
         }
       } else {
         internalDest = destination
-        destPoint = { ...agent.config.destinations[internalDest] }
+        const rawPoint = agent.config.destinations[internalDest]
+        if (!rawPoint) return prev
+        destPoint = { ...rawPoint }
 
         // 책상 자리가 점유된 경우 대기 줄 대신 회의 목적지로 바로 전환
         if (internalDest === 'desk' && isSpotOccupied(destPoint, prev, agentId)) {
           internalDest = 'meeting'
-          destPoint = { ...agent.config.destinations.meeting }
+          destPoint = { ...agent.config.destinations.meeting! }
         }
       }
 
-      const destConfig = agent.config.destinations[internalDest]
+      const destConfig = agent.config.destinations[internalDest]!
 
       // internalDest 에 맞는 실제 앉기 상태
       const resolvedTargetState: SittingState =
@@ -1034,6 +1109,53 @@ export function AgentStatusPage() {
   useVisualizationSync(handleMove)
   useAgentInfoSync()
 
+  // handleMove는 매 렌더마다 새로 생성되므로 타이머 콜백에서는 항상 최신 버전을 참조
+  const handleMoveRef = useRef(handleMove)
+  useEffect(() => {
+    handleMoveRef.current = handleMove
+  })
+
+  // CEO가 sitting_work 상태이고 서브에이전트가 있으면 주기적으로 explain(화이트보드) 좌표로 이동
+  const ceoState = useAgentVisualizationStore(
+    (s) => s.agentRuntimes.find((a) => a.config.id === 'ceo')?.state,
+  )
+  const hasSubAgents = useAgentVisualizationStore((s) =>
+    s.agentRuntimes.some((a) => a.config.id !== 'ceo'),
+  )
+
+  useEffect(() => {
+    if (!hasSubAgents || ceoState !== 'sitting_work') return
+    // 40~80초 사이 랜덤 간격으로 explain 좌표로 이동
+    const delay = 40_000 + Math.random() * 40_000
+    const timer = setTimeout(() => {
+      const ceo = useAgentVisualizationStore
+        .getState()
+        .agentRuntimes.find((a) => a.config.id === 'ceo')
+      const subs = useAgentVisualizationStore
+        .getState()
+        .agentRuntimes.filter((a) => a.config.id !== 'ceo')
+      if (ceo?.state === 'sitting_work' && subs.length > 0) {
+        handleMoveRef.current('ceo', 'meeting')
+      }
+    }, delay)
+    return () => clearTimeout(timer)
+  }, [ceoState, hasSubAgents])
+
+  // CEO가 explain(sitting_meeting) 도착 후 15~25초 뒤 work로 복귀
+  useEffect(() => {
+    if (ceoState !== 'sitting_meeting') return
+    const delay = 15_000 + Math.random() * 10_000
+    const timer = setTimeout(() => {
+      const ceo = useAgentVisualizationStore
+        .getState()
+        .agentRuntimes.find((a) => a.config.id === 'ceo')
+      if (ceo?.state === 'sitting_meeting') {
+        handleMoveRef.current('ceo', 'desk') // CEO 매핑: 'desk' → work 좌표
+      }
+    }, delay)
+    return () => clearTimeout(timer)
+  }, [ceoState])
+
   const handleAgentArrived = (agentId: string) => {
     setAgents((prev) => {
       const agent = prev.find((a) => a.config.id === agentId)
@@ -1080,29 +1202,6 @@ export function AgentStatusPage() {
     })
   }
 
-  const handleReset = (agentId: string) => {
-    clearWalkTimer(agentId)
-    setAgents((prev) =>
-      prev.map((a) =>
-        a.config.id === agentId
-          ? {
-              ...a,
-              position: { ...a.config.initialPosition },
-              state: 'idle' as const,
-              targetState: 'sitting_desk' as const,
-              walkFrame: 0 as const,
-              pendingWaypoints: [],
-              targetPosition: null,
-              standWaitTarget: null,
-              facingRight: false,
-            }
-          : a,
-      ),
-    )
-  }
-
-  const selectedAgent = agents.find((a) => a.config.id === selectedId)
-
   const selectedInfo = selectedAgentId ? agentInfoMap[selectedAgentId] : null
 
   return (
@@ -1118,67 +1217,6 @@ export function AgentStatusPage() {
         tokenUsageSummary={tokenUsageSummary}
       />
       {selectedInfo && <AgentInfoPanel info={selectedInfo} onClose={() => selectAgent(null)} />}
-
-      <div className={`absolute left-1/2 z-20 -translate-x-1/2 ${panelTop ? 'top-4' : 'bottom-6'}`}>
-        <div className="flex flex-col gap-2.5 rounded-2xl border border-white/20 bg-black/60 px-5 py-3 shadow-2xl backdrop-blur-md">
-          {/* 에이전트 탭 */}
-          <div className="flex items-center gap-1.5">
-            {agents.map((agent) => (
-              <button
-                key={agent.config.id}
-                onClick={() => setSelectedId(agent.config.id)}
-                className={`relative rounded-lg px-3 py-1 text-xs font-bold transition-colors ${
-                  selectedId === agent.config.id
-                    ? 'bg-white text-gray-900'
-                    : 'bg-white/10 text-white/60 hover:bg-white/20 hover:text-white'
-                }`}
-              >
-                {agent.config.id.replace('agent', '')}
-                <span
-                  className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-black/50 ${stateColor(agent.state)} ${agent.state === 'walking' ? 'animate-pulse' : ''}`}
-                />
-              </button>
-            ))}
-            <div className="mx-0.5 h-4 w-px bg-white/20" />
-            <button
-              onClick={() => setPanelTop((prev) => !prev)}
-              className="rounded-lg bg-white/10 px-2 py-1 text-xs text-white/60 transition-colors hover:bg-white/20 hover:text-white"
-              title="패널 위치 이동"
-            >
-              {panelTop ? '▼' : '▲'}
-            </button>
-          </div>
-
-          {/* 선택된 에이전트 이동 */}
-          {selectedAgent && (
-            <div className="flex items-center gap-3">
-              <div className="flex w-20 shrink-0 flex-col">
-                <span className="text-sm font-medium text-white">{selectedAgent.config.name}</span>
-                <span className="text-xs text-white/50">{STATE_LABELS[selectedAgent.state]}</span>
-              </div>
-              <div className="flex gap-1.5">
-                {(selectedAgent.config.allowedUIDestinations ?? DESTINATIONS).map((dest) => (
-                  <button
-                    key={dest}
-                    onClick={() => handleMove(selectedAgent.config.id, dest)}
-                    disabled={selectedAgent.state === 'walking'}
-                    className="rounded-lg bg-white/90 px-3 py-1.5 text-xs font-semibold text-gray-900 shadow-sm transition-opacity hover:bg-white disabled:cursor-not-allowed disabled:opacity-30"
-                  >
-                    {selectedAgent.config.destinationLabels?.[dest] ?? DESTINATION_MAP[dest].label}
-                  </button>
-                ))}
-              </div>
-              <button
-                onClick={() => handleReset(selectedAgent.config.id)}
-                disabled={selectedAgent.state === 'idle'}
-                className="rounded-lg border border-white/30 px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-30"
-              >
-                초기화
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   )
 }

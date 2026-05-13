@@ -346,20 +346,18 @@ async def _create_message_in_session(
     conversation_history = compact_conversation_history(
         build_conversation_history(session_store.list_messages(sessionId))
     )
-    settings_snapshot = _session_settings_snapshot(session)
-    effective_model = str(settings_snapshot.get("model") or payload.model or "").strip() or None
-    task_transcript_session_id = _create_task_transcript_session(
-        session_store,
-        session_id=sessionId,
-        owner_key=owner_key,
-        title=session.get("title") or payload.content[:120],
-        model=effective_model,
-    )
     task_input = dict(payload.input_payload)
     task_input["sessionId"] = sessionId
     task_input["ownerKey"] = owner_key
     task_input["ownerUserId"] = _owner_user_id(owner_key)
+    settings_snapshot = _session_settings_snapshot(session)
     _seed_default_session_agents_if_requested(
+        request.app.state,
+        task_input=task_input,
+        session_id=sessionId,
+        owner_key=owner_key,
+    )
+    main_profile = _attach_main_agent_context(
         request.app.state,
         task_input=task_input,
         session_id=sessionId,
@@ -373,8 +371,17 @@ async def _create_message_in_session(
     )
     if session_agent_profiles:
         task_input["allowSessionAgentRootWork"] = True
-    if effective_model and not task_input.get("model"):
+    profile_model = _profile_model(main_profile) if main_profile is not None else None
+    effective_model = str(profile_model or settings_snapshot.get("model") or payload.model or "").strip() or None
+    if effective_model:
         task_input["model"] = effective_model
+    task_transcript_session_id = _create_task_transcript_session(
+        session_store,
+        session_id=sessionId,
+        owner_key=owner_key,
+        title=session.get("title") or payload.content[:120],
+        model=effective_model,
+    )
     task_input["prompt"] = payload.content
     task_input["transcript_session_id"] = task_transcript_session_id
     task_input["conversation_history"] = conversation_history
@@ -446,19 +453,44 @@ async def _create_message_in_session(
     )
 
     if run_in_background:
-        asyncio.create_task(
-            _run_created_session_message_background(
-                request,
-                payload=payload,
-                session=session,
-                user=user,
-                session_id=sessionId,
-                owner_key=owner_key,
-                task_run_id=task_run_id,
-                task_input=task_input,
-                user_append=user_append,
+        task_execution_supervisor = getattr(request.app.state, "task_execution_supervisor", None)
+        if task_execution_supervisor is not None:
+            async def _finish_background_task(task):
+                await _finish_created_session_message(
+                    request,
+                    payload=payload,
+                    session=session,
+                    user=user,
+                    session_id=sessionId,
+                    owner_key=owner_key,
+                    task_input=task_input,
+                    user_append=user_append,
+                    task=task,
+                )
+
+            await task_execution_supervisor.submit(
+                OrchestrationRequest(
+                    task_run_id=task_run_id,
+                    owner_key=owner_key,
+                    session_key=sessionId,
+                    input_payload=task_input,
+                ),
+                on_complete=_finish_background_task,
             )
-        )
+        else:
+            asyncio.create_task(
+                _run_created_session_message_background(
+                    request,
+                    payload=payload,
+                    session=session,
+                    user=user,
+                    session_id=sessionId,
+                    owner_key=owner_key,
+                    task_run_id=task_run_id,
+                    task_input=task_input,
+                    user_append=user_append,
+                )
+            )
         messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
         return CreateSessionMessageResponse(
             session_id=sessionId,
@@ -525,6 +557,32 @@ async def _run_created_session_message(
         logger.exception("session message orchestration failed", extra={"task_run_id": task_run_id, "session_id": session_id})
         raise
 
+    return await _finish_created_session_message(
+        request,
+        payload=payload,
+        session=session,
+        user=user,
+        session_id=session_id,
+        owner_key=owner_key,
+        task_input=task_input,
+        user_append=user_append,
+        task=task,
+    )
+
+
+async def _finish_created_session_message(
+    request: Request,
+    *,
+    payload: CreateSessionMessageRequest,
+    session: dict[str, Any],
+    user,
+    session_id: str,
+    owner_key: str,
+    task_input: dict[str, Any],
+    user_append: dict[str, Any],
+    task,
+):
+    session_store = request.app.state.session_store
     _apply_linked_work_result(request, task_input=task_input, task=task)
 
     assistant_message_id = None
@@ -679,12 +737,41 @@ def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work
     if profile is None:
         return
     task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
+    profile_model = _profile_model(profile)
+    if profile_model:
+        task_input["model"] = profile_model
     profile_id = str(profile.get("profile_id") or assignee_agent_id)
     if not assignee_agent_id or assignee_agent_id == "CEO":
         _attach_session_agent_candidates(state, task_input=task_input, session_id=work.session_id, owner_key=str(work.owner_key))
     bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
     if bundle is not None:
         task_input["targetAgentInstructions"] = _instruction_bundle_prompt_payload(bundle)
+
+
+def _attach_main_agent_context(
+    state: Any,
+    *,
+    task_input: dict[str, Any],
+    session_id: str,
+    owner_key: str,
+) -> dict[str, Any] | None:
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return None
+    profile = agent_repository.ensure_session_main_agent(
+        session_id=session_id,
+        owner_key=str(owner_key),
+        owner_user_id=_owner_user_id(owner_key),
+    )
+    if profile is None:
+        return None
+    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
+    profile_id = str(profile.get("profile_id") or "").strip()
+    if profile_id:
+        bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(owner_key))
+        if bundle is not None:
+            task_input["targetAgentInstructions"] = _instruction_bundle_prompt_payload(bundle)
+    return profile
 
 
 def _seed_default_session_agents_if_requested(
@@ -750,6 +837,15 @@ def _instruction_bundle_prompt_payload(bundle: dict[str, Any]) -> dict[str, Any]
             if isinstance(document, dict)
         ],
     }
+
+
+def _profile_model(profile: dict[str, Any] | None) -> str | None:
+    if profile is None:
+        return None
+    config = profile.get("config_snapshot") if isinstance(profile.get("config_snapshot"), dict) else {}
+    value = config.get("model") or profile.get("model_name")
+    text = str(value or "").strip()
+    return text or None
 
 
 def _apply_work_execution_defaults(task_input: dict[str, Any], *, settings: Any) -> None:
@@ -867,7 +963,11 @@ async def _drain_work_wake_queue(request: Request, *, user, limit: int = _WORK_W
     claim_wakes = getattr(repository, "claim_work_wakes", None)
     if not callable(claim_wakes):
         return []
-    wakes = claim_wakes(limit=limit)
+    try:
+        wakes = claim_wakes(limit=limit)
+    except AttributeError:
+        logger.debug("work wake queue is not available in this runtime", exc_info=True)
+        return []
     completed = []
     for wake in wakes:
         completed.append(await _dispatch_work_wake(request, user=user, wake=wake))
@@ -1352,7 +1452,7 @@ def _apply_session_settings_snapshot(task_input: dict[str, Any], settings: dict[
 
     snapshot = dict(settings)
     task_input["settings_snapshot"] = snapshot
-    if "model" in snapshot:
+    if "model" in snapshot and not task_input.get("model"):
         task_input["model"] = snapshot["model"]
     if "toolsets" in snapshot:
         task_input["toolsets"] = list(snapshot["toolsets"])

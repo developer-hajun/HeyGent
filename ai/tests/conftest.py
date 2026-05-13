@@ -11,6 +11,17 @@ from app.domain.tasks.models import StepRun, TaskRun
 from tests.fakes import InMemoryAgentRepository, InMemoryTaskRepository, InMemoryTranscriptStore
 
 
+class NoopWorkRepository:
+    def release_stale_active_work_runs(self, *, stale_after_seconds: int, limit: int = 50) -> list:
+        return []
+
+    def claim_work_wakes(self, *, limit: int = 10) -> list:
+        return []
+
+    def close(self) -> None:
+        return None
+
+
 class FakeBackendAuthClient:
     async def verify_access_token(self, access_token: str, *, workspace_key: str | None = None) -> BackendAuthVerifyResult:
         return BackendAuthVerifyResult(user_id=access_token, workspace_key=workspace_key)
@@ -68,6 +79,7 @@ def configure_test_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("HEYGENT_POSTGRES_DSN", "postgresql://test")
     monkeypatch.setenv("HEYGENT_REDIS_URL", "redis://test")
     monkeypatch.setenv("HEYGENT_BRIDGE_TOKEN", "")
+    monkeypatch.setenv("HEYGENT_TASK_EXECUTION_QUEUE_ENABLED", "false")
     # 로컬 AI/.env의 WebSocket Origin 제한이 TestClient 기본 Origin을 막지 않도록
     # 테스트 런타임에서는 각 테스트가 필요한 경우에만 허용 목록을 직접 설정한다.
     monkeypatch.setenv("HEYGENT_WS_ALLOWED_ORIGINS", "")
@@ -158,6 +170,7 @@ def _patch_app_runtime(app_main, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_main, "PostgresTaskRepository", lambda _connection_factory: InMemoryTaskRepository())
     monkeypatch.setattr(app_main, "PostgresSessionStore", lambda _connection_factory: InMemoryTranscriptStore())
     monkeypatch.setattr(app_main, "PostgresAgentRepository", lambda _connection_factory: InMemoryAgentRepository())
+    monkeypatch.setattr(app_main, "PostgresWorkRepository", lambda _connection_factory: NoopWorkRepository())
     monkeypatch.setattr(app_main, "build_task_projection_store", lambda **_kwargs: RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60))
     monkeypatch.setattr(app_main, "BackendAuthClient", lambda settings: FakeBackendAuthClient())
     monkeypatch.setattr(app_main, "BackendMemoryClient", lambda settings: FakeBackendMemoryClient())

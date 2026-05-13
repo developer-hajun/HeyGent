@@ -11,15 +11,17 @@ public record BridgeDeviceResponse(
     String deviceName,
     Instant createdAt,
     Instant lastSeenAt,
-    Instant revokedAt
+    Instant revokedAt,
+    boolean online
 ) {
-    public static BridgeDeviceResponse from(BridgeDevice device) {
+    public static BridgeDeviceResponse from(BridgeDevice device, boolean online) {
         return new BridgeDeviceResponse(
             device.getId(),
             device.getDeviceName(),
             toInstant(device.getCreatedAt()),
             toInstant(device.getLastSeenAt()),
-            toInstant(device.getRevokedAt())
+            toInstant(device.getRevokedAt()),
+            online
         );
     }
 

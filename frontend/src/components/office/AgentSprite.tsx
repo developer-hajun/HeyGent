@@ -274,11 +274,7 @@ export function AgentSprite({
             agent.facingRight && (agent.state === 'walking' || agent.state === 'standing_wait')
               ? 'scaleX(-1)'
               : undefined,
-          filter: isSelected
-            ? 'drop-shadow(0 0 10px rgba(99, 179, 237, 0.9)) brightness(1.08)'
-            : isHovered
-              ? 'brightness(1.15)'
-              : undefined,
+          filter: isHovered ? 'brightness(1.15)' : undefined,
           transition: 'filter 0.15s ease',
         }}
       />

@@ -82,6 +82,14 @@ class TaskEngine:
         await self._emit("task.created", task)
         return await self._execute_initial(task=task, handler=handler, resume_payload=None)
 
+    async def enqueue_pending(self, *, task: TaskRun) -> TaskRun:
+        saved = self.repository.create_pending_task(task)
+        await self._emit("task.created", saved)
+        return saved
+
+    async def run_claimed(self, *, task: TaskRun, handler) -> TaskRun:
+        return await self._execute_initial(task=task, handler=handler, resume_payload=None)
+
     async def _execute_initial(self, *, task: TaskRun, handler, resume_payload: dict | None) -> TaskRun:
         ensure_task_transition(task.status, TaskStatus.RUNNING)
         task.status = TaskStatus.RUNNING
@@ -1120,6 +1128,9 @@ class TaskEngine:
         profile = self.agent_repository.get_session_agent(profile_id=profile_id, owner_key=str(work.owner_key))
         if profile is None:
             return
+        profile_model = self._profile_model(profile)
+        if profile_model:
+            payload["model"] = profile_model
         payload["targetAgentProfile"] = {
             "profileId": profile.get("profile_id"),
             "profileKey": profile.get("profile_key"),
@@ -1143,6 +1154,13 @@ class TaskEngine:
                     if isinstance(document, dict)
                 ],
             }
+
+    @staticmethod
+    def _profile_model(profile: dict) -> str | None:
+        config = profile.get("config_snapshot") if isinstance(profile.get("config_snapshot"), dict) else {}
+        value = config.get("model") or profile.get("model_name")
+        text = str(value or "").strip()
+        return text or None
 
     def _create_work_transcript_session(self, *, parent_task: TaskRun, work, model: str | None) -> str | None:
         if self.session_store is None:

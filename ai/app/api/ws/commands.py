@@ -16,6 +16,7 @@ from app.api.memory_writeback import writeback_persistent_memory_candidates
 from app.contracts.task.task_status import TaskStatus
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
+from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
@@ -56,6 +57,21 @@ _PROTECTED_SESSION_METADATA_KEYS = {
 _SESSION_METADATA_PATCH_ALLOWLIST = {"pinned", "color", "tags", "description", "lastViewedAt", "last_viewed_at", "ui"}
 _SESSION_SETTINGS_ALLOWLIST = {"model", "systemPrompt", "system_prompt", "toolsets", "delegationPolicy", "delegation_policy"}
 _PUBLIC_SESSION_TOOLSETS = {"skills", "session", "planning", "web", "work", "safe"}
+_OPENAI_MODEL_FALLBACKS = (
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-5.2",
+    "gpt-5.1",
+    "gpt-5",
+    "gpt-5-mini",
+    "gpt-5-nano",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "gpt-4o",
+    "gpt-4o-mini",
+)
 
 
 class WebSocketCommandError(Exception):
@@ -339,20 +355,18 @@ class WebSocketCommandRouter:
         conversation_history = compact_conversation_history(
             build_conversation_history(session_store.list_messages(session_id))
         )
-        settings_snapshot = _session_settings_snapshot(session)
-        effective_model = str(settings_snapshot.get("model") or model or "").strip() or None
-        transcript_session_id = _create_task_transcript_session(
-            session_store,
-            session_id=session_id,
-            owner_key=context.auth.user_id,
-            title=session.get("title") or content[:120],
-            model=effective_model,
-        )
         task_input = dict(input_payload)
         task_input["sessionId"] = session_id
         task_input["ownerKey"] = context.auth.user_id
         task_input["ownerUserId"] = _owner_user_id(context.auth.user_id)
+        settings_snapshot = _session_settings_snapshot(session)
         _seed_default_session_agents_if_requested(
+            context.websocket.app.state,
+            task_input=task_input,
+            session_id=session_id,
+            owner_key=context.auth.user_id,
+        )
+        main_profile = _attach_main_agent_context(
             context.websocket.app.state,
             task_input=task_input,
             session_id=session_id,
@@ -366,8 +380,17 @@ class WebSocketCommandRouter:
         )
         if session_agent_profiles:
             task_input["allowSessionAgentRootWork"] = True
-        if effective_model and not task_input.get("model"):
+        profile_model = _profile_model(main_profile) if main_profile is not None else None
+        effective_model = str(profile_model or settings_snapshot.get("model") or model or "").strip() or None
+        if effective_model:
             task_input["model"] = effective_model
+        transcript_session_id = _create_task_transcript_session(
+            session_store,
+            session_id=session_id,
+            owner_key=context.auth.user_id,
+            title=session.get("title") or content[:120],
+            model=effective_model,
+        )
         task_input["prompt"] = content
         task_input["transcript_session_id"] = transcript_session_id
         task_input["conversation_history"] = conversation_history
@@ -433,8 +456,31 @@ class WebSocketCommandRouter:
             "after_user_message_version": user_append["after_user_message_version"],
             "completion_expected_version": user_append["completion_expected_version"],
         }
+        task_execution_supervisor = getattr(context.websocket.app.state, "task_execution_supervisor", None)
         try:
-            context.websocket.app.state.repository.create_task(task)
+            if task_execution_supervisor is not None:
+                background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
+
+                async def finish_supervised_task(completed_task: Any) -> None:
+                    await self._finish_created_message_task(
+                        context=background_context,
+                        session_id=session_id,
+                        user_message_id=int(user_append["message_id"]),
+                        task=task,
+                        completed_task=completed_task,
+                    )
+
+                task = await task_execution_supervisor.submit(
+                    OrchestrationRequest(
+                        task_run_id=task.task_run_id,
+                        owner_key=context.auth.user_id,
+                        session_key=session_id,
+                        input_payload=dict(task.input_payload or {}),
+                    ),
+                    on_complete=finish_supervised_task,
+                )
+            else:
+                context.websocket.app.state.repository.create_task(task)
             if work_id is not None:
                 WorkService(context.websocket.app.state.work_repository).mark_run_started(
                     work_id=work_id,
@@ -464,22 +510,23 @@ class WebSocketCommandRouter:
         }
         self._accepted_messages[idempotency_key] = accepted
 
-        def start_background_task() -> None:
-            background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
-            background_task = asyncio.create_task(
-                self._run_created_message_task(
-                    context=background_context,
-                    session_id=session_id,
-                    user_message_id=int(user_append["message_id"]),
-                    task=task,
-                    handler=handler,
+        if task_execution_supervisor is None:
+            def start_background_task() -> None:
+                background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
+                background_task = asyncio.create_task(
+                    self._run_created_message_task(
+                        context=background_context,
+                        session_id=session_id,
+                        user_message_id=int(user_append["message_id"]),
+                        task=task,
+                        handler=handler,
+                    )
                 )
-            )
-            context.background_tasks.add(background_task)
-            background_task.add_done_callback(context.background_tasks.discard)
+                context.background_tasks.add(background_task)
+                background_task.add_done_callback(context.background_tasks.discard)
 
-        # accepted frame을 먼저 보낸 뒤 agent.loop/task.event fan-out을 시작한다.
-        context.after_response_callbacks.append(start_background_task)
+            # accepted frame을 먼저 보낸 뒤 agent.loop/task.event fan-out을 시작한다.
+            context.after_response_callbacks.append(start_background_task)
         return "session.message.accepted", dict(accepted)
 
     async def _session_message_retry(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
@@ -540,7 +587,30 @@ class WebSocketCommandRouter:
                 handler=handler,
                 task_run_id=retry_state["task_run_id"],
             )
-            context.websocket.app.state.repository.create_task(task)
+            task_execution_supervisor = getattr(context.websocket.app.state, "task_execution_supervisor", None)
+            if task_execution_supervisor is not None:
+                background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
+
+                async def finish_supervised_retry(completed_task: Any) -> None:
+                    await self._finish_created_message_task(
+                        context=background_context,
+                        session_id=session_id,
+                        user_message_id=int(retry_state["user_message_id"]),
+                        task=task,
+                        completed_task=completed_task,
+                    )
+
+                task = await task_execution_supervisor.submit(
+                    OrchestrationRequest(
+                        task_run_id=task.task_run_id,
+                        owner_key=context.auth.user_id,
+                        session_key=session_id,
+                        input_payload=dict(task.input_payload or {}),
+                    ),
+                    on_complete=finish_supervised_retry,
+                )
+            else:
+                context.websocket.app.state.repository.create_task(task)
             context.session_service.subscribe_task(
                 session_id=context.gateway_session_id,
                 websocket=context.websocket,
@@ -563,21 +633,22 @@ class WebSocketCommandRouter:
             "history_version": retry_state["completion_expected_version"],
         }
 
-        def start_background_task() -> None:
-            background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
-            background_task = asyncio.create_task(
-                self._run_created_message_task(
-                    context=background_context,
-                    session_id=session_id,
-                    user_message_id=int(retry_state["user_message_id"]),
-                    task=task,
-                    handler=handler,
+        if task_execution_supervisor is None:
+            def start_background_task() -> None:
+                background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
+                background_task = asyncio.create_task(
+                    self._run_created_message_task(
+                        context=background_context,
+                        session_id=session_id,
+                        user_message_id=int(retry_state["user_message_id"]),
+                        task=task,
+                        handler=handler,
+                    )
                 )
-            )
-            context.background_tasks.add(background_task)
-            background_task.add_done_callback(context.background_tasks.discard)
+                context.background_tasks.add(background_task)
+                background_task.add_done_callback(context.background_tasks.discard)
 
-        context.after_response_callbacks.append(start_background_task)
+            context.after_response_callbacks.append(start_background_task)
         return "session.message.accepted", accepted
 
     async def _session_message_undo(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
@@ -801,30 +872,31 @@ class WebSocketCommandRouter:
             current_model = (_session_settings_snapshot(session).get("model") or session.get("model"))
         settings = context.websocket.app.state.settings
         default_model = str(current_model or getattr(settings, "openai_response_model", "") or "gpt-5.4")
-        providers = []
-        registry = context.websocket.app.state.provider_registry
-        for provider in registry.health():
-            payload_item = provider.model_dump(mode="json") if hasattr(provider, "model_dump") else dict(provider)
-            provider_name = str(payload_item.get("provider_name") or "default")
-            provider_models = [
-                {
-                    "id": default_model,
-                    "label": default_model,
-                    "provider": provider_name,
-                    "is_current": default_model == current_model or current_model is None,
-                }
-            ]
-            providers.append(
-                {
-                    "slug": provider_name,
-                    "provider_name": provider_name,
-                    "models": provider_models,
-                    "is_current": any(model["is_current"] for model in provider_models),
-                    "total_models": len(provider_models),
-                    "warning": None if payload_item.get("healthy") or payload_item.get("configured") or payload_item.get("connected") else payload_item.get("detail"),
-                    "health": payload_item,
-                }
-            )
+        model_ids = await _list_openai_models_for_user(
+            context.websocket.app.state,
+            user_id=context.auth.user_id,
+            fallback_model=default_model,
+        )
+        provider_models = [
+            {
+                "id": model_id,
+                "label": model_id,
+                "provider": "OpenAI",
+                "is_current": model_id == current_model or (current_model is None and model_id == default_model),
+            }
+            for model_id in model_ids
+        ]
+        providers = [
+            {
+                "slug": "openai_api_key",
+                "provider_name": "openai_api_key",
+                "models": provider_models,
+                "is_current": any(model["is_current"] for model in provider_models),
+                "total_models": len(provider_models),
+                "warning": None,
+                "health": {"provider_name": "openai_api_key", "configured": True, "connected": True},
+            }
+        ]
         return ("model.options.result", {"model": default_model, "providers": providers, "models": [model for provider in providers for model in provider["models"]]})
 
     async def _task_runs_active_list(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
@@ -1035,6 +1107,56 @@ class WebSocketCommandRouter:
                 handler=handler,
                 resume_payload=None,
             )
+            await self._finish_created_message_task(
+                context=context,
+                session_id=session_id,
+                user_message_id=user_message_id,
+                task=task,
+                completed_task=completed_task,
+            )
+        except Exception:
+            logger.exception("session.message.create background 실행에 실패했습니다.")
+            _mark_ws_linked_work_run_failed(context, task=task)
+            try:
+                context.websocket.app.state.session_store.clear_stale_running_task(
+                    owner_key=task.owner_key,
+                    session_id=session_id,
+                    task_run_id=task.task_run_id,
+                )
+            except Exception:
+                logger.exception("session.message.create 실패 후 running guard 정리에 실패했습니다.")
+            # accepted 이후 background 실행이 실패해도 client가 placeholder를 무기한 기다리면 안 된다.
+            # 실패 frame은 durable TaskRun event와 별개로 현재 대화 UI의 pending assistant 상태를 닫는 역할을 한다.
+            try:
+                await context.send_json(
+                    _event_frame(
+                        "session.message.failed",
+                        {
+                            "session_id": session_id,
+                            "message_id": f"failed:{task.task_run_id}",
+                            "user_message_id": str(user_message_id),
+                            "task_run_id": task.task_run_id,
+                            "status": "FAILED",
+                            "error": {
+                                "code": "background_task_failed",
+                                "message": "AI 응답 생성 중 오류가 발생했습니다.",
+                                "retryable": True,
+                            },
+                        },
+                    )
+                )
+            except Exception:
+                logger.exception("session.message.failed frame 전송에 실패했습니다.")
+
+    async def _finish_created_message_task(
+        self,
+        *,
+        context: WebSocketBackgroundContext,
+        session_id: str,
+        user_message_id: int,
+        task: Any,
+        completed_task: Any,
+    ) -> None:
             completed_status = str(completed_task.status)
             completion_expected_version = int((task.input_payload or {}).get("completion_expected_version") or 0)
             if completed_status == TaskStatus.WAITING.value:
@@ -1091,6 +1213,12 @@ class WebSocketCommandRouter:
                 completion_expected_version=completion_expected_version,
                 status=completed_status,
             )
+            await context.send_json(
+                _event_frame(
+                    "taskRun.snapshot.result",
+                    _task_snapshot_payload(completed_task),
+                )
+            )
             # 현재 Task Engine에는 토큰 단위 streaming hook이 없으므로 delta를 합성하지 않는다.
             # 프론트에는 durable assistant 메시지가 저장된 뒤 completed frame만 보낸다.
             await context.send_json(
@@ -1136,45 +1264,6 @@ class WebSocketCommandRouter:
                 writeback=writeback_observation,
                 mark_used=mark_used_observation,
             )
-            await context.send_json(
-                _event_frame(
-                    "taskRun.snapshot.result",
-                    _task_snapshot_payload(completed_task),
-                )
-            )
-        except Exception:
-            logger.exception("session.message.create background 실행에 실패했습니다.")
-            _mark_ws_linked_work_run_failed(context, task=task)
-            try:
-                context.websocket.app.state.session_store.clear_stale_running_task(
-                    owner_key=task.owner_key,
-                    session_id=session_id,
-                    task_run_id=task.task_run_id,
-                )
-            except Exception:
-                logger.exception("session.message.create 실패 후 running guard 정리에 실패했습니다.")
-            # accepted 이후 background 실행이 실패해도 client가 placeholder를 무기한 기다리면 안 된다.
-            # 실패 frame은 durable TaskRun event와 별개로 현재 대화 UI의 pending assistant 상태를 닫는 역할을 한다.
-            try:
-                await context.send_json(
-                    _event_frame(
-                        "session.message.failed",
-                        {
-                            "session_id": session_id,
-                            "message_id": f"failed:{task.task_run_id}",
-                            "user_message_id": str(user_message_id),
-                            "task_run_id": task.task_run_id,
-                            "status": "FAILED",
-                            "error": {
-                                "code": "background_task_failed",
-                                "message": "AI 응답 생성 중 오류가 발생했습니다.",
-                                "retryable": True,
-                            },
-                        },
-                    )
-                )
-            except Exception:
-                logger.exception("session.message.failed frame 전송에 실패했습니다.")
 
     async def _run_resume_task(self, *, context: WebSocketBackgroundContext, task_run_id: str, approval_id: str, payload: dict[str, Any]) -> None:
         try:
@@ -1390,22 +1479,39 @@ def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work
     profile_id = str(profile.get("profile_id") or assignee_agent_id)
     if not assignee_agent_id or assignee_agent_id == "CEO":
         _attach_session_agent_candidates(state, task_input=task_input, session_id=work.session_id, owner_key=str(work.owner_key))
+    profile_model = _profile_model(profile)
+    if profile_model:
+        task_input["model"] = profile_model
     bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
     if bundle is None:
         return
-    task_input["targetAgentInstructions"] = {
-        "bundleId": bundle.get("bundle_id"),
-        "entryDocumentKey": bundle.get("entry_document_key") or "AGENTS.md",
-        "documents": [
-            {
-                "documentKey": document.get("document_key"),
-                "displayName": document.get("display_name"),
-                "content": document.get("content") or "",
-            }
-            for document in list(bundle.get("documents") or [])
-            if isinstance(document, dict)
-        ],
-    }
+    task_input["targetAgentInstructions"] = _instruction_bundle_prompt_payload(bundle)
+
+
+def _attach_main_agent_context(
+    state: Any,
+    *,
+    task_input: dict[str, Any],
+    session_id: str,
+    owner_key: str,
+) -> dict[str, Any] | None:
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return None
+    profile = agent_repository.ensure_session_main_agent(
+        session_id=session_id,
+        owner_key=str(owner_key),
+        owner_user_id=_owner_user_id(owner_key),
+    )
+    if profile is None:
+        return None
+    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
+    profile_id = str(profile.get("profile_id") or "").strip()
+    if profile_id:
+        bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(owner_key))
+        if bundle is not None:
+            task_input["targetAgentInstructions"] = _instruction_bundle_prompt_payload(bundle)
+    return profile
 
 
 def _apply_work_execution_defaults(task_input: dict[str, Any], *, settings: Any) -> None:
@@ -1854,7 +1960,7 @@ def _apply_session_settings_snapshot(task_input: dict[str, Any], settings: dict[
 
     snapshot = dict(settings)
     task_input["settings_snapshot"] = snapshot
-    if "model" in snapshot:
+    if "model" in snapshot and not task_input.get("model"):
         task_input["model"] = snapshot["model"]
     if "toolsets" in snapshot:
         task_input["toolsets"] = list(snapshot["toolsets"])
@@ -1862,6 +1968,39 @@ def _apply_session_settings_snapshot(task_input: dict[str, Any], settings: dict[
     if "delegationPolicy" in snapshot:
         task_input["delegation_policy"] = dict(snapshot["delegationPolicy"])
     task_input["system_prompt_snapshot"] = get_system_prompt_snapshot(session)
+
+
+async def _list_openai_models_for_user(state: Any, *, user_id: str, fallback_model: str) -> list[str]:
+    models: list[str] = []
+    registry = getattr(state, "provider_registry", None)
+    provider = None
+    if registry is not None and hasattr(registry, "get"):
+        try:
+            provider = registry.get("openai_api")
+        except KeyError:
+            provider = None
+    if provider is not None and hasattr(provider, "list_user_models"):
+        try:
+            models = await provider.list_user_models(user_id=user_id, model=fallback_model)
+        except Exception:
+            models = []
+
+    preferred = [fallback_model, *_OPENAI_MODEL_FALLBACKS]
+    configured = getattr(getattr(state, "settings", None), "openai_allowed_models", None)
+    if isinstance(configured, str):
+        preferred.extend([item.strip() for item in configured.split(",") if item.strip()])
+    elif isinstance(configured, (list, tuple, set)):
+        preferred.extend([str(item).strip() for item in configured if str(item).strip()])
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for model in [*preferred, *models]:
+        model_id = str(model or "").strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        merged.append(model_id)
+    return merged or [fallback_model]
 
 
 def _json_dumps(value: Any) -> str:
@@ -2102,6 +2241,31 @@ def _agent_profile_prompt_payload(profile: dict[str, Any]) -> dict[str, Any]:
         "templateKey": profile.get("template_key"),
         "configSnapshot": profile.get("config_snapshot") or {},
     }
+
+
+def _instruction_bundle_prompt_payload(bundle: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "bundleId": bundle.get("bundle_id"),
+        "entryDocumentKey": bundle.get("entry_document_key") or "AGENTS.md",
+        "documents": [
+            {
+                "documentKey": document.get("document_key") or document.get("documentKey"),
+                "displayName": document.get("display_name") or document.get("displayName"),
+                "content": document.get("content") or "",
+            }
+            for document in list(bundle.get("documents") or [])
+            if isinstance(document, dict)
+        ],
+    }
+
+
+def _profile_model(profile: dict[str, Any] | None) -> str | None:
+    if profile is None:
+        return None
+    config = profile.get("config_snapshot") if isinstance(profile.get("config_snapshot"), dict) else {}
+    value = config.get("model") or profile.get("model_name")
+    text = str(value or "").strip()
+    return text or None
 
 
 def _step_payload_with_display_context(task: Any, step: Any) -> dict[str, Any]:

@@ -10,7 +10,6 @@ import {
   Loader2,
   MoreHorizontal,
   Pause,
-  Play,
   Plus,
   Trash2,
 } from 'lucide-react'
@@ -20,6 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 export interface AgentSummaryItemData {
   label: string
   value: ReactNode
+  onSelect?: () => void
 }
 
 export interface AgentMetricItem {
@@ -27,6 +27,7 @@ export interface AgentMetricItem {
   label: string
   value: ReactNode
   description?: ReactNode
+  chart?: ReactNode
 }
 
 export interface AgentRunItemData {
@@ -34,11 +35,26 @@ export interface AgentRunItemData {
   status: string
   source?: string
   createdAt?: string
+  sortTime?: number
   summary?: string
   tokens?: string
   cost?: string
   adapter?: string
   model?: string
+}
+
+export interface AgentUsageMetricRecord {
+  createdAt?: string
+  totalTokens?: number
+  estimatedCostUsd?: number
+}
+
+export interface AgentUsageRowData {
+  cost: ReactNode
+  date: ReactNode
+  input: ReactNode
+  output: ReactNode
+  run: ReactNode
 }
 
 export interface AgentSkillRowData {
@@ -110,10 +126,6 @@ export function AgentDetailHeader({
           <Plus className="h-3.5 w-3.5 sm:mr-1" />
           <span className="hidden sm:inline">작업 배정</span>
         </Button>
-        <Button variant="outline" size="sm" disabled title="직접 실행 기능은 준비 중입니다.">
-          <Play className="h-3.5 w-3.5 sm:mr-1" />
-          <span className="hidden sm:inline">하트비트 실행</span>
-        </Button>
         <Button variant="outline" size="sm" disabled title="일시정지 기능은 준비 중입니다.">
           <Pause className="h-3.5 w-3.5 sm:mr-1" />
           <span className="hidden sm:inline">일시정지</span>
@@ -135,25 +147,54 @@ export function AgentDashboardPanel({
   costs,
   latestRun,
   metrics,
+  onLatestRunOpen,
   onRecentOpen,
   recentEmptyText,
   recentItems,
   recentTitle,
+  usageRows,
 }: {
   costs: AgentSummaryItemData[]
   latestRun?: AgentRunItemData | null
   metrics: AgentMetricItem[]
+  onLatestRunOpen?: () => void
   onRecentOpen?: () => void
   recentEmptyText: string
   recentItems: AgentSummaryItemData[]
   recentTitle: string
+  usageRows?: AgentUsageRowData[]
 }) {
+  const recentLimit = 10
+  const visibleRecentItems = recentItems.slice(0, recentLimit)
+  const hiddenRecentCount = Math.max(0, recentItems.length - visibleRecentItems.length)
+  const isLive = latestRun ? isLiveRunStatus(latestRun.status) : false
+  const visibleUsageRows = (usageRows ?? []).slice(0, 10)
+
   return (
     <div className="space-y-8 pt-2">
       <section className="space-y-3">
-        <h3 className="text-sm font-medium">최근 실행</h3>
+        <div className="flex w-full items-center justify-between gap-3">
+          <h3 className="flex items-center gap-2 text-sm font-medium">
+            {isLive ? (
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-pulse rounded-full bg-cyan-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan-400" />
+              </span>
+            ) : null}
+            {isLive ? '실시간 실행' : '최근 실행'}
+          </h3>
+          {latestRun && onLatestRunOpen ? (
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground shrink-0 text-xs transition-colors"
+              onClick={onLatestRunOpen}
+            >
+              상세 보기 &rarr;
+            </button>
+          ) : null}
+        </div>
         {latestRun ? (
-          <AgentRunSummaryCard run={latestRun} />
+          <AgentRunSummaryCard run={latestRun} onSelect={onLatestRunOpen} />
         ) : (
           <p className="text-muted-foreground text-sm">아직 실행 기록이 없습니다.</p>
         )}
@@ -182,17 +223,26 @@ export function AgentDashboardPanel({
           <p className="text-muted-foreground text-sm">{recentEmptyText}</p>
         ) : (
           <div className="divide-border divide-y rounded-md border">
-            {recentItems.map((item) => (
-              <div key={item.label} className="px-4 py-3">
-                <AgentSummaryItem label={item.label} value={item.value} />
+            {visibleRecentItems.map((item) => (
+              <div key={item.label} className="px-3 py-0">
+                <AgentRecentSummaryItem
+                  label={item.label}
+                  onSelect={item.onSelect}
+                  value={item.value}
+                />
               </div>
             ))}
+            {hiddenRecentCount > 0 ? (
+              <div className="text-muted-foreground px-4 py-2 text-center text-xs">
+                +{hiddenRecentCount}개 더 있음
+              </div>
+            ) : null}
           </div>
         )}
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-medium">비용</h3>
+        <h3 className="text-sm font-medium">사용량</h3>
         <div className="space-y-4">
           <div className="border-border rounded-lg border p-4">
             <AgentSummaryGrid items={costs} columns="four" />
@@ -209,11 +259,23 @@ export function AgentDashboardPanel({
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td className="text-muted-foreground px-3 py-4 text-center" colSpan={5}>
-                    아직 비용 기록이 없습니다.
-                  </td>
-                </tr>
+                {visibleUsageRows.length > 0 ? (
+                  visibleUsageRows.map((row, index) => (
+                    <tr key={index} className="border-border border-b last:border-b-0">
+                      <td className="px-3 py-2">{row.date}</td>
+                      <td className="px-3 py-2 font-mono">{row.run}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.input}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.output}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{row.cost}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="text-muted-foreground px-3 py-4 text-center" colSpan={5}>
+                      아직 사용량 기록이 없습니다.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -921,8 +983,312 @@ export function AgentSummaryItem({ label, value }: AgentSummaryItemData) {
   )
 }
 
+function AgentRecentSummaryItem({ label, onSelect, value }: AgentSummaryItemData) {
+  const content = (
+    <>
+      <div className="min-w-0 truncate text-sm font-medium" title={label}>
+        {label}
+      </div>
+      <div className="text-muted-foreground min-w-0 truncate text-xs sm:text-right">{value}</div>
+    </>
+  )
+
+  if (onSelect) {
+    return (
+      <button
+        type="button"
+        className="hover:bg-muted/50 grid w-full min-w-0 gap-1 py-3 text-left transition-colors sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-3"
+        onClick={onSelect}
+      >
+        {content}
+      </button>
+    )
+  }
+
+  return (
+    <div className="grid min-w-0 gap-1 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-3">
+      {content}
+    </div>
+  )
+}
+
+const CHART_COLORS = ['#06b6d4', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#64748b']
+const DAY_MS = 24 * 60 * 60 * 1000
+
+export function AgentRunActivityChart({ runs }: { runs: AgentRunItemData[] }) {
+  const activity = buildRunActivityData(runs)
+  return <AgentStackedDayChart activity={activity} emptyLabel="실행 기록 없음" />
+}
+
+export function AgentRunStatusChart({ runs }: { runs: AgentRunItemData[] }) {
+  const activity = buildRunActivityData(runs)
+  return (
+    <AgentStackedDayChart
+      activity={activity}
+      emptyLabel="상태 기록 없음"
+      legend={[
+        { color: CHART_COLORS[1], label: '완료' },
+        { color: CHART_COLORS[3], label: '실패' },
+        { color: CHART_COLORS[5], label: '기타' },
+      ]}
+    />
+  )
+}
+
+export function AgentRunSuccessRateChart({ runs }: { runs: AgentRunItemData[] }) {
+  const activity = buildRunActivityData(runs)
+  const hasData = activity.some((day) => day.total > 0)
+  if (!hasData) return <p className="text-muted-foreground text-xs">실행 기록 없음</p>
+
+  return (
+    <div>
+      <div className="flex h-20 items-end gap-[3px]">
+        {activity.map((day) => {
+          const rate = day.total > 0 ? day.succeeded / day.total : 0
+          const color =
+            day.total === 0
+              ? undefined
+              : rate >= 0.8
+                ? CHART_COLORS[1]
+                : rate >= 0.5
+                  ? CHART_COLORS[2]
+                  : CHART_COLORS[3]
+          return (
+            <div
+              key={day.date}
+              className="flex h-full flex-1 flex-col justify-end"
+              title={`${day.label}: ${day.total > 0 ? Math.round(rate * 100) : 0}%`}
+            >
+              {day.total > 0 ? (
+                <div style={{ height: `${rate * 100}%`, minHeight: 2, backgroundColor: color }} />
+              ) : (
+                <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+              )}
+            </div>
+          )
+        })}
+      </div>
+      <AgentDateLabels days={activity} />
+    </div>
+  )
+}
+
+export function AgentUsageActivityChart({ records }: { records: AgentUsageMetricRecord[] }) {
+  const data = buildLast14DayUsageData(records)
+  const maxValue = Math.max(...data.map((day) => day.tokens), 1)
+  const hasData = data.some((day) => day.tokens > 0)
+
+  if (!hasData) return <p className="text-muted-foreground text-xs">사용량 기록 없음</p>
+  return (
+    <div>
+      <div className="flex h-20 items-end gap-[3px]">
+        {data.map((day) => {
+          const heightPct = (day.tokens / maxValue) * 100
+          return (
+            <div
+              key={day.date}
+              className="flex h-full flex-1 flex-col justify-end"
+              title={`${day.label}: ${day.tokens.toLocaleString('ko-KR')} tokens`}
+            >
+              {day.tokens > 0 ? (
+                <div className="bg-violet-500" style={{ height: `${heightPct}%`, minHeight: 2 }} />
+              ) : (
+                <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+              )}
+            </div>
+          )
+        })}
+      </div>
+      <AgentDateLabels days={data} />
+    </div>
+  )
+}
+
+function AgentStackedDayChart({
+  activity,
+  emptyLabel,
+  legend,
+}: {
+  activity: AgentRunActivityDay[]
+  emptyLabel: string
+  legend?: Array<{ color: string; label: string }>
+}) {
+  const maxValue = Math.max(...activity.map((day) => day.total), 1)
+  const hasData = activity.some((day) => day.total > 0)
+
+  if (!hasData) return <p className="text-muted-foreground text-xs">{emptyLabel}</p>
+
+  return (
+    <div>
+      <div className="flex h-20 items-end gap-[3px]">
+        {activity.map((day) => {
+          const heightPct = (day.total / maxValue) * 100
+          return (
+            <div
+              key={day.date}
+              className="flex h-full flex-1 flex-col justify-end"
+              title={`${day.label}: ${day.total}회`}
+            >
+              {day.total > 0 ? (
+                <div
+                  className="flex flex-col-reverse gap-px overflow-hidden"
+                  style={{ height: `${heightPct}%`, minHeight: 2 }}
+                >
+                  {day.succeeded > 0 ? (
+                    <div className="bg-emerald-500" style={{ flex: day.succeeded }} />
+                  ) : null}
+                  {day.failed > 0 ? (
+                    <div className="bg-red-500" style={{ flex: day.failed }} />
+                  ) : null}
+                  {day.other > 0 ? (
+                    <div className="bg-neutral-500" style={{ flex: day.other }} />
+                  ) : null}
+                </div>
+              ) : (
+                <div className="bg-muted/30 rounded-sm" style={{ height: 2 }} />
+              )}
+            </div>
+          )
+        })}
+      </div>
+      <AgentDateLabels days={activity} />
+      {legend ? <AgentChartLegend items={legend} /> : null}
+    </div>
+  )
+}
+
+function AgentDateLabels({ days }: { days: Array<{ date: string; label: string }> }) {
+  return (
+    <div className="mt-1.5 flex gap-[3px]">
+      {days.map((day, index) => (
+        <div key={day.date} className="flex-1 text-center">
+          {index === 0 || index === 6 || index === 13 ? (
+            <span className="text-muted-foreground text-[9px] tabular-nums">{day.label}</span>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function AgentChartLegend({ items }: { items: Array<{ color: string; label: string }> }) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-x-2.5 gap-y-0.5">
+      {items.map((item) => (
+        <span key={item.label} className="text-muted-foreground flex items-center gap-1 text-[9px]">
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{ backgroundColor: item.color }}
+          />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+interface AgentRunActivityDay {
+  date: string
+  label: string
+  succeeded: number
+  failed: number
+  other: number
+  total: number
+}
+
+function buildRunActivityData(runs: AgentRunItemData[]): AgentRunActivityDay[] {
+  const days = buildLast14Days()
+  const grouped = new Map(
+    days.map((day) => [
+      day.key,
+      { date: day.key, label: day.label, succeeded: 0, failed: 0, other: 0, total: 0 },
+    ]),
+  )
+  for (const run of runs) {
+    const key = getDayKey(run.sortTime)
+    const entry = key !== null ? grouped.get(key) : undefined
+    if (!entry) continue
+    if (isSuccessStatus(run.status)) entry.succeeded += 1
+    else if (isFailureStatus(run.status)) entry.failed += 1
+    else entry.other += 1
+    entry.total += 1
+  }
+  return [...grouped.values()]
+}
+
+function buildLast14DayUsageData(records: AgentUsageMetricRecord[]) {
+  const days = buildLast14Days()
+  const grouped = new Map(
+    days.map((day) => [day.key, { date: day.key, label: day.label, tokens: 0 }]),
+  )
+  for (const record of records) {
+    const time = record.createdAt ? new Date(record.createdAt).getTime() : Number.NaN
+    const key = getDayKey(time)
+    const entry = key !== null ? grouped.get(key) : undefined
+    if (entry) {
+      entry.tokens += Math.max(0, record.totalTokens ?? 0)
+    }
+  }
+  return [...grouped.values()]
+}
+
+function buildLast14Days() {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return Array.from({ length: 14 }, (_, index) => {
+    const date = new Date(today.getTime() - (13 - index) * DAY_MS)
+    return {
+      key: getDayKey(date.getTime()) ?? '',
+      label: `${date.getMonth() + 1}/${date.getDate()}`,
+    }
+  })
+}
+
+function getDayKey(time: number | undefined) {
+  if (time === undefined || !Number.isFinite(time) || time <= 0) return null
+  const date = new Date(time)
+  date.setHours(0, 0, 0, 0)
+  return date.toISOString().slice(0, 10)
+}
+
+function isSuccessStatus(status?: string | null) {
+  return (
+    status === 'succeeded' ||
+    status === 'completed' ||
+    status === 'SUCCEEDED' ||
+    status === 'COMPLETED'
+  )
+}
+
+function isFailureStatus(status?: string | null) {
+  return (
+    status === 'failed' ||
+    status === 'blocked' ||
+    status === 'cancelled' ||
+    status === 'canceled' ||
+    status === 'FAILED' ||
+    status === 'BLOCKED' ||
+    status === 'CANCELLED' ||
+    status === 'CANCELED'
+  )
+}
+
 function AgentMetricCard({ metric }: { metric: AgentMetricItem }) {
   const Icon = metric.icon
+
+  if (metric.chart) {
+    return (
+      <div className="border-border space-y-3 rounded-lg border p-4">
+        <div>
+          <h3 className="text-muted-foreground text-xs font-medium">{metric.label}</h3>
+          {metric.description ? (
+            <span className="text-muted-foreground/60 text-[10px]">{metric.description}</span>
+          ) : null}
+        </div>
+        {metric.chart}
+      </div>
+    )
+  }
 
   return (
     <div className="border-border min-h-28 rounded-lg border p-4">
@@ -930,7 +1296,7 @@ function AgentMetricCard({ metric }: { metric: AgentMetricItem }) {
         {Icon ? <Icon className="h-3.5 w-3.5" /> : null}
         {metric.label}
       </div>
-      <div className="mt-3 text-lg font-semibold">{metric.value}</div>
+      <div className="mt-3 text-lg font-semibold tabular-nums">{metric.value}</div>
       {metric.description ? (
         <div className="text-muted-foreground mt-1 text-xs leading-5">{metric.description}</div>
       ) : null}
@@ -938,30 +1304,73 @@ function AgentMetricCard({ metric }: { metric: AgentMetricItem }) {
   )
 }
 
-function AgentRunSummaryCard({ run }: { run: AgentRunItemData }) {
-  return (
-    <div className="border-border overflow-hidden rounded-lg border">
-      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <AgentStatusPill status={run.status} />
-            <span className="text-muted-foreground font-mono text-xs">{shortRunId(run.id)}</span>
-            {run.source ? (
-              <span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[10px] font-medium">
-                {run.source}
-              </span>
-            ) : null}
-          </div>
-          {run.summary ? (
-            <p className="text-muted-foreground text-sm">{run.summary}</p>
-          ) : (
-            <p className="text-muted-foreground text-sm">아직 요약이 없습니다.</p>
-          )}
+function AgentRunSummaryCard({ onSelect, run }: { onSelect?: () => void; run: AgentRunItemData }) {
+  const summary = getRunSummaryExcerpt(run.summary)
+  const content = (
+    <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <AgentStatusPill status={run.status} />
+          <span className="text-muted-foreground font-mono text-xs">{shortRunId(run.id)}</span>
+          {run.source ? (
+            <span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 text-[10px] font-medium">
+              {run.source}
+            </span>
+          ) : null}
         </div>
-        <span className="text-muted-foreground shrink-0 text-xs">{run.createdAt ?? '방금 전'}</span>
+        {summary ? (
+          <p className="text-muted-foreground max-h-16 overflow-hidden text-sm leading-5">
+            {summary}
+          </p>
+        ) : (
+          <p className="text-muted-foreground text-sm">아직 요약이 없습니다.</p>
+        )}
       </div>
+      <span className="text-muted-foreground shrink-0 text-xs">{run.createdAt ?? '방금 전'}</span>
     </div>
   )
+
+  return (
+    <button
+      type="button"
+      className={`border-border block w-full overflow-hidden rounded-lg border text-left transition-colors ${
+        onSelect ? 'hover:bg-muted/50 cursor-pointer' : 'cursor-default'
+      } ${isLiveRunStatus(run.status) ? 'border-cyan-500/30 shadow-[0_0_12px_rgba(6,182,212,0.08)]' : ''}`}
+      onClick={onSelect}
+      disabled={!onSelect}
+    >
+      {content}
+    </button>
+  )
+}
+
+function isLiveRunStatus(status?: string | null) {
+  return status === 'running' || status === 'waiting' || status === 'queued' || status === 'RUNNING'
+}
+
+function getRunSummaryExcerpt(summary: string | undefined) {
+  if (!summary) return ''
+  const lines = summary
+    .replace(/^#{1,6}\s+/gm, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line.length > 0 &&
+        !line.startsWith('---') &&
+        !line.startsWith('|') &&
+        !line.startsWith('```') &&
+        !/^[-*>]/.test(line) &&
+        !/^\d+\./.test(line),
+    )
+  const excerpt: string[] = []
+  let chars = 0
+  for (const line of lines) {
+    if (excerpt.length >= 3 || chars + line.length > 280) break
+    excerpt.push(line)
+    chars += line.length
+  }
+  return excerpt.join(' ')
 }
 
 function AgentRunListItem({

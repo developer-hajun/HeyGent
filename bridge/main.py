@@ -155,6 +155,9 @@ async def _run_session(
     if not settings.token:
         logger.error("브릿지 토큰이 없습니다. GUI 에서 페어링을 먼저 진행해주세요.")
         return
+    if settings.workspace_root is None:
+        logger.error("워크스페이스 폴더가 선택되지 않았습니다. GUI 에서 폴더를 먼저 지정해주세요.")
+        return
 
     logger.info("AI 서버에 접속 시도: %s", settings.ai_ws_url)
     # WebSocket 프로토콜 레벨의 keep-alive를 켠다. application-level ping과 별개로
