@@ -682,6 +682,8 @@ class InMemorySkillRepository:
                 return sorted(matched)
         if profile_id and self.agent_settings.get(profile_id):
             return sorted(enabled.intersection(self.agent_settings[profile_id]))
+        if profile_id:
+            return []
         return sorted(enabled)
 
     def _with_user_enabled(self, owner_key: str, item: dict[str, Any]) -> dict[str, Any]:

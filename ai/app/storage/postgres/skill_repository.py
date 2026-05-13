@@ -218,6 +218,7 @@ class PostgresSkillRepository:
             agent_names.discard("")
             if agent_names:
                 return sorted(enabled_names.intersection(agent_names))
+            return []
 
         return sorted(enabled_names)
 
