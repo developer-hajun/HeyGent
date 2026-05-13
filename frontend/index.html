@@ -2,28 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- Favicon — OS prefers-color-scheme 기준 / 파일 이름은 로고 색상 의미: -->
-    <!-- favicon_dark.png = 어두운 로고 → 밝은 배경(라이트 모드)에 사용 -->
-    <!-- favicon_light.png = 밝은 로고 → 어두운 배경(다크 모드)에 사용 -->
+    <!-- Favicon uses dedicated theme assets. -->
     <link
       rel="icon"
       type="image/png"
       sizes="any"
-      href="/favicon_dark.png"
+      href="/favicon_light.png"
       media="(prefers-color-scheme: light)"
     />
     <link
       rel="icon"
       type="image/png"
       sizes="any"
-      href="/favicon_light.png"
+      href="/favicon_dark.png"
       media="(prefers-color-scheme: dark)"
     />
-    <!-- iOS / Android 홈 화면 바로가기 — 큰 사이즈로 표시 -->
-    <link rel="apple-touch-icon" sizes="180x180" href="/favicon_dark.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/favicon_light.png" media="(prefers-color-scheme: dark)" />
+    <!-- iOS / Android home screen icons. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/favicon_light.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/favicon_dark.png" media="(prefers-color-scheme: dark)" />
     <!-- PWA / Mask icon -->
-    <link rel="shortcut icon" href="/favicon_dark.png" />
+    <link rel="shortcut icon" href="/favicon_light.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>HeyGent</title>
   </head>
