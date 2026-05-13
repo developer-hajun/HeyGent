@@ -15,6 +15,7 @@ metadata:
       - public-restroom-nearby
       - subway-lost-property
       - korean-character-count
+      - mattermost-send
 ---
 
 # Skill Index
@@ -30,6 +31,7 @@ This skill is a discovery guide. It does not replace the target skill. After cho
 - `software-development`: Planning and subagent-driven development guidance.
 - `browser`: Browser UX flow review.
 - `mcp`: Native MCP integration.
+- `messaging`: External messaging integrations.
 - `k-skills`: Korean public data, Korean local information, Korean search surfaces, and Korean text utilities.
 
 ## Selection Guide
@@ -51,6 +53,8 @@ Read `writing-plans` or `subagent-driven-development` for software planning and 
 Read `ux-flow-review` when the user asks to inspect a browser flow or review UX behavior.
 
 Read `native-mcp` when the user asks about MCP tool or server integration.
+
+Read `mattermost-send` when the user explicitly asks to send, share, post, or publish a message to Mattermost or a configured channel alias.
 
 ## Korean Skills
 

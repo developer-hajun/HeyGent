@@ -6,12 +6,10 @@ export const DEFAULT_SIDEBAR_COLLAPSED_WIDTH = 64
 export const MIN_SIDEBAR_WIDTH = 200
 export const MAX_SIDEBAR_WIDTH = 480
 
-// 앱 테마 토글 시 favicon 도 함께 교체.
-// 파일 이름은 로고 색상을 의미:
-//  - favicon_dark.png  = 어두운 색 로고 → 라이트 모드(밝은 배경)에 사용
-//  - favicon_light.png = 밝은 색 로고 → 다크 모드(어두운 배경)에 사용
+// Keep the favicon aligned with the app theme.
+// Use the dedicated theme favicon assets.
 function applyFavicon(theme: 'dark' | 'light') {
-  const path = theme === 'dark' ? '/favicon_light.png' : '/favicon_dark.png'
+  const path = theme === 'dark' ? '/favicon_dark.png' : '/favicon_light.png'
   // cache-busting — 브라우저 favicon 캐시 강제 무효화
   const href = `${path}?v=${Date.now()}`
 

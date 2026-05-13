@@ -67,6 +67,7 @@ class LocalToolRuntime:
                 "delegate_task": self._delegate_task,
                 "session_agent_task": self._session_agent_task,
                 "work_disposition": self._work_disposition,
+                "mattermost.send": self._send_mattermost_message,
                 "terminal.run": self._run_terminal_command,
                 "web_search": self._run_web_search,
                 "web_extract": self._run_web_extract,
@@ -393,6 +394,13 @@ class LocalToolRuntime:
 
     def _run_http_get(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.web.web_tools", "http_get_handler", args)
+
+    def _send_mattermost_message(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler(
+            "app.tools.messaging.mattermost_tool",
+            "send_mattermost_message_handler",
+            args,
+        )
 
     def _run_browser_navigate(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_navigate_handler", args)
@@ -762,6 +770,9 @@ class LocalToolRuntime:
         if tool_name in FILE_TOOL_NAMES:
             # 모델이 workspace_root를 넓혀도 서버가 바인딩한 루트만 사용한다.
             trusted_args["workspace_root"] = str(self.workspace_root)
+        if tool_name == "mattermost.send":
+            # 사용자 식별자는 모델 인자가 아니라 서버가 바인딩한 owner_key만 신뢰한다.
+            trusted_args["_trusted_user_id"] = self.owner_key
         return trusted_args
 
     def _resolve_terminal_cwd(self, value: Any) -> str:
