@@ -17,6 +17,8 @@ interface SessionState {
   agentPanelsBySessionId: Record<string, AgentPanelItem[]>
   dynamicSessions: Session[]
   pinnedSessionIds: Set<string>
+  mainAgentNameDraftBySessionId: Record<string, string>
+  setMainAgentNameDraft: (sessionId: string, name: string | null) => void
   setSelectedSessionId: (id: string | null) => void
   addAgentPanel: (agent: Agent) => void
   addAgentPanelToSession: (sessionId: string, agent: Agent) => void
@@ -79,6 +81,18 @@ export const useSessionStore = create<SessionState>()(
       agentPanelsBySessionId: {},
       dynamicSessions: [],
       pinnedSessionIds: new Set(),
+      mainAgentNameDraftBySessionId: {},
+
+      setMainAgentNameDraft: (sessionId, name) =>
+        set((s) => {
+          const next = { ...s.mainAgentNameDraftBySessionId }
+          if (name === null) {
+            delete next[sessionId]
+          } else {
+            next[sessionId] = name
+          }
+          return { mainAgentNameDraftBySessionId: next }
+        }),
 
       setSelectedSessionId: (id) => set({ selectedSessionId: id }),
 

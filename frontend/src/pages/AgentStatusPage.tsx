@@ -313,7 +313,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
   },
   {
     id: 'ceo',
-    name: 'CEO',
+    name: '팀장 에이전트',
     spritePath: '/assets/agents/ceo',
     scale: 1.05,
     stateScales: { walking: 0.85, standing_wait: 0.85, sitting_work: 0.7 },
