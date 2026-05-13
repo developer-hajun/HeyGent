@@ -19,10 +19,17 @@ const RUNNING_EVENT_TYPES = new Set(['step.started', 'tool.started', 'search.sta
 
 // actorAgent.profileKey가 없을 때 kind/id로 AGENT_CONFIGS id를 유추한다.
 // 백엔드가 main 에이전트(CEO)의 profileKey를 내려주지 않아 kind 기반 매핑이 필요하다.
-function resolveProfileKey(agent?: TaskRunAgentRef | null): string | undefined {
+// profileIdMap: 세션 에이전트 패널의 profileId → spriteId(agentXX) 매핑 — 서브에이전트 연동용
+function resolveProfileKey(
+  agent?: TaskRunAgentRef | null,
+  profileIdMap?: Record<string, string>,
+): string | undefined {
   if (!agent) return undefined
-  if (agent.profileKey) return agent.profileKey
   if (agent.kind === 'main') return 'ceo'
+  const mappedKey = agent.profileId ?? agent.id
+  const fromMap = mappedKey != null ? profileIdMap?.[mappedKey] : undefined
+  if (fromMap) return fromMap
+  if (agent.profileKey) return agent.profileKey
   if (agent.id) return agent.id
   return undefined
 }
@@ -95,10 +102,12 @@ function resolveDestination(
  * useTaskRunStore의 실시간 task run / task.event 데이터를 읽어 에이전트 시각화 이동을 트리거한다.
  * - Spec 4 (taskRuns.active.list): taskRunsById 초기 상태
  * - Spec 1 (task.event): eventsByTaskRunId 실시간 갱신 → 최신 이벤트 status/event_type 반영
+ * - profileIdMap: 세션 에이전트 profileId → spriteId(agentXX) 매핑 — 서브에이전트 task run 연동용
  */
 export function useVisualizationSync(
   handleMove: (agentId: string, dest: UIDestination) => void,
   sessionId?: string,
+  profileIdMap?: Record<string, string>,
 ) {
   const handleMoveRef = useRef(handleMove)
   useEffect(() => {
@@ -121,7 +130,7 @@ export function useVisualizationSync(
         continue
       }
 
-      const profileKey = resolveProfileKey(taskRun.displayContext?.actorAgent)
+      const profileKey = resolveProfileKey(taskRun.displayContext?.actorAgent, profileIdMap)
       if (!profileKey) continue
 
       // 해당 task run의 최신 이벤트 (sequence 순 정렬된 배열의 마지막)
@@ -148,5 +157,5 @@ export function useVisualizationSync(
       lastDestByAgentId.current[profileKey] = destination
       handleMoveRef.current(profileKey, destination)
     }
-  }, [taskRunsById, eventsByTaskRunId, sessionId])
+  }, [taskRunsById, eventsByTaskRunId, sessionId, profileIdMap])
 }
