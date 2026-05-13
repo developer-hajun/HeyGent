@@ -47,6 +47,7 @@ public enum ErrorCode {
     BAD_GATEWAY(HttpStatus.BAD_GATEWAY, "외부 서비스 처리 중 오류가 발생했습니다."),
     OPENAI_OAUTH_TOKEN_EXCHANGE_FAILED(HttpStatus.BAD_GATEWAY, "OpenAI OAuth token 교환 중 오류가 발생했습니다."),
     OPENAI_USAGE_QUERY_FAILED(HttpStatus.BAD_GATEWAY, "OpenAI 사용량 조회 중 오류가 발생했습니다."),
+    MATTERMOST_REQUEST_FAILED(HttpStatus.BAD_GATEWAY, "Mattermost 요청 처리 중 오류가 발생했습니다."),
 
     // 503 SERVICE_UNAVAILABLE
     SERVICE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "서비스를 일시적으로 사용할 수 없습니다."),

@@ -30,6 +30,7 @@ import { useChatStore } from '@/store/useChatStore'
 import { getOpenAiModels, type OpenAiModelsResponse } from '@/apis/openaiModels'
 import { saveOpenAiApiKey, deleteOpenAiApiKey, type ProviderName } from '@/apis/openaiApiKey'
 import { getOpenAiProviders } from '@/apis/openaiProviders'
+import { sendMattermostWebhook } from '@/apis/mattermost'
 
 interface SettingsDialogProps {
   open: boolean
@@ -903,19 +904,32 @@ function ApiKeysContent() {
 // Channels Content
 // ────────────────────────────────────────────────────────────────────────────
 function ChannelsContent() {
-  const [channels, setChannels] = useState([
-    { id: 'telegram', name: 'Telegram', connected: true, icon: '📱' },
-    { id: 'discord', name: 'Discord', connected: false, icon: '💬' },
-    { id: 'slack', name: 'Slack', connected: true, icon: '💼' },
-    { id: 'whatsapp', name: 'WhatsApp', connected: false, icon: '📞' },
-  ])
+  const [webhookUrl, setWebhookUrl] = useState('')
+  const [message, setMessage] = useState(
+    '[Heygent PoC] Mattermost Incoming Webhook 테스트 메시지입니다.',
+  )
+  const [sendingTest, setSendingTest] = useState(false)
+  const [statusText, setStatusText] = useState<string | null>(null)
+  const [errorText, setErrorText] = useState<string | null>(null)
 
-  const toggleChannel = (id: string) => {
-    setChannels((prev) =>
-      prev.map((channel) =>
-        channel.id === id ? { ...channel, connected: !channel.connected } : channel,
-      ),
-    )
+  const canSendTest = webhookUrl.trim() !== '' && message.trim() !== ''
+
+  const handleSendTest = async () => {
+    if (!canSendTest) return
+    setSendingTest(true)
+    setErrorText(null)
+    setStatusText(null)
+    try {
+      await sendMattermostWebhook({
+        webhookUrl: webhookUrl.trim(),
+        message: message.trim(),
+      })
+      setStatusText('Incoming Webhook으로 테스트 메시지를 보냈습니다.')
+    } catch {
+      setErrorText('테스트 메시지 전송에 실패했습니다. Webhook URL이 올바른지 확인하세요.')
+    } finally {
+      setSendingTest(false)
+    }
   }
 
   return (
@@ -923,50 +937,59 @@ function ChannelsContent() {
       <div>
         <h3 className="text-foreground mb-2 text-xl font-semibold">채널 연결</h3>
         <p className="text-muted-foreground text-sm">
-          Telegram, Discord, Slack, WhatsApp 등 연결 가능한 채널 목록과 상태를 조회합니다
+          Mattermost Incoming Webhook URL을 입력해 지정된 채널로 테스트 메시지를 보냅니다.
         </p>
       </div>
 
-      <div className="space-y-3">
-        {channels.map((channel) => (
-          <div
-            key={channel.id}
-            className={`rounded-xl border p-4 transition-colors ${
-              channel.connected ? 'bg-muted/40 border-border' : 'bg-background border-border'
-            }`}
+      <div className="bg-muted/30 border-border space-y-4 rounded-xl border p-4">
+        <div className="space-y-3">
+          <label className="block">
+            <span className="text-foreground mb-1.5 block text-xs font-medium">
+              Incoming Webhook URL
+            </span>
+            <input
+              type="url"
+              value={webhookUrl}
+              onChange={(event) => setWebhookUrl(event.target.value)}
+              placeholder="https://meeting.ssafy.com/hooks/..."
+              className="border-border bg-input-background text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+            />
+          </label>
+          <label className="block">
+            <span className="text-foreground mb-1.5 block text-xs font-medium">테스트 메시지</span>
+            <textarea
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              rows={3}
+              className="border-border bg-input-background text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+            />
+          </label>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void handleSendTest()}
+            disabled={!canSendTest || sendingTest}
+            className="bg-muted text-foreground hover:bg-muted/80 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:opacity-40"
           >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">{channel.icon}</span>
-                <div>
-                  <h4 className="text-foreground text-sm font-medium">{channel.name}</h4>
-                  <span
-                    className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${
-                      channel.connected ? 'text-switch-on' : 'text-muted-foreground'
-                    }`}
-                  >
-                    <span
-                      className={`h-1.5 w-1.5 rounded-full ${
-                        channel.connected ? 'bg-switch-on' : 'bg-muted-foreground/60'
-                      }`}
-                    />
-                    {channel.connected ? '연결됨' : '미연결'}
-                  </span>
-                </div>
-              </div>
-              <button
-                onClick={() => toggleChannel(channel.id)}
-                className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
-                  channel.connected
-                    ? 'border-border bg-background text-foreground hover:bg-muted'
-                    : 'border-foreground bg-foreground text-background hover:bg-foreground/90'
-                }`}
-              >
-                {channel.connected ? '연결 해제' : '연결하기'}
-              </button>
-            </div>
-          </div>
-        ))}
+            {sendingTest && <Loader2 className="h-4 w-4 animate-spin" />}
+            테스트 메시지 보내기
+          </button>
+        </div>
+
+        {statusText && (
+          <p className="flex items-center gap-1.5 text-xs text-emerald-500">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            {statusText}
+          </p>
+        )}
+        {errorText && <p className="text-destructive text-xs">{errorText}</p>}
+      </div>
+
+      <div className="border-border text-muted-foreground rounded-xl border p-4 text-sm leading-6">
+        Webhook URL은 Mattermost의 <span className="text-foreground">Integrations</span>에서 대상
+        채널을 선택해 만든 URL입니다. URL 자체가 채널을 포함하므로 별도 채널 선택은 하지 않습니다.
       </div>
     </div>
   )
