@@ -34,6 +34,7 @@ def test_prompt_builder_includes_native_tool_call_and_termination_guidance():
     assert "요청을 수행할 수 있다고 판단되는 세션 에이전트가 있으면 session_agent_task" in prompt
     assert "session_agent_task 는 작업 보드에 보이는 하위 작업과 실제 세션 에이전트 실행을 묶는 도구입니다." in prompt
     assert "후보의 이름, 호칭, 할 수 있는 일, 스킬을 확인하세요." in prompt
+    assert "전문성이 맞는 후보가 보이면 CEO가 모두 직접 처리하기보다 맡길 수 있는 부분을 먼저 찾아보세요." in prompt
     assert "독립 산출물이나 책임 분리가 자연스러우면 세션 에이전트 작업으로 분리하세요." in prompt
     assert "분리할 실익이 낮은 작업은 CEO가 직접 처리해도 됩니다." in prompt
     assert "수행할 수 있는 세션 에이전트가 없으면 임의로 배정하지 말고" in prompt
