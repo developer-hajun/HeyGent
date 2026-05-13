@@ -83,6 +83,8 @@ def _client_message_action(message: dict) -> str | None:
         return "subscribe"
     if message_type == "subscribe.all":
         return "subscribe_all"
+    if message_type == "subscribe.session":
+        return "subscribe_session"
     return None
 
 
@@ -94,6 +96,17 @@ def _client_task_run_id(message: dict) -> str | None:
     task_run_id = message.get("taskRunId") or payload_dict.get("taskRunId") or payload_dict.get("task_run_id")
     if isinstance(task_run_id, str) and task_run_id:
         return task_run_id
+    return None
+
+
+def _client_session_id(message: dict) -> str | None:
+    """제품 WebSocket 계약의 camelCase Session ID를 읽는다."""
+
+    payload = message.get("payload")
+    payload_dict = payload if isinstance(payload, dict) else {}
+    session_id = message.get("sessionId") or payload_dict.get("sessionId") or payload_dict.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        return session_id
     return None
 
 
@@ -259,6 +272,26 @@ async def _handle_gateway_socket(websocket: WebSocket) -> None:
                 if message.get("requestId") is not None:
                     response["requestId"] = message.get("requestId")
                 await send_json(response)
+            elif action == "subscribe_session":
+                session_id_param = _client_session_id(message)
+                if session_id_param:
+                    session_store = websocket.app.state.session_store
+                    chat_session = session_store.get_session(session_id_param)
+                    if chat_session is None or str(chat_session.get("user_id") or "") != str(user_id):
+                        resp = {"type": "subscription.denied", "sessionId": session_id_param, "reason": "forbidden"}
+                        if message.get("requestId") is not None:
+                            resp["requestId"] = message.get("requestId")
+                        await send_json(resp)
+                    else:
+                        session_service.subscribe_session(
+                            session_id=session_id,
+                            websocket=websocket,
+                            public_session_id=session_id_param,
+                        )
+                        resp = {"type": "subscribed", "sessionId": session_id_param}
+                        if message.get("requestId") is not None:
+                            resp["requestId"] = message.get("requestId")
+                        await send_json(resp)
             elif action == "ping":
                 try:
                     await connection_registry.touch_connection(

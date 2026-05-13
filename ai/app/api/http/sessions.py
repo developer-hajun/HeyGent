@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 
@@ -337,6 +338,7 @@ async def _create_message_in_session(
             if assistant_message_id is not None and assistant_message_id in messages_by_id
             else None,
         )
+    _broadcast_session_message(request, sessionId, session_store, user_append["message_id"])
     task_input["after_user_message_version"] = user_append["after_user_message_version"]
     task_input["completion_expected_version"] = user_append["completion_expected_version"]
     task_input["client_message_id"] = client_message_id
@@ -372,6 +374,7 @@ async def _create_message_in_session(
             status=task.status,
         )
         assistant_message_id = assistant_append["message_id"]
+        _broadcast_session_message(request, sessionId, session_store, assistant_message_id)
     elif task.status != "WAITING":
         session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task.task_run_id)
     messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
@@ -867,6 +870,20 @@ def _owner_user_id(value: Any) -> int | None:
         return int(str(value))
     except (TypeError, ValueError):
         return None
+
+
+def _broadcast_session_message(request, session_id: str, session_store, message_id: int) -> None:
+    """세션 구독자에게 메시지 생성 이벤트를 fire-and-forget으로 브로드캐스트한다."""
+
+    session_service = getattr(request.app.state, "session_service", None)
+    if session_service is None:
+        return
+    messages_by_id = {message["id"]: message for message in session_store.list_messages(session_id)}
+    message = messages_by_id.get(message_id)
+    if message is None:
+        return
+    message_data = _jsonable(_message_response(message))
+    asyncio.create_task(session_service.broadcast_session_message(session_id, message_data))
 
 
 def _json_load(value: Any, default: Any) -> Any:
