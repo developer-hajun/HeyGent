@@ -13,10 +13,7 @@ from app.tools.runtime.catalog import register_runtime_tool_definition
 WEB_SEARCH_SCHEMA = {
     "name": "web_search",
     "description": (
-        "Search the web for information on any topic. Returns relevant results with titles, URLs, and descriptions. "
-        "Do not use as the first choice when a project skill matches the request; for Korean weather, fine dust, "
-        "subway arrivals, postcode, school meals, library, Lotto, or local public-data requests, call skills.read "
-        "for the matching k-skill first."
+        "Search the web for information on any topic. Returns relevant results with titles, URLs, and descriptions."
     ),
     "parameters": {
         "type": "object",

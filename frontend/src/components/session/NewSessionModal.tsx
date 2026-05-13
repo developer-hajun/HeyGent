@@ -3,6 +3,7 @@ import { X, Bot, Sparkles, SlidersHorizontal, ChevronLeft, ChevronRight } from '
 import { motion, AnimatePresence } from 'motion/react'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import {
+  AgentAdapterTypeDropdown,
   AgentInstructionsBundlePanel,
   AgentModelDropdown,
   AgentSectionCard,
@@ -49,7 +50,6 @@ export function NewSessionModal({
   const [agentName, setAgentName] = useState('')
   const [persona, setPersona] = useState('')
   const [callName, setCallName] = useState('')
-  const [capabilities, setCapabilities] = useState('')
   const [profileImage, setProfileImage] = useState<string>(CEO_IMAGE_OPTIONS[0].src)
   const [instructionsEntryFile, setInstructionsEntryFile] = useState('AGENTS.md')
   const [instructionsMode, setInstructionsMode] = useState<'managed' | 'external'>('managed')
@@ -71,7 +71,6 @@ export function NewSessionModal({
       setAgentName('')
       setPersona('')
       setCallName('')
-      setCapabilities('')
       setProfileImage(CEO_IMAGE_OPTIONS[0].src)
       setInstructionsEntryFile('AGENTS.md')
       setInstructionsMode('managed')
@@ -87,7 +86,7 @@ export function NewSessionModal({
       agentName,
       persona,
       callName,
-      capabilities,
+      capabilities: '',
       profileImage,
       model,
       delegationPolicy: { canDelegate },
@@ -102,7 +101,6 @@ export function NewSessionModal({
       setAgentName('')
       setPersona('')
       setCallName('')
-      setCapabilities('')
       setProfileImage(CEO_IMAGE_OPTIONS[0].src)
       setInstructionsEntryFile('AGENTS.md')
       setInstructionsMode('managed')
@@ -260,15 +258,6 @@ export function NewSessionModal({
                                 className={inputClass}
                               />
                             </Field>
-                            <Field label="할 수 있는 일">
-                              <textarea
-                                value={capabilities}
-                                onChange={(event) => setCapabilities(event.target.value)}
-                                rows={2}
-                                placeholder="이 에이전트가 할 수 있는 일을 적어주세요."
-                                className={`${inputClass} resize-none leading-6`}
-                              />
-                            </Field>
                           </div>
                         </div>
                       </AgentSectionCard>
@@ -276,6 +265,13 @@ export function NewSessionModal({
 
                     <div className="space-y-3">
                       <AgentSectionCard title="모델">
+                        <Field label="공급자">
+                          <AgentAdapterTypeDropdown
+                            value="openai"
+                            options={[{ value: 'openai', label: 'OpenAI' }]}
+                            onChange={() => undefined}
+                          />
+                        </Field>
                         <Field label="모델">
                           <AgentModelDropdown
                             value={model}

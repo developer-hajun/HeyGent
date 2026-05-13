@@ -21,6 +21,7 @@ BRIDGE_ROUTABLE_TOOLS = {"terminal.run", "read_file", "write_file", "patch", "se
 MAX_TERMINAL_STREAM_CHARS = 12_000
 MAX_TOOL_RESULT_STRING_CHARS = 20_000
 MAX_TOOL_RESULT_TRUNCATED_FIELDS = 20
+MAX_SKILL_RESOURCE_BYTES = 200_000
 SECRET_FILE_NAME_PATTERN = re.compile(
     r"(^|[._-])(secret|secrets|token|password|passwd|credential|credentials|env)($|[._-])",
     re.IGNORECASE,
@@ -57,8 +58,6 @@ class LocalToolRuntime:
         self._todo_items: list[dict[str, str]] = []
         self._tool_entries = build_runtime_tool_entries(
             {
-                "skills.list": self._list_skills,
-                "skills.read": self._read_skill,
                 "skill.execute": self._execute_skill,
                 "session.record": self._record_session_message,
                 "session.search": self._search_sessions,
@@ -67,6 +66,7 @@ class LocalToolRuntime:
                 "delegate_task": self._delegate_task,
                 "session_agent_task": self._session_agent_task,
                 "work_disposition": self._work_disposition,
+                "mattermost.send": self._send_mattermost_message,
                 "terminal.run": self._run_terminal_command,
                 "web_search": self._run_web_search,
                 "web_extract": self._run_web_extract,
@@ -252,7 +252,7 @@ class LocalToolRuntime:
             )
 
     def _list_skills(self, args: dict[str, Any]) -> dict[str, object]:
-        skills = getattr(self.skill_registry, "_skills", {})
+        skills = self._runtime_skills()
         names = sorted(skills.keys())
         return {
             "count": len(names),
@@ -268,6 +268,12 @@ class LocalToolRuntime:
 
     def _read_skill(self, args: dict[str, Any]) -> dict[str, object]:
         skill_name = str(args["skill_name"])
+        if not self._is_runtime_skill_enabled(skill_name):
+            return self._tool_error(
+                code="skill_disabled",
+                message=f"disabled skill: {skill_name}",
+                tool_name="skills.read",
+            )
         skill = getattr(self.skill_registry, "_skills", {}).get(skill_name)
         if skill is None:
             raise KeyError(skill_name)
@@ -277,9 +283,73 @@ class LocalToolRuntime:
             "body": str(skill.get("body") or ""),
         }
 
+    def _read_skill_file(self, args: dict[str, Any]) -> dict[str, object]:
+        skill_name = str(args["skill_name"])
+        if not self._is_runtime_skill_enabled(skill_name):
+            return self._tool_error(
+                code="skill_disabled",
+                message=f"disabled skill: {skill_name}",
+                tool_name="skills.read_file",
+            )
+
+        skill = getattr(self.skill_registry, "_skills", {}).get(skill_name)
+        if skill is None:
+            return self._tool_error(
+                code="skill_not_found",
+                message=f"unknown skill: {skill_name}",
+                tool_name="skills.read_file",
+            )
+
+        document_path = self._resolve_skill_document_path(skill.get("path"))
+        if document_path is None or not self._is_allowed_skill_path(document_path):
+            return self._tool_error(
+                code="skill_path_not_allowed",
+                message="skill document path must stay inside app/skills",
+                tool_name="skills.read_file",
+            )
+
+        resource_path = self._resolve_skill_resource_path(document_path, args.get("path"))
+        if resource_path is None:
+            return self._tool_error(
+                code="skill_file_not_allowed",
+                message="skill file path must stay inside the selected skill",
+                tool_name="skills.read_file",
+            )
+        if not resource_path.exists() or not resource_path.is_file():
+            return self._tool_error(
+                code="skill_file_not_found",
+                message="skill file not found",
+                tool_name="skills.read_file",
+            )
+
+        raw = resource_path.read_bytes()
+        truncated = len(raw) > MAX_SKILL_RESOURCE_BYTES
+        raw = raw[:MAX_SKILL_RESOURCE_BYTES]
+        if b"\x00" in raw:
+            return self._tool_error(
+                code="skill_file_not_text",
+                message="skill file is not a text file",
+                tool_name="skills.read_file",
+            )
+
+        return {
+            "ok": True,
+            "skill_name": skill_name,
+            "path": resource_path.relative_to(document_path.parent).as_posix(),
+            "content": raw.decode("utf-8", errors="replace"),
+            "bytes_read": len(raw),
+            "truncated": truncated,
+        }
+
     def _execute_skill(self, args: dict[str, Any]) -> dict[str, object]:
         skill_name = str(args.get("skill_name") or "").strip()
         action = str(args.get("action") or "").strip()
+        if not self._is_runtime_skill_enabled(skill_name):
+            return self._tool_error(
+                code="skill_disabled",
+                message=f"disabled skill: {skill_name}",
+                tool_name="skill.execute",
+            )
         if action != "inspect":
             return self._tool_error(
                 code="unsupported_skill_action",
@@ -311,6 +381,26 @@ class LocalToolRuntime:
             "files": self._list_skill_files(document_path),
             "content": str(skill.get("body") or ""),
         }
+
+    def _runtime_skills(self) -> dict[str, Any]:
+        skills = getattr(self.skill_registry, "_skills", {})
+        allowed = self._runtime_enabled_skill_names()
+        if allowed is None:
+            return skills
+        return {name: skills[name] for name in sorted(allowed) if name in skills}
+
+    def _runtime_enabled_skill_names(self) -> set[str] | None:
+        if "enabledSkillNames" not in self.runtime_context:
+            return None
+        return {
+            str(item).strip()
+            for item in list(self.runtime_context.get("enabledSkillNames") or [])
+            if str(item).strip()
+        }
+
+    def _is_runtime_skill_enabled(self, skill_name: str) -> bool:
+        allowed = self._runtime_enabled_skill_names()
+        return allowed is None or skill_name in allowed
 
     def _record_session_message(self, args: dict[str, Any]) -> dict[str, object]:
         session_key = str(args.get("session_key") or "runtime-probe")
@@ -393,6 +483,13 @@ class LocalToolRuntime:
 
     def _run_http_get(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.web.web_tools", "http_get_handler", args)
+
+    def _send_mattermost_message(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler(
+            "app.tools.messaging.mattermost_tool",
+            "send_mattermost_message_handler",
+            args,
+        )
 
     def _run_browser_navigate(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_navigate_handler", args)
@@ -762,6 +859,9 @@ class LocalToolRuntime:
         if tool_name in FILE_TOOL_NAMES:
             # 모델이 workspace_root를 넓혀도 서버가 바인딩한 루트만 사용한다.
             trusted_args["workspace_root"] = str(self.workspace_root)
+        if tool_name == "mattermost.send":
+            # 사용자 식별자는 모델 인자가 아니라 서버가 바인딩한 owner_key만 신뢰한다.
+            trusted_args["_trusted_user_id"] = self.owner_key
         return trusted_args
 
     def _resolve_terminal_cwd(self, value: Any) -> str:
@@ -919,6 +1019,20 @@ class LocalToolRuntime:
     @staticmethod
     def _is_secret_skill_file(relative_path: Path) -> bool:
         return any(SECRET_FILE_NAME_PATTERN.search(part) for part in relative_path.parts)
+
+    @classmethod
+    def _resolve_skill_resource_path(cls, document_path: Path, value: Any) -> Path | None:
+        raw_value = str(value or "").strip().replace("\\", "/")
+        if not raw_value:
+            return None
+        relative_path = Path(raw_value)
+        if relative_path.is_absolute() or cls._is_secret_skill_file(relative_path):
+            return None
+        skill_dir = document_path.parent.resolve(strict=False)
+        candidate = (skill_dir / relative_path).resolve(strict=False)
+        if not cls._is_relative_to(candidate, skill_dir):
+            return None
+        return candidate
 
     @staticmethod
     def _is_relative_to(path: Path, root: Path) -> bool:

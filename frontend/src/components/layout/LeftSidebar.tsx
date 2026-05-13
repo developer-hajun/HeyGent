@@ -22,11 +22,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { NewSessionModal, type CustomAgentConfig } from '@/components/session/NewSessionModal'
 import { getCurrentWorkspaceSessionId } from '@/components/sessionWorkspace/sessionWorkspaceUtils'
-import {
-  DEFAULT_SIDEBAR_COLLAPSED_WIDTH,
-  DEFAULT_SIDEBAR_WIDTH,
-  useUIStore,
-} from '@/store/useUIStore'
+import { DEFAULT_SIDEBAR_COLLAPSED_WIDTH, useUIStore } from '@/store/useUIStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
@@ -51,7 +47,9 @@ export function LeftSidebar() {
     sidebarCollapsed: collapsed,
     settingsOpen,
     settingsInitialTab,
+    sidebarWidth,
     setSidebarCollapsed,
+    setSidebarWidth,
     setSessionWorkspaceCollapsed,
     setSettingsOpen,
     theme,
@@ -110,6 +108,32 @@ export function LeftSidebar() {
     navigate(`/session/${sessionId}`)
   }
 
+  const handleSidebarResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (collapsed) return
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = sidebarWidth
+    const previousCursor = document.body.style.cursor
+    const previousUserSelect = document.body.style.userSelect
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      setSidebarWidth(startWidth + moveEvent.clientX - startX)
+    }
+
+    const handlePointerUp = () => {
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousUserSelect
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+  }
+
   return (
     <>
       <SettingsDialog
@@ -132,7 +156,7 @@ export function LeftSidebar() {
             setNewSessionCreating(true)
             setNewSessionError(null)
             void createAiSession({
-              title: '새 AI 대화',
+              title: '새 AI 세션',
               model: config.model.trim() || undefined,
               settings: {
                 ...(config.persona.trim() ? { systemPrompt: config.persona.trim() } : {}),
@@ -143,7 +167,6 @@ export function LeftSidebar() {
                 ui: {
                   agentName: config.agentName,
                   callName: config.callName,
-                  agentCapabilities: config.capabilities,
                   agentProfileImage: config.profileImage,
                   instructionsEntryFile: config.instructionsEntryFile,
                   instructionsMode: config.instructionsMode,
@@ -185,8 +208,16 @@ export function LeftSidebar() {
 
       <div
         className="bg-background border-border relative flex shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200 ease-in-out"
-        style={{ width: collapsed ? DEFAULT_SIDEBAR_COLLAPSED_WIDTH : DEFAULT_SIDEBAR_WIDTH }}
+        style={{ width: collapsed ? DEFAULT_SIDEBAR_COLLAPSED_WIDTH : sidebarWidth }}
       >
+        {!collapsed && (
+          <div
+            role="separator"
+            aria-label="사이드바 너비 조절"
+            className="hover:bg-primary/40 absolute top-0 right-0 z-20 h-full w-1 cursor-col-resize touch-none transition-colors"
+            onPointerDown={handleSidebarResizeStart}
+          />
+        )}
         {/* ── Collapsed Rail ── */}
         {collapsed && (
           <div className="flex h-full flex-col items-center gap-1.5 px-2 py-4">
@@ -245,7 +276,7 @@ export function LeftSidebar() {
             <div className="bg-border my-1 h-px w-10" />
 
             {/* New Chat button */}
-            <CollapsedTooltip label="새 대화">
+            <CollapsedTooltip label="새 세션">
               <button
                 type="button"
                 onClick={handleNewChat}
@@ -255,27 +286,29 @@ export function LeftSidebar() {
               </button>
             </CollapsedTooltip>
 
-            {sidebarSessions.map((session) => (
-              <CollapsedTooltip key={session.id} label={session.title}>
-                <button
-                  type="button"
-                  onClick={(event) => handleOpenChatSession(session.id, event)}
-                  aria-label={`${session.title} 채팅 열기`}
-                  className={`hover:bg-accent/50 relative flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${
-                    currentWorkspaceSessionId === session.id
-                      ? 'bg-accent text-foreground'
-                      : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {session.isRunning && (
-                    <Loader2 className="text-primary absolute top-1 right-1 h-3 w-3 animate-spin" />
-                  )}
-                  <MessageSquare className="h-5 w-5" />
-                </button>
-              </CollapsedTooltip>
-            ))}
-
-            <div className="flex-1" />
+            <div className="min-h-0 w-full flex-1 overflow-x-hidden overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="flex flex-col items-center gap-1.5">
+                {sidebarSessions.map((session) => (
+                  <CollapsedTooltip key={session.id} label={session.title}>
+                    <button
+                      type="button"
+                      onClick={(event) => handleOpenChatSession(session.id, event)}
+                      aria-label={`${session.title} 채팅 열기`}
+                      className={`hover:bg-accent/50 relative flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${
+                        currentWorkspaceSessionId === session.id
+                          ? 'bg-accent text-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {session.isRunning && (
+                        <Loader2 className="text-primary absolute top-1 right-1 h-3 w-3 animate-spin" />
+                      )}
+                      <MessageSquare className="h-5 w-5" />
+                    </button>
+                  </CollapsedTooltip>
+                ))}
+              </div>
+            </div>
 
             {/* Theme toggle (collapsed) */}
             <CollapsedTooltip label={theme === 'dark' ? '라이트 모드' : '다크 모드'}>
@@ -316,7 +349,7 @@ export function LeftSidebar() {
         {/* ── Expanded Panel ── */}
         {!collapsed && (
           <div className="flex h-full flex-col overflow-hidden">
-            <div className="flex h-12 shrink-0 items-center overflow-hidden px-4">
+            <div className="flex h-12 shrink-0 items-center overflow-hidden px-3">
               <button
                 type="button"
                 onClick={() => handleOpenPrimaryRoute('/agent-status')}
@@ -336,12 +369,12 @@ export function LeftSidebar() {
               </button>
             </div>
 
-            <div className="flex-1 overflow-x-hidden overflow-y-auto px-4 py-3">
-              <nav className="flex flex-col gap-1">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 py-3">
+              <nav className="flex shrink-0 flex-col gap-1">
                 <button
                   type="button"
                   onClick={() => handleOpenPrimaryRoute('/agent-status')}
-                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                  className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-sm font-medium transition-colors ${
                     location.pathname.startsWith('/agent-status')
                       ? 'bg-accent text-foreground'
                       : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
@@ -353,7 +386,7 @@ export function LeftSidebar() {
                 <button
                   type="button"
                   onClick={() => handleOpenPrimaryRoute('/')}
-                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+                  className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-sm font-medium transition-colors ${
                     location.pathname === '/'
                       ? 'bg-accent text-foreground'
                       : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
@@ -365,79 +398,69 @@ export function LeftSidebar() {
               </nav>
 
               {/* ── Sessions ── */}
-              <section className="mt-4">
-                <div className="text-muted-foreground/60 px-3 py-1.5 font-mono text-[10px] font-medium tracking-widest">
+              <section className="mt-4 flex min-h-0 flex-1 flex-col">
+                <div className="text-muted-foreground/60 px-2.5 py-1.5 font-mono text-[10px] font-medium tracking-widest">
                   <span>대화 세션</span>
                 </div>
-                <div className="mt-0.5 flex flex-col gap-0.5">
+                <div className="mt-0.5 flex shrink-0 flex-col gap-0.5">
                   <button
                     onClick={handleNewChat}
-                    className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors"
+                    className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm font-medium transition-colors"
                   >
                     <Plus className="text-muted-foreground h-5 w-5 shrink-0" />
-                    <span className="text-muted-foreground truncate text-sm">새 대화</span>
+                    <span className="text-muted-foreground truncate text-sm">새 세션</span>
                   </button>
-
-                  {sidebarSessions.map((session) => {
-                    const isActive = currentWorkspaceSessionId === session.id
-                    const isPinned = pinnedSessionIds.has(session.id)
-                    return (
-                      <button
-                        type="button"
-                        key={session.id}
-                        onClick={() => {
-                          setSelectedSessionId(session.id)
-                          setSidebarCollapsed(true)
-                          setSessionWorkspaceCollapsed(false)
-                          navigate(`/session/${session.id}`)
-                        }}
-                        className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors ${
-                          isActive
-                            ? 'bg-accent text-foreground'
-                            : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
-                        }`}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1">
-                            {isPinned && <Pin className="text-primary h-3 w-3 shrink-0" />}
-                            <p className="truncate">{session.title}</p>
+                </div>
+                <div className="mt-0.5 min-h-0 flex-1 overflow-x-hidden overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  <div className="flex flex-col gap-0.5">
+                    {sidebarSessions.map((session) => {
+                      const isActive = currentWorkspaceSessionId === session.id
+                      const isPinned = pinnedSessionIds.has(session.id)
+                      return (
+                        <button
+                          type="button"
+                          key={session.id}
+                          onClick={() => {
+                            setSelectedSessionId(session.id)
+                            setSidebarCollapsed(true)
+                            setSessionWorkspaceCollapsed(false)
+                            navigate(`/session/${session.id}`)
+                          }}
+                          className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm font-medium transition-colors ${
+                            isActive
+                              ? 'bg-accent text-foreground'
+                              : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1">
+                              {isPinned && <Pin className="text-primary h-3 w-3 shrink-0" />}
+                              <p className="truncate">{session.title}</p>
+                            </div>
                           </div>
-                        </div>
-                        {session.isRunning && (
-                          <Loader2 className="text-primary h-3.5 w-3.5 shrink-0 animate-spin" />
-                        )}
-                      </button>
-                    )
-                  })}
-                  {sidebarSessions.length === 0 && (
-                    <EmptySessionNotice
-                      realtimeStatus={realtimeStatus}
-                      loading={sessionListLoading}
-                      error={chatError}
-                    />
-                  )}
+                          {session.isRunning && (
+                            <Loader2 className="text-primary h-3.5 w-3.5 shrink-0 animate-spin" />
+                          )}
+                        </button>
+                      )
+                    })}
+                    {sidebarSessions.length === 0 && (
+                      <EmptySessionNotice
+                        realtimeStatus={realtimeStatus}
+                        loading={sessionListLoading}
+                        error={chatError}
+                      />
+                    )}
+                  </div>
                 </div>
               </section>
             </div>
 
-            {/* ── Theme toggle (above profile) ── */}
-            <div className="flex shrink-0 justify-start px-4 pt-2">
-              <button
-                type="button"
-                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors"
-                aria-label={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
-                title={theme === 'dark' ? '라이트 모드' : '다크 모드'}
-              >
-                {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-              </button>
-            </div>
-
             {/* ── Profile Footer (Fixed) ── */}
-            <div className="border-border shrink-0 border-t px-4 py-3">
+            <div className="border-border flex shrink-0 items-center gap-2 border-t px-3 py-3">
               <Popover open={profileOpen} onOpenChange={setProfileOpen}>
                 <PopoverTrigger asChild>
-                  <button className="hover:bg-accent/50 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors">
+                  <button className="hover:bg-accent/50 flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors">
                     <ProfileAvatar size={20} />
                     <div className="min-w-0 flex-1">
                       <p className="text-foreground truncate text-sm font-medium">
@@ -455,6 +478,15 @@ export function LeftSidebar() {
                   />
                 </PopoverContent>
               </Popover>
+              <button
+                type="button"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors"
+                aria-label={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+                title={theme === 'dark' ? '라이트 모드' : '다크 모드'}
+              >
+                {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </button>
             </div>
           </div>
         )}
