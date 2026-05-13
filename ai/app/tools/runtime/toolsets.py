@@ -13,8 +13,8 @@ class RuntimeToolsetDefinition:
 
 RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     "skills": RuntimeToolsetDefinition(
-        description="Skill browsing and reading tools.",
-        tools=("skills.list", "skills.read"),
+        description="Legacy skill context marker. Skill catalog is injected through prompt context.",
+        tools=(),
     ),
     "skill-runtime": RuntimeToolsetDefinition(
         description="Restricted skill execution tools.",
@@ -35,6 +35,10 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     "web": RuntimeToolsetDefinition(
         description="Web research, extraction, and crawl tools.",
         tools=("web_search", "web_extract", "web_crawl", "http_get"),
+    ),
+    "messaging": RuntimeToolsetDefinition(
+        description="Outbound messaging tools.",
+        tools=("mattermost.send",),
     ),
     "browser": RuntimeToolsetDefinition(
         description="Browser automation tools.",

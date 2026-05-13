@@ -4,6 +4,7 @@ import { ChevronDown, ChevronLeft, ChevronRight, Shield } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
 import {
+  AgentAdapterTypeDropdown,
   AgentModelDropdown,
   AgentSectionCard,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
@@ -18,6 +19,7 @@ import {
   type ModelFamily,
 } from '../sessionWorkspaceUtils'
 import {
+  SUB_AGENT_ADAPTER_OPTIONS,
   getDefaultModel,
   normalizeSubAgentAdapterType,
   type SubAgentAdapterType,
@@ -55,7 +57,7 @@ export function SubAgentDraftForm({
   const [titleDraft, setTitleDraft] = useState(initialAgent?.title ?? initialAgent?.role ?? '')
   const [roleDraft, setRoleDraft] = useState(initialAgent?.role ?? 'general')
   const [descriptionDraft, setDescriptionDraft] = useState(initialAgent?.description ?? '')
-  const [adapterType] = useState<SubAgentAdapterType>(
+  const [adapterType, setAdapterType] = useState<SubAgentAdapterType>(
     normalizeSubAgentAdapterType(initialAgent?.adapterType ?? initialAdapterType),
   )
   const [commandDraft] = useState(initialAgent?.command ?? '')
@@ -240,27 +242,40 @@ export function SubAgentDraftForm({
 
         <div className="space-y-4">
           <AgentSectionCard title="모델">
-            <Field label="모델">
-              {authenticatedReady && modelOptionsLoading && (
-                <span className="text-muted-foreground mb-1 inline-flex items-center gap-1.5 text-xs">
-                  조회 중
-                </span>
-              )}
-              {authenticatedReady && modelOptionsError ? (
-                <p className="text-destructive text-sm">{modelOptionsError}</p>
-              ) : (
-                <AgentModelDropdown
-                  value={modelDraft}
-                  options={visibleModelOptions}
-                  onChange={(modelId) => {
-                    setModelDraft(modelId)
-                    setSelectedFamily(inferModelFamily(modelId))
-                  }}
-                  allowDefault
-                  placeholder={getDefaultModel()}
-                />
-              )}
+            <Field label="공급자">
+              <AgentAdapterTypeDropdown
+                value={adapterType}
+                options={SUB_AGENT_ADAPTER_OPTIONS.map((option) => ({
+                  value: option.id,
+                  label: option.label,
+                  description: option.description,
+                }))}
+                onChange={(value) => setAdapterType(normalizeSubAgentAdapterType(value))}
+              />
             </Field>
+            {adapterType === 'openai' ? (
+              <Field label="모델">
+                {authenticatedReady && modelOptionsLoading && (
+                  <span className="text-muted-foreground mb-1 inline-flex items-center gap-1.5 text-xs">
+                    조회 중
+                  </span>
+                )}
+                {authenticatedReady && modelOptionsError ? (
+                  <p className="text-destructive text-sm">{modelOptionsError}</p>
+                ) : (
+                  <AgentModelDropdown
+                    value={modelDraft}
+                    options={visibleModelOptions}
+                    onChange={(modelId) => {
+                      setModelDraft(modelId)
+                      setSelectedFamily(inferModelFamily(modelId))
+                    }}
+                    allowDefault
+                    placeholder={getDefaultModel()}
+                  />
+                )}
+              </Field>
+            ) : null}
           </AgentSectionCard>
         </div>
       </div>

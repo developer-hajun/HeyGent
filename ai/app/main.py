@@ -45,6 +45,7 @@ from app.domain.providers.registry import ProviderRegistry
 from app.storage.postgres import (
     PostgresAgentRepository,
     PostgresSessionStore,
+    PostgresSkillRepository,
     PostgresTaskRepository,
     PostgresWorkRepository,
     apply_configured_postgres_migrations,
@@ -136,7 +137,10 @@ async def lifespan(app: FastAPI):
     # memory_store = MemoryStore()
     skill_registry = SkillRegistry()
     skill_loader = SkillLoader()
-    skill_registry.register_many(skill_loader.load_builtin())
+    builtin_skills = skill_loader.load_builtin()
+    skill_registry.register_many(builtin_skills)
+    skill_repository = PostgresSkillRepository(postgres_connection_factory)
+    skill_repository.sync_builtin_catalog(builtin_skills)
     skill_prompt_builder = SkillPromptBuilder(skill_registry)
     prompt_builder = PromptBuilder(skill_prompt_builder)
     bridge_session_manager = BridgeSessionManager()
@@ -213,6 +217,7 @@ async def lifespan(app: FastAPI):
     app.state.session_store = session_store
     app.state.work_repository = work_repository
     app.state.agent_repository = agent_repository
+    app.state.skill_repository = skill_repository
     # app.state.recall_service = recall_service
     # app.state.memory_store = memory_store
     app.state.skill_registry = skill_registry

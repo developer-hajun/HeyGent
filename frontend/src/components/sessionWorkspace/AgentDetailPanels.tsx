@@ -2,15 +2,33 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core'
+import { CSS } from '@dnd-kit/utilities'
+import {
+  ArrowLeft,
+  ArrowRight,
   Check,
   ChevronDown,
   ChevronRight,
   Copy,
   FolderOpen,
+  GripVertical,
   Loader2,
   MoreHorizontal,
   Pause,
   Plus,
+  Search,
   Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -652,8 +670,8 @@ export function AgentSkillsLibraryPanel({
   adapterLabel,
   applicationLabel,
   missingSkills = [],
-  onLibraryOpen,
   onSkillOpen,
+  onSkillReorder,
   onSkillToggle,
   rows,
   saving,
@@ -664,8 +682,8 @@ export function AgentSkillsLibraryPanel({
   adapterLabel: string
   applicationLabel: string
   missingSkills?: string[]
-  onLibraryOpen?: () => void
   onSkillOpen?: (key: string) => void
+  onSkillReorder?: (orderedSkillIds: string[]) => void
   onSkillToggle?: (key: string, checked: boolean) => void
   rows: AgentSkillRowData[]
   saving?: boolean
@@ -676,18 +694,80 @@ export function AgentSkillsLibraryPanel({
   const optionalRows = rows.filter((row) => !row.required && !row.readOnly)
   const requiredRows = rows.filter((row) => row.required)
   const unmanagedRows = rows.filter((row) => row.readOnly)
+  const enabledRows = optionalRows.filter((row) => row.checked)
+  const disabledRows = optionalRows.filter((row) => !row.checked)
+  const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor))
+  const [selectedSkillKey, setSelectedSkillKey] = useState<string | null>(null)
+  const [draggingSkillKey, setDraggingSkillKey] = useState<string | null>(null)
+  const [skillSearch, setSkillSearch] = useState('')
   const [unmanagedOpen, setUnmanagedOpen] = useState(false)
   const saveStatusLabel = saving ? 'Saving changes...' : null
+  const normalizedSkillSearch = normalizeSkillSearch(skillSearch)
+  const filteredEnabledRows = filterSkillRows(enabledRows, normalizedSkillSearch)
+  const filteredDisabledRows = filterSkillRows(disabledRows, normalizedSkillSearch)
+  const selectedRow = optionalRows.find((row) => row.key === selectedSkillKey)
+  const selectedSide =
+    selectedRow === undefined
+      ? null
+      : enabledRows.some((row) => row.key === selectedRow.key)
+        ? 'enabled'
+        : 'disabled'
+
+  const openSkill = (key: string) => {
+    setSelectedSkillKey(key)
+    onSkillOpen?.(key)
+  }
+
+  const moveSelectedSkill = (checked: boolean) => {
+    if (selectedRow === undefined || selectedRow.disabled) return
+    onSkillToggle?.(selectedRow.key, checked)
+  }
+
+  const handleDragStart = (event: DragStartEvent) => {
+    setDraggingSkillKey(String(event.active.id))
+  }
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setDraggingSkillKey(null)
+    const target = getSkillTransferTarget(event.over?.id, optionalRows)
+    if (target === null) return
+    const key = String(event.active.id)
+    const row = optionalRows.find((item) => item.key === key)
+    if (row === undefined || row.disabled) return
+    setSelectedSkillKey(key)
+
+    if (target.side === 'enabled') {
+      const currentEnabledKeys = enabledRows.map((item) => item.key).filter((item) => item !== key)
+      const insertIndex = getSkillInsertIndex(event, currentEnabledKeys, target.key)
+      const nextEnabledKeys = insertSkillKey(currentEnabledKeys, key, insertIndex)
+      if (
+        !stringArraysEqual(
+          nextEnabledKeys,
+          enabledRows.map((item) => item.key),
+        )
+      ) {
+        onSkillReorder?.(nextEnabledKeys)
+        if (onSkillReorder === undefined && !row.checked) {
+          onSkillToggle?.(key, true)
+        }
+      }
+      return
+    }
+
+    if (row.checked) {
+      onSkillToggle?.(key, false)
+    }
+  }
+
+  const draggedRow = optionalRows.find((row) => row.key === draggingSkillKey)
 
   if (rows.length === 0) {
     return (
       <div className="max-w-4xl space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <LibraryLabel onOpen={onLibraryOpen} />
-        </div>
+        {saveStatusLabel ? <AgentSavingIndicator label={saveStatusLabel} /> : null}
         <section className="border-border border-y">
           <div className="text-muted-foreground px-3 py-6 text-sm">
-            Import skills into the company library first, then attach them here.
+            먼저 스킬 목록을 불러온 뒤 이 에이전트에 적용할 수 있습니다.
           </div>
         </section>
       </div>
@@ -696,15 +776,7 @@ export function AgentSkillsLibraryPanel({
 
   return (
     <div className="max-w-4xl space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <LibraryLabel onOpen={onLibraryOpen} />
-        {saveStatusLabel ? (
-          <div className="text-muted-foreground flex items-center gap-2 text-xs">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            <span>{saveStatusLabel}</span>
-          </div>
-        ) : null}
-      </div>
+      {saveStatusLabel ? <AgentSavingIndicator label={saveStatusLabel} /> : null}
 
       {warnings.length > 0 ? (
         <div className="space-y-1 rounded-xl border border-amber-300/60 bg-amber-50/60 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-200">
@@ -721,32 +793,83 @@ export function AgentSkillsLibraryPanel({
       ) : null}
 
       {optionalRows.length > 0 ? (
-        <section className="border-border border-y">
-          {optionalRows.map((row) => (
-            <AgentSkillLibraryRow
-              key={row.key}
-              row={row}
-              onSkillOpen={onSkillOpen}
-              onSkillToggle={onSkillToggle}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragCancel={() => setDraggingSkillKey(null)}
+        >
+          <div className="relative">
+            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2" />
+            <input
+              value={skillSearch}
+              className={`${agentTextInputClass} pl-8 font-sans`}
+              placeholder="스킬 검색"
+              onChange={(event) => setSkillSearch(event.target.value)}
             />
-          ))}
-        </section>
+          </div>
+          <section className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-start">
+            <AgentSkillTransferColumn
+              countLabel={formatSkillColumnCount(filteredEnabledRows.length, enabledRows.length)}
+              emptyLabel={
+                normalizedSkillSearch ? '검색 결과가 없습니다.' : '사용 중인 스킬이 없습니다.'
+              }
+              id="enabled-skills"
+              rows={filteredEnabledRows}
+              selectedKey={selectedSkillKey}
+              title="사용 중"
+              onSkillOpen={openSkill}
+            />
+            <div className="flex items-center justify-center gap-2 md:flex-col md:pt-12">
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                className="h-9 w-9"
+                onClick={() => moveSelectedSkill(true)}
+                disabled={selectedSide !== 'disabled' || selectedRow?.disabled}
+                aria-label="선택한 스킬 사용"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                className="h-9 w-9"
+                onClick={() => moveSelectedSkill(false)}
+                disabled={selectedSide !== 'enabled'}
+                aria-label="선택한 스킬 미사용"
+              >
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </div>
+            <AgentSkillTransferColumn
+              countLabel={formatSkillColumnCount(filteredDisabledRows.length, disabledRows.length)}
+              emptyLabel={
+                normalizedSkillSearch ? '검색 결과가 없습니다.' : '미사용 스킬이 없습니다.'
+              }
+              id="disabled-skills"
+              rows={filteredDisabledRows}
+              selectedKey={selectedSkillKey}
+              title="미사용"
+              onSkillOpen={openSkill}
+            />
+          </section>
+          <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.2, 0, 0, 1)' }}>
+            {draggedRow ? <AgentSkillDragOverlayCard row={draggedRow} /> : null}
+          </DragOverlay>
+        </DndContext>
       ) : null}
 
       {requiredRows.length > 0 ? (
-        <section className="border-border border-y">
-          <div className="border-border bg-muted/40 border-b px-3 py-2">
-            <span className="text-muted-foreground text-xs font-medium">Required by system</span>
-          </div>
-          {requiredRows.map((row) => (
-            <AgentSkillLibraryRow
-              key={row.key}
-              row={row}
-              onSkillOpen={onSkillOpen}
-              onSkillToggle={onSkillToggle}
-            />
-          ))}
-        </section>
+        <AgentSkillTransferReadonlyGroup
+          rows={requiredRows}
+          selectedKey={selectedSkillKey}
+          title="시스템 필수 스킬"
+          onSkillOpen={openSkill}
+        />
       ) : null}
 
       {unmanagedRows.length > 0 ? (
@@ -767,11 +890,11 @@ export function AgentSkillsLibraryPanel({
           </button>
           {unmanagedOpen
             ? unmanagedRows.map((row) => (
-                <AgentSkillLibraryRow
+                <AgentSkillTransferReadonlyItem
                   key={row.key}
                   row={row}
-                  onSkillOpen={onSkillOpen}
-                  onSkillToggle={onSkillToggle}
+                  selected={selectedSkillKey === row.key}
+                  onSkillOpen={openSkill}
                 />
               ))
             : null}
@@ -1440,83 +1563,243 @@ function AgentRunDetailCard({ run }: { run: AgentRunItemData | null }) {
   )
 }
 
-function AgentSkillLibraryRow({
+function AgentSkillTransferColumn({
+  countLabel,
+  emptyLabel,
+  id,
   onSkillOpen,
-  onSkillToggle,
-  row,
+  rows,
+  selectedKey,
+  title,
 }: {
-  onSkillOpen?: (key: string) => void
-  onSkillToggle?: (key: string, checked: boolean) => void
-  row: AgentSkillRowData
+  countLabel: string
+  emptyLabel: string
+  id: SkillTransferDropId
+  onSkillOpen: (key: string) => void
+  rows: AgentSkillRowData[]
+  selectedKey: string | null
+  title: string
 }) {
-  const checked = Boolean(row.required || row.checked)
-  const disabled = Boolean(row.required || row.disabled)
-  const body = (
-    <div className="min-w-0 flex-1">
-      <div className="flex items-center justify-between gap-3">
-        <span className="truncate font-medium">{row.name}</span>
-        {row.linkLabel && onSkillOpen ? (
-          <button
-            type="button"
-            className="text-muted-foreground hover:text-foreground shrink-0 text-xs"
-            onClick={() => onSkillOpen(row.key)}
-          >
-            {row.linkLabel}
-          </button>
-        ) : null}
-      </div>
-      {row.description ? (
-        <div className="text-muted-foreground mt-1 text-xs leading-5">{row.description}</div>
-      ) : null}
-      {row.readOnly && row.originLabel ? (
-        <p className="text-muted-foreground mt-1 text-xs">{row.originLabel}</p>
-      ) : null}
-      {row.readOnly && row.locationLabel ? (
-        <p className="text-muted-foreground mt-1 text-xs">Location: {row.locationLabel}</p>
-      ) : null}
-      {row.detail ? <p className="text-muted-foreground mt-1 text-xs">{row.detail}</p> : null}
-      {row.requiredReason ? (
-        <p className="text-muted-foreground mt-1 text-xs">{row.requiredReason}</p>
-      ) : null}
-    </div>
-  )
-
-  if (row.readOnly) {
-    return (
-      <div className="border-border bg-muted/20 flex items-start gap-3 border-b px-3 py-3 text-sm last:border-b-0">
-        <span className="bg-muted-foreground/40 mt-1 h-2 w-2 rounded-full" />
-        {body}
-      </div>
-    )
-  }
-
+  const { isOver, setNodeRef } = useDroppable({ id })
   return (
-    <label className="border-border hover:bg-accent/20 flex items-start gap-3 border-b px-3 py-3 text-sm last:border-b-0">
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onSkillToggle?.(row.key, event.target.checked)}
-        className="mt-0.5 disabled:cursor-not-allowed disabled:opacity-60"
-      />
-      {body}
-    </label>
+    <div
+      ref={setNodeRef}
+      data-skill-drop-id={id}
+      className={`border-border min-h-64 overflow-hidden rounded-lg border ${
+        isOver ? 'ring-primary/30 ring-2' : ''
+      }`}
+    >
+      <div className="border-border bg-muted/30 flex items-center justify-between border-b px-3 py-2">
+        <span className="text-sm font-medium">{title}</span>
+        <span className="text-muted-foreground font-mono text-xs">{countLabel}</span>
+      </div>
+      {rows.length === 0 ? (
+        <div className="text-muted-foreground px-3 py-8 text-center text-sm">{emptyLabel}</div>
+      ) : (
+        <div className="divide-border divide-y">
+          {rows.map((row) => (
+            <AgentSkillTransferItem
+              key={row.key}
+              row={row}
+              selected={selectedKey === row.key}
+              onSkillOpen={onSkillOpen}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
-function LibraryLabel({ onOpen }: { onOpen?: () => void }) {
-  if (onOpen) {
-    return (
+function AgentSavingIndicator({ label }: { label: string }) {
+  return (
+    <div className="text-muted-foreground flex items-center justify-end gap-2 text-xs">
+      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      <span>{label}</span>
+    </div>
+  )
+}
+
+function AgentSkillTransferItem({
+  onSkillOpen,
+  row,
+  selected,
+}: {
+  onSkillOpen: (key: string) => void
+  row: AgentSkillRowData
+  selected: boolean
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: row.key,
+    disabled: row.disabled,
+  })
+  const { isOver, setNodeRef: setDropNodeRef } = useDroppable({
+    id: getSkillRowDropId(row.key),
+    disabled: row.disabled,
+  })
+  const setCombinedNodeRef = (node: HTMLDivElement | null) => {
+    setNodeRef(node)
+    setDropNodeRef(node)
+  }
+  const style = isDragging ? undefined : { transform: CSS.Transform.toString(transform) }
+
+  return (
+    <div
+      ref={setCombinedNodeRef}
+      data-skill-id={row.key}
+      style={style}
+      className={`hover:bg-accent/40 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 px-2 py-2 text-sm transition-colors ${
+        selected || isOver ? 'bg-accent/50' : ''
+      } ${row.disabled ? 'text-muted-foreground opacity-60' : ''} ${isDragging ? 'z-10 opacity-70' : ''}`}
+      title={typeof row.description === 'string' ? row.description : undefined}
+    >
       <button
         type="button"
-        className="text-sm font-medium underline-offset-4 hover:underline"
-        onClick={onOpen}
+        className="text-muted-foreground hover:text-foreground cursor-grab rounded p-1 disabled:cursor-not-allowed"
+        aria-label={`${row.name} 드래그`}
+        disabled={row.disabled}
+        {...attributes}
+        {...listeners}
       >
-        회사 스킬 목록 보기
+        <GripVertical className="h-4 w-4" />
       </button>
-    )
-  }
-  return <span className="text-sm font-medium">회사 스킬 목록 보기</span>
+      <button
+        type="button"
+        className="min-w-0 truncate text-left font-medium"
+        onClick={() => onSkillOpen(row.key)}
+      >
+        {row.name}
+      </button>
+    </div>
+  )
+}
+
+function AgentSkillDragOverlayCard({ row }: { row: AgentSkillRowData }) {
+  return (
+    <div className="border-border bg-background grid w-[min(26rem,calc(100vw-3rem))] grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-lg border px-2 py-2 text-sm shadow-2xl">
+      <span className="text-muted-foreground rounded p-1">
+        <GripVertical className="h-4 w-4" />
+      </span>
+      <span className="min-w-0 truncate font-medium">{row.name}</span>
+    </div>
+  )
+}
+
+type SkillTransferSide = 'enabled' | 'disabled'
+type SkillTransferDropId = 'enabled-skills' | 'disabled-skills'
+type SkillTransferTarget = { side: SkillTransferSide; key: string | null }
+
+function getSkillTransferTarget(
+  id: unknown,
+  rows: AgentSkillRowData[],
+): SkillTransferTarget | null {
+  if (id === 'enabled-skills') return { side: 'enabled', key: null }
+  if (id === 'disabled-skills') return { side: 'disabled', key: null }
+  if (typeof id !== 'string' || !id.startsWith(SKILL_ROW_DROP_PREFIX)) return null
+  const key = id.slice(SKILL_ROW_DROP_PREFIX.length)
+  const row = rows.find((item) => item.key === key)
+  if (row === undefined) return null
+  return { side: row.checked ? 'enabled' : 'disabled', key }
+}
+
+function getSkillInsertIndex(event: DragEndEvent, enabledKeys: string[], overKey: string | null) {
+  if (overKey === null) return enabledKeys.length
+  const overIndex = enabledKeys.indexOf(overKey)
+  if (overIndex === -1) return enabledKeys.length
+  const activeRect = event.active.rect.current.translated ?? event.active.rect.current.initial
+  if (activeRect === null || event.over === null) return overIndex
+  const activeCenterY = activeRect.top + activeRect.height / 2
+  const overCenterY = event.over.rect.top + event.over.rect.height / 2
+  return overIndex + (activeCenterY > overCenterY ? 1 : 0)
+}
+
+function insertSkillKey(keys: string[], key: string, insertIndex: number) {
+  const nextKeys = keys.filter((item) => item !== key)
+  nextKeys.splice(Math.max(0, Math.min(insertIndex, nextKeys.length)), 0, key)
+  return nextKeys
+}
+
+function normalizeSkillSearch(value: string) {
+  return value.trim().toLowerCase()
+}
+
+function filterSkillRows(rows: AgentSkillRowData[], normalizedSearch: string) {
+  if (!normalizedSearch) return rows
+  return rows.filter((row) => {
+    const values = [
+      row.key,
+      row.name,
+      typeof row.description === 'string' ? row.description : '',
+      row.locationLabel ?? '',
+    ]
+    return values.some((value) => value.toLowerCase().includes(normalizedSearch))
+  })
+}
+
+function formatSkillColumnCount(visibleCount: number, totalCount: number) {
+  return visibleCount === totalCount ? String(totalCount) : `${visibleCount}/${totalCount}`
+}
+
+function stringArraysEqual(first: string[], second: string[]) {
+  if (first.length !== second.length) return false
+  return first.every((item, index) => item === second[index])
+}
+
+const SKILL_ROW_DROP_PREFIX = 'skill-row:'
+
+function getSkillRowDropId(key: string) {
+  return `${SKILL_ROW_DROP_PREFIX}${key}`
+}
+
+function AgentSkillTransferReadonlyGroup({
+  rows,
+  selectedKey,
+  title,
+  onSkillOpen,
+}: {
+  rows: AgentSkillRowData[]
+  selectedKey: string | null
+  title: string
+  onSkillOpen: (key: string) => void
+}) {
+  return (
+    <section className="border-border border-y">
+      <div className="border-border bg-muted/40 border-b px-3 py-2">
+        <span className="text-muted-foreground text-xs font-medium">{title}</span>
+      </div>
+      {rows.map((row) => (
+        <AgentSkillTransferReadonlyItem
+          key={row.key}
+          row={row}
+          selected={selectedKey === row.key}
+          onSkillOpen={onSkillOpen}
+        />
+      ))}
+    </section>
+  )
+}
+
+function AgentSkillTransferReadonlyItem({
+  onSkillOpen,
+  row,
+  selected,
+}: {
+  onSkillOpen: (key: string) => void
+  row: AgentSkillRowData
+  selected: boolean
+}) {
+  return (
+    <button
+      type="button"
+      className={`hover:bg-accent/40 flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-sm transition-colors ${
+        selected ? 'bg-accent/50' : ''
+      } ${row.disabled ? 'text-muted-foreground opacity-60' : ''}`}
+      onClick={() => onSkillOpen(row.key)}
+      title={typeof row.description === 'string' ? row.description : undefined}
+    >
+      <span className="min-w-0 truncate font-medium">{row.name}</span>
+    </button>
+  )
 }
 
 function AgentInlineSummary({ label, value }: { label: string; value: ReactNode }) {

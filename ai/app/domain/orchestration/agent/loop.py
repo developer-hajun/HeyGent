@@ -45,7 +45,7 @@ from app.domain.tasks.models import StepRun, TaskRun
 
 
 logger = logging.getLogger(__name__)
-TRACKED_SKILL_TOOL_NAMES = {"skills.read", "skill.execute"}
+TRACKED_SKILL_TOOL_NAMES = {"skill.execute"}
 
 
 class TaskEngine:
