@@ -98,7 +98,7 @@ import {
   toggleValue,
 } from './issueBoardPanelUtils'
 
-const MAIN_AGENT_ASSIGNEE = { id: 'CEO', name: 'CEO', icon: UserRound } as const
+const MAIN_AGENT_ASSIGNEE = { id: 'CEO', name: '팀장 에이전트', icon: UserRound } as const
 const EMPTY_WORK_ITEMS: WorkItem[] = []
 const EMPTY_WORK_LABELS: WorkLabel[] = []
 const EMPTY_AGENT_PANELS: ReturnType<

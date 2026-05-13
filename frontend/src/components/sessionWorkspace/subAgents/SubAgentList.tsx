@@ -26,7 +26,7 @@ export function SubAgentList({
           </button>
         </div>
         <p className="text-muted-foreground mt-1 text-xs">
-          이 세션에서 CEO가 호출할 수 있는 에이전트를 구성합니다.
+          이 세션에서 팀장 에이전트가 호출할 수 있는 에이전트를 구성합니다.
         </p>
       </div>
 
