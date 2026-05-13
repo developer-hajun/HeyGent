@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.media.MediaRecorder
 import android.os.Build
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
@@ -240,6 +241,7 @@ fun ChatInputBar(
     LaunchedEffect(isRecording) {
         if (isRecording) {
             // --- 녹음 시작 ---
+            Log.d("WhisperSTT", "녹음 시작")
             val file = File(context.cacheDir, "whisper_input.m4a")
             if (file.exists()) file.delete()
             audioFileRef.value = file
@@ -262,6 +264,7 @@ fun ChatInputBar(
                     start()
                 }
                 recorderRef.value = recorder
+                Log.d("WhisperSTT", "MediaRecorder 시작 성공")
                 // 진폭 폴링 (파형 애니메이션용)
                 while (isActive) {
                     delay(80)
@@ -269,6 +272,7 @@ fun ChatInputBar(
                     amplitude = (amp.toFloat() / 8000f).coerceIn(0f, 1f)
                 }
             } catch (e: Exception) {
+                Log.e("WhisperSTT", "MediaRecorder 시작 실패: ${e.javaClass.simpleName} ${e.message}", e)
                 try { recorder.release() } catch (_: Exception) {}
                 recorderRef.value = null
                 isRecording = false
@@ -280,20 +284,32 @@ fun ChatInputBar(
             val file = audioFileRef.value
             recorderRef.value = null
 
-            if (recorder != null) {
-                try { recorder.stop(); recorder.release() } catch (_: Exception) {}
+            Log.d("WhisperSTT", "녹음 종료 — recorder=$recorder, file=$file, fileSize=${file?.length()}")
 
-                // 유효한 녹음 파일이 있으면 Whisper API 호출
-                if (file != null && file.exists() && file.length() > 1024L) {
+            if (recorder != null) {
+                try { recorder.stop(); recorder.release() } catch (e: Exception) {
+                    Log.w("WhisperSTT", "recorder.stop 예외 (무시): ${e.message}")
+                }
+
+                val fileSize = file?.length() ?: 0L
+                Log.d("WhisperSTT", "파일 크기: $fileSize bytes")
+
+                if (file != null && file.exists() && fileSize > 0L) {
                     isTranscribing = true
+                    Log.d("WhisperSTT", "Whisper API 호출 시작, apiKey=${BuildConfig.OPENAI_API_KEY.take(8)}...")
                     withContext(Dispatchers.IO) {
                         val result = callWhisperApi(file)
+                        Log.d("WhisperSTT", "Whisper 결과: '$result'")
                         withContext(Dispatchers.Main) {
                             if (result.isNotBlank()) onInputChange(result)
                             isTranscribing = false
                         }
                     }
+                } else {
+                    Log.w("WhisperSTT", "파일 없음 또는 크기 0 — 전사 스킵")
                 }
+            } else {
+                Log.w("WhisperSTT", "recorder null — MediaRecorder가 시작되지 않았음")
             }
         }
     }
@@ -472,10 +488,13 @@ private fun callWhisperApi(file: File): String {
             .build()
 
         client.newCall(request).execute().use { response ->
-            val raw = response.body?.string() ?: return ""
+            val raw = response.body?.string() ?: ""
+            Log.d("WhisperSTT", "HTTP ${response.code}: $raw")
+            if (!response.isSuccessful) return ""
             JSONObject(raw).optString("text", "")
         }
     } catch (e: Exception) {
+        Log.e("WhisperSTT", "callWhisperApi 예외: ${e.message}", e)
         ""
     }
 }
