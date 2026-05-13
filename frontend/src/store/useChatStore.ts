@@ -17,6 +17,7 @@ import {
   isJsonObject,
 } from '@/realtime/aiRealtimeTypes'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
+import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import type {
   AiModelOption,
@@ -186,6 +187,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         [clientMessageId]: optimisticSessionId,
       },
     }))
+    useAgentVisualizationStore.getState().startCeoWork(clientMessageId)
 
     try {
       const frame = await useAiRealtimeStore
@@ -212,6 +214,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       return frame
     } catch (error) {
+      useAgentVisualizationStore.getState().settleCeoAtDesk(clientMessageId)
       markOptimisticMessageFailed(clientMessageId, set)
       throw error
     }
@@ -497,6 +500,9 @@ const mergeAcceptedMessage = (
   if (sessionId === undefined) {
     return
   }
+  if (taskRunId !== undefined) {
+    useAgentVisualizationStore.getState().startCeoWork(taskRunId)
+  }
 
   const previousSessionId =
     clientMessageId !== undefined ? get().pendingClientMessageIds[clientMessageId] : undefined
@@ -632,6 +638,8 @@ const mergeAssistantCompleted = (
   if (sessionId === undefined || messageId === undefined) {
     return
   }
+
+  useAgentVisualizationStore.getState().settleCeoAtDesk(taskRunId)
 
   set((state) => {
     const nextMessages = upsertAssistantMessage(state.messagesBySessionId[sessionId] ?? [], {
@@ -851,6 +859,9 @@ const mergeTaskEventCompletionPayload = (
 
   const content = getTaskEventCompletionContent(payload)
   const nextStatus: ChatMessageStatus = eventType === 'task.completed' ? 'completed' : 'failed'
+  if (eventType === 'task.completed') {
+    useAgentVisualizationStore.getState().settleCeoAtDesk(taskRunId)
+  }
 
   set((state) => {
     const messagesBySessionId = { ...state.messagesBySessionId }

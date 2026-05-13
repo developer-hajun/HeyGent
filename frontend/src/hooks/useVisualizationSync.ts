@@ -35,6 +35,25 @@ const STEP_TERMINAL_EVENT_TYPES = new Set([
   'step.cancelled',
 ])
 
+const TASK_COMPLETED_EVENT_TYPES = new Set(['task.completed', 'session.message.completed'])
+const TASK_FAILED_EVENT_TYPES = new Set(['task.failed', 'session.message.failed'])
+const TASK_CANCELED_EVENT_TYPES = new Set(['task.canceled', 'task.cancelled'])
+
+function getTimestamp(value: unknown): number {
+  if (typeof value !== 'string') return 0
+  const time = new Date(value).getTime()
+  return Number.isFinite(time) ? time : 0
+}
+
+function getTaskRunSortTime(taskRun: RawTaskRun, latestEvent?: RawTaskEventPayload): number {
+  return Math.max(
+    getTimestamp(latestEvent?.occurred_at),
+    getTimestamp(taskRun.updated_at),
+    getTimestamp(taskRun.completed_at),
+    getTimestamp(taskRun.created_at),
+  )
+}
+
 /**
  * task run 상태를 결정한다.
  * 최신 이벤트(task.event)의 status가 있으면 우선 사용 — taskRunsById보다 실시간.
@@ -44,6 +63,12 @@ function resolveDestination(
   taskRun: RawTaskRun,
   latestEvent?: RawTaskEventPayload,
 ): UIDestination | null {
+  if (latestEvent !== undefined) {
+    if (TASK_COMPLETED_EVENT_TYPES.has(latestEvent.event_type)) return 'rest'
+    if (TASK_FAILED_EVENT_TYPES.has(latestEvent.event_type)) return 'calling'
+    if (TASK_CANCELED_EVENT_TYPES.has(latestEvent.event_type)) return 'rest'
+  }
+
   // step 단위 종료 이벤트(step.completed 등)의 status는 task 완료를 의미하지 않음
   // — step event가 아닌 경우에만 event status를 task 상태 판단에 사용
   const eventStatus =
@@ -71,7 +96,10 @@ function resolveDestination(
  * - Spec 4 (taskRuns.active.list): taskRunsById 초기 상태
  * - Spec 1 (task.event): eventsByTaskRunId 실시간 갱신 → 최신 이벤트 status/event_type 반영
  */
-export function useVisualizationSync(handleMove: (agentId: string, dest: UIDestination) => void) {
+export function useVisualizationSync(
+  handleMove: (agentId: string, dest: UIDestination) => void,
+  sessionId?: string,
+) {
   const handleMoveRef = useRef(handleMove)
   useEffect(() => {
     handleMoveRef.current = handleMove
@@ -82,9 +110,17 @@ export function useVisualizationSync(handleMove: (agentId: string, dest: UIDesti
   const lastDestByAgentId = useRef<Record<string, UIDestination>>({})
 
   useEffect(() => {
-    const pendingMoves: Record<string, UIDestination> = {}
+    const pendingMoves: Record<string, { destination: UIDestination; sortTime: number }> = {}
 
     for (const taskRun of Object.values(taskRunsById)) {
+      if (
+        sessionId !== undefined &&
+        taskRun.session_id !== undefined &&
+        taskRun.session_id !== sessionId
+      ) {
+        continue
+      }
+
       const profileKey = resolveProfileKey(taskRun.displayContext?.actorAgent)
       if (!profileKey) continue
 
@@ -95,16 +131,22 @@ export function useVisualizationSync(handleMove: (agentId: string, dest: UIDesti
       const destination = resolveDestination(taskRun, latestEvent)
       if (destination === null) continue
 
+      const sortTime = getTaskRunSortTime(taskRun, latestEvent)
       const existing = pendingMoves[profileKey]
-      if (existing === undefined || DEST_PRIORITY[destination] < DEST_PRIORITY[existing]) {
-        pendingMoves[profileKey] = destination
+      if (
+        existing === undefined ||
+        sortTime > existing.sortTime ||
+        (sortTime === existing.sortTime &&
+          DEST_PRIORITY[destination] < DEST_PRIORITY[existing.destination])
+      ) {
+        pendingMoves[profileKey] = { destination, sortTime }
       }
     }
 
-    for (const [profileKey, destination] of Object.entries(pendingMoves)) {
+    for (const [profileKey, { destination }] of Object.entries(pendingMoves)) {
       if (lastDestByAgentId.current[profileKey] === destination) continue
       lastDestByAgentId.current[profileKey] = destination
       handleMoveRef.current(profileKey, destination)
     }
-  }, [taskRunsById, eventsByTaskRunId])
+  }, [taskRunsById, eventsByTaskRunId, sessionId])
 }
