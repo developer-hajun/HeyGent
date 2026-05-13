@@ -705,7 +705,15 @@ class InMemoryAgentRepository:
     def list_templates(self) -> list[dict[str, Any]]:
         order = {template_key: index for index, template_key in enumerate(DEFAULT_SESSION_TEMPLATE_KEYS)}
         templates = [self._template_payload(template) for template in BUILTIN_AGENT_TEMPLATES]
-        return sorted(templates, key=lambda item: order.get(str(item.get("templateKey")), len(order)))
+        visible_templates = [
+            template
+            for template in templates
+            if str(template.get("template_key") or template.get("templateKey") or "") in order
+        ]
+        return sorted(
+            visible_templates,
+            key=lambda item: order.get(str(item.get("template_key") or item.get("templateKey") or ""), len(order)),
+        )
 
     def get_template(self, template_key: str) -> dict[str, Any] | None:
         for template in [MAIN_AGENT_TEMPLATE, *BUILTIN_AGENT_TEMPLATES]:

@@ -161,3 +161,67 @@ export type TaskRunEventsReplayResultPayload = {
   retentionExceeded?: boolean
   [key: string]: unknown
 }
+
+export type TaskRunFlowActivity = {
+  event_type?: string
+  eventType?: string
+  status?: RawTaskRunStatus | null
+  summary_message?: string | null
+  summaryMessage?: string | null
+  occurred_at?: string | null
+  occurredAt?: string | null
+}
+
+export type TaskRunFlowWorkerSession = {
+  session_id?: string
+  sessionId?: string
+  status?: string | null
+  summary?: string | null
+  agent_id?: string | null
+  agentId?: string | null
+  profile_key?: string | null
+  profileKey?: string | null
+}
+
+export type TaskRunFlowNode = {
+  step_run_id?: string
+  stepRunId?: string
+  step_order?: number
+  stepOrder?: number
+  title?: string | null
+  status?: RawTaskRunStatus | null
+  step_type?: string
+  stepType?: string
+  worker_session_id?: string | null
+  workerSessionId?: string | null
+  worker_session?: TaskRunFlowWorkerSession | null
+  workerSession?: TaskRunFlowWorkerSession | null
+  activity?: TaskRunFlowActivity[]
+  [key: string]: unknown
+}
+
+export type TaskRunFlowEdge = {
+  from_step_run_id?: string | null
+  fromStepRunId?: string | null
+  to_step_run_id?: string | null
+  toStepRunId?: string | null
+  to_task_run_id?: string | null
+  toTaskRunId?: string | null
+  to_agent_session_id?: string | null
+  toAgentSessionId?: string | null
+  relation?: string
+  [key: string]: unknown
+}
+
+export type TaskRunFlowResponse = {
+  task_run_id?: string
+  taskRunId?: string
+  status?: RawTaskRunStatus | null
+  title?: string | null
+  current_step_run_id?: string | null
+  currentStepRunId?: string | null
+  summary?: string | null
+  nodes?: TaskRunFlowNode[]
+  edges?: TaskRunFlowEdge[]
+  [key: string]: unknown
+}

@@ -172,6 +172,7 @@ async def lifespan(app: FastAPI):
         session_store=session_store,
         work_repository=work_repository,
         agent_repository=agent_repository,
+        skill_repository=skill_repository,
         settings=settings,
         iot_display_adapter=iot_display_adapter,
     )
