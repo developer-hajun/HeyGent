@@ -252,6 +252,10 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const missingSkillIds = skillCatalogReady
     ? selectedSkillIds.filter((skillId) => !knownSkillIds.has(skillId))
     : []
+  const orderedSkillCatalog = useMemo(
+    () => orderSkillCatalogBySelectedIds(skillCatalog, selectedKnownSkillIds),
+    [skillCatalog, selectedKnownSkillIds],
+  )
   const isDirty =
     agentName.trim() !== currentAgentName ||
     callName.trim() !== currentCallName ||
@@ -652,7 +656,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
             <AgentSkillsLibraryPanel
               adapterLabel="세션"
               applicationLabel="에이전트 실행 시 적용"
-              rows={skillCatalog.map((skill) => ({
+              rows={orderedSkillCatalog.map((skill) => ({
                 key: skill.skillId,
                 name: skill.displayName,
                 description: skill.description,
@@ -667,6 +671,10 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
               selectedCount={selectedKnownSkillIds.length}
               warnings={skillCatalogError ? [skillCatalogError] : []}
               onSkillOpen={openSkillDetail}
+              onSkillReorder={(orderedSkillIds) => {
+                setSelectedSkillIds([...orderedSkillIds, ...missingSkillIds])
+                markDirty()
+              }}
               onSkillToggle={(skillId, checked) => {
                 setSelectedSkillIds((current) =>
                   checked
@@ -1270,10 +1278,21 @@ function normalizeMainAgentSkillIds(value: unknown): string[] {
   )
 }
 
+function orderSkillCatalogBySelectedIds(
+  catalog: SkillCatalogItem[],
+  selectedSkillIds: string[],
+): SkillCatalogItem[] {
+  const byId = new Map(catalog.map((skill) => [skill.skillId, skill]))
+  const selected = selectedSkillIds
+    .map((skillId) => byId.get(skillId))
+    .filter((skill): skill is SkillCatalogItem => skill !== undefined)
+  const selectedIds = new Set(selected.map((skill) => skill.skillId))
+  return [...selected, ...catalog.filter((skill) => !selectedIds.has(skill.skillId))]
+}
+
 function stringArraysEqual(left: string[], right: string[]) {
   if (left.length !== right.length) return false
-  const leftSet = new Set(left)
-  return right.every((item) => leftSet.has(item))
+  return left.every((value, index) => right[index] === value)
 }
 
 function getMainAgentTab(value: string | null): MainAgentTab {

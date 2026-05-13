@@ -137,9 +137,6 @@ export function SubAgentDetailView({
   }))
   const skillDraft =
     skillDraftState.itemId === item.id ? skillDraftState.skills : (item.agent.skills ?? [])
-  const selectedSkills = skillCatalog.filter(
-    (skill) => skill.enabled && skillDraft.includes(skill.skillId),
-  )
   const skillCatalogReady = skillCatalog.length > 0
   const knownSkillIds = new Set(skillCatalog.map((skill) => skill.skillId))
   const selectedKnownSkillIds = skillCatalogReady
@@ -148,6 +145,10 @@ export function SubAgentDetailView({
   const missingSkillIds = skillCatalogReady
     ? skillDraft.filter((skillId) => !knownSkillIds.has(skillId))
     : []
+  const orderedSkillCatalog = useMemo(
+    () => orderSkillCatalogBySelectedIds(skillCatalog, selectedKnownSkillIds),
+    [skillCatalog, selectedKnownSkillIds],
+  )
   const profileId = item.agent.profileId ?? item.id
   const agentTaskRuns = useMemo(
     () => buildAgentTaskRuns(sessionId, profileId, loadedTaskRuns, taskRunsById),
@@ -489,7 +490,7 @@ export function SubAgentDetailView({
           <AgentSkillsLibraryPanel
             adapterLabel={item.agent.adapterType ?? 'local'}
             applicationLabel="에이전트 실행 시 적용"
-            rows={skillCatalog.map((skill) => ({
+            rows={orderedSkillCatalog.map((skill) => ({
               key: skill.skillId,
               name: skill.displayName,
               description: skill.description,
@@ -501,8 +502,15 @@ export function SubAgentDetailView({
               locationLabel: skill.sourcePath ?? undefined,
             }))}
             missingSkills={missingSkillIds}
-            selectedCount={selectedSkills.length}
+            selectedCount={selectedKnownSkillIds.length}
             saving={skillSaving}
+            onSkillReorder={(orderedSkillIds) => {
+              setSkillDraftState({
+                itemId: item.id,
+                skills: [...orderedSkillIds, ...missingSkillIds],
+              })
+              setSaved(false)
+            }}
             onSkillToggle={toggleSkill}
             onSkillOpen={openSkillDetail}
             warnings={skillCatalogError ? [skillCatalogError] : []}
@@ -794,4 +802,16 @@ function shallowStringRecordEqual(left: Record<string, string>, right: Record<st
 function stringArraysEqual(left: string[], right: string[]) {
   if (left.length !== right.length) return false
   return left.every((value, index) => right[index] === value)
+}
+
+function orderSkillCatalogBySelectedIds(
+  catalog: SkillCatalogItem[],
+  selectedSkillIds: string[],
+): SkillCatalogItem[] {
+  const byId = new Map(catalog.map((skill) => [skill.skillId, skill]))
+  const selected = selectedSkillIds
+    .map((skillId) => byId.get(skillId))
+    .filter((skill): skill is SkillCatalogItem => skill !== undefined)
+  const selectedIds = new Set(selected.map((skill) => skill.skillId))
+  return [...selected, ...catalog.filter((skill) => !selectedIds.has(skill.skillId))]
 }
