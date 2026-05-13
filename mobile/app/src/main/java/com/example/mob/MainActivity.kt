@@ -60,6 +60,7 @@ import com.example.mob.common.AppDrawer
 import com.example.mob.data.remote.RetrofitClient
 import com.example.mob.feature.auth.LoginScreen
 import com.example.mob.feature.chat.ChatScreen
+import com.example.mob.feature.chat.ChatViewModel
 import com.example.mob.feature.health.HealthViewModel
 import com.example.mob.feature.home.HomeScreen
 import com.example.mob.feature.profile.ProfileScreen
@@ -177,6 +178,7 @@ private fun MainApp(onLogout: () -> Unit) {
     val context = LocalContext.current
     val healthViewModel = remember { HealthViewModel(context) }
 
+    val chatViewModel = remember { ChatViewModel() }
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -196,7 +198,7 @@ private fun MainApp(onLogout: () -> Unit) {
     }
 
     // 앱 세션 동안 유지 (앱 재실행 시 초기화됨)
-    var activeChatSessionId by remember { mutableStateOf<Int?>(null) }
+    var activeChatSessionId by remember { mutableStateOf<String?>(null) }
     var agentName by remember { mutableStateOf("Jarvis") }
 
     ModalNavigationDrawer(
@@ -205,8 +207,9 @@ private fun MainApp(onLogout: () -> Unit) {
             AppDrawer(
                 onClose = { scope.launch { drawerState.close() } },
                 agentName = agentName,
+                sessions = chatViewModel.sessions.collectAsState().value,
                 onNewChat = {
-                    activeChatSessionId = 0
+                    activeChatSessionId = ""
                     navController.navigate(Screen.Chat.route) { launchSingleTop = true }
                     scope.launch { drawerState.close() }
                 },
@@ -237,6 +240,7 @@ private fun MainApp(onLogout: () -> Unit) {
                         onMenuClick = onMenuClick,
                         activeChatSessionId = activeChatSessionId,
                         onActiveChatSessionChange = { activeChatSessionId = it },
+                        viewModel = chatViewModel,
                         agentName = agentName,
                         bottomPadding = bottomPadding,
                     )
