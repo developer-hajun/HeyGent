@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.mob.BuildConfig
 import com.example.mob.ui.theme.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -271,6 +272,11 @@ fun ChatInputBar(
                     val amp = recorderRef.value?.maxAmplitude ?: 0
                     amplitude = (amp.toFloat() / 8000f).coerceIn(0f, 1f)
                 }
+            } catch (e: CancellationException) {
+                // 유저가 중지 버튼 탭 → Compose가 코루틴 취소
+                // recorderRef는 그대로 유지 — isRecording=false LaunchedEffect에서 cleanup
+                Log.d("WhisperSTT", "녹음 코루틴 취소됨 (정상)")
+                throw e  // 반드시 re-throw
             } catch (e: Exception) {
                 Log.e("WhisperSTT", "MediaRecorder 시작 실패: ${e.javaClass.simpleName} ${e.message}", e)
                 try { recorder.release() } catch (_: Exception) {}
