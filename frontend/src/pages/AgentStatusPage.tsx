@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { useParams } from 'react-router'
 import { OfficeMap } from '@/components/office/OfficeMap'
 import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
@@ -769,6 +770,7 @@ function playSpawnSound() {
 }
 
 export function AgentStatusPage() {
+  const { sessionId } = useParams()
   const agents = useAgentVisualizationStore((s) => s.agentRuntimes)
   const setAgents = useAgentVisualizationStore((s) => s.setAgentRuntimes)
   const addSpawnedKey = useAgentVisualizationStore((s) => s.addSpawnedKey)
@@ -801,8 +803,8 @@ export function AgentStatusPage() {
 
   // 시각화 페이지 마운트 시 현재 활성 task run을 즉시 조회해 displayContext(profileKey)를 채운다.
   useEffect(() => {
-    void fetchActiveTaskRuns().catch(() => {})
-  }, [fetchActiveTaskRuns])
+    void fetchActiveTaskRuns(sessionId).catch(() => {})
+  }, [fetchActiveTaskRuns, sessionId])
 
   // 페이지 재진입 시 walk 중이던 에이전트를 최종 상태로 정착시키고,
   // 언마운트 시에도 동일하게 처리해 다음 진입 때 clean한 상태로 시작한다.
@@ -912,6 +914,25 @@ export function AgentStatusPage() {
       if (!prevAgents.some((a) => a.config.id === agentId)) {
         const config = AGENT_CONFIGS.find((c) => c.id === agentId)
         if (!config) return prevAgents
+        if (agentId === 'ceo' && rawDestination === 'rest') {
+          const deskPosition = config.destinations.desk
+          if (!deskPosition) return prevAgents
+          return [
+            ...prevAgents,
+            {
+              config,
+              position: { ...deskPosition },
+              state: 'sitting_desk' as const,
+              targetState: 'sitting_desk' as const,
+              walkFrame: 0 as const,
+              transitionDuration: 0,
+              pendingWaypoints: [],
+              targetPosition: null,
+              standWaitTarget: null,
+              facingRight: false,
+            },
+          ]
+        }
         requestAnimationFrame(() => handleMove(agentId, rawDestination))
         return [
           ...prevAgents,
@@ -933,6 +954,33 @@ export function AgentStatusPage() {
 
       const agent = prev.find((a) => a.config.id === agentId)
       if (!agent) return prev
+      if (agentId === 'ceo' && rawDestination === 'rest') {
+        const deskPosition = agent.config.destinations.desk
+        if (!deskPosition) return prev
+        const alreadyAtDesk =
+          agent.state === 'sitting_desk' &&
+          agent.targetState === 'sitting_desk' &&
+          Math.abs(agent.position.x - deskPosition.x) < 1 &&
+          Math.abs(agent.position.y - deskPosition.y) < 1
+        clearWalkTimer('ceo')
+        if (!alreadyAtDesk) playSpawnSound()
+        return prev.map((a) =>
+          a.config.id === 'ceo'
+            ? {
+                ...a,
+                position: { ...deskPosition },
+                state: 'sitting_desk',
+                targetState: 'sitting_desk',
+                walkFrame: 0,
+                transitionDuration: 0,
+                pendingWaypoints: [],
+                targetPosition: null,
+                standWaitTarget: null,
+                facingRight: false,
+              }
+            : a,
+        )
+      }
       if (agent.state === 'walking') {
         // 이동 중 목적지 변경: 경로는 유지하고 도착 시 전환할 targetState만 갱신
         // rest는 소파 빈 자리 탐색이 필요해 mid-walk 갱신 불가 — 나머지만 처리
@@ -947,24 +995,24 @@ export function AgentStatusPage() {
         return prev
       }
 
-      // CEO: sitting_work ↔ sitting_desk 즉시 전환 (걷기 없이)
-      // — 두 좌표가 근접해 걸어가기 어색하며, idle(첫 등장) 상태는 통과시켜 정상 walk 처리
       if (
         agentId === 'ceo' &&
         (destination === 'desk' || destination === 'work') &&
-        (agent.state === 'sitting_work' || agent.state === 'sitting_desk')
+        (agent.state === 'sitting_desk' || agent.state === 'sitting_work')
       ) {
-        const newTargetState = DESTINATION_MAP[destination as UIDestination]?.targetState
-        if (!newTargetState || agent.state === newTargetState) return prev
+        const nextPosition = agent.config.destinations[destination as Destination]
+        const nextState = DESTINATION_MAP[destination as UIDestination]?.targetState
+        if (!nextPosition || !nextState || agent.state === nextState) return prev
         clearWalkTimer('ceo')
         return prev.map((a) =>
           a.config.id === 'ceo'
             ? {
                 ...a,
-                position: { ...a.config.destinations[destination as Destination]! },
-                state: newTargetState,
-                targetState: newTargetState,
+                position: { ...nextPosition },
+                state: nextState,
+                targetState: nextState,
                 walkFrame: 0,
+                transitionDuration: 0,
                 pendingWaypoints: [],
                 targetPosition: null,
                 standWaitTarget: null,
@@ -973,6 +1021,8 @@ export function AgentStatusPage() {
         )
       }
 
+      // CEO: sitting_work ↔ sitting_desk 즉시 전환 (걷기 없이)
+      // — 두 좌표가 근접해 걸어가기 어색하며, idle(첫 등장) 상태는 통과시켜 정상 walk 처리
       // ── rest → 소파 빈 자리 우선 배정, 둘 다 차면 floorLean ──────────────
       let internalDest: Destination
       let destPoint: { x: number; y: number }
@@ -1106,8 +1156,8 @@ export function AgentStatusPage() {
     })
   }
 
-  useVisualizationSync(handleMove)
-  useAgentInfoSync()
+  useVisualizationSync(handleMove, sessionId)
+  useAgentInfoSync(sessionId)
 
   // handleMove는 매 렌더마다 새로 생성되므로 타이머 콜백에서는 항상 최신 버전을 참조
   const handleMoveRef = useRef(handleMove)
