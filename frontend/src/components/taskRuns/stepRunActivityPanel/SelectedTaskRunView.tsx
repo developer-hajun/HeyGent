@@ -28,6 +28,7 @@ export function SelectedTaskRunView({
     activities.at(-1)?.raw.status ?? activities.at(-1)?.raw.event_type ?? taskRun?.status
   const taskRunFinished = status === 'COMPLETED' || status === 'task.completed'
   const reversedActivities = [...activities].reverse()
+  const agentNameMap = buildActivityAgentNameMap(activities)
   const currentStep = selectCurrentVisibleStep(taskRun, steps)
   const memoryDebug = buildMemoryDebugView(taskRun)
 
@@ -75,6 +76,7 @@ export function SelectedTaskRunView({
                 activities={activities.filter(
                   (activity) => activity.stepRunId === step.step_run_id,
                 )}
+                allActivities={activities}
               />
             ))}
           </ol>
@@ -121,6 +123,7 @@ export function SelectedTaskRunView({
                   key={activity.id}
                   activity={activity}
                   taskRunFinished={taskRunFinished}
+                  agentNameMap={agentNameMap}
                 />
               ))}
             </ol>
@@ -233,6 +236,50 @@ function buildMemoryDebugView(taskRun: RawTaskRun | undefined) {
       memoryObservation: resultPayload?.memory_observation,
     },
   }
+}
+
+function buildActivityAgentNameMap(activities: ActivityItemView[]) {
+  const names = new Map<string, string>()
+  activities.forEach((activity) => {
+    addAgentRef(names, activity.displayContext?.actorAgent)
+    addAgentRef(names, activity.displayContext?.assigneeAgent)
+    activity.displayContext?.delegatedAgents?.forEach((agent) => addAgentRef(names, agent))
+
+    const payload = toRecord(activity.raw.payload)
+    const input = toRecord(payload?.input) ?? toRecord(payload?.args)
+    const result = toRecord(payload?.result) ?? toRecord(payload?.output)
+    const agent = toRecord(result?.agent)
+    addAgentName(
+      names,
+      stringValue(agent?.profileId) ??
+        stringValue(agent?.profile_id) ??
+        stringValue(agent?.agentId) ??
+        stringValue(agent?.id) ??
+        stringValue(input?.assigneeAgentId),
+      stringValue(agent?.name) ?? stringValue(agent?.displayName),
+    )
+  })
+  return names
+}
+
+function addAgentRef(
+  names: Map<string, string>,
+  agent?: { id?: string; profileId?: string | null; displayName?: string },
+) {
+  addAgentName(names, agent?.id, agent?.displayName)
+  addAgentName(names, agent?.profileId ?? undefined, agent?.displayName)
+}
+
+function addAgentName(names: Map<string, string>, id?: string, name?: string) {
+  if (id === undefined || name === undefined) return
+  const normalizedId = id.trim()
+  const normalizedName = name.trim()
+  if (!normalizedId || !normalizedName || isRawAgentId(normalizedName)) return
+  names.set(normalizedId, normalizedName)
+}
+
+function isRawAgentId(value: string) {
+  return /^agent_profile_[a-z0-9]+$/i.test(value.trim())
 }
 
 function summarizeMemoryDebug(

@@ -7,16 +7,20 @@ export function ActivityEventItem({
   activity,
   taskRunFinished = false,
   compact = false,
+  agentNameMap,
 }: {
   activity: ActivityItemView
   taskRunFinished?: boolean
   compact?: boolean
+  agentNameMap?: Map<string, string>
 }) {
   // 세부 기록은 과거 이벤트의 상태를 보여준다. 다만 TaskRun이 이미 끝난 뒤에는
   // 과거 started/running 이벤트 아이콘이 계속 도는 것처럼 보이지 않게 고정 아이콘으로 바꾼다.
   const tone = taskRunFinished && activity.tone === 'running' ? 'completed' : activity.tone
   const detailSections = buildActivityDetailSections(activity.raw)
-  const actorName = activity.displayContext?.actorAgent?.displayName
+  const actorName = resolveAgentDisplayName(activity.displayContext?.actorAgent, agentNameMap)
+  const title = getActivityDisplayTitle(activity, actorName)
+  const statusText = getActivityStatusLine(activity, actorName)
 
   return (
     <li
@@ -39,12 +43,10 @@ export function ActivityEventItem({
                   : 'text-foreground line-clamp-2 block text-sm font-medium [overflow-wrap:anywhere] break-words'
               }
             >
-              {toUserFacingTaskTitle(activity.title)}
+              {title}
             </span>
             <span className="text-muted-foreground mt-0.5 line-clamp-1 block text-xs leading-5 [overflow-wrap:anywhere] break-words">
-              {actorName === undefined
-                ? activity.statusText
-                : `${activity.statusText} · ${actorName}`}
+              {statusText}
             </span>
           </span>
           <ChevronDown className="text-muted-foreground h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
@@ -85,6 +87,66 @@ type DetailSection = {
 
 const MAX_DETAIL_CHARS = 1800
 
+const getActivityDisplayTitle = (activity: ActivityItemView, actorName?: string) => {
+  const payload = asRecord(activity.raw.payload)
+  const toolName = pickString(payload, 'toolName', 'tool_name')
+  if (toolName === 'session_agent_task') {
+    const result = asRecord(payload?.result) ?? asRecord(payload?.output)
+    const agent = asRecord(result?.agent)
+    const agentName = pickString(agent, 'name', 'displayName')
+    if (agentName !== undefined) {
+      return `${agentName}에게 작업 위임`
+    }
+  }
+
+  const title = toUserFacingTaskTitle(activity.title)
+  if (
+    actorName !== undefined &&
+    isToolEvent(activity.raw.event_type) &&
+    !title.includes(actorName)
+  ) {
+    return `${actorName}가 ${title}`
+  }
+  return title
+}
+
+const getActivityStatusLine = (activity: ActivityItemView, actorName?: string) => {
+  if (actorName === undefined) {
+    return activity.statusText
+  }
+  if (isToolEvent(activity.raw.event_type)) {
+    return `${actorName} 실행`
+  }
+  return `${activity.statusText} · ${actorName}`
+}
+
+const isToolEvent = (eventType?: string | null) =>
+  eventType === 'tool.started' ||
+  eventType === 'tool.completed' ||
+  eventType === 'search.started' ||
+  eventType === 'search.completed'
+
+const resolveAgentDisplayName = (
+  agent:
+    | {
+        id?: string
+        profileId?: string | null
+        displayName?: string
+      }
+    | undefined,
+  agentNameMap?: Map<string, string>,
+) => {
+  if (agent === undefined) return undefined
+  if (agent.displayName !== undefined && !isRawAgentId(agent.displayName)) {
+    return agent.displayName
+  }
+  const id = agent.profileId ?? agent.id
+  if (id === undefined) return isRawAgentId(agent.displayName ?? '') ? undefined : agent.displayName
+  return agentNameMap?.get(id) ?? (isRawAgentId(id) ? undefined : id)
+}
+
+const isRawAgentId = (value: string) => /^agent_profile_[a-z0-9]+$/i.test(value.trim())
+
 const buildActivityDetailSections = (raw: ActivityItemView['raw']): DetailSection[] => {
   const sections: DetailSection[] = []
   const payload = raw.payload
@@ -104,6 +166,20 @@ const buildActivityDetailSections = (raw: ActivityItemView['raw']): DetailSectio
 
   pushDetailSection(sections, '상세 데이터', raw.detail_json)
   return sections
+}
+
+const pickString = (value: unknown, ...keys: string[]) => {
+  const record = asRecord(value)
+  if (record === undefined) {
+    return undefined
+  }
+  for (const key of keys) {
+    const candidate = record[key]
+    if (typeof candidate === 'string' && candidate.trim() !== '') {
+      return candidate.trim()
+    }
+  }
+  return undefined
 }
 
 const pushDetailSection = (sections: DetailSection[], label: string, value: unknown) => {
