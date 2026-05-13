@@ -1,10 +1,12 @@
 package com.example.mob.feature.chat
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
@@ -25,6 +27,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,10 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.example.mob.ui.theme.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.withContext
-import kotlin.math.sqrt
+import java.util.Locale
 
 private val BotBubbleColor = Color(0xFF1C1C1E)
 
@@ -213,46 +213,57 @@ fun ChatInputBar(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) isRecording = true }
 
+    val speechRecognizer = remember {
+        if (SpeechRecognizer.isRecognitionAvailable(context))
+            SpeechRecognizer.createSpeechRecognizer(context)
+        else null
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { speechRecognizer?.destroy() }
+    }
+
     LaunchedEffect(isRecording) {
-        if (!isRecording) {
-            amplitude = 0f
-            return@LaunchedEffect
-        }
-        val sampleRate = 44100
-        val minBuf = AudioRecord.getMinBufferSize(
-            sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
-        )
-        val bufSize = minBuf.coerceAtLeast(2048)
-        val record = try {
-            AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                sampleRate, AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT, bufSize
-            ).also {
-                if (it.state != AudioRecord.STATE_INITIALIZED) {
+        if (isRecording) {
+            speechRecognizer?.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {}
+                override fun onBeginningOfSpeech() {}
+                override fun onRmsChanged(rmsdB: Float) {
+                    amplitude = ((rmsdB + 2f) * 8f / 100f).coerceIn(0f, 1f)
+                }
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {}
+                override fun onError(error: Int) {
                     isRecording = false
-                    return@LaunchedEffect
+                    amplitude = 0f
                 }
-            }
-        } catch (e: SecurityException) {
-            isRecording = false
-            return@LaunchedEffect
-        }
-        record.startRecording()
-        val buffer = ShortArray(bufSize / 2)
-        try {
-            while (isActive) {
-                val read = withContext(Dispatchers.IO) { record.read(buffer, 0, buffer.size) }
-                if (read > 0) {
-                    var sumSq = 0.0
-                    for (j in 0 until read) sumSq += buffer[j].toLong() * buffer[j]
-                    val rms = sqrt(sumSq / read).toFloat()
-                    amplitude = (rms / (Short.MAX_VALUE * 0.1f)).coerceIn(0f, 1f)
+                override fun onResults(results: Bundle?) {
+                    val text = results
+                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()
+                    if (!text.isNullOrBlank()) onInputChange(text)
+                    isRecording = false
+                    amplitude = 0f
                 }
-            }
-        } finally {
-            record.stop()
-            record.release()
+                override fun onPartialResults(partialResults: Bundle?) {
+                    val text = partialResults
+                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()
+                    if (!text.isNullOrBlank()) onInputChange(text)
+                }
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+            })
+            speechRecognizer?.startListening(
+                Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.KOREAN.toLanguageTag())
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                    putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
+                }
+            )
+        } else {
+            speechRecognizer?.stopListening()
             amplitude = 0f
         }
     }
@@ -280,7 +291,7 @@ fun ChatInputBar(
                 contentAlignment = Alignment.CenterStart
             ) {
                 when {
-                    isRecording -> RecordingWaveform(amplitude)
+                    isRecording && inputText.isEmpty() -> RecordingWaveform(amplitude)
                     isProcessing -> Text("응답을 기다리는 중...", color = TextSecondary, fontSize = 14.sp)
                     else -> BasicTextField(
                         value = inputText,
