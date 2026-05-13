@@ -12,6 +12,7 @@ import {
 } from '@/utils/taskRunStatusView'
 import { findPromptForTaskRun, getTime } from './activityPanelText'
 import { SelectedTaskRunView } from './SelectedTaskRunView'
+import { TaskRunStatusHelpDialog, TaskRunStatusLegend } from './TaskRunStatusIcon'
 import { TaskRunSummaryList } from './TaskRunSummaryList'
 
 const EMPTY_MESSAGES: never[] = []
@@ -199,7 +200,7 @@ export function StepRunActivityPanelBody({
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-border border-b p-4">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="text-muted-foreground truncate text-xs">이 세션의 답변 기록</p>
             <h2 className="text-foreground mt-1 flex items-center gap-2 text-sm font-semibold">
               <span>답변 활동</span>
@@ -208,7 +209,9 @@ export function StepRunActivityPanelBody({
                   {taskRunSummaries.length}개
                 </span>
               )}
+              <TaskRunStatusHelpDialog />
             </h2>
+            <TaskRunStatusLegend />
           </div>
           <button
             type="button"

@@ -5,7 +5,7 @@ import { ActivityEventItem } from './ActivityEventItem'
 import { ApprovalCard } from './ApprovalCard'
 import { StepProgressItem } from './StepProgressItem'
 import { toStepProgressSentence, toUserFacingTaskTitle } from './activityPanelText'
-import { TaskRunStatusIcon } from './TaskRunStatusIcon'
+import { TaskRunStatusBadge, TaskRunStatusIcon } from './TaskRunStatusIcon'
 
 export function SelectedTaskRunView({
   taskRunId,
@@ -31,20 +31,23 @@ export function SelectedTaskRunView({
   const agentNameMap = buildActivityAgentNameMap(activities)
   const currentStep = selectCurrentVisibleStep(taskRun, steps)
   const memoryDebug = buildMemoryDebugView(taskRun)
+  const currentStepTone = toTaskRunStatusTone(currentStep?.status ?? status)
 
   return (
     <div className="space-y-5">
       {!taskRunFinished && currentStep !== undefined && (
         <section className="border-border bg-muted/30 rounded-lg border px-3 py-2">
           <div className="flex items-start gap-2">
-            <TaskRunStatusIcon tone={toTaskRunStatusTone(currentStep?.status ?? status)} />
+            <TaskRunStatusIcon tone={currentStepTone} />
             <div className="min-w-0">
               <div className="text-foreground line-clamp-1 text-xs font-semibold [overflow-wrap:anywhere] break-words">
                 {toUserFacingTaskTitle(currentStep.title ?? currentStep.goal ?? '답변 진행')}
               </div>
-              <div className="text-muted-foreground mt-0.5 line-clamp-1 text-[11px] [overflow-wrap:anywhere] break-words">
-                {toStepProgressSentence(currentStep.status ?? status)}
-              </div>
+              <TaskRunStatusBadge
+                tone={currentStepTone}
+                label={toStepProgressSentence(currentStep.status ?? status)}
+                className="mt-1"
+              />
             </div>
           </div>
         </section>

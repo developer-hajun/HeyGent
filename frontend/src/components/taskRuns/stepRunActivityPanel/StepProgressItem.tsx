@@ -3,7 +3,7 @@ import type { ActivityItemView } from '@/types/taskRuns'
 import type { RawStepRun } from '@/types/taskRuns'
 import { toTaskRunStatusText, toTaskRunStatusTone } from '@/utils/taskRunStatusView'
 import { toStepProgressSentence, toUserFacingTaskTitle } from './activityPanelText'
-import { TaskRunStatusIcon } from './TaskRunStatusIcon'
+import { TaskRunStatusBadge, TaskRunStatusIcon } from './TaskRunStatusIcon'
 
 export function StepProgressItem({
   step,
@@ -17,18 +17,21 @@ export function StepProgressItem({
   const agentNameMap = buildAgentNameMap(step, allActivities)
   const workerItems = getStepWorkerItems(step, activities, agentNameMap)
   const executionLabel = getStepExecutionLabel(step, activities, agentNameMap)
+  const stepTone = toTaskRunStatusTone(step.status)
 
   return (
     <li className="bg-card border-border rounded-lg border p-3">
       <div className="flex min-h-14 items-center gap-3">
-        <TaskRunStatusIcon tone={toTaskRunStatusTone(step.status)} />
+        <TaskRunStatusIcon tone={stepTone} />
         <span className="min-w-0 flex-1">
           <span className="text-foreground line-clamp-2 block text-sm font-medium [overflow-wrap:anywhere] break-words">
             {toUserFacingTaskTitle(step.title ?? step.goal ?? '답변 준비')}
           </span>
-          <span className="text-muted-foreground mt-1 line-clamp-1 block text-xs">
-            {toStepProgressSentence(step.status)}
-          </span>
+          <TaskRunStatusBadge
+            tone={stepTone}
+            label={toStepProgressSentence(step.status)}
+            className="mt-1"
+          />
           {executionLabel !== undefined && (
             <span className="text-muted-foreground mt-0.5 line-clamp-1 block text-[11px]">
               {executionLabel}
@@ -64,9 +67,11 @@ function WorkerStatusList({ workers }: { workers: WorkerStatusItem[] }) {
               <span className="text-foreground line-clamp-1 block text-xs font-medium [overflow-wrap:anywhere] break-words">
                 {worker.title}
               </span>
-              <span className="text-muted-foreground line-clamp-1 block text-[11px] [overflow-wrap:anywhere] break-words">
-                {worker.summary || toTaskRunStatusText(worker.status)}
-              </span>
+              <TaskRunStatusBadge
+                tone={toTaskRunStatusTone(worker.status)}
+                label={worker.summary || toTaskRunStatusText(worker.status)}
+                className="mt-1 max-w-full"
+              />
             </span>
           </li>
         ))}

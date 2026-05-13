@@ -1,7 +1,7 @@
 import { ChevronDown } from 'lucide-react'
 import type { ActivityItemView } from '@/types/taskRuns'
 import { toUserFacingTaskTitle } from './activityPanelText'
-import { TaskRunStatusIcon } from './TaskRunStatusIcon'
+import { TaskRunStatusBadge, TaskRunStatusIcon } from './TaskRunStatusIcon'
 
 export function ActivityEventItem({
   activity,
@@ -45,9 +45,7 @@ export function ActivityEventItem({
             >
               {title}
             </span>
-            <span className="text-muted-foreground mt-0.5 line-clamp-1 block text-xs leading-5 [overflow-wrap:anywhere] break-words">
-              {statusText}
-            </span>
+            <TaskRunStatusBadge tone={tone} label={statusText} className="mt-1 max-w-full" />
           </span>
           <ChevronDown className="text-muted-foreground h-4 w-4 shrink-0 transition-transform group-open:rotate-180" />
         </summary>
@@ -159,12 +157,12 @@ const buildActivityDetailSections = (raw: ActivityItemView['raw']): DetailSectio
 
     pushDetailSection(sections, '도구 입력', input)
     pushDetailSection(sections, '도구 결과', result)
-    pushDetailSection(sections, '이벤트 payload', metadata)
+    pushDetailSection(sections, '원본 이벤트', metadata)
   } else {
-    pushDetailSection(sections, '이벤트 payload', payload)
+    pushDetailSection(sections, '원본 이벤트', payload)
   }
 
-  pushDetailSection(sections, '상세 데이터', raw.detail_json)
+  pushDetailSection(sections, '원본 상세 데이터', raw.detail_json)
   return sections
 }
 
