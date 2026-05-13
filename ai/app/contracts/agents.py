@@ -79,6 +79,37 @@ class AgentProfileListResponse(BaseModel):
     items: list[AgentProfileResponse] = Field(default_factory=list)
 
 
+class SkillCatalogItemResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    skill_id: str = Field(alias="skillId")
+    name: str
+    display_name: str = Field(alias="displayName")
+    description: str = ""
+    source_type: str = Field(default="builtin", alias="sourceType")
+    source_path: str | None = Field(default=None, alias="sourcePath")
+    version: int = 1
+    enabled: bool = True
+    default_enabled: bool = Field(default=True, alias="defaultEnabled")
+
+
+class SkillCatalogDetailResponse(SkillCatalogItemResponse):
+    body: str = ""
+    files: list[str] = Field(default_factory=list)
+
+
+class SkillCatalogListResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[SkillCatalogItemResponse] = Field(default_factory=list)
+
+
+class UpdateUserSkillSettingRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    enabled: bool
+
+
 class CreateSessionAgentFromTemplateRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 

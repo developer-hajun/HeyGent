@@ -205,6 +205,52 @@ def test_skills_list_includes_frontmatter_descriptions():
     assert "한국 날씨를 기상청 단기예보 조회서비스" in descriptions["korea-weather"]
 
 
+def test_skills_toolset_exposes_skill_resource_reader():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    definitions = runtime.list_tool_definitions(enabled_toolsets=("skills",))
+
+    schema_by_name = {definition["name"]: definition["schema"] for definition in definitions}
+    assert [definition["name"] for definition in definitions] == [
+        "skills.list",
+        "skills.read",
+        "skills.read_file",
+    ]
+    assert schema_by_name["skills.read_file"]["parameters"]["properties"]["path"]["type"] == "string"
+
+
+def test_skill_tools_only_expose_enabled_runtime_skills():
+    registry = SkillRegistry()
+    registry.register_many(
+        [
+            {"name": "korea-weather", "description": "한국 날씨 조회", "body": "# Weather"},
+            {"name": "zipcode-search", "description": "우편번호 조회", "body": "# Zipcode"},
+        ]
+    )
+    runtime = LocalToolRuntime(
+        skill_registry=registry,
+        session_store=DummySessionStore(),
+        runtime_context={"enabledSkillNames": ["korea-weather"]},
+    )
+
+    listed = runtime.run_call(name="skills.list", args={}, enabled_toolsets=("skills",))
+    allowed = runtime.run_call(
+        name="skills.read",
+        args={"skill_name": "korea-weather"},
+        enabled_toolsets=("skills",),
+    )
+    blocked = runtime.run_call(
+        name="skills.read",
+        args={"skill_name": "zipcode-search"},
+        enabled_toolsets=("skills",),
+    )
+
+    assert listed["items"] == ["korea-weather"]
+    assert allowed["body"] == "# Weather"
+    assert blocked["ok"] is False
+    assert blocked["error"]["code"] == "skill_disabled"
+
+
 def test_runtime_exposes_heygent_browser_tool_definitions():
     runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
 

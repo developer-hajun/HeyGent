@@ -96,6 +96,9 @@ def test_postgres_schema_contains_required_durable_tables():
         "work_wake_requests",
         "work_recovery_actions",
         "work_read_states",
+        "ai_skill_catalog",
+        "ai_user_skill_settings",
+        "ai_agent_skill_settings",
     }
 
     for table_name in required_tables:
@@ -237,6 +240,27 @@ def test_postgres_work_schema_contains_wake_recovery_contract():
     assert "0015_allow_nested_session_agent_runs" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
     assert "DROP CONSTRAINT IF EXISTS work_wake_requests_status_check" in migration_sql
     assert "DROP INDEX IF EXISTS idx_run_anchors_one_active_per_owner_session" in migration_sql
+
+
+def test_postgres_schema_contains_user_skill_settings_contract():
+    schema_sql = render_postgres_schema()
+    migration_sql = "\n".join(statement for migration in POSTGRES_MIGRATIONS for statement in migration.statements)
+
+    for expected in [
+        "CREATE TABLE IF NOT EXISTS ai_skill_catalog",
+        "CREATE TABLE IF NOT EXISTS ai_user_skill_settings",
+        "CREATE TABLE IF NOT EXISTS ai_agent_skill_settings",
+        "source_type TEXT NOT NULL DEFAULT 'builtin'",
+        "enabled BOOLEAN NOT NULL",
+        "PRIMARY KEY (owner_key, skill_id)",
+        "PRIMARY KEY (profile_id, skill_id)",
+        "CREATE INDEX IF NOT EXISTS idx_ai_user_skill_settings_owner_enabled",
+        "CREATE INDEX IF NOT EXISTS idx_ai_agent_skill_settings_profile_enabled",
+    ]:
+        assert expected in schema_sql
+
+    assert "0016_user_skill_settings" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "CREATE TABLE IF NOT EXISTS ai_skill_catalog" in migration_sql
 
 
 def test_work_item_response_exposes_flow_order_for_diagram_layout():

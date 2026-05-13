@@ -1477,6 +1477,13 @@ def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work
         return
     task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
     profile_id = str(profile.get("profile_id") or assignee_agent_id)
+    _attach_effective_skill_names(
+        state,
+        task_input=task_input,
+        owner_key=str(work.owner_key),
+        profile=profile,
+        profile_id=profile_id,
+    )
     if not assignee_agent_id or assignee_agent_id == "CEO":
         _attach_session_agent_candidates(state, task_input=task_input, session_id=work.session_id, owner_key=str(work.owner_key))
     profile_model = _profile_model(profile)
@@ -1507,6 +1514,13 @@ def _attach_main_agent_context(
         return None
     task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
     profile_id = str(profile.get("profile_id") or "").strip()
+    _attach_effective_skill_names(
+        state,
+        task_input=task_input,
+        owner_key=str(owner_key),
+        profile=profile,
+        profile_id=profile_id or None,
+    )
     if profile_id:
         bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(owner_key))
         if bundle is not None:
@@ -2231,6 +2245,26 @@ def _attach_session_agent_candidates(
     if profiles:
         task_input["sessionAgentProfiles"] = profiles
     return profiles
+
+
+def _attach_effective_skill_names(
+    state: Any,
+    *,
+    task_input: dict[str, Any],
+    owner_key: str,
+    profile: dict[str, Any],
+    profile_id: str | None,
+) -> None:
+    skill_repository = getattr(state, "skill_repository", None)
+    if skill_repository is None:
+        return
+    config = profile.get("config_snapshot") if isinstance(profile.get("config_snapshot"), dict) else {}
+    task_input["enabledSkillNames"] = skill_repository.effective_skill_names(
+        owner_key=str(owner_key),
+        profile_id=profile_id,
+        requested_skill_names=[str(skill) for skill in list(config.get("skills") or [])],
+        explicit_agent_selection=config.get("skillSelectionMode") == "explicit",
+    )
 
 
 def _agent_profile_prompt_payload(profile: dict[str, Any]) -> dict[str, Any]:

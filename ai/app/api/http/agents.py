@@ -16,6 +16,10 @@ from app.contracts.agents import (
     CreateSessionAgentRequest,
     CreateSessionAgentFromTemplateRequest,
     SaveInstructionDocumentRequest,
+    SkillCatalogDetailResponse,
+    SkillCatalogItemResponse,
+    SkillCatalogListResponse,
+    UpdateUserSkillSettingRequest,
     UpdateSessionAgentRequest,
 )
 
@@ -29,6 +33,52 @@ async def list_agent_templates(request: Request) -> AgentTemplateListResponse:
     await authenticate_http_user(request)
     items = [_template_response(item) for item in request.app.state.agent_repository.list_templates()]
     return AgentTemplateListResponse(items=items)
+
+
+@router.get("/skills", response_model=SkillCatalogListResponse, summary="사용자 스킬 목록 조회")
+async def list_user_skills(request: Request) -> SkillCatalogListResponse:
+    user = await authenticate_http_user(request)
+    repository = _skill_repository_or_404(request)
+    items = repository.list_user_skills(
+        owner_key=str(user.user_id),
+        owner_user_id=_int_or_none(user.user_id),
+    )
+    return SkillCatalogListResponse(items=[_skill_response(item) for item in items])
+
+
+@router.get("/skills/{skillId}", response_model=SkillCatalogDetailResponse, summary="사용자 스킬 상세 조회")
+async def get_user_skill_detail(
+    request: Request,
+    skillId: str = Path(..., description="조회할 스킬 ID입니다."),
+) -> SkillCatalogDetailResponse:
+    user = await authenticate_http_user(request)
+    repository = _skill_repository_or_404(request)
+    item = repository.get_user_skill_detail(
+        owner_key=str(user.user_id),
+        skill_id=skillId,
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="skill not found")
+    return _skill_detail_response(item)
+
+
+@router.patch("/skills/{skillId}", response_model=SkillCatalogItemResponse, summary="사용자 스킬 사용 여부 수정")
+async def update_user_skill_setting(
+    request: Request,
+    payload: UpdateUserSkillSettingRequest,
+    skillId: str = Path(..., description="사용 여부를 수정할 스킬 ID입니다."),
+) -> SkillCatalogItemResponse:
+    user = await authenticate_http_user(request)
+    repository = _skill_repository_or_404(request)
+    item = repository.set_user_skill_enabled(
+        owner_key=str(user.user_id),
+        owner_user_id=_int_or_none(user.user_id),
+        skill_id=skillId,
+        enabled=payload.enabled,
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="skill not found")
+    return _skill_response(item)
 
 
 @router.get(
@@ -91,6 +141,7 @@ async def create_session_agent(
         owner_user_id=_int_or_none(user.user_id),
         config_snapshot=_custom_agent_config_snapshot(payload),
     )
+    _sync_agent_skill_settings(request, item)
     return _profile_response(item)
 
 
@@ -123,6 +174,7 @@ async def update_session_agent(
     )
     if item is None:
         raise HTTPException(status_code=404, detail="agent profile not found")
+    _sync_agent_skill_settings(request, item)
     return _profile_response(item)
 
 
@@ -244,6 +296,27 @@ def _session_or_404(request: Request, session_id: str) -> dict[str, Any]:
     return session
 
 
+def _skill_repository_or_404(request: Request) -> Any:
+    repository = getattr(request.app.state, "skill_repository", None)
+    if repository is None:
+        raise HTTPException(status_code=503, detail="skill repository is not configured")
+    return repository
+
+
+def _sync_agent_skill_settings(request: Request, item: dict[str, Any]) -> None:
+    repository = getattr(request.app.state, "skill_repository", None)
+    if repository is None:
+        return
+    profile_id = str(item.get("profile_id") or "").strip()
+    config = item.get("config_snapshot") if isinstance(item.get("config_snapshot"), dict) else {}
+    if not profile_id or config.get("skillSelectionMode") != "explicit":
+        return
+    repository.set_agent_skill_settings(
+        profile_id=profile_id,
+        skill_ids=[str(skill) for skill in list(config.get("skills") or [])],
+    )
+
+
 def _template_response(item: dict[str, Any]) -> AgentTemplateResponse:
     config = dict(item.get("default_config_snapshot") or {})
     documents = [
@@ -299,6 +372,7 @@ def _custom_agent_config_snapshot(payload: CreateSessionAgentRequest) -> dict[st
         "model": (payload.model or "").strip(),
         "profileImage": (payload.profile_image or "").strip(),
         "skills": [str(skill).strip() for skill in payload.skills if str(skill).strip()],
+        "skillSelectionMode": "explicit",
         "entryDocumentKey": entry_document_key,
         "documents": [
             {
@@ -332,6 +406,7 @@ def _updated_agent_config_snapshot(
         next_config["profileImage"] = payload.profile_image.strip()
     if payload.skills is not None:
         next_config["skills"] = [str(skill).strip() for skill in payload.skills if str(skill).strip()]
+        next_config["skillSelectionMode"] = "explicit"
 
     entry_document_key = payload.entry_document_key
     if entry_document_key is not None:
@@ -380,6 +455,29 @@ def _profile_response(item: dict[str, Any]) -> AgentProfileResponse:
         instructionBundleId=item.get("bundle_id"),
         entryDocumentKey=item.get("entry_document_key"),
         configSnapshot=config,
+    )
+
+
+def _skill_response(item: dict[str, Any]) -> SkillCatalogItemResponse:
+    return SkillCatalogItemResponse(
+        skillId=str(item.get("skill_id") or item.get("name") or ""),
+        name=str(item.get("name") or item.get("skill_id") or ""),
+        displayName=str(item.get("display_name") or item.get("name") or ""),
+        description=str(item.get("description") or ""),
+        sourceType=str(item.get("source_type") or "builtin"),
+        sourcePath=item.get("source_path"),
+        version=int(item.get("version") or 1),
+        enabled=bool(item.get("enabled", True)),
+        defaultEnabled=bool(item.get("default_enabled", True)),
+    )
+
+
+def _skill_detail_response(item: dict[str, Any]) -> SkillCatalogDetailResponse:
+    base = _skill_response(item).model_dump(by_alias=True)
+    return SkillCatalogDetailResponse(
+        **base,
+        body=str(item.get("body") or ""),
+        files=[str(file) for file in list(item.get("files") or [])],
     )
 
 

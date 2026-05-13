@@ -57,6 +57,23 @@ export type AgentInstructionBundle = {
   documents: AgentInstructionDocument[]
 }
 
+export type SkillCatalogItem = {
+  skillId: string
+  name: string
+  displayName: string
+  description: string
+  sourceType: string
+  sourcePath?: string | null
+  version: number
+  enabled: boolean
+  defaultEnabled: boolean
+}
+
+export type SkillCatalogDetail = SkillCatalogItem & {
+  body: string
+  files: string[]
+}
+
 type SessionAgentInput = {
   name: string
   role: string
@@ -73,6 +90,29 @@ type SessionAgentInput = {
 export async function listAgentTemplates(): Promise<AgentTemplate[]> {
   const { data } = await aiAxiosInstance.get<{ items: AgentTemplate[] }>('/agent-templates')
   return data.items
+}
+
+export async function listUserSkills(): Promise<SkillCatalogItem[]> {
+  const { data } = await aiAxiosInstance.get<{ items: SkillCatalogItem[] }>('/skills')
+  return data.items
+}
+
+export async function getUserSkillDetail(skillId: string): Promise<SkillCatalogDetail> {
+  const { data } = await aiAxiosInstance.get<SkillCatalogDetail>(
+    `/skills/${encodeURIComponent(skillId)}`,
+  )
+  return data
+}
+
+export async function updateUserSkillSetting(
+  skillId: string,
+  input: { enabled: boolean },
+): Promise<SkillCatalogItem> {
+  const { data } = await aiAxiosInstance.patch<SkillCatalogItem>(
+    `/skills/${encodeURIComponent(skillId)}`,
+    input,
+  )
+  return data
 }
 
 export async function listSessionAgents(sessionId: string): Promise<AgentProfile[]> {

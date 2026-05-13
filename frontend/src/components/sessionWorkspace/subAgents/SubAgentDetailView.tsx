@@ -26,6 +26,13 @@ import {
 } from '@/components/sessionWorkspace/agentUsageDisplay'
 import { Button } from '@/components/ui/button'
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
   AlertDialog,
   AlertDialogCancel,
   AlertDialogContent,
@@ -42,6 +49,12 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tabs } from '@/components/ui/tabs'
 import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
+import {
+  getUserSkillDetail,
+  listUserSkills,
+  type SkillCatalogDetail,
+  type SkillCatalogItem,
+} from '@/apis/agents'
 import { listTaskRuns } from '@/apis/taskRuns'
 import {
   getCachedTaskRuns,
@@ -59,7 +72,6 @@ import { isInternalStepAnchorEvent, toTaskRunSummaryView } from '@/utils/taskRun
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { SubAgentDraftForm } from './SubAgentDraftForm'
 import { SubAgentProfileImage } from './SubAgentProfileImage'
-import { SUB_AGENT_SKILLS } from './subAgentOptions'
 
 type SubAgentDetailTab = 'dashboard' | 'instructions' | 'skills' | 'configuration' | 'runs'
 
@@ -117,7 +129,14 @@ export function SubAgentDetailView({
     () => getCachedUsageRecords(sessionId) ?? [],
   )
   const [usageError, setUsageError] = useState<string | null>(null)
-  const selectedSkills = SUB_AGENT_SKILLS.filter((skill) => item.agent.skills?.includes(skill.id))
+  const [skillCatalog, setSkillCatalog] = useState<SkillCatalogItem[]>([])
+  const [skillCatalogError, setSkillCatalogError] = useState<string | null>(null)
+  const [skillDetail, setSkillDetail] = useState<SkillCatalogDetail | null>(null)
+  const [skillDetailOpen, setSkillDetailOpen] = useState(false)
+  const [skillDetailLoading, setSkillDetailLoading] = useState(false)
+  const selectedSkills = skillCatalog.filter(
+    (skill) => skill.enabled && item.agent.skills?.includes(skill.skillId),
+  )
   const profileId = item.agent.profileId ?? item.id
   const agentTaskRuns = useMemo(
     () => buildAgentTaskRuns(sessionId, profileId, loadedTaskRuns, taskRunsById),
@@ -199,6 +218,27 @@ export function SubAgentDetailView({
     }
   }, [authenticatedReady, commandClient, sessionId])
 
+  useEffect(() => {
+    if (!authenticatedReady || commandClient === null) {
+      return
+    }
+
+    let alive = true
+    void listUserSkills()
+      .then((items) => {
+        if (!alive) return
+        setSkillCatalog(items)
+        setSkillCatalogError(null)
+      })
+      .catch(() => {
+        if (alive) setSkillCatalogError('스킬 목록을 불러오지 못했습니다.')
+      })
+
+    return () => {
+      alive = false
+    }
+  }, [authenticatedReady, commandClient])
+
   const selectTab = (nextTab: SubAgentDetailTab) => {
     setTab(nextTab)
     onTabChange?.(nextTab)
@@ -229,6 +269,8 @@ export function SubAgentDetailView({
   }
 
   const toggleSkill = (skillId: string, checked: boolean) => {
+    const catalogItem = skillCatalog.find((skill) => skill.skillId === skillId)
+    if (catalogItem && !catalogItem.enabled) return
     const currentSkills = item.agent.skills ?? []
     const nextSkills = checked
       ? Array.from(new Set([...currentSkills, skillId]))
@@ -236,6 +278,19 @@ export function SubAgentDetailView({
     setSkillSaving(true)
     onSave({ ...item.agent, skills: nextSkills })
     window.setTimeout(() => setSkillSaving(false), 500)
+  }
+
+  const openSkillDetail = (skillId: string) => {
+    setSkillDetailOpen(true)
+    setSkillDetailLoading(true)
+    void getUserSkillDetail(skillId)
+      .then((detail) => {
+        setSkillDetail(detail)
+      })
+      .catch(() => {
+        setSkillCatalogError('스킬 상세를 불러오지 못했습니다.')
+      })
+      .finally(() => setSkillDetailLoading(false))
   }
 
   const handleDelete = async () => {
@@ -408,16 +463,23 @@ export function SubAgentDetailView({
           <AgentSkillsLibraryPanel
             adapterLabel={item.agent.adapterType ?? 'local'}
             applicationLabel="에이전트 실행 시 적용"
-            rows={SUB_AGENT_SKILLS.map((skill) => ({
-              key: skill.id,
-              name: skill.label,
+            rows={skillCatalog.map((skill) => ({
+              key: skill.skillId,
+              name: skill.displayName,
               description: skill.description,
-              checked: item.agent.skills?.includes(skill.id) ?? false,
+              checked: item.agent.skills?.includes(skill.skillId) ?? false,
+              disabled: !skill.enabled,
+              detail: skill.enabled
+                ? undefined
+                : '사용자 설정에서 꺼져 있어 이 에이전트에 적용할 수 없습니다.',
+              locationLabel: skill.sourcePath ?? undefined,
               linkLabel: '보기',
             }))}
             selectedCount={selectedSkills.length}
             saving={skillSaving}
             onSkillToggle={toggleSkill}
+            onSkillOpen={openSkillDetail}
+            warnings={skillCatalogError ? [skillCatalogError] : []}
           />
         </AgentSkillsPanel>
       )}
@@ -478,6 +540,67 @@ export function SubAgentDetailView({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <Dialog open={skillDetailOpen} onOpenChange={setSkillDetailOpen}>
+        <DialogContent className="max-h-[82vh] max-w-3xl overflow-hidden p-0">
+          <DialogHeader className="border-border border-b px-5 py-4">
+            <DialogTitle>{skillDetail?.displayName ?? '스킬 상세'}</DialogTitle>
+            <DialogDescription>
+              {skillDetail?.description ?? '스킬 정보를 확인합니다.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[64vh] overflow-y-auto px-5 py-4">
+            {skillDetailLoading ? (
+              <div className="text-muted-foreground flex items-center gap-2 py-10 text-sm">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                상세 조회 중
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="border-border grid gap-2 border-y py-3 text-sm sm:grid-cols-2">
+                  <AgentSkillMeta label="키" value={skillDetail?.name ?? '-'} />
+                  <AgentSkillMeta
+                    label="상태"
+                    value={skillDetail?.enabled ? '사용 중' : '미사용'}
+                  />
+                  <AgentSkillMeta label="타입" value={skillDetail?.sourceType ?? '-'} />
+                  <AgentSkillMeta label="경로" value={skillDetail?.sourcePath ?? '-'} />
+                </div>
+                {skillDetail?.files?.length ? (
+                  <div className="border-border rounded-md border p-3">
+                    <div className="text-muted-foreground mb-2 text-[11px] tracking-[0.16em] uppercase">
+                      파일
+                    </div>
+                    <div className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">
+                      {skillDetail.files.map((file) => (
+                        <span
+                          key={file}
+                          className="bg-muted/60 rounded px-2 py-1 font-mono text-[11px]"
+                        >
+                          {file}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                <pre className="bg-muted/30 border-border max-h-[44vh] overflow-auto rounded-md border p-4 text-xs leading-5 whitespace-pre-wrap">
+                  <code>{skillDetail?.body || '내용이 없습니다.'}</code>
+                </pre>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function AgentSkillMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-muted-foreground text-[11px] tracking-[0.16em] uppercase">{label}</div>
+      <div className="mt-1 truncate font-mono text-xs" title={value}>
+        {value}
+      </div>
     </div>
   )
 }

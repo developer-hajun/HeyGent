@@ -348,6 +348,27 @@ def test_prompt_builder_includes_skill_catalog_before_web_tool_choice():
     assert "한국 날씨를 기상청 단기예보 조회서비스" in prompt
 
 
+def test_prompt_builder_filters_skill_catalog_by_enabled_skill_names():
+    registry = SkillRegistry()
+    registry.register_many(
+        [
+            {"name": "korea-weather", "description": "한국 날씨 조회"},
+            {"name": "zipcode-search", "description": "우편번호 조회"},
+        ]
+    )
+    prompt_builder = PromptBuilder(SkillPromptBuilder(registry))
+
+    prompt = prompt_builder.build_model_prompt(
+        input_payload={
+            "prompt": "날씨 확인",
+            "enabledSkillNames": ["korea-weather"],
+        }
+    )
+
+    assert "`korea-weather`" in prompt
+    assert "`zipcode-search`" not in prompt
+
+
 def test_assemble_agent_loop_messages_preserves_history_as_native_messages():
     messages = assemble_agent_loop_messages(
         system_prompt_snapshot="고정 system prompt",
