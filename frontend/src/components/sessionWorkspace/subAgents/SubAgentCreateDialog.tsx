@@ -73,7 +73,7 @@ export function SubAgentCreateDialog({
 
               <Button className="w-full" size="lg" onClick={onAskCeo}>
                 <Bot className="mr-2 h-4 w-4" />
-                CEO에게 새 에이전트 생성 요청
+                기본 에이전트 모두 추가
               </Button>
 
               <div className="space-y-2">
