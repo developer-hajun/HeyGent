@@ -147,7 +147,6 @@ class WakeWordForegroundService : Service(), RecognitionListener {
         if (isListening || speechRecognizer == null) return
 
         Log.d(TAG, "Start listening for wake word.")
-        updateListeningNotification("Listening... say \"Gent ya\".")
         isListening = true
         speechRecognizer?.startListening(
             Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
