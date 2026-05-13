@@ -4,6 +4,7 @@ from app.storage.postgres.durable_repository import PostgresDurableRepository, P
 from app.storage.postgres.migrations import POSTGRES_MIGRATIONS, PostgresMigration, apply_postgres_migrations
 from app.storage.postgres.schema import POSTGRES_SCHEMA_STATEMENTS, render_postgres_schema
 from app.storage.postgres.session_store import PostgresSessionStore
+from app.storage.postgres.skill_repository import PostgresSkillRepository
 from app.storage.postgres.work_repository import PostgresWorkRepository
 
 __all__ = [
@@ -13,6 +14,7 @@ __all__ = [
     "PostgresDurableRepository",
     "PostgresMigration",
     "PostgresSessionStore",
+    "PostgresSkillRepository",
     "PostgresTaskRepository",
     "PostgresWorkRepository",
     "apply_configured_postgres_migrations",
