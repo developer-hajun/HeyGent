@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   AgentActivityStatus,
+  AgentConfig,
   AgentRuntime,
   AgentVisualizationInfo,
   TaskStatus,
@@ -20,6 +21,9 @@ interface AgentVisualizationState {
   selectAgent: (agentId: string | null) => void
   setAgentRuntimes: (updater: AgentRuntime[] | ((prev: AgentRuntime[]) => AgentRuntime[])) => void
   addSpawnedKey: (id: string) => void
+  startCeoWork: (taskRunId?: string) => void
+  settleCeoAtDesk: (taskRunId?: string) => void
+  activeCeoTaskRunId: string | null
 }
 
 // mock 데이터 — 백엔드 API 연동 전 임시. spriteId(agentId)는 AGENT_CONFIGS의 id와 일치해야 함.
@@ -370,11 +374,61 @@ export function createMockAgentInfoMap(): Record<string, AgentVisualizationInfo>
   return Object.fromEntries(MOCK_AGENTS.map((info) => [info.agentId, info]))
 }
 
+const CEO_CONFIG: AgentConfig = {
+  id: 'ceo',
+  name: 'CEO',
+  spritePath: '/assets/agents/ceo',
+  scale: 1.05,
+  stateScales: { walking: 0.85, standing_wait: 0.85, sitting_work: 0.7 },
+  sittingSprites: {
+    sitting_desk: 'ceo_desk',
+    sitting_meeting: 'ceo_explain',
+    sitting_work: 'ceo_work',
+    standing_wait: 'walk_side_stand',
+  },
+  allowedUIDestinations: ['desk', 'meeting', 'work'],
+  destinationLabels: { meeting: '화이트보드', work: '작업' },
+  initialPosition: { x: 1460, y: 700 },
+  destinations: {
+    desk: { x: 310, y: 215 },
+    meeting: { x: 383, y: 493 },
+    work: { x: 275, y: 195 },
+    sofa: { x: 310, y: 215 },
+    floorLean: { x: 310, y: 215 },
+    calling: { x: 310, y: 215 },
+  },
+}
+
+function playAgentChime() {
+  try {
+    const ctx = new AudioContext()
+    const play = () => {
+      ;[1318.51, 1567.98].forEach((freq, i) => {
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+        osc.type = 'sine'
+        osc.frequency.value = freq
+        const t = ctx.currentTime + i * 0.12
+        gain.gain.setValueAtTime(0.18, t)
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45)
+        osc.start(t)
+        osc.stop(t + 0.45)
+      })
+    }
+    void ctx.resume().then(play)
+  } catch {
+    // AudioContext 미지원 환경에서는 소리 없이 상태만 갱신한다.
+  }
+}
+
 export const useAgentVisualizationStore = create<AgentVisualizationState>((set) => ({
   agentInfoMap: {},
   selectedAgentId: null,
   agentRuntimes: [],
   spawnedKeys: [],
+  activeCeoTaskRunId: null,
 
   setAgentInfoMap: (map) => set({ agentInfoMap: map }),
 
@@ -402,5 +456,113 @@ export const useAgentVisualizationStore = create<AgentVisualizationState>((set) 
   addSpawnedKey: (id) =>
     set((state) => ({
       spawnedKeys: state.spawnedKeys.includes(id) ? state.spawnedKeys : [...state.spawnedKeys, id],
+    })),
+
+  startCeoWork: (taskRunId) =>
+    set((state) => {
+      if (taskRunId !== undefined && state.activeCeoTaskRunId === taskRunId) {
+        return { agentRuntimes: state.agentRuntimes }
+      }
+
+      const workPosition = CEO_CONFIG.destinations.work!
+      const existingCeo = state.agentRuntimes.find((agent) => agent.config.id === 'ceo')
+      if (existingCeo?.state !== 'sitting_work') {
+        playAgentChime()
+      }
+      const nextCeo: AgentRuntime = {
+        ...(existingCeo ?? {
+          config: CEO_CONFIG,
+          facingRight: false,
+        }),
+        config: existingCeo?.config ?? CEO_CONFIG,
+        position: { ...workPosition },
+        state: 'sitting_work',
+        targetState: 'sitting_work',
+        walkFrame: 0,
+        transitionDuration: 0,
+        pendingWaypoints: [],
+        targetPosition: null,
+        standWaitTarget: null,
+        facingRight: existingCeo?.facingRight ?? false,
+      }
+
+      return {
+        activeCeoTaskRunId: taskRunId ?? state.activeCeoTaskRunId,
+        spawnedKeys: state.spawnedKeys.includes('ceo')
+          ? state.spawnedKeys
+          : [...state.spawnedKeys, 'ceo'],
+        agentInfoMap: {
+          ...state.agentInfoMap,
+          ceo: {
+            ...(state.agentInfoMap.ceo ?? {
+              agentId: 'ceo',
+              name: 'CEO',
+              role: '',
+              skills: [],
+              taskHistory: [],
+            }),
+            activityStatus: 'working',
+            currentTask: {
+              taskId: taskRunId ?? 'ceo-active-task',
+              title: '작업 진행 중',
+              description: '',
+              status: 'in_progress',
+              startedAt: new Date().toISOString(),
+            },
+          },
+        },
+        agentRuntimes:
+          existingCeo === undefined
+            ? [...state.agentRuntimes, nextCeo]
+            : state.agentRuntimes.map((agent) => (agent.config.id === 'ceo' ? nextCeo : agent)),
+      }
+    }),
+
+  settleCeoAtDesk: (taskRunId) =>
+    set((state) => ({
+      activeCeoTaskRunId:
+        taskRunId !== undefined &&
+        state.activeCeoTaskRunId !== null &&
+        state.activeCeoTaskRunId !== taskRunId
+          ? state.activeCeoTaskRunId
+          : null,
+      agentInfoMap: {
+        ...state.agentInfoMap,
+        ceo: {
+          ...(state.agentInfoMap.ceo ?? {
+            agentId: 'ceo',
+            name: 'CEO',
+            role: '',
+            skills: [],
+            taskHistory: [],
+          }),
+          activityStatus: 'resting',
+          currentTask: undefined,
+        },
+      },
+      agentRuntimes: state.agentRuntimes.map((agent) => {
+        if (agent.config.id !== 'ceo') return agent
+        if (
+          taskRunId !== undefined &&
+          state.activeCeoTaskRunId !== null &&
+          state.activeCeoTaskRunId !== taskRunId
+        ) {
+          return agent
+        }
+        const deskPosition = agent.config.destinations.desk
+        if (!deskPosition) return agent
+        return {
+          ...agent,
+          position: { ...deskPosition },
+          state: 'sitting_desk',
+          targetState: 'sitting_desk',
+          walkFrame: 0,
+          transitionDuration: 0,
+          pendingWaypoints: [],
+          targetPosition: null,
+          standWaitTarget: null,
+          facingRight: false,
+        }
+      }),
     })),
 }))
