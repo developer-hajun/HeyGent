@@ -34,8 +34,8 @@ def test_prompt_builder_includes_native_tool_call_and_termination_guidance():
     assert "요청을 수행할 수 있다고 판단되는 세션 에이전트가 있으면 session_agent_task" in prompt
     assert "session_agent_task 는 작업 보드에 보이는 하위 작업과 실제 세션 에이전트 실행을 묶는 도구입니다." in prompt
     assert "후보의 이름, 호칭, 할 수 있는 일, 스킬을 확인하세요." in prompt
-    assert "등록된 에이전트가 수행할 수 있는 정보 조회, 검토, 구현, 테스트 작업은 CEO가 직접 끝내기보다 해당 에이전트에게 맡기세요." in prompt
-    assert "CEO가 web_search, file, browser 도구를 직접 실행하기 전에 먼저 session_agent_task" in prompt
+    assert "독립 산출물이나 책임 분리가 자연스러우면 세션 에이전트 작업으로 분리하세요." in prompt
+    assert "분리할 실익이 낮은 작업은 CEO가 직접 처리해도 됩니다." in prompt
     assert "수행할 수 있는 세션 에이전트가 없으면 임의로 배정하지 말고" in prompt
     assert "폴더 경로 자체를 파일명으로 바꾸지 말고 폴더 안에 의미 있는 파일명을 만들어 저장하세요." in prompt
     assert "근거/자료를 찾아 이해하는 단계와, 그 근거로 파일/문서/코드를 작성해 저장하는 단계는 서로 다른 단계입니다." in prompt
@@ -231,7 +231,7 @@ def test_prompt_builder_promotes_session_agent_task_from_candidate_profiles():
     assert "사용자 입력을 처리하기 전에 세션 에이전트 후보를 먼저 확인하세요." in prompt
     assert "요청을 수행할 수 있다고 판단되는 세션 에이전트가 있으면 session_agent_task" in prompt
     assert "후보의 이름, 호칭, 할 수 있는 일, 스킬을 확인하세요." in prompt
-    assert "CEO가 직접 처리하는 경우는 수행할 수 있는 세션 에이전트가 없거나" in prompt
+    assert "단순 응답, 맥락 정리, 최종 종합" in prompt
     assert "관점/영역별로 독립된 delegate_task" not in prompt
 
 

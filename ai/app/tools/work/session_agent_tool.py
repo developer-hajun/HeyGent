@@ -7,10 +7,9 @@ SESSION_AGENT_TASK_SCHEMA = {
     "name": "session_agent_task",
     "description": (
         "Create a child work item assigned to one configured session agent and run it. "
-        "For CEO-owned work, use this before CEO performs web, file, browser, implementation, "
-        "review, or test work directly when a configured session agent can perform the request. "
-        "The work may be a focused information lookup, review, implementation, or test deliverable. "
-        "Do not invent an assignee when no configured session agent fits."
+        "For CEO-owned work, use this when a configured session agent can naturally own "
+        "an independent deliverable, focused specialty work, or a clearly separated part "
+        "of the request. Do not invent an assignee when no configured session agent fits."
     ),
     "parameters": {
         "type": "object",
