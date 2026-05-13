@@ -3,10 +3,8 @@ package com.example.mob.feature.chat
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.mob.BuildConfig
 import com.example.mob.data.remote.ChatSessionMessageResponse
 import com.example.mob.data.remote.ChatSessionResponse
-import com.example.mob.data.remote.ChatWebSocketClient
 import com.example.mob.data.remote.RetrofitClient
 import com.example.mob.data.remote.SendChatMessageRequest
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,8 +33,6 @@ class ChatViewModel : ViewModel() {
     private val _activeSessionId = MutableStateFlow<String?>(null)
     val activeSessionId: StateFlow<String?> = _activeSessionId.asStateFlow()
 
-    private var wsClient: ChatWebSocketClient? = null
-
     fun loadSessions() {
         viewModelScope.launch {
             _isLoadingSessions.value = true
@@ -53,7 +49,6 @@ class ChatViewModel : ViewModel() {
     fun openSession(sessionId: String) {
         _activeSessionId.value = sessionId
         _messages.value = emptyList()
-        connectWebSocket(sessionId)
         viewModelScope.launch {
             try {
                 val resp = RetrofitClient.aiApiService.getChatSessionMessages(sessionId)
@@ -65,7 +60,6 @@ class ChatViewModel : ViewModel() {
     }
 
     fun startNewSession() {
-        disconnectWebSocket()
         _activeSessionId.value = null
         _messages.value = emptyList()
     }
@@ -84,15 +78,9 @@ class ChatViewModel : ViewModel() {
                 } else {
                     RetrofitClient.aiApiService.sendChatMessageNewSession(request)
                 }
-                if (_activeSessionId.value == null) {
-                    _activeSessionId.value = resp.sessionId
-                    connectWebSocket(resp.sessionId)
-                }
-                resp.assistantMessage?.toChatMessage()?.let { httpMsg ->
-                    val current = _messages.value
-                    if (httpMsg.messageId == null || current.none { it.messageId == httpMsg.messageId }) {
-                        _messages.value = current + httpMsg
-                    }
+                if (_activeSessionId.value == null) _activeSessionId.value = resp.sessionId
+                resp.assistantMessage?.toChatMessage()?.let {
+                    _messages.value = _messages.value + it
                 }
                 loadSessions()
             } catch (e: Exception) {
@@ -105,37 +93,6 @@ class ChatViewModel : ViewModel() {
     fun stopProcessing() {
         _isProcessing.value = false
     }
-
-    override fun onCleared() {
-        disconnectWebSocket()
-        super.onCleared()
-    }
-
-    private fun connectWebSocket(sessionId: String) {
-        disconnectWebSocket()
-        val token = RetrofitClient.getAccessToken()
-        if (token.isBlank()) return
-        wsClient = ChatWebSocketClient(
-            baseUrl = BuildConfig.BASE_URL,
-            accessToken = token,
-            onMessageCreated = { message -> handleIncomingWsMessage(message) },
-        ).also {
-            it.connect()
-            it.subscribeToSession(sessionId)
-        }
-    }
-
-    private fun disconnectWebSocket() {
-        wsClient?.disconnect()
-        wsClient = null
-    }
-
-    private fun handleIncomingWsMessage(message: ChatSessionMessageResponse) {
-        val chatMsg = message.toChatMessage() ?: return
-        val current = _messages.value
-        if (chatMsg.messageId != null && current.any { it.messageId == chatMsg.messageId }) return
-        _messages.value = current + chatMsg
-    }
 }
 
 private fun nowFormatted() = SimpleDateFormat("a\nhh:mm", Locale.KOREAN).format(Date())
@@ -146,7 +103,7 @@ private fun ChatSessionMessageResponse.toChatMessage(): ChatMessage? {
         val millis = java.time.OffsetDateTime.parse(timestamp).toInstant().toEpochMilli()
         SimpleDateFormat("a\nhh:mm", Locale.KOREAN).format(Date(millis))
     } catch (_: Exception) { timestamp ?: "" }
-    return ChatMessage(isBot = role == "assistant", text = text, timestamp = time, messageId = id)
+    return ChatMessage(isBot = role == "assistant", text = text, timestamp = time)
 }
 
 fun ChatSessionResponse.formatTime(): String {

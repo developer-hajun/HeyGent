@@ -56,8 +56,7 @@ data class ChatMessage(
     val isBot: Boolean,
     val text: String,
     val timestamp: String,
-    val isTyping: Boolean = false,
-    val messageId: Int? = null,
+    val isTyping: Boolean = false
 )
 
 @Composable

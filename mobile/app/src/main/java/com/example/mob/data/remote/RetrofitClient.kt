@@ -25,7 +25,6 @@ object RetrofitClient {
 
     fun setToken(token: String) { accessToken = token }
     fun setRefreshToken(token: String) { refreshToken = token }
-    fun getAccessToken(): String = accessToken
     fun getRefreshToken(): String = refreshToken
     fun clearTokens() { accessToken = ""; refreshToken = "" }
 
