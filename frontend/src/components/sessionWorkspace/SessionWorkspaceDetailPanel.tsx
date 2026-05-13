@@ -244,6 +244,14 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const displayName = agentName.trim() || '메인 에이전트'
   const displayRole = callName.trim() || 'CEO'
   const activeTab = getMainAgentTab(searchParams.get('agentTab'))
+  const skillCatalogReady = skillCatalog.length > 0
+  const knownSkillIds = new Set(skillCatalog.map((skill) => skill.skillId))
+  const selectedKnownSkillIds = skillCatalogReady
+    ? selectedSkillIds.filter((skillId) => knownSkillIds.has(skillId))
+    : selectedSkillIds
+  const missingSkillIds = skillCatalogReady
+    ? selectedSkillIds.filter((skillId) => !knownSkillIds.has(skillId))
+    : []
   const isDirty =
     agentName.trim() !== currentAgentName ||
     callName.trim() !== currentCallName ||
@@ -547,7 +555,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
           adapterType: 'openai',
           model: selectedModel,
           profileImage,
-          skills: selectedSkillIds,
+          skills: selectedKnownSkillIds,
           entryDocumentKey: documentKey,
           instructionsFiles: nextInstructionsFiles,
         })
@@ -648,14 +656,15 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                 key: skill.skillId,
                 name: skill.displayName,
                 description: skill.description,
-                checked: selectedSkillIds.includes(skill.skillId),
+                checked: selectedKnownSkillIds.includes(skill.skillId),
                 disabled: !skill.enabled,
                 detail: skill.enabled
                   ? undefined
                   : '사용자 설정에서 꺼져 있어 이 에이전트에 적용할 수 없습니다.',
                 locationLabel: skill.sourcePath ?? undefined,
               }))}
-              selectedCount={selectedSkillIds.length}
+              missingSkills={missingSkillIds}
+              selectedCount={selectedKnownSkillIds.length}
               warnings={skillCatalogError ? [skillCatalogError] : []}
               onSkillOpen={openSkillDetail}
               onSkillToggle={(skillId, checked) => {

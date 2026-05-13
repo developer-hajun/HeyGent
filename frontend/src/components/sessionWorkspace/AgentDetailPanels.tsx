@@ -2,6 +2,20 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core'
+import { CSS } from '@dnd-kit/utilities'
+import {
   ArrowLeft,
   ArrowRight,
   Check,
@@ -9,6 +23,7 @@ import {
   ChevronRight,
   Copy,
   FolderOpen,
+  GripVertical,
   Loader2,
   MoreHorizontal,
   Pause,
@@ -654,7 +669,6 @@ export function AgentSkillsLibraryPanel({
   adapterLabel,
   applicationLabel,
   missingSkills = [],
-  onLibraryOpen,
   onSkillOpen,
   onSkillToggle,
   rows,
@@ -666,7 +680,6 @@ export function AgentSkillsLibraryPanel({
   adapterLabel: string
   applicationLabel: string
   missingSkills?: string[]
-  onLibraryOpen?: () => void
   onSkillOpen?: (key: string) => void
   onSkillToggle?: (key: string, checked: boolean) => void
   rows: AgentSkillRowData[]
@@ -680,7 +693,9 @@ export function AgentSkillsLibraryPanel({
   const unmanagedRows = rows.filter((row) => row.readOnly)
   const enabledRows = optionalRows.filter((row) => row.checked)
   const disabledRows = optionalRows.filter((row) => !row.checked)
+  const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor))
   const [selectedSkillKey, setSelectedSkillKey] = useState<string | null>(null)
+  const [draggingSkillKey, setDraggingSkillKey] = useState<string | null>(null)
   const [unmanagedOpen, setUnmanagedOpen] = useState(false)
   const saveStatusLabel = saving ? 'Saving changes...' : null
   const selectedRow = optionalRows.find((row) => row.key === selectedSkillKey)
@@ -701,12 +716,29 @@ export function AgentSkillsLibraryPanel({
     onSkillToggle?.(selectedRow.key, checked)
   }
 
+  const handleDragStart = (event: DragStartEvent) => {
+    setDraggingSkillKey(String(event.active.id))
+  }
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setDraggingSkillKey(null)
+    const targetSide = getSkillTransferSide(event.over?.id)
+    if (targetSide === null) return
+    const key = String(event.active.id)
+    const row = optionalRows.find((item) => item.key === key)
+    if (row === undefined || row.disabled) return
+    const nextChecked = targetSide === 'enabled'
+    if (row.checked === nextChecked) return
+    setSelectedSkillKey(key)
+    onSkillToggle?.(key, nextChecked)
+  }
+
+  const draggedRow = optionalRows.find((row) => row.key === draggingSkillKey)
+
   if (rows.length === 0) {
     return (
       <div className="max-w-4xl space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <LibraryLabel onOpen={onLibraryOpen} />
-        </div>
+        {saveStatusLabel ? <AgentSavingIndicator label={saveStatusLabel} /> : null}
         <section className="border-border border-y">
           <div className="text-muted-foreground px-3 py-6 text-sm">
             먼저 스킬 목록을 불러온 뒤 이 에이전트에 적용할 수 있습니다.
@@ -718,15 +750,7 @@ export function AgentSkillsLibraryPanel({
 
   return (
     <div className="max-w-4xl space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <LibraryLabel onOpen={onLibraryOpen} />
-        {saveStatusLabel ? (
-          <div className="text-muted-foreground flex items-center gap-2 text-xs">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            <span>{saveStatusLabel}</span>
-          </div>
-        ) : null}
-      </div>
+      {saveStatusLabel ? <AgentSavingIndicator label={saveStatusLabel} /> : null}
 
       {warnings.length > 0 ? (
         <div className="space-y-1 rounded-xl border border-amber-300/60 bg-amber-50/60 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/30 dark:text-amber-200">
@@ -743,62 +767,68 @@ export function AgentSkillsLibraryPanel({
       ) : null}
 
       {optionalRows.length > 0 ? (
-        <section className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-start">
-          <AgentSkillTransferColumn
-            emptyLabel="사용 중인 스킬이 없습니다."
-            rows={enabledRows}
-            selectedKey={selectedSkillKey}
-            title="사용 중"
-            onSkillOpen={openSkill}
-          />
-          <div className="flex items-center justify-center gap-2 md:flex-col md:pt-12">
-            <Button
-              type="button"
-              size="icon"
-              variant="outline"
-              className="h-9 w-9"
-              onClick={() => moveSelectedSkill(true)}
-              disabled={selectedSide !== 'disabled' || selectedRow?.disabled}
-              aria-label="선택한 스킬 사용"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-            <Button
-              type="button"
-              size="icon"
-              variant="outline"
-              className="h-9 w-9"
-              onClick={() => moveSelectedSkill(false)}
-              disabled={selectedSide !== 'enabled'}
-              aria-label="선택한 스킬 미사용"
-            >
-              <ArrowRight className="h-4 w-4" />
-            </Button>
-          </div>
-          <AgentSkillTransferColumn
-            emptyLabel="미사용 스킬이 없습니다."
-            rows={disabledRows}
-            selectedKey={selectedSkillKey}
-            title="미사용"
-            onSkillOpen={openSkill}
-          />
-        </section>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragCancel={() => setDraggingSkillKey(null)}
+        >
+          <section className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-start">
+            <AgentSkillTransferColumn
+              emptyLabel="사용 중인 스킬이 없습니다."
+              id="enabled-skills"
+              rows={enabledRows}
+              selectedKey={selectedSkillKey}
+              title="사용 중"
+              onSkillOpen={openSkill}
+            />
+            <div className="flex items-center justify-center gap-2 md:flex-col md:pt-12">
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                className="h-9 w-9"
+                onClick={() => moveSelectedSkill(true)}
+                disabled={selectedSide !== 'disabled' || selectedRow?.disabled}
+                aria-label="선택한 스킬 사용"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                className="h-9 w-9"
+                onClick={() => moveSelectedSkill(false)}
+                disabled={selectedSide !== 'enabled'}
+                aria-label="선택한 스킬 미사용"
+              >
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </div>
+            <AgentSkillTransferColumn
+              emptyLabel="미사용 스킬이 없습니다."
+              id="disabled-skills"
+              rows={disabledRows}
+              selectedKey={selectedSkillKey}
+              title="미사용"
+              onSkillOpen={openSkill}
+            />
+          </section>
+          <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.2, 0, 0, 1)' }}>
+            {draggedRow ? <AgentSkillDragOverlayCard row={draggedRow} /> : null}
+          </DragOverlay>
+        </DndContext>
       ) : null}
 
       {requiredRows.length > 0 ? (
-        <section className="border-border border-y">
-          <div className="border-border bg-muted/40 border-b px-3 py-2">
-            <span className="text-muted-foreground text-xs font-medium">Required by system</span>
-          </div>
-          {requiredRows.map((row) => (
-            <AgentSkillTransferItem
-              key={row.key}
-              row={row}
-              selected={selectedSkillKey === row.key}
-              onSkillOpen={openSkill}
-            />
-          ))}
-        </section>
+        <AgentSkillTransferReadonlyGroup
+          rows={requiredRows}
+          selectedKey={selectedSkillKey}
+          title="시스템 필수 스킬"
+          onSkillOpen={openSkill}
+        />
       ) : null}
 
       {unmanagedRows.length > 0 ? (
@@ -819,7 +849,7 @@ export function AgentSkillsLibraryPanel({
           </button>
           {unmanagedOpen
             ? unmanagedRows.map((row) => (
-                <AgentSkillTransferItem
+                <AgentSkillTransferReadonlyItem
                   key={row.key}
                   row={row}
                   selected={selectedSkillKey === row.key}
@@ -1494,21 +1524,31 @@ function AgentRunDetailCard({ run }: { run: AgentRunItemData | null }) {
 
 function AgentSkillTransferColumn({
   emptyLabel,
+  id,
   onSkillOpen,
   rows,
   selectedKey,
   title,
 }: {
   emptyLabel: string
+  id: SkillTransferDropId
   onSkillOpen: (key: string) => void
   rows: AgentSkillRowData[]
   selectedKey: string | null
   title: string
 }) {
+  const { isOver, setNodeRef } = useDroppable({ id })
   return (
-    <div className="border-border min-h-64 overflow-hidden rounded-lg border">
-      <div className="border-border bg-muted/30 border-b px-3 py-2 text-sm font-medium">
-        {title}
+    <div
+      ref={setNodeRef}
+      data-skill-drop-id={id}
+      className={`border-border min-h-64 overflow-hidden rounded-lg border ${
+        isOver ? 'ring-primary/30 ring-2' : ''
+      }`}
+    >
+      <div className="border-border bg-muted/30 flex items-center justify-between border-b px-3 py-2">
+        <span className="text-sm font-medium">{title}</span>
+        <span className="text-muted-foreground font-mono text-xs">{rows.length}</span>
       </div>
       {rows.length === 0 ? (
         <div className="text-muted-foreground px-3 py-8 text-center text-sm">{emptyLabel}</div>
@@ -1528,7 +1568,110 @@ function AgentSkillTransferColumn({
   )
 }
 
+function AgentSavingIndicator({ label }: { label: string }) {
+  return (
+    <div className="text-muted-foreground flex items-center justify-end gap-2 text-xs">
+      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      <span>{label}</span>
+    </div>
+  )
+}
+
 function AgentSkillTransferItem({
+  onSkillOpen,
+  row,
+  selected,
+}: {
+  onSkillOpen: (key: string) => void
+  row: AgentSkillRowData
+  selected: boolean
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: row.key,
+    disabled: row.disabled,
+  })
+  const style = isDragging ? undefined : { transform: CSS.Transform.toString(transform) }
+
+  return (
+    <div
+      ref={setNodeRef}
+      data-skill-id={row.key}
+      style={style}
+      className={`hover:bg-accent/40 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 px-2 py-2 text-sm transition-colors ${
+        selected ? 'bg-accent/50' : ''
+      } ${row.disabled ? 'text-muted-foreground opacity-60' : ''} ${isDragging ? 'z-10 opacity-70' : ''}`}
+      title={typeof row.description === 'string' ? row.description : undefined}
+    >
+      <button
+        type="button"
+        className="text-muted-foreground hover:text-foreground cursor-grab rounded p-1 disabled:cursor-not-allowed"
+        aria-label={`${row.name} 드래그`}
+        disabled={row.disabled}
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
+      <button
+        type="button"
+        className="min-w-0 truncate text-left font-medium"
+        onClick={() => onSkillOpen(row.key)}
+      >
+        {row.name}
+      </button>
+    </div>
+  )
+}
+
+function AgentSkillDragOverlayCard({ row }: { row: AgentSkillRowData }) {
+  return (
+    <div className="border-border bg-background grid w-[min(26rem,calc(100vw-3rem))] grid-cols-[auto_minmax(0,1fr)] items-center gap-2 rounded-lg border px-2 py-2 text-sm shadow-2xl">
+      <span className="text-muted-foreground rounded p-1">
+        <GripVertical className="h-4 w-4" />
+      </span>
+      <span className="min-w-0 truncate font-medium">{row.name}</span>
+    </div>
+  )
+}
+
+type SkillTransferSide = 'enabled' | 'disabled'
+type SkillTransferDropId = 'enabled-skills' | 'disabled-skills'
+
+function getSkillTransferSide(id: unknown): SkillTransferSide | null {
+  if (id === 'enabled-skills') return 'enabled'
+  if (id === 'disabled-skills') return 'disabled'
+  return null
+}
+
+function AgentSkillTransferReadonlyGroup({
+  rows,
+  selectedKey,
+  title,
+  onSkillOpen,
+}: {
+  rows: AgentSkillRowData[]
+  selectedKey: string | null
+  title: string
+  onSkillOpen: (key: string) => void
+}) {
+  return (
+    <section className="border-border border-y">
+      <div className="border-border bg-muted/40 border-b px-3 py-2">
+        <span className="text-muted-foreground text-xs font-medium">{title}</span>
+      </div>
+      {rows.map((row) => (
+        <AgentSkillTransferReadonlyItem
+          key={row.key}
+          row={row}
+          selected={selectedKey === row.key}
+          onSkillOpen={onSkillOpen}
+        />
+      ))}
+    </section>
+  )
+}
+
+function AgentSkillTransferReadonlyItem({
   onSkillOpen,
   row,
   selected,
@@ -1549,21 +1692,6 @@ function AgentSkillTransferItem({
       <span className="min-w-0 truncate font-medium">{row.name}</span>
     </button>
   )
-}
-
-function LibraryLabel({ onOpen }: { onOpen?: () => void }) {
-  if (onOpen) {
-    return (
-      <button
-        type="button"
-        className="text-sm font-medium underline-offset-4 hover:underline"
-        onClick={onOpen}
-      >
-        회사 스킬 목록 보기
-      </button>
-    )
-  }
-  return <span className="text-sm font-medium">회사 스킬 목록 보기</span>
 }
 
 function AgentInlineSummary({ label, value }: { label: string; value: ReactNode }) {

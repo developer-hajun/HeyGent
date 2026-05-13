@@ -140,6 +140,14 @@ export function SubAgentDetailView({
   const selectedSkills = skillCatalog.filter(
     (skill) => skill.enabled && skillDraft.includes(skill.skillId),
   )
+  const skillCatalogReady = skillCatalog.length > 0
+  const knownSkillIds = new Set(skillCatalog.map((skill) => skill.skillId))
+  const selectedKnownSkillIds = skillCatalogReady
+    ? skillDraft.filter((skillId) => knownSkillIds.has(skillId))
+    : skillDraft
+  const missingSkillIds = skillCatalogReady
+    ? skillDraft.filter((skillId) => !knownSkillIds.has(skillId))
+    : []
   const profileId = item.agent.profileId ?? item.id
   const agentTaskRuns = useMemo(
     () => buildAgentTaskRuns(sessionId, profileId, loadedTaskRuns, taskRunsById),
@@ -285,7 +293,7 @@ export function SubAgentDetailView({
   const saveSkillDraft = () => {
     if (!skillsDirty) return
     setSkillSaving(true)
-    onSave({ ...item.agent, skills: skillDraft })
+    onSave({ ...item.agent, skills: selectedKnownSkillIds })
     setSaved(true)
     window.setTimeout(() => {
       setSkillSaving(false)
@@ -492,6 +500,7 @@ export function SubAgentDetailView({
                 : '사용자 설정에서 꺼져 있어 이 에이전트에 적용할 수 없습니다.',
               locationLabel: skill.sourcePath ?? undefined,
             }))}
+            missingSkills={missingSkillIds}
             selectedCount={selectedSkills.length}
             saving={skillSaving}
             onSkillToggle={toggleSkill}
