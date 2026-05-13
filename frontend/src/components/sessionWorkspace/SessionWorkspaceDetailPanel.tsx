@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { Tabs } from '@/components/ui/tabs'
 import {
   AgentDetailHeader,
+  AgentAdapterTypeDropdown,
   AgentRunActivityChart,
   AgentRunStatusChart,
   AgentRunSuccessRateChart,
@@ -31,6 +32,7 @@ import {
   AgentSkillsLibraryPanel,
   AgentSkillsPanel,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
+import { AgentSkillDetailDialog } from '@/components/sessionWorkspace/AgentSkillDetailDialog'
 import {
   type AgentRunUsageSummary,
   buildAgentRunUsageMap,
@@ -46,7 +48,15 @@ import { SubAgentsPanel } from '@/components/sessionWorkspace/subAgents'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
 import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
-import { getSessionMainAgent, updateSessionAgent, type AgentProfile } from '@/apis/agents'
+import {
+  getSessionMainAgent,
+  getUserSkillDetail,
+  listUserSkills,
+  updateSessionAgent,
+  type AgentProfile,
+  type SkillCatalogDetail,
+  type SkillCatalogItem,
+} from '@/apis/agents'
 import {
   getCachedMainAgentProfile,
   getCachedUsageRecords,
@@ -153,8 +163,6 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     getString(uiMetadata, 'agentName') ?? getString(mainAgentConfig, 'name') ?? ''
   const currentCallName =
     getString(uiMetadata, 'callName') ?? getString(mainAgentConfig, 'title') ?? ''
-  const currentCapabilities =
-    getString(uiMetadata, 'agentCapabilities') ?? getString(mainAgentConfig, 'description') ?? ''
   const currentSkillIds = normalizeMainAgentSkillIds(
     uiMetadata.agentSkills ?? mainAgentConfig.skills,
   )
@@ -185,7 +193,6 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   )
   const [agentName, setAgentName] = useState(currentAgentName)
   const [callName, setCallName] = useState(currentCallName)
-  const [capabilities, setCapabilities] = useState(currentCapabilities)
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>(currentSkillIds)
   const [persona, setPersona] = useState(currentPersona)
   const [instructionsEntryFile, setInstructionsEntryFile] = useState(currentInstructionsEntryFile)
@@ -213,6 +220,11 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     () => getCachedUsageRecords(session.session_id) ?? [],
   )
   const [usageError, setUsageError] = useState<string | null>(null)
+  const [skillCatalog, setSkillCatalog] = useState<SkillCatalogItem[]>([])
+  const [skillCatalogError, setSkillCatalogError] = useState<string | null>(null)
+  const [skillDetail, setSkillDetail] = useState<SkillCatalogDetail | null>(null)
+  const [skillDetailOpen, setSkillDetailOpen] = useState(false)
+  const [skillDetailLoading, setSkillDetailLoading] = useState(false)
 
   const modelGroups = useMemo(() => groupModels(modelOptions), [modelOptions])
   const modelFamilies = useMemo(() => getModelFamilies(modelGroups), [modelGroups])
@@ -235,7 +247,6 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const isDirty =
     agentName.trim() !== currentAgentName ||
     callName.trim() !== currentCallName ||
-    capabilities.trim() !== currentCapabilities ||
     !stringArraysEqual(selectedSkillIds, currentSkillIds) ||
     persona.trim() !== currentPersona ||
     instructionsEntryFile.trim() !== currentInstructionsEntryFile ||
@@ -246,7 +257,8 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     profileImage !== currentProfileImage ||
     canDelegate !== currentCanDelegate
   const showConfigActionBar =
-    (activeTab === 'configuration' || activeTab === 'instructions') && (isDirty || saving)
+    (activeTab === 'configuration' || activeTab === 'instructions' || activeTab === 'skills') &&
+    (isDirty || saving)
   const sessionRuns = useMemo(
     () => buildSessionRunItems(session, messages, taskRunsById, eventsByTaskRunId, usageRecords),
     [eventsByTaskRunId, messages, session, taskRunsById, usageRecords],
@@ -306,9 +318,6 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
         const files = getInstructionFilesFromDocuments(config.documents)
         setAgentName(getString(uiMetadata, 'agentName') ?? getString(config, 'name') ?? 'CEO')
         setCallName(getString(uiMetadata, 'callName') ?? getString(config, 'title') ?? 'CEO')
-        setCapabilities(
-          getString(uiMetadata, 'agentCapabilities') ?? getString(config, 'description') ?? '',
-        )
         setSelectedSkillIds(normalizeMainAgentSkillIds(uiMetadata.agentSkills ?? config.skills))
         const entryDocumentKey = getString(config, 'entryDocumentKey') ?? 'AGENTS.md'
         const nextEntryFile = getString(uiMetadata, 'instructionsEntryFile') ?? entryDocumentKey
@@ -347,6 +356,27 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
       cancelled = true
     }
   }, [authenticatedReady, currentSettingsPrompt, sessionId, uiMetadata])
+
+  useEffect(() => {
+    if (!authenticatedReady || commandClient === null) {
+      return
+    }
+
+    let cancelled = false
+    void listUserSkills()
+      .then((items) => {
+        if (cancelled) return
+        setSkillCatalog(items)
+        setSkillCatalogError(null)
+      })
+      .catch(() => {
+        if (!cancelled) setSkillCatalogError('스킬 목록을 불러오지 못했습니다.')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [authenticatedReady, commandClient])
 
   useEffect(() => {
     if (!authenticatedReady || commandClient === null || sessionId.startsWith('pending_session_')) {
@@ -433,7 +463,6 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const resetDraft = () => {
     setAgentName(currentAgentName)
     setCallName(currentCallName)
-    setCapabilities(currentCapabilities)
     setSelectedSkillIds(currentSkillIds)
     setPersona(currentPersona)
     setInstructionsEntryFile(currentInstructionsEntryFile)
@@ -448,11 +477,24 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     setSaved(false)
   }
 
+  const openSkillDetail = (skillId: string) => {
+    setSkillDetailOpen(true)
+    setSkillDetailLoading(true)
+    void getUserSkillDetail(skillId)
+      .then((detail) => {
+        setSkillDetail(detail)
+      })
+      .catch(() => {
+        setSkillCatalogError('스킬 상세를 불러오지 못했습니다.')
+      })
+      .finally(() => setSkillDetailLoading(false))
+  }
+
   const handleSave = async () => {
     const nextUiMetadata: JsonObject = { ...uiMetadata }
     setOptionalUiString(nextUiMetadata, 'agentName', agentName)
     setOptionalUiString(nextUiMetadata, 'callName', callName)
-    setOptionalUiString(nextUiMetadata, 'agentCapabilities', capabilities)
+    delete nextUiMetadata.agentCapabilities
     if (selectedSkillIds.length === 0) {
       delete nextUiMetadata.agentSkills
     } else {
@@ -501,7 +543,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
           name: agentName.trim() || 'CEO',
           role: 'ceo',
           title: callName.trim() || 'CEO',
-          description: capabilities.trim(),
+          description: '',
           adapterType: 'openai',
           model: selectedModel,
           profileImage,
@@ -516,7 +558,6 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
       }
       setAgentName(agentName.trim())
       setCallName(callName.trim())
-      setCapabilities(capabilities.trim())
       setPersona(nextPersona)
       setInstructionsEntryFile(instructionsEntryFile.trim() || 'AGENTS.md')
       setInstructionsRootPath(instructionsRootPath.trim())
@@ -603,17 +644,25 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
             <AgentSkillsLibraryPanel
               adapterLabel="세션"
               applicationLabel="에이전트 실행 시 적용"
-              rows={MAIN_AGENT_SKILL_OPTIONS.map((skill) => ({
-                key: skill.id,
-                name: skill.label,
+              rows={skillCatalog.map((skill) => ({
+                key: skill.skillId,
+                name: skill.displayName,
                 description: skill.description,
-                checked: selectedSkillIds.includes(skill.id),
-                linkLabel: 'View',
+                checked: selectedSkillIds.includes(skill.skillId),
+                disabled: !skill.enabled,
+                detail: skill.enabled
+                  ? undefined
+                  : '사용자 설정에서 꺼져 있어 이 에이전트에 적용할 수 없습니다.',
+                locationLabel: skill.sourcePath ?? undefined,
               }))}
               selectedCount={selectedSkillIds.length}
+              warnings={skillCatalogError ? [skillCatalogError] : []}
+              onSkillOpen={openSkillDetail}
               onSkillToggle={(skillId, checked) => {
                 setSelectedSkillIds((current) =>
-                  checked ? [...current, skillId] : current.filter((item) => item !== skillId),
+                  checked
+                    ? Array.from(new Set([...current, skillId]))
+                    : current.filter((item) => item !== skillId),
                 )
                 markDirty()
               }}
@@ -693,22 +742,16 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                     </div>
                   </div>
                 </AgentSectionCard>
-                <AgentSectionCard title="역할과 능력">
-                  <Field label="할 수 있는 일">
-                    <DraftTextarea
-                      minRows={3}
-                      onChange={(value) => {
-                        setCapabilities(value)
-                        markDirty()
-                      }}
-                      placeholder="이 에이전트가 할 수 있는 일을 적어주세요."
-                      value={capabilities}
-                    />
-                  </Field>
-                </AgentSectionCard>
               </div>
               <div className="space-y-4">
                 <AgentSectionCard title="모델">
+                  <Field label="공급자">
+                    <AgentAdapterTypeDropdown
+                      value="openai"
+                      options={[{ value: 'openai', label: 'OpenAI' }]}
+                      onChange={() => undefined}
+                    />
+                  </Field>
                   <Field label="모델">
                     {authenticatedReady && modelOptionsLoading && (
                       <span className="text-muted-foreground mb-1 inline-flex items-center gap-1.5 text-xs">
@@ -782,6 +825,12 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
             </div>
           </div>
         )}
+        <AgentSkillDetailDialog
+          detail={skillDetail}
+          loading={skillDetailLoading}
+          open={skillDetailOpen}
+          onOpenChange={setSkillDetailOpen}
+        />
       </div>
     </WorkspacePageShell>
   )
@@ -1086,16 +1135,6 @@ const CEO_IMAGE_OPTIONS = [
   { id: 'profile', label: '프로필', src: '/assets/agents/ceo/ceo_profile.png' },
 ] as const
 
-const MAIN_AGENT_SKILL_OPTIONS = [
-  { id: 'notion', label: 'Notion', description: '문서와 데이터베이스를 정리합니다.' },
-  {
-    id: 'samsung-health',
-    label: 'Samsung Health',
-    description: '건강 기록과 루틴 맥락을 확인합니다.',
-  },
-  { id: 'code', label: 'Code', description: '코드 읽기와 구현 작업을 맡습니다.' },
-] as const
-
 function MainAgentHeader({
   callName,
   model,
@@ -1181,28 +1220,6 @@ function DraftInput({
   )
 }
 
-function DraftTextarea({
-  minRows,
-  onChange,
-  placeholder,
-  value,
-}: {
-  minRows: number
-  onChange: (value: string) => void
-  placeholder: string
-  value: string
-}) {
-  return (
-    <textarea
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      placeholder={placeholder}
-      rows={minRows}
-      className={`${inputClass} resize-y leading-6`}
-    />
-  )
-}
-
 function ToggleRow({
   checked,
   description,
@@ -1239,9 +1256,8 @@ function normalizeAgentProfileImage(value: string | undefined) {
 
 function normalizeMainAgentSkillIds(value: unknown): string[] {
   if (!Array.isArray(value)) return []
-  const allowed = new Set<string>(MAIN_AGENT_SKILL_OPTIONS.map((skill) => skill.id))
   return Array.from(
-    new Set(value.filter((item): item is string => typeof item === 'string' && allowed.has(item))),
+    new Set(value.filter((item): item is string => typeof item === 'string' && item.trim() !== '')),
   )
 }
 

@@ -26,13 +26,6 @@ import {
 } from '@/components/sessionWorkspace/agentUsageDisplay'
 import { Button } from '@/components/ui/button'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
   AlertDialog,
   AlertDialogCancel,
   AlertDialogContent,
@@ -70,6 +63,7 @@ import type { RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
 import type { RawTaskRun, TaskRunAgentRef } from '@/types/taskRuns'
 import { isInternalStepAnchorEvent, toTaskRunSummaryView } from '@/utils/taskRunStatusView'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
+import { AgentSkillDetailDialog } from '@/components/sessionWorkspace/AgentSkillDetailDialog'
 import { SubAgentDraftForm } from './SubAgentDraftForm'
 import { SubAgentProfileImage } from './SubAgentProfileImage'
 
@@ -134,8 +128,17 @@ export function SubAgentDetailView({
   const [skillDetail, setSkillDetail] = useState<SkillCatalogDetail | null>(null)
   const [skillDetailOpen, setSkillDetailOpen] = useState(false)
   const [skillDetailLoading, setSkillDetailLoading] = useState(false)
+  const [skillDraftState, setSkillDraftState] = useState<{
+    itemId: string
+    skills: string[]
+  }>(() => ({
+    itemId: item.id,
+    skills: item.agent.skills ?? [],
+  }))
+  const skillDraft =
+    skillDraftState.itemId === item.id ? skillDraftState.skills : (item.agent.skills ?? [])
   const selectedSkills = skillCatalog.filter(
-    (skill) => skill.enabled && item.agent.skills?.includes(skill.skillId),
+    (skill) => skill.enabled && skillDraft.includes(skill.skillId),
   )
   const profileId = item.agent.profileId ?? item.id
   const agentTaskRuns = useMemo(
@@ -170,6 +173,7 @@ export function SubAgentDetailView({
     !shallowStringRecordEqual(instructionsFiles, item.agent.instructionsFiles ?? {}) ||
     instructionsMode !== (item.agent.instructionsMode ?? 'managed') ||
     instructionsRootPath.trim() !== (item.agent.instructionsRootPath ?? '')
+  const skillsDirty = !stringArraysEqual(skillDraft, item.agent.skills ?? [])
 
   useEffect(() => {
     if (!authenticatedReady || commandClient === null || sessionId.startsWith('pending_session_')) {
@@ -271,13 +275,27 @@ export function SubAgentDetailView({
   const toggleSkill = (skillId: string, checked: boolean) => {
     const catalogItem = skillCatalog.find((skill) => skill.skillId === skillId)
     if (catalogItem && !catalogItem.enabled) return
-    const currentSkills = item.agent.skills ?? []
     const nextSkills = checked
-      ? Array.from(new Set([...currentSkills, skillId]))
-      : currentSkills.filter((id) => id !== skillId)
+      ? Array.from(new Set([...skillDraft, skillId]))
+      : skillDraft.filter((id) => id !== skillId)
+    setSkillDraftState({ itemId: item.id, skills: nextSkills })
+    setSaved(false)
+  }
+
+  const saveSkillDraft = () => {
+    if (!skillsDirty) return
     setSkillSaving(true)
-    onSave({ ...item.agent, skills: nextSkills })
-    window.setTimeout(() => setSkillSaving(false), 500)
+    onSave({ ...item.agent, skills: skillDraft })
+    setSaved(true)
+    window.setTimeout(() => {
+      setSkillSaving(false)
+      setSaved(false)
+    }, 800)
+  }
+
+  const resetSkillDraft = () => {
+    setSkillDraftState({ itemId: item.id, skills: item.agent.skills ?? [] })
+    setSaved(false)
   }
 
   const openSkillDetail = (skillId: string) => {
@@ -307,7 +325,7 @@ export function SubAgentDetailView({
   }
 
   return (
-    <div className={`space-y-6 ${instructionsDirty ? 'pb-24 sm:pb-0' : ''}`}>
+    <div className={`space-y-6 ${instructionsDirty || skillsDirty ? 'pb-24 sm:pb-0' : ''}`}>
       <AgentDetailHeader
         actionsMenu={
           <DropdownMenu>
@@ -467,13 +485,12 @@ export function SubAgentDetailView({
               key: skill.skillId,
               name: skill.displayName,
               description: skill.description,
-              checked: item.agent.skills?.includes(skill.skillId) ?? false,
+              checked: skillDraft.includes(skill.skillId),
               disabled: !skill.enabled,
               detail: skill.enabled
                 ? undefined
                 : '사용자 설정에서 꺼져 있어 이 에이전트에 적용할 수 없습니다.',
               locationLabel: skill.sourcePath ?? undefined,
-              linkLabel: '보기',
             }))}
             selectedCount={selectedSkills.length}
             saving={skillSaving}
@@ -486,6 +503,30 @@ export function SubAgentDetailView({
 
       {tab === 'runs' && <AgentRunsPanel emptyText="아직 실행 기록이 없습니다." items={runItems} />}
 
+      {tab === 'skills' && skillsDirty && (
+        <div className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-sm sm:hidden">
+          <div className="flex items-center justify-end gap-2 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
+            <Button variant="ghost" size="sm" onClick={resetSkillDraft} disabled={skillSaving}>
+              취소
+            </Button>
+            <Button size="sm" onClick={saveSkillDraft} disabled={skillSaving}>
+              {skillSaving ? '저장 중' : '저장'}
+            </Button>
+          </div>
+        </div>
+      )}
+      {tab === 'skills' && skillsDirty && (
+        <div className="fixed right-6 bottom-6 z-30 hidden sm:block">
+          <div className="bg-background/90 border-border flex items-center gap-2 rounded-lg border px-3 py-1.5 shadow-lg backdrop-blur-sm">
+            <Button variant="ghost" size="sm" onClick={resetSkillDraft} disabled={skillSaving}>
+              취소
+            </Button>
+            <Button size="sm" onClick={saveSkillDraft} disabled={skillSaving}>
+              {skillSaving ? '저장 중' : '저장'}
+            </Button>
+          </div>
+        </div>
+      )}
       {tab === 'instructions' && instructionsDirty && (
         <div className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-sm sm:hidden">
           <div className="flex items-center justify-end gap-2 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
@@ -540,67 +581,12 @@ export function SubAgentDetailView({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <Dialog open={skillDetailOpen} onOpenChange={setSkillDetailOpen}>
-        <DialogContent className="max-h-[82vh] max-w-3xl overflow-hidden p-0">
-          <DialogHeader className="border-border border-b px-5 py-4">
-            <DialogTitle>{skillDetail?.displayName ?? '스킬 상세'}</DialogTitle>
-            <DialogDescription>
-              {skillDetail?.description ?? '스킬 정보를 확인합니다.'}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="max-h-[64vh] overflow-y-auto px-5 py-4">
-            {skillDetailLoading ? (
-              <div className="text-muted-foreground flex items-center gap-2 py-10 text-sm">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                상세 조회 중
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="border-border grid gap-2 border-y py-3 text-sm sm:grid-cols-2">
-                  <AgentSkillMeta label="키" value={skillDetail?.name ?? '-'} />
-                  <AgentSkillMeta
-                    label="상태"
-                    value={skillDetail?.enabled ? '사용 중' : '미사용'}
-                  />
-                  <AgentSkillMeta label="타입" value={skillDetail?.sourceType ?? '-'} />
-                  <AgentSkillMeta label="경로" value={skillDetail?.sourcePath ?? '-'} />
-                </div>
-                {skillDetail?.files?.length ? (
-                  <div className="border-border rounded-md border p-3">
-                    <div className="text-muted-foreground mb-2 text-[11px] tracking-[0.16em] uppercase">
-                      파일
-                    </div>
-                    <div className="flex max-h-24 flex-wrap gap-1.5 overflow-y-auto">
-                      {skillDetail.files.map((file) => (
-                        <span
-                          key={file}
-                          className="bg-muted/60 rounded px-2 py-1 font-mono text-[11px]"
-                        >
-                          {file}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-                <pre className="bg-muted/30 border-border max-h-[44vh] overflow-auto rounded-md border p-4 text-xs leading-5 whitespace-pre-wrap">
-                  <code>{skillDetail?.body || '내용이 없습니다.'}</code>
-                </pre>
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
-
-function AgentSkillMeta({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-muted-foreground text-[11px] tracking-[0.16em] uppercase">{label}</div>
-      <div className="mt-1 truncate font-mono text-xs" title={value}>
-        {value}
-      </div>
+      <AgentSkillDetailDialog
+        detail={skillDetail}
+        loading={skillDetailLoading}
+        open={skillDetailOpen}
+        onOpenChange={setSkillDetailOpen}
+      />
     </div>
   )
 }
@@ -794,4 +780,9 @@ function shallowStringRecordEqual(left: Record<string, string>, right: Record<st
   const rightEntries = Object.entries(right)
   if (leftEntries.length !== rightEntries.length) return false
   return leftEntries.every(([key, value]) => right[key] === value)
+}
+
+function stringArraysEqual(left: string[], right: string[]) {
+  if (left.length !== right.length) return false
+  return left.every((value, index) => right[index] === value)
 }

@@ -143,7 +143,6 @@ export function LeftSidebar() {
                 ui: {
                   agentName: config.agentName,
                   callName: config.callName,
-                  agentCapabilities: config.capabilities,
                   agentProfileImage: config.profileImage,
                   instructionsEntryFile: config.instructionsEntryFile,
                   instructionsMode: config.instructionsMode,

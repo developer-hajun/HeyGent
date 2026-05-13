@@ -2,6 +2,8 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import {
+  ArrowLeft,
+  ArrowRight,
   Check,
   ChevronDown,
   ChevronRight,
@@ -676,8 +678,28 @@ export function AgentSkillsLibraryPanel({
   const optionalRows = rows.filter((row) => !row.required && !row.readOnly)
   const requiredRows = rows.filter((row) => row.required)
   const unmanagedRows = rows.filter((row) => row.readOnly)
+  const enabledRows = optionalRows.filter((row) => row.checked)
+  const disabledRows = optionalRows.filter((row) => !row.checked)
+  const [selectedSkillKey, setSelectedSkillKey] = useState<string | null>(null)
   const [unmanagedOpen, setUnmanagedOpen] = useState(false)
   const saveStatusLabel = saving ? 'Saving changes...' : null
+  const selectedRow = optionalRows.find((row) => row.key === selectedSkillKey)
+  const selectedSide =
+    selectedRow === undefined
+      ? null
+      : enabledRows.some((row) => row.key === selectedRow.key)
+        ? 'enabled'
+        : 'disabled'
+
+  const openSkill = (key: string) => {
+    setSelectedSkillKey(key)
+    onSkillOpen?.(key)
+  }
+
+  const moveSelectedSkill = (checked: boolean) => {
+    if (selectedRow === undefined || selectedRow.disabled) return
+    onSkillToggle?.(selectedRow.key, checked)
+  }
 
   if (rows.length === 0) {
     return (
@@ -687,7 +709,7 @@ export function AgentSkillsLibraryPanel({
         </div>
         <section className="border-border border-y">
           <div className="text-muted-foreground px-3 py-6 text-sm">
-            Import skills into the company library first, then attach them here.
+            먼저 스킬 목록을 불러온 뒤 이 에이전트에 적용할 수 있습니다.
           </div>
         </section>
       </div>
@@ -721,15 +743,45 @@ export function AgentSkillsLibraryPanel({
       ) : null}
 
       {optionalRows.length > 0 ? (
-        <section className="border-border border-y">
-          {optionalRows.map((row) => (
-            <AgentSkillLibraryRow
-              key={row.key}
-              row={row}
-              onSkillOpen={onSkillOpen}
-              onSkillToggle={onSkillToggle}
-            />
-          ))}
+        <section className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-start">
+          <AgentSkillTransferColumn
+            emptyLabel="사용 중인 스킬이 없습니다."
+            rows={enabledRows}
+            selectedKey={selectedSkillKey}
+            title="사용 중"
+            onSkillOpen={openSkill}
+          />
+          <div className="flex items-center justify-center gap-2 md:flex-col md:pt-12">
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              className="h-9 w-9"
+              onClick={() => moveSelectedSkill(true)}
+              disabled={selectedSide !== 'disabled' || selectedRow?.disabled}
+              aria-label="선택한 스킬 사용"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              className="h-9 w-9"
+              onClick={() => moveSelectedSkill(false)}
+              disabled={selectedSide !== 'enabled'}
+              aria-label="선택한 스킬 미사용"
+            >
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </div>
+          <AgentSkillTransferColumn
+            emptyLabel="미사용 스킬이 없습니다."
+            rows={disabledRows}
+            selectedKey={selectedSkillKey}
+            title="미사용"
+            onSkillOpen={openSkill}
+          />
         </section>
       ) : null}
 
@@ -739,11 +791,11 @@ export function AgentSkillsLibraryPanel({
             <span className="text-muted-foreground text-xs font-medium">Required by system</span>
           </div>
           {requiredRows.map((row) => (
-            <AgentSkillLibraryRow
+            <AgentSkillTransferItem
               key={row.key}
               row={row}
-              onSkillOpen={onSkillOpen}
-              onSkillToggle={onSkillToggle}
+              selected={selectedSkillKey === row.key}
+              onSkillOpen={openSkill}
             />
           ))}
         </section>
@@ -767,11 +819,11 @@ export function AgentSkillsLibraryPanel({
           </button>
           {unmanagedOpen
             ? unmanagedRows.map((row) => (
-                <AgentSkillLibraryRow
+                <AgentSkillTransferItem
                   key={row.key}
                   row={row}
-                  onSkillOpen={onSkillOpen}
-                  onSkillToggle={onSkillToggle}
+                  selected={selectedSkillKey === row.key}
+                  onSkillOpen={openSkill}
                 />
               ))
             : null}
@@ -1440,67 +1492,62 @@ function AgentRunDetailCard({ run }: { run: AgentRunItemData | null }) {
   )
 }
 
-function AgentSkillLibraryRow({
+function AgentSkillTransferColumn({
+  emptyLabel,
   onSkillOpen,
-  onSkillToggle,
-  row,
+  rows,
+  selectedKey,
+  title,
 }: {
-  onSkillOpen?: (key: string) => void
-  onSkillToggle?: (key: string, checked: boolean) => void
-  row: AgentSkillRowData
+  emptyLabel: string
+  onSkillOpen: (key: string) => void
+  rows: AgentSkillRowData[]
+  selectedKey: string | null
+  title: string
 }) {
-  const checked = Boolean(row.required || row.checked)
-  const disabled = Boolean(row.required || row.disabled)
-  const body = (
-    <div className="min-w-0 flex-1">
-      <div className="flex items-center justify-between gap-3">
-        <span className="truncate font-medium">{row.name}</span>
-        {row.linkLabel && onSkillOpen ? (
-          <button
-            type="button"
-            className="text-muted-foreground hover:text-foreground shrink-0 text-xs"
-            onClick={() => onSkillOpen(row.key)}
-          >
-            {row.linkLabel}
-          </button>
-        ) : null}
+  return (
+    <div className="border-border min-h-64 overflow-hidden rounded-lg border">
+      <div className="border-border bg-muted/30 border-b px-3 py-2 text-sm font-medium">
+        {title}
       </div>
-      {row.description ? (
-        <div className="text-muted-foreground mt-1 text-xs leading-5">{row.description}</div>
-      ) : null}
-      {row.readOnly && row.originLabel ? (
-        <p className="text-muted-foreground mt-1 text-xs">{row.originLabel}</p>
-      ) : null}
-      {row.readOnly && row.locationLabel ? (
-        <p className="text-muted-foreground mt-1 text-xs">Location: {row.locationLabel}</p>
-      ) : null}
-      {row.detail ? <p className="text-muted-foreground mt-1 text-xs">{row.detail}</p> : null}
-      {row.requiredReason ? (
-        <p className="text-muted-foreground mt-1 text-xs">{row.requiredReason}</p>
-      ) : null}
+      {rows.length === 0 ? (
+        <div className="text-muted-foreground px-3 py-8 text-center text-sm">{emptyLabel}</div>
+      ) : (
+        <div className="divide-border divide-y">
+          {rows.map((row) => (
+            <AgentSkillTransferItem
+              key={row.key}
+              row={row}
+              selected={selectedKey === row.key}
+              onSkillOpen={onSkillOpen}
+            />
+          ))}
+        </div>
+      )}
     </div>
   )
+}
 
-  if (row.readOnly) {
-    return (
-      <div className="border-border bg-muted/20 flex items-start gap-3 border-b px-3 py-3 text-sm last:border-b-0">
-        <span className="bg-muted-foreground/40 mt-1 h-2 w-2 rounded-full" />
-        {body}
-      </div>
-    )
-  }
-
+function AgentSkillTransferItem({
+  onSkillOpen,
+  row,
+  selected,
+}: {
+  onSkillOpen: (key: string) => void
+  row: AgentSkillRowData
+  selected: boolean
+}) {
   return (
-    <label className="border-border hover:bg-accent/20 flex items-start gap-3 border-b px-3 py-3 text-sm last:border-b-0">
-      <input
-        type="checkbox"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onSkillToggle?.(row.key, event.target.checked)}
-        className="mt-0.5 disabled:cursor-not-allowed disabled:opacity-60"
-      />
-      {body}
-    </label>
+    <button
+      type="button"
+      className={`hover:bg-accent/40 flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-sm transition-colors ${
+        selected ? 'bg-accent/50' : ''
+      } ${row.disabled ? 'text-muted-foreground opacity-60' : ''}`}
+      onClick={() => onSkillOpen(row.key)}
+      title={typeof row.description === 'string' ? row.description : undefined}
+    >
+      <span className="min-w-0 truncate font-medium">{row.name}</span>
+    </button>
   )
 }
 
