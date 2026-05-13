@@ -226,9 +226,17 @@ export function agentProfileToAgent(profile: AgentProfile): Agent {
     model: profile.model ?? undefined,
     extraArgs: '',
     profileImage: profile.profileImage ?? undefined,
+    spriteId: deriveSpriteId(profile.profileImage),
     reportsToAgentId: 'main',
     skills: profile.skills,
   }
+}
+
+// /assets/agents/agentXX/idle_front.png 형식의 profileImage에서 spriteId(agentXX)를 추출한다.
+function deriveSpriteId(profileImage: string | null | undefined): string | undefined {
+  if (!profileImage) return undefined
+  const match = profileImage.match(/\/assets\/agents\/(agent\d{2})\/idle_front\.png/)
+  return match?.[1]
 }
 
 function normalizeAgentAdapterType(value: string | null | undefined) {

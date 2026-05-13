@@ -18,7 +18,9 @@ import {
 } from '@/realtime/aiRealtimeTypes'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
+import { useSessionStore, type AgentPanelItem } from '@/store/useSessionStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
+import { agentProfilesToPanelItems, listSessionAgents } from '@/apis/agents'
 import type {
   AiModelOption,
   AiModelProviderOption,
@@ -66,6 +68,65 @@ type ChatState = {
   fetchModelOptions: (sessionId?: string) => Promise<ModelOptionsResultPayload>
   handleRealtimeFrame: (frame: AiRealtimeRawFrame) => void
   clearChatState: () => void
+}
+
+const SESSION_AGENT_SPRITE_SLOTS = [
+  'agent01',
+  'agent02',
+  'agent03',
+  'agent04',
+  'agent05',
+  'agent06',
+  'agent07',
+  'agent08',
+  'agent09',
+  'agent10',
+]
+
+function getSessionSubAgentSpriteIds(panels: AgentPanelItem[]) {
+  const usedSlots = new Set<string>()
+  const spriteIds: string[] = []
+
+  for (const panel of panels) {
+    if (panel.agent.spriteId) {
+      spriteIds.push(panel.agent.spriteId)
+      usedSlots.add(panel.agent.spriteId)
+    }
+  }
+
+  for (const panel of panels) {
+    if (panel.agent.spriteId) continue
+    const slot = SESSION_AGENT_SPRITE_SLOTS.find((id) => !usedSlots.has(id))
+    if (!slot) break
+    spriteIds.push(slot)
+    usedSlots.add(slot)
+  }
+
+  return [...new Set(spriteIds)]
+}
+
+function startVisualizationForSession(
+  sessionId: string,
+  taskRunId: string,
+  panels: AgentPanelItem[],
+) {
+  useAgentVisualizationStore.getState().startSessionWork({
+    sessionId,
+    taskRunId,
+    subAgentSpriteIds: getSessionSubAgentSpriteIds(panels),
+  })
+}
+
+function refreshVisualizationSessionAgents(sessionId: string, taskRunId: string) {
+  void listSessionAgents(sessionId)
+    .then((profiles) => {
+      const panels = agentProfilesToPanelItems(profiles)
+      useSessionStore.getState().setAgentPanelsForSession(sessionId, panels)
+      startVisualizationForSession(sessionId, taskRunId, panels)
+    })
+    .catch(() => {
+      // 시각화 보강 조회 실패 시 채팅 전송 흐름은 유지한다.
+    })
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -187,7 +248,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         [clientMessageId]: optimisticSessionId,
       },
     }))
-    useAgentVisualizationStore.getState().startCeoWork(clientMessageId)
+    const visualizationSessionId = sessionId ?? optimisticSessionId
+    const sessionPanels =
+      useSessionStore.getState().agentPanelsBySessionId[visualizationSessionId] ?? []
+    startVisualizationForSession(visualizationSessionId, clientMessageId, sessionPanels)
+    if (
+      sessionId !== undefined &&
+      !sessionId.startsWith('pending_session_') &&
+      sessionPanels.length === 0
+    ) {
+      refreshVisualizationSessionAgents(sessionId, clientMessageId)
+    }
 
     try {
       const frame = await useAiRealtimeStore
@@ -501,7 +572,11 @@ const mergeAcceptedMessage = (
     return
   }
   if (taskRunId !== undefined) {
-    useAgentVisualizationStore.getState().startCeoWork(taskRunId)
+    const sessionPanels = useSessionStore.getState().agentPanelsBySessionId[sessionId] ?? []
+    startVisualizationForSession(sessionId, taskRunId, sessionPanels)
+    if (sessionPanels.length === 0) {
+      refreshVisualizationSessionAgents(sessionId, taskRunId)
+    }
   }
 
   const previousSessionId =
