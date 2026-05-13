@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { CommandUsageRecord, CommandUsageSummary } from '@/apis/aiCommandUsage'
+import type { AgentUsageRowData } from '@/components/sessionWorkspace/AgentDetailPanels'
 
 export interface AgentRunUsageSummary {
   totalTokens: number
@@ -26,6 +27,39 @@ export function buildAgentRunUsageMap(records: CommandUsageRecord[]) {
     })
   }
   return usageByTaskRunId
+}
+
+export function buildUsageSummaryFromRecords(records: CommandUsageRecord[]): CommandUsageSummary {
+  return records.reduce<CommandUsageSummary>(
+    (summary, record) => ({
+      inputTokens: summary.inputTokens + (record.inputTokens ?? 0),
+      outputTokens: summary.outputTokens + (record.outputTokens ?? 0),
+      totalTokens: summary.totalTokens + (record.totalTokens ?? 0),
+      cachedInputTokens: summary.cachedInputTokens + (record.cachedInputTokens ?? 0),
+      reasoningTokens: summary.reasoningTokens + (record.reasoningTokens ?? 0),
+      estimatedCostUsd: summary.estimatedCostUsd + (record.estimatedCostUsd ?? 0),
+      currency: record.currency ?? summary.currency,
+      recordCount: summary.recordCount + 1,
+    }),
+    {
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      cachedInputTokens: 0,
+      reasoningTokens: 0,
+      estimatedCostUsd: 0,
+      currency: 'USD',
+      recordCount: 0,
+    },
+  )
+}
+
+export function filterUsageRecordsByTaskRunIds(
+  records: CommandUsageRecord[],
+  taskRunIds: Iterable<string>,
+) {
+  const allowed = new Set([...taskRunIds].map((id) => id.trim()).filter(Boolean))
+  return records.filter((record) => allowed.has(record.taskRunId?.trim() ?? ''))
 }
 
 export function formatAgentRunTokenUsage(usage: AgentRunUsageSummary | undefined) {
@@ -69,6 +103,25 @@ export function buildAgentUsageSummaryItems(
   ]
 }
 
+export function buildAgentUsageRows(records: CommandUsageRecord[]): AgentUsageRowData[] {
+  return [...records]
+    .filter(
+      (record) =>
+        (record.totalTokens ?? 0) > 0 ||
+        (record.inputTokens ?? 0) > 0 ||
+        (record.outputTokens ?? 0) > 0 ||
+        (record.estimatedCostUsd ?? 0) > 0,
+    )
+    .sort((first, second) => getRecordTime(second) - getRecordTime(first))
+    .map((record) => ({
+      cost: formatUsageCost(record.estimatedCostUsd ?? 0),
+      date: formatUsageDate(record.createdAt),
+      input: formatUsageNumber(record.inputTokens ?? 0),
+      output: formatUsageNumber(record.outputTokens ?? 0),
+      run: record.taskRunId ? record.taskRunId.slice(0, 8) : '-',
+    }))
+}
+
 function formatUsageNumber(value: number) {
   return value.toLocaleString('ko-KR')
 }
@@ -76,4 +129,21 @@ function formatUsageNumber(value: number) {
 function formatUsageCost(value: number) {
   if (value > 0 && value < 0.01) return `$${value.toFixed(4)}`
   return `$${value.toFixed(2)}`
+}
+
+function getRecordTime(record: CommandUsageRecord) {
+  const time = record.createdAt ? new Date(record.createdAt).getTime() : 0
+  return Number.isFinite(time) ? time : 0
+}
+
+function formatUsageDate(value?: string) {
+  if (!value) return '-'
+  const time = new Date(value).getTime()
+  if (!Number.isFinite(time)) return '-'
+  return new Intl.DateTimeFormat('ko-KR', {
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(time))
 }

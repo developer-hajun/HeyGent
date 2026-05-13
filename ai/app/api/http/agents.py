@@ -16,6 +16,7 @@ from app.contracts.agents import (
     CreateSessionAgentRequest,
     CreateSessionAgentFromTemplateRequest,
     SaveInstructionDocumentRequest,
+    UpdateSessionAgentRequest,
 )
 
 router = APIRouter(tags=["agents"], dependencies=[Depends(document_bearer_auth)])
@@ -90,6 +91,38 @@ async def create_session_agent(
         owner_user_id=_int_or_none(user.user_id),
         config_snapshot=_custom_agent_config_snapshot(payload),
     )
+    return _profile_response(item)
+
+
+@router.patch(
+    "/sessions/{sessionId}/agents/{profileId}",
+    response_model=AgentProfileResponse,
+    summary="세션 에이전트 설정 수정",
+)
+async def update_session_agent(
+    request: Request,
+    payload: UpdateSessionAgentRequest,
+    sessionId: str = Path(..., description="에이전트를 수정할 AI 세션 ID입니다."),
+    profileId: str = Path(..., description="수정할 세션 에이전트 프로필 ID입니다."),
+) -> AgentProfileResponse:
+    user = await authenticate_http_user(request)
+    session = _session_or_404(request, sessionId)
+    ensure_owner(user, session.get("user_id"))
+    existing = request.app.state.agent_repository.get_session_agent(
+        profile_id=profileId,
+        owner_key=str(user.user_id),
+    )
+    if existing is None or str(existing.get("session_id") or "") != sessionId:
+        raise HTTPException(status_code=404, detail="agent profile not found")
+    config_snapshot = _updated_agent_config_snapshot(existing.get("config_snapshot") or {}, payload)
+    item = request.app.state.agent_repository.update_session_agent(
+        session_id=sessionId,
+        owner_key=str(user.user_id),
+        profile_id=profileId,
+        config_snapshot=config_snapshot,
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="agent profile not found")
     return _profile_response(item)
 
 
@@ -276,6 +309,55 @@ def _custom_agent_config_snapshot(payload: CreateSessionAgentRequest) -> dict[st
             for key, content in instructions_files.items()
         ],
     }
+
+
+def _updated_agent_config_snapshot(
+    current: dict[str, Any],
+    payload: UpdateSessionAgentRequest,
+) -> dict[str, Any]:
+    next_config = dict(current or {})
+    if payload.name is not None:
+        next_config["name"] = payload.name.strip()
+    if payload.role is not None:
+        next_config["role"] = payload.role.strip() or "general"
+    if payload.title is not None:
+        next_config["title"] = payload.title.strip()
+    if payload.description is not None:
+        next_config["description"] = payload.description.strip()
+    if payload.adapter_type is not None:
+        next_config["adapterType"] = payload.adapter_type.strip()
+    if payload.model is not None:
+        next_config["model"] = payload.model.strip()
+    if payload.profile_image is not None:
+        next_config["profileImage"] = payload.profile_image.strip()
+    if payload.skills is not None:
+        next_config["skills"] = [str(skill).strip() for skill in payload.skills if str(skill).strip()]
+
+    entry_document_key = payload.entry_document_key
+    if entry_document_key is not None:
+        entry_document_key = entry_document_key.strip() or "AGENTS.md"
+        if not _is_active_instruction_document(entry_document_key):
+            entry_document_key = "AGENTS.md"
+        next_config["entryDocumentKey"] = entry_document_key
+
+    if payload.instructions_files is not None:
+        instructions_files = {
+            key: content
+            for key, content in dict(payload.instructions_files).items()
+            if _is_active_instruction_document(key)
+        }
+        active_entry = str(next_config.get("entryDocumentKey") or "AGENTS.md")
+        if active_entry not in instructions_files:
+            instructions_files[active_entry] = ""
+        next_config["documents"] = [
+            {
+                "documentKey": key,
+                "displayName": _instruction_display_name(key),
+                "content": content,
+            }
+            for key, content in instructions_files.items()
+        ]
+    return next_config
 
 
 def _profile_response(item: dict[str, Any]) -> AgentProfileResponse:

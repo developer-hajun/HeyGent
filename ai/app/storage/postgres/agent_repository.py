@@ -174,7 +174,7 @@ class PostgresAgentRepository:
         if existing is not None:
             self._sync_profile_documents(
                 profile=existing,
-                config_snapshot=config_snapshot,
+                config_snapshot=_merge_config_defaults(existing.get("config_snapshot") or {}, config_snapshot),
                 delegation_policy={"canDelegate": True},
             )
             refreshed = self.get_session_main_agent(session_id=session_id, owner_key=owner_key)
@@ -357,6 +357,83 @@ class PostgresAgentRepository:
         connection.commit()
         return self.get_session_agent(profile_id=profile_id, owner_key=owner_key) or {"profile_id": profile_id}
 
+    def update_session_agent(
+        self,
+        *,
+        session_id: str,
+        owner_key: str,
+        profile_id: str,
+        config_snapshot: dict[str, Any],
+        delegation_policy: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        existing = self.get_session_agent(profile_id=profile_id, owner_key=owner_key)
+        if existing is None or str(existing.get("session_id") or "") != session_id:
+            return None
+        connection = self.connection_factory()
+        next_policy = delegation_policy if delegation_policy is not None else dict(existing.get("delegation_policy") or {})
+        next_version = int(existing.get("profile_version") or 1) + 1
+        entry_document_key = str(config_snapshot.get("entryDocumentKey") or "AGENTS.md")
+        connection.execute(
+            """
+            UPDATE ai_agent_profiles
+            SET profile_version = %s,
+                provider_name = %s,
+                model_name = %s,
+                config_snapshot = %s::jsonb,
+                delegation_policy = %s::jsonb,
+                updated_at = now()
+            WHERE profile_id = %s
+              AND session_id = %s
+              AND owner_key = %s
+            """,
+            (
+                next_version,
+                config_snapshot.get("adapterType"),
+                config_snapshot.get("model"),
+                _json(config_snapshot),
+                _json(next_policy),
+                profile_id,
+                session_id,
+                owner_key,
+            ),
+        )
+        if existing.get("bundle_id"):
+            bundle_id = str(existing["bundle_id"])
+            connection.execute(
+                """
+                UPDATE ai_agent_instruction_bundles
+                SET entry_document_key = %s,
+                    updated_at = now()
+                WHERE bundle_id = %s
+                """,
+                (entry_document_key, bundle_id),
+            )
+            for document in config_snapshot.get("documents") or []:
+                if not isinstance(document, dict):
+                    continue
+                connection.execute(
+                    """
+                    INSERT INTO ai_agent_instruction_documents (
+                        document_id, bundle_id, document_key, display_name, content_format, content
+                    )
+                    VALUES (%s, %s, %s, %s, 'markdown', %s)
+                    ON CONFLICT (bundle_id, document_key) DO UPDATE
+                    SET display_name = EXCLUDED.display_name,
+                        content = EXCLUDED.content,
+                        version = ai_agent_instruction_documents.version + 1,
+                        updated_at = now()
+                    """,
+                    (
+                        new_id("instruction_document"),
+                        bundle_id,
+                        str(document.get("documentKey") or "AGENTS.md"),
+                        str(document.get("displayName") or document.get("documentKey") or "지침 문서"),
+                        str(document.get("content") or ""),
+                    ),
+                )
+        connection.commit()
+        return self.get_session_agent(profile_id=profile_id, owner_key=owner_key)
+
     def list_session_agents(self, *, session_id: str, owner_key: str) -> list[dict[str, Any]]:
         rows = self.connection_factory().execute(
             """
@@ -518,6 +595,33 @@ def _profile_from_row(row: Any) -> dict[str, Any]:
     record["delegation_policy"] = _json_load(record.get("delegation_policy"), {})
     record["instruction_mode"] = record.get("mode")
     return record
+
+
+def _merge_config_defaults(current: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(defaults or {})
+    merged.update(dict(current or {}))
+    default_documents = [
+        document
+        for document in list((defaults or {}).get("documents") or [])
+        if isinstance(document, dict)
+    ]
+    current_documents = [
+        document
+        for document in list((current or {}).get("documents") or [])
+        if isinstance(document, dict)
+    ]
+    documents_by_key: dict[str, dict[str, Any]] = {}
+    for document in default_documents:
+        key = str(document.get("documentKey") or "").strip()
+        if key:
+            documents_by_key[key] = dict(document)
+    for document in current_documents:
+        key = str(document.get("documentKey") or "").strip()
+        if key:
+            documents_by_key[key] = dict(document)
+    merged["documents"] = list(documents_by_key.values())
+    merged["entryDocumentKey"] = str(merged.get("entryDocumentKey") or "AGENTS.md")
+    return merged
 
 
 def _document_from_row(row: Any) -> dict[str, Any]:

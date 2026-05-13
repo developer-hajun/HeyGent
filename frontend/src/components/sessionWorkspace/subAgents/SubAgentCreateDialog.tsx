@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, Bot, Terminal } from 'lucide-react'
+import { ArrowLeft, Bot } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/components/ui/utils'
@@ -7,8 +7,7 @@ import type { AgentTemplate } from '@/apis/agents'
 import { SUB_AGENT_ADAPTER_OPTIONS, type SubAgentAdapterType } from './subAgentConfigOptions'
 
 const ADAPTER_ICONS: Record<SubAgentAdapterType, typeof Bot> = {
-  claude_local: Bot,
-  codex_local: Terminal,
+  openai: Bot,
 }
 
 export function SubAgentCreateDialog({
@@ -130,11 +129,11 @@ export function SubAgentCreateDialog({
                   뒤로
                 </button>
                 <p className="text-muted-foreground text-sm">
-                  세부 설정에 사용할 연결 방식을 선택하세요.
+                  OpenAI 모델로 세부 설정을 시작합니다.
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid gap-2">
                 {SUB_AGENT_ADAPTER_OPTIONS.map((option) => {
                   const Icon = ADAPTER_ICONS[option.id]
                   const comingSoon = false
@@ -144,7 +143,7 @@ export function SubAgentCreateDialog({
                       key={option.id}
                       type="button"
                       className={cn(
-                        'border-border hover:bg-accent/50 relative flex flex-col items-center gap-1.5 rounded-md border p-3 text-xs transition-colors',
+                        'border-border hover:bg-accent/50 relative flex items-center justify-center gap-2 rounded-md border p-3 text-xs transition-colors',
                         comingSoon && 'cursor-not-allowed opacity-40',
                       )}
                       disabled={comingSoon}
@@ -161,10 +160,7 @@ export function SubAgentCreateDialog({
                         </span>
                       )}
                       <Icon className="h-4 w-4" />
-                      <span className="font-medium">{option.label}</span>
-                      <span className="text-muted-foreground text-[10px]">
-                        {option.description}
-                      </span>
+                      <span className="font-medium">직접 만들기</span>
                     </button>
                   )
                 })}

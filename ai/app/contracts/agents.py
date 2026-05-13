@@ -100,6 +100,21 @@ class CreateSessionAgentRequest(BaseModel):
     instructions_files: dict[str, str] = Field(default_factory=dict, alias="instructionsFiles")
 
 
+class UpdateSessionAgentRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    name: str | None = None
+    role: str | None = None
+    title: str | None = None
+    description: str | None = None
+    adapter_type: str | None = Field(default=None, alias="adapterType")
+    model: str | None = None
+    profile_image: str | None = Field(default=None, alias="profileImage")
+    skills: list[str] | None = None
+    entry_document_key: str | None = Field(default=None, alias="entryDocumentKey")
+    instructions_files: dict[str, str] | None = Field(default=None, alias="instructionsFiles")
+
+
 class SaveInstructionDocumentRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
