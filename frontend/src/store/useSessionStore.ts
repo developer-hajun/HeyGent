@@ -60,8 +60,6 @@ type PersistedAgentPanelItem = {
     | 'extraArgs'
     | 'webSearchEnabled'
     | 'bypassSandbox'
-    | 'heartbeatEnabled'
-    | 'intervalSec'
     | 'profileImage'
     | 'profileId'
     | 'templateKey'
@@ -250,8 +248,6 @@ function serializeAgentPanelsBySessionId(
           extraArgs: panel.agent.extraArgs,
           webSearchEnabled: panel.agent.webSearchEnabled,
           bypassSandbox: panel.agent.bypassSandbox,
-          heartbeatEnabled: panel.agent.heartbeatEnabled,
-          intervalSec: panel.agent.intervalSec,
           profileImage: panel.agent.profileImage,
           profileId: panel.agent.profileId,
           templateKey: panel.agent.templateKey,

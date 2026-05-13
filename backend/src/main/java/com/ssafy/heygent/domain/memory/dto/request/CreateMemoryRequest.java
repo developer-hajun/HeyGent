@@ -1,6 +1,7 @@
 package com.ssafy.heygent.domain.memory.dto.request;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 import com.ssafy.heygent.domain.memory.entity.MemoryOperationType;
@@ -28,6 +29,8 @@ public class CreateMemoryRequest {
     private MemoryOperationType operationType;
 
     private Long targetMemoryId;
+
+    private List<Long> additionalTargetMemoryIds;
 
     @NotBlank(message = "기억 내용은 필수입니다.")
     @Size(max = 2000, message = "기억 내용은 2000자 이하여야 합니다.")

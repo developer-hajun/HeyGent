@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   AgentActivityStatus,
+  AgentRuntime,
   AgentVisualizationInfo,
   TaskStatus,
   VisualizationTask,
@@ -11,9 +12,14 @@ export type { AgentActivityStatus, AgentVisualizationInfo, TaskStatus, Visualiza
 interface AgentVisualizationState {
   agentInfoMap: Record<string, AgentVisualizationInfo>
   selectedAgentId: string | null
+  // 페이지 이동 후 재진입 시 에이전트 위치/상태 유지용 런타임 상태
+  agentRuntimes: AgentRuntime[]
+  spawnedKeys: string[]
   setAgentInfoMap: (map: Record<string, AgentVisualizationInfo>) => void
   updateAgentInfo: (agentId: string, updates: Partial<AgentVisualizationInfo>) => void
   selectAgent: (agentId: string | null) => void
+  setAgentRuntimes: (updater: AgentRuntime[] | ((prev: AgentRuntime[]) => AgentRuntime[])) => void
+  addSpawnedKey: (id: string) => void
 }
 
 // mock 데이터 — 백엔드 API 연동 전 임시. spriteId(agentId)는 AGENT_CONFIGS의 id와 일치해야 함.
@@ -367,15 +373,34 @@ export function createMockAgentInfoMap(): Record<string, AgentVisualizationInfo>
 export const useAgentVisualizationStore = create<AgentVisualizationState>((set) => ({
   agentInfoMap: {},
   selectedAgentId: null,
+  agentRuntimes: [],
+  spawnedKeys: [],
 
   setAgentInfoMap: (map) => set({ agentInfoMap: map }),
 
   updateAgentInfo: (agentId, updates) =>
     set((state) => {
-      const existing = state.agentInfoMap[agentId]
-      if (!existing) return state
+      const existing = state.agentInfoMap[agentId] ?? {
+        agentId,
+        name: agentId,
+        role: '',
+        skills: [],
+        activityStatus: 'inactive' as AgentActivityStatus,
+        currentTask: undefined,
+        taskHistory: [],
+      }
       return { agentInfoMap: { ...state.agentInfoMap, [agentId]: { ...existing, ...updates } } }
     }),
 
   selectAgent: (agentId) => set({ selectedAgentId: agentId }),
+
+  setAgentRuntimes: (updater) =>
+    set((state) => ({
+      agentRuntimes: typeof updater === 'function' ? updater(state.agentRuntimes) : updater,
+    })),
+
+  addSpawnedKey: (id) =>
+    set((state) => ({
+      spawnedKeys: state.spawnedKeys.includes(id) ? state.spawnedKeys : [...state.spawnedKeys, id],
+    })),
 }))

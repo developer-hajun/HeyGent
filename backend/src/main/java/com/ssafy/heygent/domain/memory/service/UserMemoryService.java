@@ -3,6 +3,7 @@ package com.ssafy.heygent.domain.memory.service;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -466,6 +467,7 @@ public class UserMemoryService {
     ) {
         UserMemory targetMemory = findOwnedMemory(userId, request.getTargetMemoryId());
         validateTargetCanChange(targetMemory);
+        List<UserMemory> additionalTargetMemories = findAdditionalTargetMemories(userId, request, targetMemory.getId());
 
         UserMemoryResponse savedResponse = saveMemory(
             userId,
@@ -482,7 +484,42 @@ public class UserMemoryService {
             "supersededByMemoryId", savedResponse.getId(),
             "operationType", eventType.name()
         ));
+        additionalTargetMemories.forEach(memory -> invalidateAdditionalTargetMemory(memory, savedResponse, request, eventType));
         return savedResponse;
+    }
+
+    private List<UserMemory> findAdditionalTargetMemories(Long userId, CreateMemoryRequest request, Long primaryTargetMemoryId) {
+        List<Long> additionalTargetMemoryIds = request.getAdditionalTargetMemoryIds();
+        if (additionalTargetMemoryIds == null || additionalTargetMemoryIds.isEmpty()) {
+            return List.of();
+        }
+
+        LinkedHashSet<Long> uniqueTargetMemoryIds = additionalTargetMemoryIds.stream()
+            .filter(Objects::nonNull)
+            .filter(memoryId -> !memoryId.equals(primaryTargetMemoryId))
+            .collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
+
+        return uniqueTargetMemoryIds.stream()
+            .map(memoryId -> {
+                UserMemory memory = findOwnedMemory(userId, memoryId);
+                validateTargetCanChange(memory);
+                return memory;
+            })
+            .toList();
+    }
+
+    private void invalidateAdditionalTargetMemory(
+        UserMemory memory,
+        UserMemoryResponse savedResponse,
+        CreateMemoryRequest request,
+        MemoryEventType eventType
+    ) {
+        memory.invalidate(savedResponse.getId(), trimToNull(request.getUpdateReason()), LocalDateTime.now());
+        userMemoryEventService.record(memory, MemoryEventType.INVALIDATED, null, Map.of(
+            "supersededByMemoryId", savedResponse.getId(),
+            "operationType", eventType.name(),
+            "additionalTarget", true
+        ));
     }
 
     private Optional<UserMemory> findSemanticDuplicateMemory(

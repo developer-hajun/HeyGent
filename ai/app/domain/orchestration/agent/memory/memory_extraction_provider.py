@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from app.domain.orchestration.agent.memory.memory_extractor import MemoryExtractionContext
+from app.domain.orchestration.agent.memory.memory_reconciler import MemoryReconciliationContext
 from app.domain.providers.model.base import AgentMessage
 from app.domain.providers.registry import ProviderRegistry
 
@@ -25,6 +26,7 @@ class ProviderMemoryExtractionClient:
         context: MemoryExtractionContext,
     ) -> dict[str, Any]:
         provider = self._provider_registry.preferred_model_provider()
+        _ensure_live_provider(provider)
         model = self._model or str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
         payload = {
             "userMessage": user_message,
@@ -36,8 +38,41 @@ class ProviderMemoryExtractionClient:
                 "taskRunId": context.task_run_id,
             },
         }
-        response = await asyncio.to_thread(
-            provider.respond,
+        response = await _respond_provider_async(
+            provider,
+            messages=[
+                AgentMessage(role="system", content=system_prompt),
+                AgentMessage(role="user", content=json.dumps(payload, ensure_ascii=False)),
+            ],
+            tools=None,
+            model=model,
+            tool_choice=None,
+        )
+        return _parse_json_object(response.output_text)
+
+    async def reconcile_memory_operation_json(
+        self,
+        *,
+        system_prompt: str,
+        user_message: str,
+        candidate: dict[str, Any],
+        existing_memories: list[dict[str, Any]],
+        context: MemoryReconciliationContext,
+    ) -> dict[str, Any]:
+        provider = self._provider_registry.preferred_model_provider()
+        _ensure_live_provider(provider)
+        model = self._model or str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
+        payload = {
+            "userMessage": user_message,
+            "candidate": candidate,
+            "existingMemories": existing_memories,
+            "context": {
+                "userId": context.user_id,
+                "workspaceKey": context.workspace_key,
+            },
+        }
+        response = await _respond_provider_async(
+            provider,
             messages=[
                 AgentMessage(role="system", content=system_prompt),
                 AgentMessage(role="user", content=json.dumps(payload, ensure_ascii=False)),
@@ -62,3 +97,16 @@ def _parse_json_object(text: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("memory extraction response must be a JSON object")
     return parsed
+
+
+async def _respond_provider_async(provider, **kwargs):
+    respond_async = getattr(provider, "respond_async", None)
+    if callable(respond_async):
+        return await respond_async(**kwargs)
+    return await asyncio.to_thread(provider.respond, **kwargs)
+
+
+def _ensure_live_provider(provider) -> None:
+    health = provider.health()
+    if not bool(getattr(health, "connected", False)):
+        raise RuntimeError("memory provider requires a connected model provider")

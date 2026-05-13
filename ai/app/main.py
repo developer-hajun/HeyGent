@@ -27,6 +27,7 @@ from app.domain.orchestration.agent.runner import AgentLoopRunner
 from app.domain.orchestration.agent.loop import TaskEngine
 from app.domain.orchestration.agent.memory.memory_extraction_provider import ProviderMemoryExtractionClient
 from app.domain.orchestration.agent.memory.memory_extractor import LlmMemoryExtractor
+from app.domain.orchestration.agent.memory.memory_reconciler import MemoryOperationReconciler
 from app.domain.orchestration.agent.memory.memory_recall_planner_provider import ProviderMemoryRecallPlannerClient
 from app.domain.orchestration.agent.memory.memory_usage_attribution_provider import (
     ProviderMemoryUsageAttributionClient,
@@ -36,7 +37,8 @@ from app.api.memory_context import LlmMemoryRecallPlanner
 from app.api.memory_mark_used import LlmMemoryUsageAttributionVerifier
 from app.domain.orchestration.orchestrator import Orchestrator
 from app.domain.orchestration.runtime_planning import Planner
-from app.domain.providers.model import OpenAIAPIProvider, OpenAIOAuthProvider
+from app.domain.orchestration.task_execution_supervisor import TaskExecutionSupervisor, TaskExecutionSupervisorConfig
+from app.domain.providers.model import OpenAIAPIProvider
 from app.domain.providers.registry import ProviderRegistry
 from app.storage.postgres import (
     PostgresAgentRepository,
@@ -85,6 +87,7 @@ async def lifespan(app: FastAPI):
     ws_manager = WebSocketManager()
     redis_fanout_task: asyncio.Task | None = None
     work_wake_task: asyncio.Task | None = None
+    task_execution_supervisor: TaskExecutionSupervisor | None = None
     session_registry = SessionRegistry()
     connection_registry = build_connection_registry(
         redis_url=settings.redis_url,
@@ -109,11 +112,14 @@ async def lifespan(app: FastAPI):
     provider_registry = ProviderRegistry(
         [
             OpenAIAPIProvider(settings),
-            OpenAIOAuthProvider(settings, repository),
         ]
     )
     memory_extraction_provider = ProviderMemoryExtractionClient(provider_registry=provider_registry)
     memory_extractor = LlmMemoryExtractor(provider=memory_extraction_provider)
+    memory_operation_reconciler = MemoryOperationReconciler(
+        backend_memory_client,
+        operation_provider=memory_extraction_provider,
+    )
     memory_recall_planner_provider = ProviderMemoryRecallPlannerClient(provider_registry=provider_registry)
     memory_recall_planner = LlmMemoryRecallPlanner(provider=memory_recall_planner_provider)
     memory_usage_attribution_provider = ProviderMemoryUsageAttributionClient(provider_registry=provider_registry)
@@ -168,6 +174,17 @@ async def lifespan(app: FastAPI):
     )
     child_session_launcher.bind_worker_start(loop_runner.start_worker_session)
     orchestrator = Orchestrator(loop_runner, repository)
+    if settings.task_execution_queue_enabled:
+        task_execution_supervisor = TaskExecutionSupervisor(
+            repository=repository,
+            orchestrator=orchestrator,
+            config=TaskExecutionSupervisorConfig(
+                worker_count=settings.task_execution_worker_count,
+                lease_seconds=settings.task_execution_lease_seconds,
+                poll_interval_seconds=settings.task_execution_poll_interval_seconds,
+            ),
+        )
+        await task_execution_supervisor.start()
 
     app.state.settings = settings
     app.state.applied_postgres_migrations = applied_postgres_migrations
@@ -181,6 +198,8 @@ async def lifespan(app: FastAPI):
     app.state.backend_auth_client = backend_auth_client
     app.state.backend_memory_client = backend_memory_client
     app.state.memory_extractor = memory_extractor
+    app.state.memory_operation_provider = memory_extraction_provider
+    app.state.memory_operation_reconciler = memory_operation_reconciler
     app.state.memory_recall_planner = memory_recall_planner
     app.state.memory_usage_attribution_verifier = memory_usage_attribution_verifier
     app.state.provider_registry = provider_registry
@@ -198,6 +217,7 @@ async def lifespan(app: FastAPI):
     app.state.bridge_session_manager = bridge_session_manager
     app.state.child_session_launcher = child_session_launcher
     app.state.orchestrator = orchestrator
+    app.state.task_execution_supervisor = task_execution_supervisor
     app.state.task_engine = task_engine
     app.state.redis_fanout_task = redis_fanout_task
     from app.api.http.sessions import run_work_wake_loop
@@ -209,12 +229,15 @@ async def lifespan(app: FastAPI):
         work_wake_task.cancel()
         with suppress(asyncio.CancelledError):
             await work_wake_task
+    if task_execution_supervisor is not None:
+        await task_execution_supervisor.stop()
     if redis_fanout_task is not None:
         redis_fanout_task.cancel()
         with suppress(asyncio.CancelledError):
             await redis_fanout_task
     await backend_auth_client.aclose()
     await backend_memory_client.aclose()
+    await provider_registry.aclose()
     await connection_registry.aclose()
     task_projection_store.close()
     session_store.close()

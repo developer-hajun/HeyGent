@@ -21,7 +21,7 @@ def test_ready(client):
     assert body["storage"]["postgres_configured"] is True
     provider_names = [provider["provider_name"] for provider in body["providers"]]
     assert "openai_api" in provider_names
-    assert "openai_oauth" in provider_names
+    assert "openai_oauth" not in provider_names
 
 
 def test_runtime_requires_redis_when_postgres_is_configured():

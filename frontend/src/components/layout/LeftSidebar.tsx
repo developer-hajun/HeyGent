@@ -5,6 +5,7 @@ import {
   Loader2,
   LayoutDashboard,
   MessageSquare,
+  Monitor,
   Moon,
   Plus,
   Sun,
@@ -315,7 +316,7 @@ export function LeftSidebar() {
         {/* ── Expanded Panel ── */}
         {!collapsed && (
           <div className="flex h-full flex-col overflow-hidden">
-            <div className="flex h-12 shrink-0 items-center px-4">
+            <div className="flex h-12 shrink-0 items-center overflow-hidden px-4">
               <button
                 type="button"
                 onClick={() => handleOpenPrimaryRoute('/agent-status')}
@@ -325,12 +326,12 @@ export function LeftSidebar() {
                 <img
                   src="/text_logo_light.png"
                   alt="HeyGent"
-                  className="h-7 w-auto max-w-full shrink-0 translate-y-1 scale-[2] object-contain mix-blend-multiply dark:hidden"
+                  className="h-7 w-auto max-w-[220px] shrink-0 scale-[2] object-contain dark:hidden"
                 />
                 <img
                   src="/text_logo_dark.png"
                   alt="HeyGent"
-                  className="hidden h-7 w-auto max-w-full shrink-0 translate-y-1 scale-[2] object-contain mix-blend-screen dark:block"
+                  className="hidden h-7 w-auto max-w-[220px] shrink-0 scale-[2] object-contain dark:block"
                 />
               </button>
             </div>
@@ -735,6 +736,7 @@ function ProfileMenu({ onSettingsClick }: { onSettingsClick: () => void }) {
   const menuItems = [
     { icon: UserCircle, label: '프로필', action: () => setView('profile') },
     { icon: Settings, label: '설정', action: onSettingsClick },
+    { icon: Monitor, label: '내 PC 브릿지', action: () => navigate('/settings/bridge') },
   ]
 
   return (

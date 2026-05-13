@@ -63,35 +63,6 @@ MAIN_AGENT_TEMPLATE = BuiltinAgentTemplate(
 """,
         ),
         (
-            "HEARTBEAT.md",
-            "작업 루프 지침",
-            """# 작업 루프 지침
-
-CEO는 한 번의 실행 안에서 현재 요청을 끝까지 밀고 가되, 작업 보드 상태를 기준으로 다음 행동을 정합니다.
-
-## 루프
-
-1. 사용자 요청과 현재 세션 상태를 읽습니다.
-2. 새 작업이 필요한지, 기존 작업을 이어야 하는지 판단합니다.
-3. 담당자가 필요한 작업은 세션 에이전트 후보의 역할과 작업 성격을 비교해 CEO 또는 세션 에이전트 중 하나로 배정합니다.
-4. 실행 중 생긴 결과, 차단 사유, 후속 작업을 작업 댓글과 채팅 응답에 남깁니다.
-5. 완료 조건을 만족하면 결과를 요약하고 작업 상태를 정리합니다.
-
-## 분리 기준
-
-- 하위 작업은 실행을 빠르게 만들거나 상태 추적을 명확하게 만들 때만 만듭니다.
-- 같은 담당자가 바로 끝낼 수 있는 일을 과하게 쪼개지 않습니다.
-- 여러 하위 작업은 실제 선후관계를 먼저 정하고, 서로 막지 않는 작업만 병렬로 맡깁니다.
-- 에이전트가 다시 물어보지 않아도 실행할 수 있을 만큼 지시와 완료 조건을 적습니다.
-
-## 중단 기준
-
-- 사용자 결정이 필요한 정보가 없으면 차단 사유를 남기고 멈춥니다.
-- 권한, 비밀값, 외부 경로처럼 위험한 입력은 필요한 확인을 요청합니다.
-- 이미 진행 중인 같은 작업이 있으면 새 실행을 중복으로 만들지 않습니다.
-""",
-        ),
-        (
             "SOUL.md",
             "역할 성향 지침",
             """# 역할 성향 지침
@@ -141,8 +112,8 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         role="general",
         title="General Agent",
         description="세션 맥락을 바탕으로 조사, 정리, 실행 보조 작업을 맡습니다.",
-        adapter_type="claude_local",
-        model="",
+        adapter_type="openai",
+        model="gpt-5.4",
         profile_image="/assets/agents/sub/agent01.png",
         skills=("notion",),
         documents=(
@@ -171,8 +142,8 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         role="engineer",
         title="Software Engineer",
         description="코드 구현, 디버깅, 테스트 보강, 개발 작업 인수인계를 맡습니다.",
-        adapter_type="codex_local",
-        model="",
+        adapter_type="openai",
+        model="gpt-5.4",
         profile_image="/assets/agents/sub/agent03.png",
         skills=("code",),
         documents=(
@@ -209,8 +180,8 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         role="qa",
         title="QA Engineer",
         description="버그 재현, 수정 검증, 화면 동작 확인, 검증 리포트를 맡습니다.",
-        adapter_type="claude_local",
-        model="",
+        adapter_type="openai",
+        model="gpt-5.4",
         profile_image="/assets/agents/sub/agent04.png",
         skills=("browser",),
         documents=(
@@ -249,8 +220,8 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         role="designer",
         title="UX Designer",
         description="사용자 흐름, 정보 구조, 화면 품질, 문구와 상호작용을 검토합니다.",
-        adapter_type="claude_local",
-        model="",
+        adapter_type="openai",
+        model="gpt-5.4",
         profile_image="/assets/agents/sub/agent05.png",
         skills=("browser",),
         documents=(
@@ -285,8 +256,8 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         role="security",
         title="Security Engineer",
         description="인증, 권한, 비밀값, 입력 검증, 도구 실행 위험을 점검합니다.",
-        adapter_type="claude_local",
-        model="",
+        adapter_type="openai",
+        model="gpt-5.4",
         profile_image="/assets/agents/sub/agent02.png",
         skills=("code",),
         documents=(

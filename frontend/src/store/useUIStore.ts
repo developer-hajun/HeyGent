@@ -1,15 +1,15 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-export const DEFAULT_SIDEBAR_WIDTH = 195
+export const DEFAULT_SIDEBAR_WIDTH = 260
 export const DEFAULT_SIDEBAR_COLLAPSED_WIDTH = 64
+export const MIN_SIDEBAR_WIDTH = 200
+export const MAX_SIDEBAR_WIDTH = 480
 
-// 앱 테마 토글 시 favicon 도 함께 교체.
-// 파일 이름은 로고 색상을 의미:
-//  - favicon_dark.png  = 어두운 색 로고 → 라이트 모드(밝은 배경)에 사용
-//  - favicon_light.png = 밝은 색 로고 → 다크 모드(어두운 배경)에 사용
+// Keep the favicon aligned with the app theme.
+// Use the dedicated theme favicon assets.
 function applyFavicon(theme: 'dark' | 'light') {
-  const path = theme === 'dark' ? '/favicon_light.png' : '/favicon_dark.png'
+  const path = theme === 'dark' ? '/favicon_dark.png' : '/favicon_light.png'
   // cache-busting — 브라우저 favicon 캐시 강제 무효화
   const href = `${path}?v=${Date.now()}`
 
@@ -55,10 +55,12 @@ function applyFavicon(theme: 'dark' | 'light') {
 interface UIState {
   // 좌측 사이드바
   sidebarCollapsed: boolean
+  sidebarWidth: number
   sessionWorkspaceCollapsed: boolean
   settingsOpen: boolean
   settingsInitialTab: string
   setSidebarCollapsed: (collapsed: boolean) => void
+  setSidebarWidth: (width: number) => void
   setSessionWorkspaceCollapsed: (collapsed: boolean) => void
   setSettingsOpen: (open: boolean, initialTab?: string) => void
 
@@ -75,10 +77,13 @@ export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
       sidebarCollapsed: false,
+      sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
       sessionWorkspaceCollapsed: false,
       settingsOpen: false,
       settingsInitialTab: 'general',
       setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+      setSidebarWidth: (width) =>
+        set({ sidebarWidth: Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width)) }),
       setSessionWorkspaceCollapsed: (collapsed) => set({ sessionWorkspaceCollapsed: collapsed }),
       setSettingsOpen: (open, initialTab) =>
         set({ settingsOpen: open, ...(initialTab ? { settingsInitialTab: initialTab } : {}) }),
@@ -95,6 +100,7 @@ export const useUIStore = create<UIState>()(
       name: 'heygent-ui-state',
       partialize: (state) => ({
         sidebarCollapsed: state.sidebarCollapsed,
+        sidebarWidth: state.sidebarWidth,
         sessionWorkspaceCollapsed: state.sessionWorkspaceCollapsed,
         theme: state.theme,
       }),

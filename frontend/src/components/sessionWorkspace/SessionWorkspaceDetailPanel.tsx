@@ -16,8 +16,11 @@ import { Button } from '@/components/ui/button'
 import { Tabs } from '@/components/ui/tabs'
 import {
   AgentDetailHeader,
+  AgentRunActivityChart,
+  AgentRunStatusChart,
+  AgentRunSuccessRateChart,
+  AgentUsageActivityChart,
   type AgentRunItemData,
-  AgentBudgetPanel,
   AgentConfigurationPanel,
   AgentDashboardPanel,
   AgentInstructionsBundlePanel,
@@ -28,17 +31,34 @@ import {
   AgentSkillsLibraryPanel,
   AgentSkillsPanel,
 } from '@/components/sessionWorkspace/AgentDetailPanels'
+import {
+  type AgentRunUsageSummary,
+  buildAgentRunUsageMap,
+  buildAgentUsageSummaryItems,
+  buildAgentUsageRows,
+  buildUsageSummaryFromRecords,
+  filterUsageRecordsByTaskRunIds,
+  formatAgentRunCostUsage,
+  formatAgentRunTokenUsage,
+} from '@/components/sessionWorkspace/agentUsageDisplay'
 import { WorkBoardPanel } from '@/components/sessionWorkspace/work/board'
 import { SubAgentsPanel } from '@/components/sessionWorkspace/subAgents'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
-import { getSessionMainAgent, saveAgentInstructionDocument, type AgentProfile } from '@/apis/agents'
+import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
+import { getSessionMainAgent, updateSessionAgent, type AgentProfile } from '@/apis/agents'
+import {
+  getCachedMainAgentProfile,
+  getCachedUsageRecords,
+  setCachedMainAgentProfile,
+  setCachedUsageRecords,
+} from '@/components/sessionWorkspace/sessionWorkspaceDashboardCache'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import type { JsonObject, RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
 import type { AiSessionSettingsPatch, ChatMessageView, RawAiSession } from '@/types/aiChat'
-import type { RawTaskRun } from '@/types/taskRuns'
+import type { RawTaskRun, TaskRunAgentRef } from '@/types/taskRuns'
 import { isInternalStepAnchorEvent, toTaskRunSummaryView } from '@/utils/taskRunStatusView'
 import {
   getModelFamilies,
@@ -92,7 +112,7 @@ export function SessionWorkspaceDetailPanel({
   }
 
   if (activePanel === 'ceo') {
-    return <MainAgentPage session={session} />
+    return <MainAgentPage key={session.session_id} session={session} />
   }
 
   return null
@@ -108,11 +128,14 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const updateSession = useChatStore((state) => state.updateSession)
   const updateSessionSettings = useChatStore((state) => state.updateSessionSettings)
   const fetchModelOptions = useChatStore((state) => state.fetchModelOptions)
+  const cachedModelOptions = useChatStore((state) => state.modelOptions)
   const taskRunsById = useTaskRunStore((state) => state.taskRunsById)
   const eventsByTaskRunId = useTaskRunStore((state) => state.eventsByTaskRunId)
   const fetchActiveTaskRuns = useTaskRunStore((state) => state.fetchActiveTaskRuns)
   const [searchParams, setSearchParams] = useSearchParams()
-  const [mainAgentProfile, setMainAgentProfile] = useState<AgentProfile | null>(null)
+  const [mainAgentProfile, setMainAgentProfile] = useState<AgentProfile | null>(() =>
+    getCachedMainAgentProfile(session.session_id),
+  )
 
   const metadata = useMemo(() => toJsonObject(session.metadata), [session.metadata])
   const uiMetadata = useMemo(() => toJsonObject(metadata.ui), [metadata])
@@ -152,11 +175,13 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const currentInstructionsMode =
     getString(uiMetadata, 'instructionsMode') === 'external' ? 'external' : 'managed'
   const currentInstructionsRootPath = getString(uiMetadata, 'instructionsRootPath') ?? ''
-  const currentModel = getString(settings, 'model') ?? ''
+  const currentModel = getString(mainAgentConfig, 'model') ?? getString(settings, 'model') ?? ''
   const currentDelegationPolicy = toJsonObject(settings.delegationPolicy)
   const currentCanDelegate = currentDelegationPolicy.canDelegate === true
   const currentProfileImage = normalizeAgentProfileImage(
-    getString(uiMetadata, 'agentProfileImage') ?? undefined,
+    getString(uiMetadata, 'agentProfileImage') ??
+      getString(mainAgentConfig, 'profileImage') ??
+      undefined,
   )
   const [agentName, setAgentName] = useState(currentAgentName)
   const [callName, setCallName] = useState(currentCallName)
@@ -172,14 +197,22 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const [selectedModel, setSelectedModel] = useState(currentModel)
   const [canDelegate, setCanDelegate] = useState(currentCanDelegate)
   const [profileImage, setProfileImage] = useState(currentProfileImage)
-  const [modelOptionsLoading, setModelOptionsLoading] = useState(authenticatedReady)
+  const [modelOptionsLoading, setModelOptionsLoading] = useState(
+    authenticatedReady && cachedModelOptions === null,
+  )
   const [modelOptionsError, setModelOptionsError] = useState<string | null>(null)
-  const [modelOptions, setModelOptions] = useState(getModelOptions(undefined))
+  const [modelOptions, setModelOptions] = useState(() =>
+    getModelOptions(cachedModelOptions?.models),
+  )
   const [selectedFamily, setSelectedFamily] = useState<ModelFamily>(inferModelFamily(currentModel))
   const [modelBaseline, setModelBaseline] = useState(currentModel)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+  const [usageRecords, setUsageRecords] = useState<CommandUsageRecord[]>(
+    () => getCachedUsageRecords(session.session_id) ?? [],
+  )
+  const [usageError, setUsageError] = useState<string | null>(null)
 
   const modelGroups = useMemo(() => groupModels(modelOptions), [modelOptions])
   const modelFamilies = useMemo(() => getModelFamilies(modelGroups), [modelGroups])
@@ -215,8 +248,31 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const showConfigActionBar =
     (activeTab === 'configuration' || activeTab === 'instructions') && (isDirty || saving)
   const sessionRuns = useMemo(
-    () => buildSessionRunItems(session, messages, taskRunsById, eventsByTaskRunId),
-    [eventsByTaskRunId, messages, session, taskRunsById],
+    () => buildSessionRunItems(session, messages, taskRunsById, eventsByTaskRunId, usageRecords),
+    [eventsByTaskRunId, messages, session, taskRunsById, usageRecords],
+  )
+  const mainAgentTaskRunIds = useMemo(
+    () => buildMainAgentTaskRunIds(session, messages, taskRunsById, mainAgentProfile?.profileId),
+    [mainAgentProfile?.profileId, messages, session, taskRunsById],
+  )
+  const mainAgentUsageSummary = useMemo(
+    () =>
+      buildUsageSummaryFromRecords(
+        filterUsageRecordsByTaskRunIds(usageRecords, mainAgentTaskRunIds),
+      ),
+    [mainAgentTaskRunIds, usageRecords],
+  )
+  const mainAgentUsageRecords = useMemo(
+    () => filterUsageRecordsByTaskRunIds(usageRecords, mainAgentTaskRunIds),
+    [mainAgentTaskRunIds, usageRecords],
+  )
+  const usageItems = useMemo(
+    () => buildAgentUsageSummaryItems(mainAgentUsageSummary, false, usageError),
+    [mainAgentUsageSummary, usageError],
+  )
+  const usageRows = useMemo(
+    () => buildAgentUsageRows(mainAgentUsageRecords),
+    [mainAgentUsageRecords],
   )
 
   useEffect(() => {
@@ -245,19 +301,43 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
       .then((profile) => {
         if (cancelled) return
         setMainAgentProfile(profile)
+        setCachedMainAgentProfile(sessionId, profile)
         const config = toJsonObject(profile.configSnapshot)
         const files = getInstructionFilesFromDocuments(config.documents)
-        setAgentName(getString(config, 'name') ?? 'CEO')
-        setCallName(getString(config, 'title') ?? 'CEO')
-        setCapabilities(getString(config, 'description') ?? '')
-        setSelectedSkillIds(normalizeMainAgentSkillIds(config.skills))
+        setAgentName(getString(uiMetadata, 'agentName') ?? getString(config, 'name') ?? 'CEO')
+        setCallName(getString(uiMetadata, 'callName') ?? getString(config, 'title') ?? 'CEO')
+        setCapabilities(
+          getString(uiMetadata, 'agentCapabilities') ?? getString(config, 'description') ?? '',
+        )
+        setSelectedSkillIds(normalizeMainAgentSkillIds(uiMetadata.agentSkills ?? config.skills))
         const entryDocumentKey = getString(config, 'entryDocumentKey') ?? 'AGENTS.md'
-        setInstructionsEntryFile(entryDocumentKey)
-        setInstructionsFiles(files)
-        setPersona(files[entryDocumentKey] ?? '')
-        setInstructionsMode('managed')
-        setInstructionsRootPath('')
-        setProfileImage(normalizeAgentProfileImage(getString(config, 'profileImage') ?? undefined))
+        const nextEntryFile = getString(uiMetadata, 'instructionsEntryFile') ?? entryDocumentKey
+        const nextFiles = {
+          ...files,
+          ...getInstructionsFiles(uiMetadata.instructionsFiles),
+        }
+        setInstructionsEntryFile(nextEntryFile)
+        setInstructionsFiles(nextFiles)
+        setPersona(
+          currentSettingsPrompt.trim() !== ''
+            ? currentSettingsPrompt
+            : (nextFiles[nextEntryFile] ?? ''),
+        )
+        setInstructionsMode(
+          getString(uiMetadata, 'instructionsMode') === 'external' ? 'external' : 'managed',
+        )
+        setInstructionsRootPath(getString(uiMetadata, 'instructionsRootPath') ?? '')
+        const profileModel = getString(config, 'model') ?? ''
+        setSelectedModel(profileModel)
+        setModelBaseline(profileModel)
+        setSelectedFamily(inferModelFamily(profileModel))
+        setProfileImage(
+          normalizeAgentProfileImage(
+            getString(uiMetadata, 'agentProfileImage') ??
+              getString(config, 'profileImage') ??
+              undefined,
+          ),
+        )
       })
       .catch(() => {
         if (!cancelled) setMainAgentProfile(null)
@@ -266,7 +346,30 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     return () => {
       cancelled = true
     }
-  }, [authenticatedReady, sessionId])
+  }, [authenticatedReady, currentSettingsPrompt, sessionId, uiMetadata])
+
+  useEffect(() => {
+    if (!authenticatedReady || commandClient === null || sessionId.startsWith('pending_session_')) {
+      return
+    }
+
+    let active = true
+    void getCommandUsage({ sessionId })
+      .then((result) => {
+        if (!active) return
+        setUsageError(null)
+        setUsageRecords(result.records)
+        setCachedUsageRecords(sessionId, result.records)
+      })
+      .catch(() => {
+        if (!active) return
+        setUsageError('사용량을 불러오지 못했습니다.')
+      })
+
+    return () => {
+      active = false
+    }
+  }, [authenticatedReady, commandClient, sessionId])
 
   useEffect(() => {
     if (!authenticatedReady || commandClient === null) {
@@ -301,7 +404,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   }, [authenticatedReady, commandClient, currentModel, fetchModelOptions, sessionId])
 
   useEffect(() => {
-    if (!isDirty) return
+    if (!showConfigActionBar) return
 
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault()
@@ -310,7 +413,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
 
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [isDirty])
+  }, [showConfigActionBar])
 
   const markDirty = () => {
     setSaved(false)
@@ -370,7 +473,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     if (mainAgentProfile === null && nextPersona !== currentPersona) {
       settingsPatch.systemPrompt = nextPersona
     }
-    if (selectedModel !== '' && selectedModel !== modelBaseline) {
+    if (mainAgentProfile === null && selectedModel !== '' && selectedModel !== modelBaseline) {
       settingsPatch.model = selectedModel
     }
     if (canDelegate !== currentCanDelegate) {
@@ -388,22 +491,27 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
       if (Object.keys(settingsPatch).length > 0) {
         await updateSessionSettings({ sessionId, settingsPatch })
       }
-      if (
-        mainAgentProfile !== null &&
-        (persona.trim() !== currentPersona ||
-          !shallowStringRecordEqual(instructionsFiles, currentInstructionsFiles))
-      ) {
+      if (mainAgentProfile !== null) {
         const documentKey = instructionsEntryFile.trim() || 'AGENTS.md'
-        await saveAgentInstructionDocument(mainAgentProfile.profileId, {
-          documentKey,
-          displayName: instructionDisplayName(documentKey),
-          content:
-            documentKey === instructionsEntryFile.trim()
-              ? persona.trim()
-              : (instructionsFiles[documentKey] ?? ''),
+        const nextInstructionsFiles = {
+          ...instructionsFiles,
+          [documentKey]: persona.trim(),
+        }
+        const profile = await updateSessionAgent(sessionId, mainAgentProfile.profileId, {
+          name: agentName.trim() || 'CEO',
+          role: 'ceo',
+          title: callName.trim() || 'CEO',
+          description: capabilities.trim(),
+          adapterType: 'openai',
+          model: selectedModel,
+          profileImage,
+          skills: selectedSkillIds,
+          entryDocumentKey: documentKey,
+          instructionsFiles: nextInstructionsFiles,
         })
+        setMainAgentProfile(profile)
       }
-      if (settingsPatch.model !== undefined) {
+      if (settingsPatch.model !== undefined || mainAgentProfile !== null) {
         setModelBaseline(selectedModel)
       }
       setAgentName(agentName.trim())
@@ -445,42 +553,48 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
 
         {activeTab === 'dashboard' && (
           <AgentDashboardPanel
-            costs={[
-              { label: '입력 토큰', value: '0' },
-              { label: '출력 토큰', value: '0' },
-              { label: '캐시 토큰', value: '0' },
-              { label: '총 비용', value: '$0.00' },
-            ]}
+            costs={usageItems}
             latestRun={sessionRuns[0] ?? null}
             metrics={[
               {
                 icon: Activity,
-                label: '실행 현황',
-                value: formatSessionRunStatus(session.last_task_run_status),
+                label: '실행 활동',
+                value: `${sessionRuns.length}회`,
                 description: '최근 14일',
+                chart: <AgentRunActivityChart runs={sessionRuns} />,
               },
               {
                 icon: FileText,
                 label: '담당 작업',
-                value: '0',
+                value: `${mainAgentTaskRunIds.length}개`,
                 description: '최근 14일',
+                chart: <AgentRunStatusChart runs={sessionRuns} />,
               },
               {
                 icon: BarChart3,
-                label: '상태별 작업',
-                value: '0',
+                label: '토큰 사용',
+                value: mainAgentUsageSummary.totalTokens.toLocaleString('ko-KR'),
                 description: '최근 14일',
+                chart: <AgentUsageActivityChart records={mainAgentUsageRecords} />,
               },
               {
                 icon: Play,
-                label: '완료 횟수',
-                value: session.last_message_at ? '1+' : '0',
+                label: '성공률',
+                value: getRunSuccessRateLabel(sessionRuns),
                 description: '최근 14일',
+                chart: <AgentRunSuccessRateChart runs={sessionRuns} />,
               },
             ]}
             recentTitle="최근 작업"
             recentEmptyText="최근 작업이 없습니다."
-            recentItems={[]}
+            recentItems={sessionRuns.map((run) => ({
+              label: run.summary ?? run.id,
+              onSelect: () => selectTab('runs'),
+              value: `${formatSessionRunStatus(run.status)}${run.createdAt ? ` · ${run.createdAt}` : ''}`,
+            }))}
+            onLatestRunOpen={() => selectTab('runs')}
+            onRecentOpen={() => selectTab('runs')}
+            usageRows={usageRows}
           />
         )}
 
@@ -639,28 +753,12 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
           <AgentRunsPanel emptyText="아직 실행 기록이 없습니다." items={sessionRuns} />
         )}
 
-        {activeTab === 'budget' && (
-          <AgentBudgetPanel
-            summary={{
-              amountLabel: '사용 안 함',
-              observedLabel: '$0.00',
-              remainingLabel: '제한 없음',
-              scopeName: displayName,
-              scopeType: '에이전트',
-              status: 'healthy',
-              utilizationPercent: 0,
-              warnPercent: 80,
-              windowLabel: '월간 예산',
-            }}
-          />
-        )}
-
         {saveError && (
           <p className="text-destructive text-sm" aria-live="polite">
             {saveError}
           </p>
         )}
-        {(isDirty || saving) && (
+        {showConfigActionBar && (
           <div className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-sm sm:hidden">
             <div className="flex items-center justify-end gap-2 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
               <Button variant="ghost" size="sm" onClick={resetDraft} disabled={saving}>
@@ -672,7 +770,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
             </div>
           </div>
         )}
-        {(isDirty || saving) && (
+        {showConfigActionBar && (
           <div className="fixed right-6 bottom-6 z-30 hidden sm:block">
             <div className="bg-background/90 border-border flex items-center gap-2 rounded-lg border px-3 py-1.5 shadow-lg backdrop-blur-sm">
               <Button variant="ghost" size="sm" onClick={resetDraft} disabled={saving}>
@@ -694,8 +792,10 @@ function buildSessionRunItems(
   messages: ChatMessageView[],
   taskRunsById: Record<string, RawTaskRun>,
   eventsByTaskRunId: Record<string, RawTaskEventPayload[]>,
+  usageRecords: CommandUsageRecord[],
 ): AgentRunItemData[] {
   const ids = new Set<string>()
+  const usageByTaskRunId = buildAgentRunUsageMap(usageRecords)
 
   messages.forEach((message) => {
     if (message.taskRunId !== undefined) {
@@ -718,7 +818,7 @@ function buildSessionRunItems(
       buildSessionRunItem(taskRunId, session, messages, taskRunsById[taskRunId], eventsByTaskRunId),
     )
     .sort((first, second) => second.sortTime - first.sortTime)
-    .map(toAgentRunItem)
+    .map((item) => toAgentRunItem(item, usageByTaskRunId))
 
   if (runItems.length > 0 || (!session.last_message && !session.last_task_run_status)) {
     return runItems
@@ -731,11 +831,58 @@ function buildSessionRunItems(
       source: 'chat',
       createdAt: formatRunTimestamp(getTime(session.last_message_at)),
       summary: session.last_message || '아직 요약이 없습니다.',
-      tokens: '0 tok',
-      cost: '$0.00',
+      tokens: '-',
+      cost: '-',
       adapter: 'openai',
+      sortTime: getTime(session.last_message_at),
     },
   ]
+}
+
+function buildMainAgentTaskRunIds(
+  session: RawAiSession,
+  messages: ChatMessageView[],
+  taskRunsById: Record<string, RawTaskRun>,
+  mainProfileId?: string,
+) {
+  const ids = new Set<string>()
+  for (const taskRun of Object.values(taskRunsById)) {
+    if (
+      taskRun.session_id === session.session_id &&
+      taskRunMatchesMainAgent(taskRun, mainProfileId)
+    ) {
+      ids.add(taskRun.task_run_id)
+    }
+  }
+  for (const message of messages) {
+    if (!message.taskRunId) continue
+    const taskRun = taskRunsById[message.taskRunId]
+    if (taskRun === undefined || taskRunMatchesMainAgent(taskRun, mainProfileId)) {
+      ids.add(message.taskRunId)
+    }
+  }
+  if (ids.size === 0 && typeof session.active_task_run_id === 'string') {
+    ids.add(session.active_task_run_id)
+  }
+  return [...ids]
+}
+
+function taskRunMatchesMainAgent(taskRun: RawTaskRun, mainProfileId?: string) {
+  const context = taskRun.displayContext
+  if (mainProfileId) {
+    if (matchesMainAgentRef(context?.assigneeAgent, mainProfileId)) return true
+    if (matchesMainAgentRef(context?.actorAgent, mainProfileId)) return true
+    if (taskRun.agent_profile_id === mainProfileId) return true
+  }
+  const agentType = String(
+    context?.assigneeAgent?.kind ?? context?.actorAgent?.kind ?? '',
+  ).toLowerCase()
+  if (agentType === 'main') return true
+  return context === undefined || context === null
+}
+
+function matchesMainAgentRef(agent: TaskRunAgentRef | undefined, mainProfileId: string) {
+  return agent?.profileId === mainProfileId || agent?.id === mainProfileId || agent?.kind === 'main'
 }
 
 function buildSessionRunItem(
@@ -766,26 +913,50 @@ function buildSessionRunItem(
       getCompactRunSummary(answer) ??
       getCompactRunSummary(summary.title) ??
       '아직 요약이 없습니다.',
-    tokens: '0 tok',
-    cost: '$0.00',
+    tokens: '-',
+    cost: '-',
     adapter: 'openai',
     model: getString(toJsonObject(session.settings), 'model') ?? undefined,
     sortTime,
   }
 }
 
-function toAgentRunItem(item: AgentRunItemData & { sortTime: number }): AgentRunItemData {
+function toAgentRunItem(
+  item: AgentRunItemData & { sortTime: number },
+  usageByTaskRunId: Map<string, AgentRunUsageSummary>,
+): AgentRunItemData {
+  const usage = usageByTaskRunId.get(item.id)
   return {
     id: item.id,
     status: item.status,
     source: item.source,
     createdAt: item.createdAt,
     summary: item.summary,
-    tokens: item.tokens,
-    cost: item.cost,
+    tokens: formatAgentRunTokenUsage(usage),
+    cost: formatAgentRunCostUsage(usage),
     adapter: item.adapter,
     model: item.model,
+    sortTime: item.sortTime,
   }
+}
+
+function getRunSuccessRateLabel(runs: AgentRunItemData[]) {
+  const finished = runs.filter(
+    (run) => isRunSuccessStatus(run.status) || isRunFailureStatus(run.status),
+  )
+  if (finished.length === 0) return '0%'
+  const succeeded = finished.filter((run) => isRunSuccessStatus(run.status)).length
+  return `${Math.round((succeeded / finished.length) * 100)}%`
+}
+
+function isRunSuccessStatus(status?: string | null) {
+  return status === 'succeeded' || status === 'completed'
+}
+
+function isRunFailureStatus(status?: string | null) {
+  return (
+    status === 'failed' || status === 'blocked' || status === 'cancelled' || status === 'canceled'
+  )
 }
 
 function getRunSortTime(
@@ -889,14 +1060,6 @@ function getInstructionFilesFromDocuments(value: unknown): Record<string, string
   )
 }
 
-function instructionDisplayName(documentKey: string) {
-  if (documentKey === 'AGENTS.md') return '기본 지침'
-  if (documentKey === 'HEARTBEAT.md') return '작업 루프 지침'
-  if (documentKey === 'SOUL.md') return '역할 성향 지침'
-  if (documentKey === 'TOOLS.md') return '도구 사용 지침'
-  return documentKey
-}
-
 function shallowStringRecordEqual(left: Record<string, string>, right: Record<string, string>) {
   const leftEntries = Object.entries(left)
   const rightEntries = Object.entries(right)
@@ -904,7 +1067,7 @@ function shallowStringRecordEqual(left: Record<string, string>, right: Record<st
   return leftEntries.every(([key, value]) => right[key] === value)
 }
 
-type MainAgentTab = 'dashboard' | 'instructions' | 'skills' | 'configuration' | 'runs' | 'budget'
+type MainAgentTab = 'dashboard' | 'instructions' | 'skills' | 'configuration' | 'runs'
 
 const MAIN_AGENT_TABS: Array<{ value: MainAgentTab; label: string }> = [
   { value: 'dashboard', label: '대시보드' },
@@ -912,7 +1075,6 @@ const MAIN_AGENT_TABS: Array<{ value: MainAgentTab; label: string }> = [
   { value: 'skills', label: '스킬' },
   { value: 'configuration', label: '설정' },
   { value: 'runs', label: '실행 기록' },
-  { value: 'budget', label: '예산' },
 ]
 
 const inputClass =

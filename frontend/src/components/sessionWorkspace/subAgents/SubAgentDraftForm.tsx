@@ -17,9 +17,7 @@ import {
   inferModelFamily,
   type ModelFamily,
 } from '../sessionWorkspaceUtils'
-import { AdapterSection } from './SubAgentConfigSections'
 import {
-  getDefaultCommand,
   getDefaultModel,
   normalizeSubAgentAdapterType,
   type SubAgentAdapterType,
@@ -57,20 +55,16 @@ export function SubAgentDraftForm({
   const [titleDraft, setTitleDraft] = useState(initialAgent?.title ?? initialAgent?.role ?? '')
   const [roleDraft, setRoleDraft] = useState(initialAgent?.role ?? 'general')
   const [descriptionDraft, setDescriptionDraft] = useState(initialAgent?.description ?? '')
-  const [adapterType, setAdapterType] = useState<SubAgentAdapterType>(
+  const [adapterType] = useState<SubAgentAdapterType>(
     normalizeSubAgentAdapterType(initialAgent?.adapterType ?? initialAdapterType),
   )
-  const [commandDraft, setCommandDraft] = useState(
-    initialAgent?.command ?? getDefaultCommand(adapterType),
-  )
-  const [modelDraft, setModelDraft] = useState(initialAgent?.model ?? getDefaultModel(adapterType))
+  const [commandDraft] = useState(initialAgent?.command ?? '')
+  const [modelDraft, setModelDraft] = useState(initialAgent?.model ?? getDefaultModel())
   const [extraArgsDraft] = useState(initialAgent?.extraArgs ?? '')
   const [selectedFamily, setSelectedFamily] = useState<ModelFamily>(inferModelFamily(modelDraft))
   const [modelOptionsLoading, setModelOptionsLoading] = useState(false)
   const [modelOptionsError, setModelOptionsError] = useState<string | null>(null)
   const [modelOptions, setModelOptions] = useState(getModelOptions(undefined))
-  const heartbeatEnabled = initialAgent?.heartbeatEnabled ?? false
-  const [intervalSec] = useState(initialAgent?.intervalSec ?? 300)
   const [spriteId, setSpriteId] = useState<SubAgentSpriteId>(
     normalizeSubAgentSpriteId(initialAgent?.spriteId),
   )
@@ -145,8 +139,6 @@ export function SubAgentDraftForm({
       command: commandDraft.trim(),
       model: modelDraft.trim(),
       extraArgs: extraArgsDraft.trim(),
-      heartbeatEnabled,
-      intervalSec,
       profileImage,
       spriteId,
       reportsToAgentId: initialAgent?.reportsToAgentId ?? 'main',
@@ -247,17 +239,6 @@ export function SubAgentDraftForm({
         </div>
 
         <div className="space-y-4">
-          <AdapterSection
-            adapterType={adapterType}
-            onAdapterTypeChange={(nextAdapterType) => {
-              setAdapterType(nextAdapterType)
-              setCommandDraft(getDefaultCommand(nextAdapterType))
-              const nextModel = getDefaultModel(nextAdapterType)
-              setModelDraft(nextModel)
-              setSelectedFamily(inferModelFamily(nextModel))
-            }}
-          />
-
           <AgentSectionCard title="모델">
             <Field label="모델">
               {authenticatedReady && modelOptionsLoading && (
@@ -276,7 +257,7 @@ export function SubAgentDraftForm({
                     setSelectedFamily(inferModelFamily(modelId))
                   }}
                   allowDefault
-                  placeholder={getDefaultModel(adapterType)}
+                  placeholder={getDefaultModel()}
                 />
               )}
             </Field>
