@@ -60,6 +60,7 @@ class TaskEngine:
         session_store: TranscriptStore | None = None,
         work_repository=None,
         agent_repository=None,
+        skill_repository=None,
         settings=None,
     ) -> None:
         self.repository = repository
@@ -71,6 +72,7 @@ class TaskEngine:
         self.session_store = session_store
         self.work_repository = work_repository
         self.agent_repository = agent_repository
+        self.skill_repository = skill_repository
         self.settings = settings
         self.approval_runtime = ApprovalRuntime()
         self.delegate_runtime = DelegateRuntime(child_session_launcher, session_store=session_store)
@@ -1139,6 +1141,7 @@ class TaskEngine:
             "templateKey": profile.get("template_key"),
             "configSnapshot": profile.get("config_snapshot") or {},
         }
+        self._attach_session_agent_skill_names(payload, profile=profile, profile_id=profile_id, owner_key=str(work.owner_key))
         bundle = self.agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
         if bundle is not None:
             payload["targetAgentInstructions"] = {
@@ -1154,6 +1157,26 @@ class TaskEngine:
                     if isinstance(document, dict)
                 ],
             }
+
+    def _attach_session_agent_skill_names(
+        self,
+        payload: dict,
+        *,
+        profile: dict,
+        profile_id: str,
+        owner_key: str,
+    ) -> None:
+        config = profile.get("config_snapshot") if isinstance(profile.get("config_snapshot"), dict) else {}
+        requested_skill_names = [str(skill) for skill in list(config.get("skills") or [])]
+        if self.skill_repository is not None:
+            payload["enabledSkillNames"] = self.skill_repository.effective_skill_names(
+                owner_key=owner_key,
+                profile_id=profile_id or None,
+                requested_skill_names=requested_skill_names,
+                explicit_agent_selection=config.get("skillSelectionMode") == "explicit",
+            )
+            return
+        payload["enabledSkillNames"] = [skill.strip() for skill in requested_skill_names if skill.strip()]
 
     @staticmethod
     def _profile_model(profile: dict) -> str | None:

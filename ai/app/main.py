@@ -168,6 +168,7 @@ async def lifespan(app: FastAPI):
         session_store=session_store,
         work_repository=work_repository,
         agent_repository=agent_repository,
+        skill_repository=skill_repository,
         settings=settings,
     )
     loop_runner = AgentLoopRunner(

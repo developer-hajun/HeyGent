@@ -19,7 +19,7 @@ class BuiltinAgentTemplate:
 
 
 MAIN_AGENT_TEMPLATE_KEY = "ceo"
-DEFAULT_SESSION_TEMPLATE_KEYS = ("default", "k_services", "coder", "qa", "ux_designer", "security_engineer")
+DEFAULT_SESSION_TEMPLATE_KEYS = ("coder", "qa", "ux_designer", "k_services")
 LEGACY_AGENT_SKILL_IDS = frozenset(("notion", "code", "browser"))
 K_SERVICE_SKILL_IDS = (
     "korea-weather",

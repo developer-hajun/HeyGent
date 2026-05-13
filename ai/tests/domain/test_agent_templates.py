@@ -14,6 +14,7 @@ from app.domain.agents.templates import (
     MAIN_AGENT_TEMPLATE,
 )
 from app.contracts.agents import CreateSessionAgentRequest
+from tests.fakes import InMemoryAgentRepository
 
 
 def test_main_agent_template_does_not_include_heartbeat_document():
@@ -43,6 +44,17 @@ def test_k_service_template_includes_korean_life_skills():
     assert template.display_name == "K-에이전트"
     assert set(K_SERVICE_SKILL_IDS).issubset(set(template.skills))
     assert "subway-lost-property" in template.skills
+
+
+def test_visible_builtin_templates_are_routing_focused_agents():
+    repository = InMemoryAgentRepository()
+
+    assert [item["template_key"] for item in repository.list_templates()] == [
+        "coder",
+        "qa",
+        "ux_designer",
+        "k_services",
+    ]
 
 
 def test_instruction_bundle_response_omits_removed_run_loop_document():
