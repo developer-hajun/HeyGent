@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type {
   AgentActivityStatus,
+  AgentConfig,
   AgentRuntime,
   AgentVisualizationInfo,
   TaskStatus,
@@ -15,11 +16,23 @@ interface AgentVisualizationState {
   // 페이지 이동 후 재진입 시 에이전트 위치/상태 유지용 런타임 상태
   agentRuntimes: AgentRuntime[]
   spawnedKeys: string[]
+  // 현재 시각화 중인 세션 ID — 같은 세션 재진입 시 상태 보존 판단에 사용
+  activeSessionId: string | null
   setAgentInfoMap: (map: Record<string, AgentVisualizationInfo>) => void
   updateAgentInfo: (agentId: string, updates: Partial<AgentVisualizationInfo>) => void
   selectAgent: (agentId: string | null) => void
   setAgentRuntimes: (updater: AgentRuntime[] | ((prev: AgentRuntime[]) => AgentRuntime[])) => void
   addSpawnedKey: (id: string) => void
+  // 세션 전환 시 호출 — 이전 세션 에이전트 잔상 제거 (같은 세션 재진입이면 상태 유지)
+  clearVisualizationState: (newSessionId?: string | null) => void
+  startCeoWork: (taskRunId?: string, sessionId?: string | null) => void
+  startSessionWork: (input: {
+    taskRunId?: string
+    sessionId?: string | null
+    subAgentSpriteIds?: string[]
+  }) => void
+  settleCeoAtDesk: (taskRunId?: string) => void
+  activeCeoTaskRunId: string | null
 }
 
 // mock 데이터 — 백엔드 API 연동 전 임시. spriteId(agentId)는 AGENT_CONFIGS의 id와 일치해야 함.
@@ -370,11 +383,268 @@ export function createMockAgentInfoMap(): Record<string, AgentVisualizationInfo>
   return Object.fromEntries(MOCK_AGENTS.map((info) => [info.agentId, info]))
 }
 
+const CEO_CONFIG: AgentConfig = {
+  id: 'ceo',
+  name: 'CEO',
+  spritePath: '/assets/agents/ceo',
+  scale: 1.05,
+  stateScales: { walking: 0.85, standing_wait: 0.85, sitting_work: 0.7 },
+  sittingSprites: {
+    sitting_desk: 'ceo_desk',
+    sitting_meeting: 'ceo_explain',
+    sitting_work: 'ceo_work',
+    standing_wait: 'walk_side_stand',
+  },
+  allowedUIDestinations: ['desk', 'meeting', 'work'],
+  destinationLabels: { meeting: '화이트보드', work: '작업' },
+  initialPosition: { x: 1460, y: 700 },
+  destinations: {
+    desk: { x: 310, y: 215 },
+    meeting: { x: 383, y: 493 },
+    work: { x: 275, y: 195 },
+    sofa: { x: 310, y: 215 },
+    floorLean: { x: 310, y: 215 },
+    calling: { x: 310, y: 215 },
+  },
+}
+
+const SESSION_SUB_AGENT_CONFIGS: Record<string, AgentConfig> = {
+  agent01: {
+    id: 'agent01',
+    name: 'Agent 01',
+    spritePath: '/assets/agents/agent01',
+    stateScales: { sitting_meeting: 0.85, sitting_calling: 0.85, sitting_floor_lean: 0.85 },
+    initialPosition: { x: 1460, y: 700 },
+    destinations: {
+      desk: { x: 470, y: 395 },
+      sofa: { x: 1185, y: 205 },
+      floorLean: { x: 1545, y: 285 },
+      meeting: { x: 415, y: 130 },
+      calling: { x: 1110, y: 660 },
+    },
+  },
+  agent02: {
+    id: 'agent02',
+    name: 'Agent 02',
+    spritePath: '/assets/agents/agent02',
+    stateScales: { sitting_meeting: 0.85, sitting_floor_lean: 0.85, sitting_calling: 0.85 },
+    initialPosition: { x: 1460, y: 700 },
+    destinations: {
+      desk: { x: 650, y: 458 },
+      sofa: { x: 1185, y: 205 },
+      floorLean: { x: 1070, y: 285 },
+      meeting: { x: 925, y: 90 },
+      calling: { x: 840, y: 350 },
+    },
+  },
+  agent03: {
+    id: 'agent03',
+    name: 'Agent 03',
+    spritePath: '/assets/agents/agent03',
+    scale: 0.85,
+    initialPosition: { x: 1460, y: 700 },
+    destinations: {
+      desk: { x: 470, y: 395 },
+      sofa: { x: 1185, y: 205 },
+      floorLean: { x: 1215, y: 370 },
+      meeting: { x: 715, y: 215 },
+      calling: { x: 990, y: 750 },
+    },
+  },
+  agent04: {
+    id: 'agent04',
+    name: 'Agent 04',
+    spritePath: '/assets/agents/agent04',
+    scale: 0.87,
+    stateScales: { sitting_desk: 1.1, sitting_floor_lean: 0.85 },
+    initialPosition: { x: 1460, y: 700 },
+    destinations: {
+      desk: { x: 465, y: 595 },
+      sofa: { x: 1185, y: 205 },
+      floorLean: { x: 1415, y: 360 },
+      meeting: { x: 920, y: 220 },
+      calling: { x: 1110, y: 655 },
+    },
+  },
+  agent05: {
+    id: 'agent05',
+    name: 'Agent 05',
+    spritePath: '/assets/agents/agent05',
+    stateScales: {
+      sitting_desk: 0.92,
+      sitting_meeting: 0.85,
+      sitting_floor_lean: 0.8,
+      sitting_calling: 0.9,
+    },
+    initialPosition: { x: 1460, y: 700 },
+    destinations: {
+      desk: { x: 825, y: 520 },
+      sofa: { x: 1185, y: 205 },
+      floorLean: { x: 1535, y: 425 },
+      meeting: { x: 415, y: 130 },
+      calling: { x: 1334, y: 665 },
+    },
+  },
+  agent06: {
+    id: 'agent06',
+    name: 'Agent 06',
+    spritePath: '/assets/agents/agent06',
+    stateScales: {
+      sitting_floor_lean: 0.85,
+      sitting_meeting: 0.85,
+      sitting_calling: 0.85,
+      sitting_sofa: 0.85,
+    },
+    initialPosition: { x: 1460, y: 700 },
+    destinations: {
+      desk: { x: 825, y: 520 },
+      sofa: { x: 1185, y: 205 },
+      floorLean: { x: 1290, y: 260 },
+      meeting: { x: 925, y: 90 },
+      calling: { x: 1070, y: 658 },
+    },
+  },
+  agent07: {
+    id: 'agent07',
+    name: 'Agent 07',
+    spritePath: '/assets/agents/agent07',
+    stateScales: {
+      sitting_meeting: 0.8,
+      sitting_sofa: 0.85,
+      sitting_floor_lean: 0.85,
+      sitting_calling: 0.85,
+    },
+    initialPosition: { x: 1460, y: 700 },
+    destinations: {
+      desk: { x: 465, y: 595 },
+      sofa: { x: 1185, y: 205 },
+      floorLean: { x: 1340, y: 280 },
+      meeting: { x: 850, y: 75 },
+      calling: { x: 1430, y: 840 },
+    },
+  },
+  agent08: {
+    id: 'agent08',
+    name: 'Agent 08',
+    spritePath: '/assets/agents/agent08',
+    scale: 0.85,
+    stateScales: { sitting_sofa: 1.1, sitting_desk: 0.95, sitting_calling: 1.1 },
+    initialPosition: { x: 1460, y: 700 },
+    destinations: {
+      desk: { x: 650, y: 458 },
+      sofa: { x: 1185, y: 205 },
+      floorLean: { x: 995, y: 340 },
+      meeting: { x: 670, y: 105 },
+      calling: { x: 240, y: 710 },
+    },
+  },
+  agent09: {
+    id: 'agent09',
+    name: 'Agent 09',
+    spritePath: '/assets/agents/agent09',
+    scale: 0.85,
+    stateScales: { sitting_desk: 1.1 },
+    initialPosition: { x: 1460, y: 700 },
+    destinations: {
+      desk: { x: 650, y: 685 },
+      sofa: { x: 1185, y: 205 },
+      floorLean: { x: 1380, y: 490 },
+      meeting: { x: 785, y: 245 },
+      calling: { x: 1200, y: 658 },
+    },
+  },
+  agent10: {
+    id: 'agent10',
+    name: 'Agent 10',
+    spritePath: '/assets/agents/agent10',
+    scale: 0.85,
+    initialPosition: { x: 1460, y: 700 },
+    destinations: {
+      desk: { x: 650, y: 685 },
+      sofa: { x: 1185, y: 205 },
+      floorLean: { x: 1310, y: 460 },
+      meeting: { x: 920, y: 220 },
+      calling: { x: 1250, y: 660 },
+    },
+  },
+}
+
+const SESSION_SOFA_SPOTS = [
+  { x: 1185, y: 205 },
+  { x: 1140, y: 230 },
+]
+const SESSION_SPOT_OCCUPIED_RADIUS = 40
+
+function isRestSpotOccupied(
+  spot: { x: number; y: number },
+  agents: AgentRuntime[],
+  excludeId: string,
+) {
+  return agents.some(
+    (agent) =>
+      agent.config.id !== excludeId &&
+      agent.state !== 'idle' &&
+      Math.hypot(agent.position.x - spot.x, agent.position.y - spot.y) <
+        SESSION_SPOT_OCCUPIED_RADIUS,
+  )
+}
+
+function buildRestingSubAgentRuntime(
+  spriteId: string,
+  agents: AgentRuntime[],
+): AgentRuntime | null {
+  const config = SESSION_SUB_AGENT_CONFIGS[spriteId]
+  if (!config) return null
+
+  const freeSofa = SESSION_SOFA_SPOTS.find((spot) => !isRestSpotOccupied(spot, agents, spriteId))
+  const position = freeSofa ?? config.destinations.floorLean ?? config.initialPosition
+  const state = freeSofa ? 'sitting_sofa' : 'sitting_floor_lean'
+
+  return {
+    config,
+    position: { ...position },
+    state,
+    targetState: state,
+    walkFrame: 0,
+    transitionDuration: 0,
+    pendingWaypoints: [],
+    targetPosition: null,
+    standWaitTarget: null,
+    facingRight: false,
+  }
+}
+
+function playAgentChime() {
+  try {
+    const ctx = new AudioContext()
+    const play = () => {
+      ;[1318.51, 1567.98].forEach((freq, i) => {
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+        osc.type = 'sine'
+        osc.frequency.value = freq
+        const t = ctx.currentTime + i * 0.12
+        gain.gain.setValueAtTime(0.18, t)
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45)
+        osc.start(t)
+        osc.stop(t + 0.45)
+      })
+    }
+    void ctx.resume().then(play)
+  } catch {
+    // AudioContext 미지원 환경에서는 소리 없이 상태만 갱신한다.
+  }
+}
+
 export const useAgentVisualizationStore = create<AgentVisualizationState>((set) => ({
   agentInfoMap: {},
   selectedAgentId: null,
   agentRuntimes: [],
   spawnedKeys: [],
+  activeSessionId: null,
+  activeCeoTaskRunId: null,
 
   setAgentInfoMap: (map) => set({ agentInfoMap: map }),
 
@@ -403,4 +673,221 @@ export const useAgentVisualizationStore = create<AgentVisualizationState>((set) 
     set((state) => ({
       spawnedKeys: state.spawnedKeys.includes(id) ? state.spawnedKeys : [...state.spawnedKeys, id],
     })),
+
+  clearVisualizationState: (newSessionId) =>
+    set((state) => {
+      if (newSessionId !== undefined && newSessionId === state.activeSessionId) return state
+      return {
+        agentRuntimes: [],
+        spawnedKeys: [],
+        activeCeoTaskRunId: null,
+        selectedAgentId: null,
+        activeSessionId: newSessionId ?? null,
+      }
+    }),
+
+  startCeoWork: (taskRunId, sessionId) =>
+    set((state) => {
+      if (taskRunId !== undefined && state.activeCeoTaskRunId === taskRunId) {
+        return {
+          agentRuntimes: state.agentRuntimes,
+          activeSessionId: sessionId ?? state.activeSessionId,
+        }
+      }
+
+      const workPosition = CEO_CONFIG.destinations.work!
+      const existingCeo = state.agentRuntimes.find((agent) => agent.config.id === 'ceo')
+      if (existingCeo?.state !== 'sitting_work') {
+        playAgentChime()
+      }
+      const nextCeo: AgentRuntime = {
+        ...(existingCeo ?? {
+          config: CEO_CONFIG,
+          facingRight: false,
+        }),
+        config: existingCeo?.config ?? CEO_CONFIG,
+        position: { ...workPosition },
+        state: 'sitting_work',
+        targetState: 'sitting_work',
+        walkFrame: 0,
+        transitionDuration: 0,
+        pendingWaypoints: [],
+        targetPosition: null,
+        standWaitTarget: null,
+        facingRight: existingCeo?.facingRight ?? false,
+      }
+
+      return {
+        activeSessionId: sessionId ?? state.activeSessionId,
+        activeCeoTaskRunId: taskRunId ?? state.activeCeoTaskRunId,
+        spawnedKeys: state.spawnedKeys.includes('ceo')
+          ? state.spawnedKeys
+          : [...state.spawnedKeys, 'ceo'],
+        agentInfoMap: {
+          ...state.agentInfoMap,
+          ceo: {
+            ...(state.agentInfoMap.ceo ?? {
+              agentId: 'ceo',
+              name: 'CEO',
+              role: '',
+              skills: [],
+              taskHistory: [],
+            }),
+            activityStatus: 'working',
+            currentTask: {
+              taskId: taskRunId ?? 'ceo-active-task',
+              title: '작업 진행 중',
+              description: '',
+              status: 'in_progress',
+              startedAt: new Date().toISOString(),
+            },
+          },
+        },
+        agentRuntimes:
+          existingCeo === undefined
+            ? [...state.agentRuntimes, nextCeo]
+            : state.agentRuntimes.map((agent) => (agent.config.id === 'ceo' ? nextCeo : agent)),
+      }
+    }),
+
+  startSessionWork: ({ taskRunId, sessionId, subAgentSpriteIds = [] }) =>
+    set((state) => {
+      const shouldResetSession =
+        sessionId !== undefined && sessionId !== null && state.activeSessionId !== sessionId
+      const baseAgents = shouldResetSession ? [] : state.agentRuntimes
+      const baseSpawnedKeys = shouldResetSession ? [] : state.spawnedKeys
+      const existingCeo = baseAgents.find((agent) => agent.config.id === 'ceo')
+      const workPosition = CEO_CONFIG.destinations.work!
+
+      if (existingCeo?.state !== 'sitting_work') {
+        playAgentChime()
+      }
+
+      const nextCeo: AgentRuntime = {
+        ...(existingCeo ?? {
+          config: CEO_CONFIG,
+          facingRight: false,
+        }),
+        config: existingCeo?.config ?? CEO_CONFIG,
+        position: { ...workPosition },
+        state: 'sitting_work',
+        targetState: 'sitting_work',
+        walkFrame: 0,
+        transitionDuration: 0,
+        pendingWaypoints: [],
+        targetPosition: null,
+        standWaitTarget: null,
+        facingRight: existingCeo?.facingRight ?? false,
+      }
+
+      let nextAgents =
+        existingCeo === undefined
+          ? [...baseAgents, nextCeo]
+          : baseAgents.map((agent) => (agent.config.id === 'ceo' ? nextCeo : agent))
+      const nextSpawnedKeys = new Set(baseSpawnedKeys)
+      nextSpawnedKeys.add('ceo')
+
+      for (const spriteId of subAgentSpriteIds) {
+        if (
+          nextSpawnedKeys.has(spriteId) ||
+          nextAgents.some((agent) => agent.config.id === spriteId)
+        ) {
+          continue
+        }
+        const runtime = buildRestingSubAgentRuntime(spriteId, nextAgents)
+        if (runtime === null) continue
+        nextAgents = [...nextAgents, runtime]
+        nextSpawnedKeys.add(spriteId)
+      }
+
+      return {
+        activeSessionId: sessionId ?? state.activeSessionId,
+        activeCeoTaskRunId: taskRunId ?? state.activeCeoTaskRunId,
+        spawnedKeys: [...nextSpawnedKeys],
+        agentInfoMap: {
+          ...state.agentInfoMap,
+          ceo: {
+            ...(state.agentInfoMap.ceo ?? {
+              agentId: 'ceo',
+              name: 'CEO',
+              role: '',
+              skills: [],
+              taskHistory: [],
+            }),
+            activityStatus: 'working',
+            currentTask: {
+              taskId: taskRunId ?? 'ceo-active-task',
+              title: '작업 진행 중',
+              description: '',
+              status: 'in_progress',
+              startedAt: new Date().toISOString(),
+            },
+          },
+        },
+        agentRuntimes: nextAgents,
+      }
+    }),
+
+  settleCeoAtDesk: (taskRunId) =>
+    set((state) => {
+      const ceo = state.agentRuntimes.find((agent) => agent.config.id === 'ceo')
+      const deskPosition = ceo?.config.destinations.desk
+      const alreadyAtDesk =
+        ceo !== undefined &&
+        deskPosition !== undefined &&
+        ceo.state === 'sitting_desk' &&
+        Math.abs(ceo.position.x - deskPosition.x) < 1 &&
+        Math.abs(ceo.position.y - deskPosition.y) < 1
+
+      if (ceo !== undefined && !alreadyAtDesk) {
+        playAgentChime()
+      }
+
+      return {
+        activeCeoTaskRunId:
+          taskRunId !== undefined &&
+          state.activeCeoTaskRunId !== null &&
+          state.activeCeoTaskRunId !== taskRunId
+            ? state.activeCeoTaskRunId
+            : null,
+        agentInfoMap: {
+          ...state.agentInfoMap,
+          ceo: {
+            ...(state.agentInfoMap.ceo ?? {
+              agentId: 'ceo',
+              name: 'CEO',
+              role: '',
+              skills: [],
+              taskHistory: [],
+            }),
+            activityStatus: 'resting',
+            currentTask: undefined,
+          },
+        },
+        agentRuntimes: state.agentRuntimes.map((agent) => {
+          if (agent.config.id !== 'ceo') return agent
+          if (
+            taskRunId !== undefined &&
+            state.activeCeoTaskRunId !== null &&
+            state.activeCeoTaskRunId !== taskRunId
+          ) {
+            return agent
+          }
+          const nextDeskPosition = agent.config.destinations.desk
+          if (!nextDeskPosition) return agent
+          return {
+            ...agent,
+            position: { ...nextDeskPosition },
+            state: 'sitting_desk',
+            targetState: 'sitting_desk',
+            walkFrame: 0,
+            transitionDuration: 0,
+            pendingWaypoints: [],
+            targetPosition: null,
+            standWaitTarget: null,
+            facingRight: false,
+          }
+        }),
+      }
+    }),
 }))

@@ -13,8 +13,8 @@ class RuntimeToolsetDefinition:
 
 RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     "skills": RuntimeToolsetDefinition(
-        description="Skill browsing and reading tools.",
-        tools=("skills.list", "skills.read"),
+        description="Legacy skill context marker. Skill catalog is injected through prompt context.",
+        tools=(),
     ),
     "skill-runtime": RuntimeToolsetDefinition(
         description="Restricted skill execution tools.",
@@ -78,7 +78,7 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "local-core": RuntimeToolsetDefinition(
         description="Current minimal local runtime tool bundle.",
-        includes=("skills", "session", "planning", "terminal", "file", "web", "work", "messaging"),
+        includes=("skills", "session", "planning", "terminal", "file", "web", "work"),
     ),
 }
 

@@ -20,6 +20,7 @@ class BuiltinAgentTemplate:
 
 MAIN_AGENT_TEMPLATE_KEY = "ceo"
 DEFAULT_SESSION_TEMPLATE_KEYS = ("default", "coder", "qa", "ux_designer", "security_engineer")
+LEGACY_AGENT_SKILL_IDS = frozenset(("notion", "code", "browser"))
 
 
 MAIN_AGENT_TEMPLATE = BuiltinAgentTemplate(
@@ -32,7 +33,7 @@ MAIN_AGENT_TEMPLATE = BuiltinAgentTemplate(
     adapter_type="openai",
     model="gpt-5.4",
     profile_image="/assets/agents/ceo/ceo_profile.png",
-    skills=("notion",),
+    skills=(),
     documents=(
         (
             "AGENTS.md",
@@ -115,7 +116,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         adapter_type="openai",
         model="gpt-5.4",
         profile_image="/assets/agents/sub/agent01.png",
-        skills=("notion",),
+        skills=("skill-index",),
         documents=(
             (
                 "AGENTS.md",
@@ -145,7 +146,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         adapter_type="openai",
         model="gpt-5.4",
         profile_image="/assets/agents/sub/agent03.png",
-        skills=("code",),
+        skills=("subagent-driven-development", "writing-plans"),
         documents=(
             (
                 "AGENTS.md",
@@ -183,7 +184,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         adapter_type="openai",
         model="gpt-5.4",
         profile_image="/assets/agents/sub/agent04.png",
-        skills=("browser",),
+        skills=("ux-flow-review",),
         documents=(
             (
                 "AGENTS.md",
@@ -223,7 +224,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         adapter_type="openai",
         model="gpt-5.4",
         profile_image="/assets/agents/sub/agent05.png",
-        skills=("browser",),
+        skills=("ux-flow-review",),
         documents=(
             (
                 "AGENTS.md",
@@ -259,7 +260,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         adapter_type="openai",
         model="gpt-5.4",
         profile_image="/assets/agents/sub/agent02.png",
-        skills=("code",),
+        skills=(),
         documents=(
             (
                 "AGENTS.md",

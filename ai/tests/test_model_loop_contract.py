@@ -323,7 +323,7 @@ def test_persistent_memory_prompt_applies_relevant_instructions():
     assert "세부 결과를 만들지 말고 필요한 조건만 먼저 짧게 물어보세요." in prompt
 
 
-def test_prompt_builder_includes_skill_catalog_before_web_tool_choice():
+def test_prompt_builder_includes_skill_description_catalog_without_reader_tool_policy():
     registry = SkillRegistry()
     registry.register_many(SkillLoader().load_builtin())
     prompt_builder = PromptBuilder(SkillPromptBuilder(registry))
@@ -331,7 +331,6 @@ def test_prompt_builder_includes_skill_catalog_before_web_tool_choice():
     prompt = prompt_builder.build_agent_loop_prompt(
         input_payload={"prompt": "강남구 날씨 알려줘"},
         available_tools=[
-            {"name": "skills.read", "summary": "skill 문서 읽기", "toolset": "skills"},
             {"name": "web_search", "summary": "웹 검색", "toolset": "web"},
         ],
         tool_results=[],
@@ -341,11 +340,35 @@ def test_prompt_builder_includes_skill_catalog_before_web_tool_choice():
         max_iterations=4,
     )
 
-    assert "프로젝트 skill 라우팅 힌트" in prompt
-    assert "`web_search`보다 먼저 `skills.read`" in prompt
-    assert "`http_get`으로 해당 endpoint를 호출하세요" in prompt
+    assert "사용 가능한 skill 설명" in prompt
+    assert "사용자 입력이 skill 설명과 맞으면 가능한 한 해당 skill을 활용하는 방향으로 진행하세요." in prompt
+    assert "전혀 관련 있는 skill이 없을 때만 skill 없이 진행하세요." in prompt
+    assert "skills.read" not in prompt
+    assert "skills.read_file" not in prompt
+    assert "k-skills`를 우선" not in prompt
     assert "`korea-weather`" in prompt
     assert "한국 날씨를 기상청 단기예보 조회서비스" in prompt
+
+
+def test_prompt_builder_filters_skill_catalog_by_enabled_skill_names():
+    registry = SkillRegistry()
+    registry.register_many(
+        [
+            {"name": "korea-weather", "description": "한국 날씨 조회"},
+            {"name": "zipcode-search", "description": "우편번호 조회"},
+        ]
+    )
+    prompt_builder = PromptBuilder(SkillPromptBuilder(registry))
+
+    prompt = prompt_builder.build_model_prompt(
+        input_payload={
+            "prompt": "날씨 확인",
+            "enabledSkillNames": ["korea-weather"],
+        }
+    )
+
+    assert "`korea-weather`" in prompt
+    assert "`zipcode-search`" not in prompt
 
 
 def test_assemble_agent_loop_messages_preserves_history_as_native_messages():

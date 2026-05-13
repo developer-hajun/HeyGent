@@ -67,7 +67,7 @@ class FakeWorkRepository:
         return {"title": work.title, "labels": [], "commentsIncluded": 0, "recentRunsIncluded": 1, "promptPreview": work.execution_instruction or ""}
 
 
-def test_successful_skill_read_creates_work_and_links_current_task_run():
+def test_successful_skill_execute_creates_work_and_links_current_task_run():
     task_repository = InMemoryTaskRepository()
     work_repository = FakeWorkRepository()
     broadcaster = DummyBroadcaster()
@@ -80,9 +80,9 @@ def test_successful_skill_read_creates_work_and_links_current_task_run():
         sink(
             event_type="tool.completed",
             payload={
-                "tool_name": "skills.read",
+                "tool_name": "skill.execute",
                 "input": {"skill_name": "korea-weather"},
-                "result": {"name": "korea-weather", "body": "# Weather"},
+                "result": {"ok": True, "skill_name": "korea-weather", "content": "# Weather"},
             },
         )
     )
@@ -91,7 +91,7 @@ def test_successful_skill_read_creates_work_and_links_current_task_run():
     work = next(iter(work_repository.items.values()))
     assert work.source == "skill_use"
     assert work.title == "korea-weather 스킬 실행"
-    assert work.metadata["triggerTool"] == "skills.read"
+    assert work.metadata["triggerTool"] == "skill.execute"
     assert work_repository.runs[(work.work_id, task.task_run_id)].status == "RUNNING"
     saved_task = task_repository.get_task(task.task_run_id)
     assert saved_task is not None

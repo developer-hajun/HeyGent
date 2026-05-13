@@ -128,7 +128,6 @@ export function NewChatPage() {
                   agentName: pendingConfig.agentName,
                   persona: pendingConfig.persona,
                   callName: pendingConfig.callName,
-                  capabilities: pendingConfig.capabilities,
                   model: pendingConfig.model,
                   delegationPolicy: pendingConfig.delegationPolicy,
                   instructionsEntryFile: pendingConfig.instructionsEntryFile,
@@ -164,7 +163,6 @@ export function NewChatPage() {
               ui: {
                 agentName: pendingConfig.agentName,
                 callName: pendingConfig.callName,
-                agentCapabilities: pendingConfig.capabilities,
                 agentProfileImage: pendingConfig.profileImage,
                 instructionsEntryFile: pendingConfig.instructionsEntryFile,
                 instructionsMode: pendingConfig.instructionsMode,

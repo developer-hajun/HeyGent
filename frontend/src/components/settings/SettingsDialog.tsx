@@ -1,4 +1,16 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react'
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core'
+import { CSS } from '@dnd-kit/utilities'
 import {
   Zap,
   Database,
@@ -18,6 +30,8 @@ import {
   CheckCircle2,
   BarChart2,
   RefreshCw,
+  Code2,
+  GripVertical,
   Send,
   Star,
   Trash2,
@@ -28,7 +42,13 @@ import {
   type CommandUsageSummary,
   type CommandUsageParams,
 } from '@/apis/aiCommandUsage'
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { motion, AnimatePresence } from 'motion/react'
@@ -36,6 +56,13 @@ import { useChatStore } from '@/store/useChatStore'
 import { getOpenAiModels, type OpenAiModelsResponse } from '@/apis/openaiModels'
 import { saveOpenAiApiKey, deleteOpenAiApiKey, type ProviderName } from '@/apis/openaiApiKey'
 import { getOpenAiProviders } from '@/apis/openaiProviders'
+import {
+  getUserSkillDetail,
+  listUserSkills,
+  updateUserSkillSetting,
+  type SkillCatalogDetail,
+  type SkillCatalogItem,
+} from '@/apis/agents'
 import {
   createMattermostChannel,
   deleteMattermostChannel,
@@ -265,84 +292,419 @@ function GeneralContent() {
 // Skills Content
 // ────────────────────────────────────────────────────────────────────────────
 function SkillsContent() {
-  const [skills, setSkills] = useState([
-    {
-      id: 'github-pr',
-      name: '깃허브 PR 리뷰',
-      enabled: true,
-      description: 'Pull Request를 자동으로 분석하고 리뷰합니다',
-    },
-    {
-      id: 'reminder',
-      name: '리마인드 생성',
-      enabled: true,
-      description: '일정과 알림을 자동으로 생성하고 관리합니다',
-    },
-    { id: 'diet', name: '식단 추천', enabled: true, description: '개인 맞춤 식단을 추천합니다' },
-    {
-      id: 'health',
-      name: '헬스 커넥트 조회',
-      enabled: false,
-      description: '건강 데이터를 조회하고 분석합니다',
-    },
-    {
-      id: 'iot',
-      name: 'IoT 알림 전송',
-      enabled: true,
-      description: 'IoT 기기로 알림을 전송합니다',
-    },
-  ])
+  const [skills, setSkills] = useState<SkillCatalogItem[]>([])
   const [searchQuery, setSearchQuery] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [draftEnabled, setDraftEnabled] = useState<Record<string, boolean>>({})
+  const [detail, setDetail] = useState<SkillCatalogDetail | null>(null)
+  const [detailOpen, setDetailOpen] = useState(false)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [viewMode, setViewMode] = useState<'preview' | 'code'>('preview')
+  const [saving, setSaving] = useState(false)
+  const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor))
 
-  const toggleSkill = (id: string) => {
-    setSkills((prev) =>
-      prev.map((skill) => (skill.id === id ? { ...skill, enabled: !skill.enabled } : skill)),
+  useEffect(() => {
+    let alive = true
+    void listUserSkills()
+      .then((items) => {
+        if (!alive) return
+        setSkills(items)
+        setDraftEnabled(Object.fromEntries(items.map((item) => [item.skillId, item.enabled])))
+        setError(null)
+      })
+      .catch(() => {
+        if (alive) setError('스킬 목록을 불러오지 못했습니다.')
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const filteredSkills = skills.filter((skill) => {
+    const query = searchQuery.trim().toLowerCase()
+    if (!query) return true
+    return (
+      skill.displayName.toLowerCase().includes(query) ||
+      skill.name.toLowerCase().includes(query) ||
+      skill.description.toLowerCase().includes(query)
     )
-  }
-
-  const filteredSkills = skills.filter(
-    (skill) =>
-      skill.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      skill.description.toLowerCase().includes(searchQuery.toLowerCase()),
+  })
+  const activeSkills = filteredSkills.filter(
+    (skill) => draftEnabled[skill.skillId] ?? skill.enabled,
+  )
+  const inactiveSkills = filteredSkills.filter(
+    (skill) => !(draftEnabled[skill.skillId] ?? skill.enabled),
+  )
+  const changedSkills = skills.filter(
+    (skill) => (draftEnabled[skill.skillId] ?? skill.enabled) !== skill.enabled,
   )
 
+  const setSkillDraftState = (skillId: string, enabled: boolean) => {
+    setDraftEnabled((current) => ({ ...current, [skillId]: enabled }))
+  }
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const skillId = String(event.active.id)
+    const target =
+      event.over?.id === 'enabled-skills'
+        ? true
+        : event.over?.id === 'disabled-skills'
+          ? false
+          : null
+    if (target === null || !skills.some((skill) => skill.skillId === skillId)) return
+    setSkillDraftState(skillId, target)
+  }
+
+  const openSkillDetail = (skillId: string) => {
+    setDetailOpen(true)
+    setDetail(null)
+    setDetailLoading(true)
+    void getUserSkillDetail(skillId)
+      .then((item) => {
+        setDetail(item)
+        setViewMode('preview')
+        setError(null)
+      })
+      .catch(() => {
+        setError('스킬 상세를 불러오지 못했습니다.')
+      })
+      .finally(() => setDetailLoading(false))
+  }
+
+  const resetDraft = () => {
+    setDraftEnabled(Object.fromEntries(skills.map((item) => [item.skillId, item.enabled])))
+    setError(null)
+  }
+
+  const saveChanges = async () => {
+    if (changedSkills.length === 0) return
+    setSaving(true)
+    try {
+      const savedItems = await Promise.all(
+        changedSkills.map((skill) =>
+          updateUserSkillSetting(skill.skillId, {
+            enabled: draftEnabled[skill.skillId] ?? skill.enabled,
+          }),
+        ),
+      )
+      const savedById = new Map(savedItems.map((item) => [item.skillId, item]))
+      setSkills((current) => current.map((item) => savedById.get(item.skillId) ?? item))
+      setDraftEnabled((current) => ({
+        ...current,
+        ...Object.fromEntries(savedItems.map((item) => [item.skillId, item.enabled])),
+      }))
+      setError(null)
+    } catch {
+      setError('스킬 설정을 저장하지 못했습니다.')
+      try {
+        const latest = await listUserSkills()
+        setSkills(latest)
+        setDraftEnabled(Object.fromEntries(latest.map((item) => [item.skillId, item.enabled])))
+      } catch {
+        // 저장 실패 뒤 재조회도 실패하면 기존 draft를 유지해 사용자가 다시 시도할 수 있게 둔다.
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h3 className="text-foreground mb-2 text-xl font-semibold">스킬 목록</h3>
-        <p className="text-muted-foreground text-sm">Heygent가 사용할 수 있는 스킬을 관리합니다</p>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="border-border flex flex-wrap items-start justify-between gap-3 border-b px-0 pb-4">
+        <div>
+          <h3 className="text-foreground mb-2 text-xl font-semibold">스킬 목록</h3>
+          <p className="text-muted-foreground text-sm">
+            사용자 단위 스킬 catalog와 적용 상태를 관리합니다
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={changedSkills.length === 0 || saving}
+            onClick={resetDraft}
+            className="border-border hover:bg-accent inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm disabled:opacity-50"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            되돌리기
+          </button>
+          <button
+            type="button"
+            disabled={changedSkills.length === 0 || saving}
+            onClick={() => void saveChanges()}
+            className="bg-foreground text-background hover:bg-foreground/90 inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm disabled:opacity-50"
+          >
+            {saving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Check className="h-3.5 w-3.5" />
+            )}
+            저장
+          </button>
+        </div>
       </div>
 
-      <div className="relative">
+      {error ? <p className="text-destructive py-3 text-sm">{error}</p> : null}
+
+      <div className="relative py-3">
         <Search className="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
         <input
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="스킬 검색..."
-          className="border-border text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-lg border bg-white py-2 pr-3 pl-9 text-sm focus:ring-2 focus:outline-none"
+          className="border-border text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-md border bg-transparent py-2 pr-3 pl-9 text-sm focus:ring-2 focus:outline-none"
         />
       </div>
 
-      <div className="space-y-3">
-        {filteredSkills.map((skill) => (
-          <div
-            key={skill.id}
-            className="bg-muted/30 border-border hover:bg-muted/50 flex items-start justify-between rounded-xl border p-4 transition-colors"
-          >
-            <div className="flex-1 pr-4">
-              <h4 className="text-foreground mb-1 text-sm font-medium">{skill.name}</h4>
-              <p className="text-muted-foreground text-xs">{skill.description}</p>
-            </div>
-            <Switch checked={skill.enabled} onCheckedChange={() => toggleSkill(skill.id)} />
+      {loading ? (
+        <div className="text-muted-foreground flex items-center gap-2 py-6 text-sm">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          조회 중
+        </div>
+      ) : (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <div className="grid min-h-0 flex-1 grid-cols-2 gap-4 overflow-hidden">
+            <SkillDropColumn id="enabled-skills" title="사용 중" count={activeSkills.length}>
+              {activeSkills.map((skill) => (
+                <DraggableSkillRow
+                  key={skill.skillId}
+                  skill={skill}
+                  changed={(draftEnabled[skill.skillId] ?? skill.enabled) !== skill.enabled}
+                  onOpen={() => openSkillDetail(skill.skillId)}
+                  onMove={() => setSkillDraftState(skill.skillId, false)}
+                  moveLabel="미사용으로"
+                />
+              ))}
+            </SkillDropColumn>
+            <SkillDropColumn id="disabled-skills" title="미사용" count={inactiveSkills.length}>
+              {inactiveSkills.map((skill) => (
+                <DraggableSkillRow
+                  key={skill.skillId}
+                  skill={skill}
+                  changed={(draftEnabled[skill.skillId] ?? skill.enabled) !== skill.enabled}
+                  onOpen={() => openSkillDetail(skill.skillId)}
+                  onMove={() => setSkillDraftState(skill.skillId, true)}
+                  moveLabel="사용으로"
+                />
+              ))}
+            </SkillDropColumn>
           </div>
-        ))}
-        {filteredSkills.length === 0 && (
-          <p className="text-muted-foreground py-8 text-center text-sm">검색 결과가 없습니다</p>
-        )}
+        </DndContext>
+      )}
+
+      {!loading && filteredSkills.length === 0 ? (
+        <p className="text-muted-foreground px-3 py-8 text-sm">검색 결과가 없습니다</p>
+      ) : null}
+
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="max-h-[82vh] max-w-4xl overflow-hidden p-0">
+          <DialogHeader className="border-border border-b px-5 py-4">
+            <DialogTitle>{detail?.displayName ?? '스킬 상세'}</DialogTitle>
+            <DialogDescription>
+              {detail?.description ?? '스킬 정보를 확인합니다.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[68vh] overflow-y-auto px-5 py-4">
+            {detailLoading ? (
+              <div className="text-muted-foreground flex items-center gap-2 py-10 text-sm">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                상세 조회 중
+              </div>
+            ) : detail === null ? null : (
+              <div className="space-y-4">
+                <div className="border-border grid gap-2 border-y py-3 text-sm sm:grid-cols-2">
+                  <SkillMeta label="키" value={detail.name} />
+                  <SkillMeta
+                    label="상태"
+                    value={(draftEnabled[detail.skillId] ?? detail.enabled) ? '사용 중' : '미사용'}
+                  />
+                  <SkillMeta label="타입" value={detail.sourceType} />
+                  <SkillMeta label="경로" value={detail.sourcePath ?? '-'} />
+                </div>
+
+                {detail.files.length ? (
+                  <div className="border-border rounded-md border p-3">
+                    <div className="text-muted-foreground mb-2 text-[11px] tracking-[0.16em] uppercase">
+                      파일
+                    </div>
+                    <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
+                      {detail.files.map((file) => (
+                        <span
+                          key={file}
+                          className="bg-muted/60 rounded px-2 py-1 font-mono text-[11px]"
+                        >
+                          {file}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="border-border flex items-center justify-between border-b pb-3">
+                  <div className="font-mono text-sm">SKILL.md</div>
+                  <div className="border-border flex overflow-hidden rounded-md border">
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('preview')}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm ${
+                        viewMode === 'preview'
+                          ? 'bg-accent text-foreground'
+                          : 'text-muted-foreground'
+                      }`}
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                      보기
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('code')}
+                      className={`border-border inline-flex items-center gap-1.5 border-l px-3 py-1.5 text-sm ${
+                        viewMode === 'code' ? 'bg-accent text-foreground' : 'text-muted-foreground'
+                      }`}
+                    >
+                      <Code2 className="h-3.5 w-3.5" />
+                      코드
+                    </button>
+                  </div>
+                </div>
+
+                {viewMode === 'code' ? (
+                  <pre className="bg-muted/30 border-border max-h-[42vh] overflow-auto rounded-md border p-4 text-xs leading-5">
+                    <code>{detail.body || '내용이 없습니다.'}</code>
+                  </pre>
+                ) : (
+                  <div className="border-border bg-muted/20 max-h-[42vh] overflow-auto rounded-md border p-4">
+                    <pre className="text-foreground font-sans text-sm leading-6 whitespace-pre-wrap">
+                      {stripSkillFrontmatter(detail.body) ||
+                        detail.description ||
+                        '내용이 없습니다.'}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function SkillDropColumn({
+  id,
+  title,
+  count,
+  children,
+}: {
+  id: string
+  title: string
+  count: number
+  children: ReactNode
+}) {
+  const { isOver, setNodeRef } = useDroppable({ id })
+  return (
+    <div
+      ref={setNodeRef}
+      className={`border-border min-h-0 overflow-hidden rounded-md border ${
+        isOver ? 'ring-primary/30 ring-2' : ''
+      }`}
+    >
+      <div className="border-border flex items-center justify-between border-b px-3 py-2">
+        <div className="text-sm font-medium">{title}</div>
+        <div className="text-muted-foreground font-mono text-xs">{count}</div>
+      </div>
+      <div className="max-h-[50vh] min-h-60 space-y-2 overflow-y-auto p-2">{children}</div>
+    </div>
+  )
+}
+
+function DraggableSkillRow({
+  skill,
+  changed,
+  moveLabel,
+  onOpen,
+  onMove,
+}: {
+  skill: SkillCatalogItem
+  changed: boolean
+  moveLabel: string
+  onOpen: () => void
+  onMove: () => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: skill.skillId,
+  })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`border-border bg-background grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border p-2 text-sm shadow-sm ${
+        isDragging ? 'z-10 opacity-70' : ''
+      }`}
+    >
+      <button
+        type="button"
+        className="text-muted-foreground hover:text-foreground cursor-grab rounded p-1"
+        aria-label="드래그"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="h-4 w-4" />
+      </button>
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="truncate font-medium">{skill.displayName}</span>
+          {changed ? (
+            <span className="bg-accent rounded px-1.5 py-0.5 text-[10px]">변경됨</span>
+          ) : null}
+        </div>
+        <div className="text-muted-foreground truncate font-mono text-[11px]">{skill.name}</div>
+      </div>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={onOpen}
+          className="border-border hover:bg-accent rounded border px-2 py-1 text-xs"
+        >
+          상세
+        </button>
+        <button
+          type="button"
+          onClick={onMove}
+          className="border-border hover:bg-accent rounded border px-2 py-1 text-xs"
+        >
+          {moveLabel}
+        </button>
       </div>
     </div>
   )
+}
+
+function SkillMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-muted-foreground text-[11px] tracking-[0.16em] uppercase">{label}</div>
+      <div className="mt-1 truncate font-mono text-xs" title={value}>
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function stripSkillFrontmatter(markdown: string) {
+  const normalized = markdown.replace(/\r\n/g, '\n')
+  if (!normalized.startsWith('---\n')) return normalized.trim()
+  const closing = normalized.indexOf('\n---\n', 4)
+  if (closing < 0) return normalized.trim()
+  return normalized.slice(closing + 5).trim()
 }
 
 // ────────────────────────────────────────────────────────────────────────────

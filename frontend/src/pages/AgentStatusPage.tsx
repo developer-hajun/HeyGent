@@ -1,8 +1,11 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
+import { useParams } from 'react-router'
 import { OfficeMap } from '@/components/office/OfficeMap'
 import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
-import { useTaskRunStore } from '@/store/useTaskRunStore'
+import { useSessionStore } from '@/store/useSessionStore'
+import { useAuthStore } from '@/store/useAuthStore'
 import { getCommandUsage } from '@/apis/aiCommandUsage'
+import { agentProfilesToPanelItems, listSessionAgents } from '@/apis/agents'
 import type { CommandUsageSummary } from '@/apis/aiCommandUsage'
 import type {
   AgentConfig,
@@ -742,6 +745,44 @@ function isSpotOccupied(
   })
 }
 
+const nowMs = Date.now.bind(Date)
+const ALL_AGENT_SLOT_IDS = [
+  'agent01',
+  'agent02',
+  'agent03',
+  'agent04',
+  'agent05',
+  'agent06',
+  'agent07',
+  'agent08',
+  'agent09',
+  'agent10',
+]
+
+function buildProfileIdSpriteMap(
+  panels: Array<{ agent: { profileId?: string; spriteId?: string } }>,
+): Record<string, string> {
+  const map: Record<string, string> = {}
+  const usedSlots = new Set<string>()
+
+  for (const panel of panels) {
+    if (panel.agent.profileId && panel.agent.spriteId) {
+      map[panel.agent.profileId] = panel.agent.spriteId
+      usedSlots.add(panel.agent.spriteId)
+    }
+  }
+
+  for (const panel of panels) {
+    if (!panel.agent.profileId || map[panel.agent.profileId]) continue
+    const slot = ALL_AGENT_SLOT_IDS.find((s) => !usedSlots.has(s))
+    if (!slot) break
+    map[panel.agent.profileId] = slot
+    usedSlots.add(slot)
+  }
+
+  return map
+}
+
 function playSpawnSound() {
   try {
     const ctx = new AudioContext()
@@ -769,6 +810,7 @@ function playSpawnSound() {
 }
 
 export function AgentStatusPage() {
+  const { sessionId } = useParams()
   const agents = useAgentVisualizationStore((s) => s.agentRuntimes)
   const setAgents = useAgentVisualizationStore((s) => s.setAgentRuntimes)
   const addSpawnedKey = useAgentVisualizationStore((s) => s.addSpawnedKey)
@@ -795,41 +837,57 @@ export function AgentStatusPage() {
   }, [])
   const runtimeGridRef = useRef<boolean[][]>(OBSTACLE_GRID)
   const walkTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({})
+  const lastSpawnSoundRef = useRef<number>(0)
+  const initialSessionAgentProfileIdsRef = useRef<Set<string>>(new Set())
+  const capturedInitialAgentPanelsRef = useRef(false)
 
   const { agentInfoMap, selectedAgentId, selectAgent } = useAgentVisualizationStore()
-  const fetchActiveTaskRuns = useTaskRunStore((s) => s.fetchActiveTaskRuns)
+  const accessToken = useAuthStore((s) => s.accessToken)
+  const setAgentPanelsForSession = useSessionStore((s) => s.setAgentPanelsForSession)
 
-  // 시각화 페이지 마운트 시 현재 활성 task run을 즉시 조회해 displayContext(profileKey)를 채운다.
+  // 세션 전환(sessionId 변경) 시에만 에이전트 상태를 초기화한다.
+  // 같은 세션 재진입이면 clearVisualizationState 내부에서 no-op 처리되어 위치가 보존된다.
+  // 언마운트 시에는 walk 타이머만 정리하고 상태는 유지 — 돌아왔을 때 그대로 표시된다.
   useEffect(() => {
-    void fetchActiveTaskRuns().catch(() => {})
-  }, [fetchActiveTaskRuns])
-
-  // 페이지 재진입 시 walk 중이던 에이전트를 최종 상태로 정착시키고,
-  // 언마운트 시에도 동일하게 처리해 다음 진입 때 clean한 상태로 시작한다.
-  useEffect(() => {
-    const finalizeWalking = () => {
-      useAgentVisualizationStore.getState().setAgentRuntimes((prev) =>
-        prev.map((a) => {
-          if (a.state !== 'walking') return a
-          return {
-            ...a,
-            position: a.targetPosition ? { ...a.targetPosition } : a.position,
-            state: a.targetState,
-            walkFrame: 0,
-            pendingWaypoints: [],
-            targetPosition: null,
-            standWaitTarget: null,
-          }
-        }),
-      )
-    }
-    finalizeWalking()
+    Object.values(walkTimersRef.current).forEach((t) => clearTimeout(t))
+    walkTimersRef.current = {}
+    initialSessionAgentProfileIdsRef.current = new Set()
+    capturedInitialAgentPanelsRef.current = false
+    useAgentVisualizationStore.getState().clearVisualizationState(sessionId ?? null)
     return () => {
       Object.values(walkTimersRef.current).forEach((t) => clearTimeout(t))
       walkTimersRef.current = {}
-      finalizeWalking()
     }
-  }, [])
+  }, [sessionId])
+
+  useEffect(() => {
+    if (!sessionId || sessionId.startsWith('pending_session_') || accessToken === null) return
+
+    let cancelled = false
+    void listSessionAgents(sessionId)
+      .then((profiles) => {
+        if (cancelled) return
+        const panels = agentProfilesToPanelItems(profiles)
+        const spawnedKeys = useAgentVisualizationStore.getState().spawnedKeys
+        const hasSpawnedSubAgent = spawnedKeys.some((id) => id !== 'ceo')
+        const fetchedProfileIdMap = buildProfileIdSpriteMap(panels)
+        const initialProfileIds = hasSpawnedSubAgent
+          ? profiles
+              .map((profile) => profile.profileId)
+              .filter((profileId) => spawnedKeys.includes(fetchedProfileIdMap[profileId]))
+          : profiles.map((profile) => profile.profileId)
+        initialSessionAgentProfileIdsRef.current = new Set(initialProfileIds)
+        capturedInitialAgentPanelsRef.current = true
+        setAgentPanelsForSession(sessionId, panels)
+      })
+      .catch(() => {
+        // 사이드바/서브에이전트 패널에서도 동일 데이터를 불러오므로 실패 시 기존 캐시를 유지한다.
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [accessToken, sessionId, setAgentPanelsForSession])
 
   useEffect(() => {
     let cancelled = false
@@ -879,6 +937,33 @@ export function AgentStatusPage() {
     }
   }
 
+  // 세션의 서브에이전트 패널 목록 — 추가·삭제 시 자동으로 스폰/연동 트리거
+  const agentPanels = useSessionStore((s) =>
+    sessionId ? (s.agentPanelsBySessionId[sessionId] ?? []) : [],
+  )
+
+  useEffect(() => {
+    if (capturedInitialAgentPanelsRef.current) return
+    const profileIds = agentPanels
+      .map((panel) => panel.agent.profileId)
+      .filter((profileId): profileId is string => typeof profileId === 'string')
+    if (profileIds.length === 0) return
+    const spawnedKeys = useAgentVisualizationStore.getState().spawnedKeys
+    const hasSpawnedSubAgent = spawnedKeys.some((id) => id !== 'ceo')
+    const currentProfileIdMap = buildProfileIdSpriteMap(agentPanels)
+    initialSessionAgentProfileIdsRef.current = new Set(
+      hasSpawnedSubAgent
+        ? profileIds.filter((profileId) => spawnedKeys.includes(currentProfileIdMap[profileId]))
+        : profileIds,
+    )
+    capturedInitialAgentPanelsRef.current = true
+  }, [agentPanels])
+
+  // profileId → spriteId(agentXX) 매핑 — task run의 actorAgent.profileId로 시각화 ID 조회
+  const profileIdMap = useMemo<Record<string, string>>(() => {
+    return buildProfileIdSpriteMap(agentPanels)
+  }, [agentPanels])
+
   const handleMove = (agentId: string, rawDestination: UIDestination) => {
     // CEO 전용 목적지 매핑
     //   작업 중(desk) → work 좌표에서 ceo_work 스프라이트
@@ -890,12 +975,76 @@ export function AgentStatusPage() {
           ? 'desk'
           : rawDestination
 
-    // 미등록 에이전트 자동 스폰 — task run에서 처음 등장하는 경우
+    // 미등록 에이전트 자동 스폰
     const spawnedKeys = useAgentVisualizationStore.getState().spawnedKeys
     if (!spawnedKeys.includes(agentId) && AGENT_CONFIGS.some((c) => c.id === agentId)) {
       addSpawnedKey(agentId)
+
+      if (agentId === 'ceo' && rawDestination === 'desk') {
+        // CEO 첫 등장(작업 중): ceo_work에 직접 배치 + 세션 서브에이전트 휴게공간 동시 배치
+        const unspawnedSubs = Object.entries(profileIdMap).filter(
+          ([, spriteId]) =>
+            !spawnedKeys.includes(spriteId) && AGENT_CONFIGS.some((c) => c.id === spriteId),
+        )
+        unspawnedSubs.forEach(([, spriteId]) => addSpawnedKey(spriteId))
+        setAgents((prev) => {
+          const ceoConfig = AGENT_CONFIGS.find((c) => c.id === 'ceo')!
+          const workPos = ceoConfig.destinations.work!
+          const ceoRuntime: AgentRuntime = {
+            config: ceoConfig,
+            position: { ...workPos },
+            state: 'sitting_work',
+            targetState: 'sitting_work',
+            walkFrame: 0,
+            transitionDuration: 0,
+            pendingWaypoints: [],
+            targetPosition: null,
+            standWaitTarget: null,
+            facingRight: false,
+          }
+          const subRuntimes: AgentRuntime[] = []
+          for (const [, spriteId] of unspawnedSubs) {
+            const config = AGENT_CONFIGS.find((c) => c.id === spriteId)
+            if (!config || prev.some((a) => a.config.id === spriteId)) continue
+            const all = [...prev, ceoRuntime, ...subRuntimes]
+            const freeSofa = SOFA_SPOTS.find((spot) => !isSpotOccupied(spot, all, spriteId))
+            const position = freeSofa ?? config.destinations.floorLean ?? config.initialPosition
+            const state = (freeSofa ? 'sitting_sofa' : 'sitting_floor_lean') as SittingState
+            subRuntimes.push({
+              config,
+              position: { ...position },
+              state,
+              targetState: state,
+              walkFrame: 0,
+              transitionDuration: 0,
+              pendingWaypoints: [],
+              targetPosition: null,
+              standWaitTarget: null,
+              facingRight: false,
+            })
+          }
+          return [...prev, ceoRuntime, ...subRuntimes]
+        })
+        // CEO만 전구 표시 + 효과음
+        setSpawningIds((s) => new Set([...s, 'ceo']))
+        setTimeout(() => {
+          setSpawningIds((s) => {
+            const n = new Set(s)
+            n.delete('ceo')
+            return n
+          })
+        }, 2500)
+        playSpawnSound()
+        return
+      }
+
+      // 서브에이전트('+' 버튼) 첫 등장: 엘리베이터 입장 + 전구 + 효과음
       setSpawningIds((s) => new Set([...s, agentId]))
-      playSpawnSound()
+      const now = nowMs()
+      if (now - lastSpawnSoundRef.current > 2000) {
+        lastSpawnSoundRef.current = now
+        playSpawnSound()
+      }
       setTimeout(() => {
         setSpawningIds((s) => {
           const n = new Set(s)
@@ -912,6 +1061,25 @@ export function AgentStatusPage() {
       if (!prevAgents.some((a) => a.config.id === agentId)) {
         const config = AGENT_CONFIGS.find((c) => c.id === agentId)
         if (!config) return prevAgents
+        if (agentId === 'ceo' && rawDestination === 'rest') {
+          const deskPosition = config.destinations.desk
+          if (!deskPosition) return prevAgents
+          return [
+            ...prevAgents,
+            {
+              config,
+              position: { ...deskPosition },
+              state: 'sitting_desk' as const,
+              targetState: 'sitting_desk' as const,
+              walkFrame: 0 as const,
+              transitionDuration: 0,
+              pendingWaypoints: [],
+              targetPosition: null,
+              standWaitTarget: null,
+              facingRight: false,
+            },
+          ]
+        }
         requestAnimationFrame(() => handleMove(agentId, rawDestination))
         return [
           ...prevAgents,
@@ -933,6 +1101,33 @@ export function AgentStatusPage() {
 
       const agent = prev.find((a) => a.config.id === agentId)
       if (!agent) return prev
+      if (agentId === 'ceo' && rawDestination === 'rest') {
+        const deskPosition = agent.config.destinations.desk
+        if (!deskPosition) return prev
+        const alreadyAtDesk =
+          agent.state === 'sitting_desk' &&
+          agent.targetState === 'sitting_desk' &&
+          Math.abs(agent.position.x - deskPosition.x) < 1 &&
+          Math.abs(agent.position.y - deskPosition.y) < 1
+        clearWalkTimer('ceo')
+        if (!alreadyAtDesk) playSpawnSound()
+        return prev.map((a) =>
+          a.config.id === 'ceo'
+            ? {
+                ...a,
+                position: { ...deskPosition },
+                state: 'sitting_desk',
+                targetState: 'sitting_desk',
+                walkFrame: 0,
+                transitionDuration: 0,
+                pendingWaypoints: [],
+                targetPosition: null,
+                standWaitTarget: null,
+                facingRight: false,
+              }
+            : a,
+        )
+      }
       if (agent.state === 'walking') {
         // 이동 중 목적지 변경: 경로는 유지하고 도착 시 전환할 targetState만 갱신
         // rest는 소파 빈 자리 탐색이 필요해 mid-walk 갱신 불가 — 나머지만 처리
@@ -947,24 +1142,24 @@ export function AgentStatusPage() {
         return prev
       }
 
-      // CEO: sitting_work ↔ sitting_desk 즉시 전환 (걷기 없이)
-      // — 두 좌표가 근접해 걸어가기 어색하며, idle(첫 등장) 상태는 통과시켜 정상 walk 처리
       if (
         agentId === 'ceo' &&
         (destination === 'desk' || destination === 'work') &&
-        (agent.state === 'sitting_work' || agent.state === 'sitting_desk')
+        (agent.state === 'sitting_desk' || agent.state === 'sitting_work')
       ) {
-        const newTargetState = DESTINATION_MAP[destination as UIDestination]?.targetState
-        if (!newTargetState || agent.state === newTargetState) return prev
+        const nextPosition = agent.config.destinations[destination as Destination]
+        const nextState = DESTINATION_MAP[destination as UIDestination]?.targetState
+        if (!nextPosition || !nextState || agent.state === nextState) return prev
         clearWalkTimer('ceo')
         return prev.map((a) =>
           a.config.id === 'ceo'
             ? {
                 ...a,
-                position: { ...a.config.destinations[destination as Destination]! },
-                state: newTargetState,
-                targetState: newTargetState,
+                position: { ...nextPosition },
+                state: nextState,
+                targetState: nextState,
                 walkFrame: 0,
+                transitionDuration: 0,
                 pendingWaypoints: [],
                 targetPosition: null,
                 standWaitTarget: null,
@@ -973,6 +1168,8 @@ export function AgentStatusPage() {
         )
       }
 
+      // CEO: sitting_work ↔ sitting_desk 즉시 전환 (걷기 없이)
+      // — 두 좌표가 근접해 걸어가기 어색하며, idle(첫 등장) 상태는 통과시켜 정상 walk 처리
       // ── rest → 소파 빈 자리 우선 배정, 둘 다 차면 floorLean ──────────────
       let internalDest: Destination
       let destPoint: { x: number; y: number }
@@ -1106,14 +1303,71 @@ export function AgentStatusPage() {
     })
   }
 
-  useVisualizationSync(handleMove)
-  useAgentInfoSync()
+  useVisualizationSync(handleMove, sessionId, profileIdMap)
+  useAgentInfoSync(sessionId)
 
   // handleMove는 매 렌더마다 새로 생성되므로 타이머 콜백에서는 항상 최신 버전을 참조
   const handleMoveRef = useRef(handleMove)
   useEffect(() => {
     handleMoveRef.current = handleMove
   })
+
+  // CEO가 스폰된 상태에서 profileIdMap이 갱신될 때 미스폰 서브에이전트를 휴게공간에 보완 배치
+  // — profileIdMap이 늦게 로드되거나(listSessionAgents 지연) '+' 버튼으로 패널이 추가될 때 처리
+  // — ceoInSpawnedKeys를 의존성에 두지 않음: addSpawnedKey('ceo')가 동기 리렌더를 유발해
+  //   setAgents(CEO) 실행 전에 이 이펙트가 먼저 실행되어 서브에이전트가 CEO보다 먼저 등장하는 문제 방지
+  useEffect(() => {
+    const store = useAgentVisualizationStore.getState()
+    if (!store.spawnedKeys.includes('ceo')) return
+    const unspawnedSubs = Object.entries(profileIdMap).filter(
+      ([, spriteId]) =>
+        !store.spawnedKeys.includes(spriteId) && AGENT_CONFIGS.some((c) => c.id === spriteId),
+    )
+    if (unspawnedSubs.length === 0) return
+
+    const directRestSubs = unspawnedSubs.filter(
+      ([profileId]) =>
+        !capturedInitialAgentPanelsRef.current ||
+        initialSessionAgentProfileIdsRef.current.has(profileId),
+    )
+    const elevatorSubs = unspawnedSubs.filter(
+      ([profileId]) =>
+        capturedInitialAgentPanelsRef.current &&
+        !initialSessionAgentProfileIdsRef.current.has(profileId),
+    )
+
+    if (directRestSubs.length > 0) {
+      directRestSubs.forEach(([, spriteId]) => addSpawnedKey(spriteId))
+      setAgents((prev) => {
+        const newAgents: AgentRuntime[] = []
+        for (const [, spriteId] of directRestSubs) {
+          const config = AGENT_CONFIGS.find((c) => c.id === spriteId)
+          if (!config || prev.some((a) => a.config.id === spriteId)) continue
+          const all = [...prev, ...newAgents]
+          const freeSofa = SOFA_SPOTS.find((spot) => !isSpotOccupied(spot, all, spriteId))
+          const position = freeSofa ?? config.destinations.floorLean ?? config.initialPosition
+          const state = (freeSofa ? 'sitting_sofa' : 'sitting_floor_lean') as SittingState
+          newAgents.push({
+            config,
+            position: { ...position },
+            state,
+            targetState: state,
+            walkFrame: 0,
+            transitionDuration: 0,
+            pendingWaypoints: [],
+            targetPosition: null,
+            standWaitTarget: null,
+            facingRight: false,
+          })
+        }
+        return [...prev, ...newAgents]
+      })
+    }
+
+    for (const [, spriteId] of elevatorSubs) {
+      handleMoveRef.current(spriteId, 'rest')
+    }
+  }, [profileIdMap, setAgents, addSpawnedKey])
 
   // CEO가 sitting_work 상태이고 서브에이전트가 있으면 주기적으로 explain(화이트보드) 좌표로 이동
   const ceoState = useAgentVisualizationStore(

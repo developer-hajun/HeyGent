@@ -9,6 +9,7 @@ from app.api.router import build_api_router
 from app.api.ws.gateway import build_websocket_auth_rate_limiter
 from app.bridge import BridgeSessionManager
 from app.clients.backend_auth import BackendAuthClient
+from app.clients.backend_iot_display import BackendIotDisplayClient
 from app.clients.backend_memory import BackendMemoryClient
 from app.core.cors import configure_cors
 from app.core.config import get_settings
@@ -25,6 +26,7 @@ from app.domain.orchestration.approval.queue import ApprovalQueue
 from app.domain.orchestration.approval.service import ApprovalService
 from app.domain.orchestration.agent.runner import AgentLoopRunner
 from app.domain.orchestration.agent.loop import TaskEngine
+from app.domain.orchestration.agent.iot_display import IotDisplayEventAdapter
 from app.domain.orchestration.agent.memory.memory_extraction_provider import ProviderMemoryExtractionClient
 from app.domain.orchestration.agent.memory.memory_extractor import LlmMemoryExtractor
 from app.domain.orchestration.agent.memory.memory_reconciler import MemoryOperationReconciler
@@ -43,6 +45,7 @@ from app.domain.providers.registry import ProviderRegistry
 from app.storage.postgres import (
     PostgresAgentRepository,
     PostgresSessionStore,
+    PostgresSkillRepository,
     PostgresTaskRepository,
     PostgresWorkRepository,
     apply_configured_postgres_migrations,
@@ -107,7 +110,9 @@ async def lifespan(app: FastAPI):
     )
     broadcaster = EventBroadcaster(ws_manager, topic_router, fanout_publisher=fanout_publisher)
     backend_auth_client = BackendAuthClient(settings=settings)
+    backend_iot_display_client = BackendIotDisplayClient(settings=settings)
     backend_memory_client = BackendMemoryClient(settings=settings)
+    iot_display_adapter = IotDisplayEventAdapter(backend_iot_display_client)
     approval_service = ApprovalService(repository, ApprovalQueue())
     provider_registry = ProviderRegistry(
         [
@@ -132,7 +137,10 @@ async def lifespan(app: FastAPI):
     # memory_store = MemoryStore()
     skill_registry = SkillRegistry()
     skill_loader = SkillLoader()
-    skill_registry.register_many(skill_loader.load_builtin())
+    builtin_skills = skill_loader.load_builtin()
+    skill_registry.register_many(builtin_skills)
+    skill_repository = PostgresSkillRepository(postgres_connection_factory)
+    skill_repository.sync_builtin_catalog(builtin_skills)
     skill_prompt_builder = SkillPromptBuilder(skill_registry)
     prompt_builder = PromptBuilder(skill_prompt_builder)
     bridge_session_manager = BridgeSessionManager()
@@ -144,7 +152,7 @@ async def lifespan(app: FastAPI):
         work_repository=work_repository,
         agent_repository=agent_repository,
     )
-    tool_catalog = ToolCatalog(tool_runtime, default_toolsets=("skills", "session", "planning", "terminal", "file", "web", "browser", "work", "messaging"))
+    tool_catalog = ToolCatalog(tool_runtime, default_toolsets=("skills", "session", "planning", "terminal", "file", "web", "browser", "work"))
     child_session_launcher = ChildSessionLauncher()
     planner = Planner()
     tool_registry = ToolRegistry(
@@ -165,6 +173,7 @@ async def lifespan(app: FastAPI):
         work_repository=work_repository,
         agent_repository=agent_repository,
         settings=settings,
+        iot_display_adapter=iot_display_adapter,
     )
     loop_runner = AgentLoopRunner(
         repository=repository,
@@ -196,6 +205,8 @@ async def lifespan(app: FastAPI):
     app.state.ws_auth_rate_limiter = build_websocket_auth_rate_limiter(settings)
     app.state.session_service = session_service
     app.state.backend_auth_client = backend_auth_client
+    app.state.backend_iot_display_client = backend_iot_display_client
+    app.state.iot_display_adapter = iot_display_adapter
     app.state.backend_memory_client = backend_memory_client
     app.state.memory_extractor = memory_extractor
     app.state.memory_operation_provider = memory_extraction_provider
@@ -206,6 +217,7 @@ async def lifespan(app: FastAPI):
     app.state.session_store = session_store
     app.state.work_repository = work_repository
     app.state.agent_repository = agent_repository
+    app.state.skill_repository = skill_repository
     # app.state.recall_service = recall_service
     # app.state.memory_store = memory_store
     app.state.skill_registry = skill_registry
@@ -236,6 +248,7 @@ async def lifespan(app: FastAPI):
         with suppress(asyncio.CancelledError):
             await redis_fanout_task
     await backend_auth_client.aclose()
+    await backend_iot_display_client.aclose()
     await backend_memory_client.aclose()
     await provider_registry.aclose()
     await connection_registry.aclose()
