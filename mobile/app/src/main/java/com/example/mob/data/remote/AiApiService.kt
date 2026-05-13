@@ -46,24 +46,24 @@ interface AiApiService {
         @Query("to") to: String? = null,
     ): ServerResponse<OpenAiUsageResponse>
 
-    @GET("api/v1/ai/sessions")
+    @GET("ai/api/v1/sessions")
     suspend fun getChatSessions(
         @Query("page") page: Int = 1,
         @Query("pageSize") pageSize: Int = 20,
     ): ChatSessionListResponse
 
-    @GET("api/v1/ai/sessions/{sessionId}/messages")
+    @GET("ai/api/v1/sessions/{sessionId}/messages")
     suspend fun getChatSessionMessages(
         @Path("sessionId") sessionId: String,
         @Query("limit") limit: Int = 100,
     ): ChatSessionMessagesResponse
 
-    @POST("api/v1/ai/sessions/messages")
+    @POST("ai/api/v1/sessions/messages")
     suspend fun sendChatMessageNewSession(
         @Body request: SendChatMessageRequest,
     ): SendChatMessageResponse
 
-    @POST("api/v1/ai/sessions/{sessionId}/messages")
+    @POST("ai/api/v1/sessions/{sessionId}/messages")
     suspend fun sendChatMessage(
         @Path("sessionId") sessionId: String,
         @Body request: SendChatMessageRequest,

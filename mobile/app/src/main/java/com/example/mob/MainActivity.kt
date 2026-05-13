@@ -79,6 +79,15 @@ import com.kakao.sdk.common.KakaoSdk
 import com.kakao.sdk.common.util.Utility
 import com.example.mob.voice.WakeWordForegroundService
 
+private sealed class Screen(
+    val route: String,
+    val label: String,
+    val icon: ImageVector,
+) {
+    data object Chat : Screen("chat", "Chat", Icons.AutoMirrored.Filled.Chat)
+
+    data object Home : Screen("home", "Home", Icons.Default.Home)
+
     data object Profile : Screen("profile", "Profile", Icons.Default.Person)
 }
 

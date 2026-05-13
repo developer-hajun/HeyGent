@@ -88,7 +88,6 @@ class WakeWordForegroundService : Service(), RecognitionListener {
 
     override fun onBeginningOfSpeech() {
         Log.d(TAG, "Speech started.")
-        updateListeningNotification("Voice detected. Keep saying \"Gent ya\".")
     }
 
     override fun onRmsChanged(rmsdB: Float) {
@@ -100,7 +99,6 @@ class WakeWordForegroundService : Service(), RecognitionListener {
             lastLevelBucket = bucket
             lastRmsLogAtMillis = now
             Log.d(TAG, "Mic level: $level/100 (rms=${"%.1f".format(Locale.US, rmsdB)}dB)")
-            updateListeningNotification("Mic level $level/100 ${level.toLevelBar()}")
         }
     }
 
@@ -108,13 +106,11 @@ class WakeWordForegroundService : Service(), RecognitionListener {
 
     override fun onEndOfSpeech() {
         Log.d(TAG, "Speech ended.")
-        updateListeningNotification("Processing voice...")
         isListening = false
     }
 
     override fun onError(error: Int) {
         Log.w(TAG, "Speech recognizer error: ${error.toRecognizerErrorName()}")
-        updateListeningNotification("Listening again after ${error.toRecognizerErrorName()}.")
         isListening = false
         scheduleRestart(RESTART_DELAY_MS)
     }
@@ -123,7 +119,6 @@ class WakeWordForegroundService : Service(), RecognitionListener {
         isListening = false
         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
         Log.d(TAG, "Wake word final results: $matches")
-        updateListeningNotification("Heard: ${matches.firstOrNull().orEmpty().ifBlank { "no clear speech" }}")
         handleMatches(matches)
         scheduleRestart(RESTART_DELAY_MS)
     }
@@ -152,7 +147,6 @@ class WakeWordForegroundService : Service(), RecognitionListener {
         if (isListening || speechRecognizer == null) return
 
         Log.d(TAG, "Start listening for wake word.")
-        updateListeningNotification("Listening... say \"Gent ya\".")
         isListening = true
         speechRecognizer?.startListening(
             Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
