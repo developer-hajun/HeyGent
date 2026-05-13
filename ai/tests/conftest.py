@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from app.clients.backend_auth import BackendAuthVerifyResult
 from app.clients.backend_memory import BackendMemoryClientError
 from app.domain.tasks.models import StepRun, TaskRun
-from tests.fakes import InMemoryAgentRepository, InMemoryTaskRepository, InMemoryTranscriptStore
+from tests.fakes import InMemoryAgentRepository, InMemorySkillRepository, InMemoryTaskRepository, InMemoryTranscriptStore
 
 
 class NoopWorkRepository:
@@ -171,6 +171,7 @@ def _patch_app_runtime(app_main, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_main, "PostgresSessionStore", lambda _connection_factory: InMemoryTranscriptStore())
     monkeypatch.setattr(app_main, "PostgresAgentRepository", lambda _connection_factory: InMemoryAgentRepository())
     monkeypatch.setattr(app_main, "PostgresWorkRepository", lambda _connection_factory: NoopWorkRepository())
+    monkeypatch.setattr(app_main, "PostgresSkillRepository", lambda _connection_factory: InMemorySkillRepository())
     monkeypatch.setattr(app_main, "build_task_projection_store", lambda **_kwargs: RedisTaskProjectionStore(FakeRedis(), ttl_seconds=60))
     monkeypatch.setattr(app_main, "BackendAuthClient", lambda settings: FakeBackendAuthClient())
     monkeypatch.setattr(app_main, "BackendMemoryClient", lambda settings: FakeBackendMemoryClient())

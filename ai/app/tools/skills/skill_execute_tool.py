@@ -15,7 +15,7 @@ _SKILL_EXECUTE_TOOL_DEFINITION = register_runtime_tool_definition(
             "properties": {
                 "skill_name": {
                     "type": "string",
-                    "description": "Registered skill name from skills.list.",
+                    "description": "Registered skill name.",
                 },
                 "action": {
                     "type": "string",

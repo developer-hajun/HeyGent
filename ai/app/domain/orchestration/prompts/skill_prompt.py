@@ -72,11 +72,12 @@ class SkillPromptBuilder:
             return ""
 
         lines = [
-            "프로젝트 skill 라우팅 힌트:",
-            "- 사용자 요청이 아래 skill 의도와 맞으면 `web_search`보다 먼저 `skills.read`로 해당 `SKILL.md`를 읽으세요.",
-            "- skill 문서가 같은 skill 폴더의 보조 파일을 지시하면 일반 파일 도구 대신 `skills.read_file`로 상대 경로만 읽으세요.",
-            "- skill 문서가 public API/proxy endpoint를 지정하면 일반 검색 대신 `http_get`으로 해당 endpoint를 호출하세요.",
-            "- 한국 날씨/미세먼지/지하철/우편번호/급식/도서관/로또/지역 생활 정보는 `k-skills`를 우선합니다.",
+            "사용 가능한 skill 설명:",
+            "- 아래 목록은 사용자가 켠 skill의 이름과 설명입니다.",
+            "- 답변하기 전에 skill 설명을 먼저 훑고, 사용자 입력이 skill 설명과 맞으면 가능한 한 해당 skill을 활용하는 방향으로 진행하세요.",
+            "- 여러 skill이 관련 있으면 가장 직접적인 skill을 중심으로 삼고 필요한 경우 다른 skill도 함께 참고하세요.",
+            "- 전혀 관련 있는 skill이 없을 때만 skill 없이 진행하세요.",
+            "- skill은 별도 실행 도구가 아니며, 실제 행동은 현재 제공된 runtime tool만 사용하세요.",
         ]
         for skill in items:
             name = str(skill.get("name") or "").strip()

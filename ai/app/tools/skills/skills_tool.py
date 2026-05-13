@@ -22,7 +22,7 @@ _SKILLS_TOOL_DEFINITIONS = [
                 "properties": {
                     "skill_name": {
                         "type": "string",
-                        "description": "Skill name from skills.list.",
+                        "description": "Registered skill name.",
                     },
                 },
                 "required": ["skill_name"],
@@ -41,7 +41,7 @@ _SKILLS_TOOL_DEFINITIONS = [
                 "properties": {
                     "skill_name": {
                         "type": "string",
-                        "description": "Skill name from skills.list.",
+                        "description": "Registered skill name.",
                     },
                     "path": {
                         "type": "string",
