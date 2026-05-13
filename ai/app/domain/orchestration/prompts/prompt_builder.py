@@ -143,13 +143,13 @@ class PromptBuilder:
                     "도구 호출은 본문 JSON으로 쓰지 말고 모델의 tool call 응답으로 반환하세요.",
                     "이미 충분한 정보가 있으면 더 이상 도구를 부르지 말고 일반 답변으로 종료하세요.",
                     "직전에 같은 도구를 같은 인자로 실행했다면 반복하지 말고 답변 종료를 우선하세요.",
-                    "연결된 작업의 담당자가 CEO이고 사용자가 세션 에이전트에게 맡기라고 하거나 후보 에이전트의 전문성이 더 맞으면 session_agent_task 로 하위 작업을 만들고 실행하세요.",
-                    "세션 에이전트 후보가 있으면 명확한 위임 단위는 직접 처리보다 가장 적합한 후보에게 session_agent_task 로 맡기는 쪽을 우선하세요.",
+                    "연결된 작업의 담당자가 CEO이면 사용자 입력을 처리하기 전에 세션 에이전트 후보를 먼저 확인하세요.",
+                    "요청을 수행할 수 있다고 판단되는 세션 에이전트가 있으면 session_agent_task 로 하위 작업을 만들고 실행하세요.",
                     "session_agent_task 는 작업 보드에 보이는 하위 작업과 실제 세션 에이전트 실행을 묶는 도구입니다.",
-                    "세션 에이전트에게 맡기기 전 세션 에이전트 후보의 이름, 역할, 설명을 비교하세요.",
-                    "별도 전문성, 독립 산출물, 병렬 진행 가능성, 부모 작업이 기다려야 하는 하위 산출물이 있으면 세션 에이전트 작업으로 분리하세요.",
+                    "세션 에이전트에게 맡기기 전 후보의 이름, 호칭, 할 수 있는 일, 스킬을 확인하세요.",
+                    "후보가 사용자 요청의 일부만 수행할 수 있어도 그 부분이 독립 산출물로 나뉘면 세션 에이전트 작업으로 분리하세요.",
                     "CEO가 한 번의 응답이나 한 번의 실행으로 충분히 처리할 수 있는 작은 작업은 직접 처리하고, 쪼개는 시간이 작업보다 커지면 분리하지 마세요.",
-                    "적합한 세션 에이전트가 없으면 임의로 배정하지 말고 차단 사유와 필요한 역할 또는 사용자 결정 지점을 남기세요.",
+                    "수행할 수 있는 세션 에이전트가 없으면 임의로 배정하지 말고 CEO가 직접 진행하거나 필요한 정보와 사용자 결정 지점을 남기세요.",
                     "session_agent_task 입력에는 담당자가 다시 묻지 않아도 실행할 수 있도록 제목, 지시, 기대 산출물, 완료 기준, 제약을 구체적으로 담으세요.",
                     "workId가 연결된 실행은 답변을 끝내기 전에 work_disposition 도구로 작업 상태를 명시하세요.",
                     "완료 조건을 만족하면 done, 산출물은 있지만 사용자나 담당자의 확인이 필요하면 in_review, 실제 선행 작업/필수 입력/권한/도구가 없어 더 진행할 수 없을 때만 blocked, 등록만 요청한 작업이면 todo를 남기세요.",
@@ -259,10 +259,21 @@ def _build_session_agent_profile_lines(profiles: list) -> list[str]:
             config = {}
         profile_id = str(profile.get("profileId") or profile.get("profile_id") or "").strip()
         name = str(config.get("name") or profile.get("profileKey") or profile.get("profile_key") or "").strip()
-        role = str(config.get("role") or profile.get("agentType") or profile.get("agent_type") or "").strip()
         title = str(config.get("title") or "").strip()
         description = str(config.get("description") or "").strip()
-        parts = [item for item in (name, role, title, description) if item]
+        role = str(config.get("role") or profile.get("agentType") or profile.get("agent_type") or "").strip()
+        skills = _text_list(config.get("skills") or profile.get("skills"))
+        parts = []
+        if name:
+            parts.append(f"이름={name}")
+        if title:
+            parts.append(f"호칭={title}")
+        if description:
+            parts.append(f"할 수 있는 일={description}")
+        if skills:
+            parts.append("스킬=" + ", ".join(skills))
+        if role:
+            parts.append(f"참고 분류={role}")
         if profile_id and parts:
             lines.append(f"{profile_id}: " + " / ".join(parts))
         elif profile_id:
@@ -293,6 +304,12 @@ def _build_target_agent_profile_lines(profile: dict) -> list[str]:
         if skill_names:
             lines.append("스킬: " + ", ".join(skill_names))
     return lines
+
+
+def _text_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
 
 
 def _build_target_agent_instruction_lines(bundle: dict) -> list[str]:

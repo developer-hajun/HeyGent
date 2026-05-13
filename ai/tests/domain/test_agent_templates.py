@@ -8,6 +8,8 @@ from app.api.http.agents import (
 from app.domain.orchestration.prompts.skill_prompt import SkillLoader
 from app.domain.agents.templates import (
     BUILTIN_AGENT_TEMPLATES,
+    DEFAULT_SESSION_TEMPLATE_KEYS,
+    K_SERVICE_SKILL_IDS,
     LEGACY_AGENT_SKILL_IDS,
     MAIN_AGENT_TEMPLATE,
 )
@@ -31,6 +33,16 @@ def test_builtin_agent_template_skills_exist_in_builtin_catalog():
     assert template_skills
     assert template_skills.isdisjoint(LEGACY_AGENT_SKILL_IDS)
     assert template_skills.issubset(catalog_skill_names)
+
+
+def test_k_service_template_includes_korean_life_skills():
+    template_by_key = {template.template_key: template for template in BUILTIN_AGENT_TEMPLATES}
+    template = template_by_key["k_services"]
+
+    assert "k_services" in DEFAULT_SESSION_TEMPLATE_KEYS
+    assert template.display_name == "K-에이전트"
+    assert set(K_SERVICE_SKILL_IDS).issubset(set(template.skills))
+    assert "subway-lost-property" in template.skills
 
 
 def test_instruction_bundle_response_omits_removed_run_loop_document():
