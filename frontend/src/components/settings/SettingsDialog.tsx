@@ -5,6 +5,8 @@ import {
   Palette,
   Key,
   MessageSquare,
+  Pencil,
+  Plus,
   ChevronDown,
   Check,
   SlidersHorizontal,
@@ -16,6 +18,10 @@ import {
   CheckCircle2,
   BarChart2,
   RefreshCw,
+  Send,
+  Star,
+  Trash2,
+  X,
 } from 'lucide-react'
 import {
   getCommandUsage,
@@ -30,7 +36,15 @@ import { useChatStore } from '@/store/useChatStore'
 import { getOpenAiModels, type OpenAiModelsResponse } from '@/apis/openaiModels'
 import { saveOpenAiApiKey, deleteOpenAiApiKey, type ProviderName } from '@/apis/openaiApiKey'
 import { getOpenAiProviders } from '@/apis/openaiProviders'
-import { sendMattermostWebhook } from '@/apis/mattermost'
+import {
+  createMattermostChannel,
+  deleteMattermostChannel,
+  getMattermostChannels,
+  sendMattermostMessage,
+  setDefaultMattermostChannel,
+  updateMattermostChannel,
+  type MattermostChannel,
+} from '@/apis/mattermost'
 
 interface SettingsDialogProps {
   open: boolean
@@ -904,31 +918,146 @@ function ApiKeysContent() {
 // Channels Content
 // ────────────────────────────────────────────────────────────────────────────
 function ChannelsContent() {
-  const [webhookUrl, setWebhookUrl] = useState('')
-  const [message, setMessage] = useState(
-    '[Heygent PoC] Mattermost Incoming Webhook 테스트 메시지입니다.',
+  const [channels, setChannels] = useState<MattermostChannel[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [form, setForm] = useState({
+    alias: '',
+    displayName: '',
+    webhookUrl: '',
+    defaultChannel: false,
+  })
+  const [testMessage, setTestMessage] = useState(
+    '[Heygent] Mattermost 채널 설정 테스트 메시지입니다.',
   )
-  const [sendingTest, setSendingTest] = useState(false)
+  const [testingAlias, setTestingAlias] = useState<string | null>(null)
   const [statusText, setStatusText] = useState<string | null>(null)
   const [errorText, setErrorText] = useState<string | null>(null)
 
-  const canSendTest = webhookUrl.trim() !== '' && message.trim() !== ''
+  const isEditing = editingId !== null
+  const canSave =
+    form.alias.trim() !== '' &&
+    form.displayName.trim() !== '' &&
+    (isEditing || form.webhookUrl.trim() !== '')
 
-  const handleSendTest = async () => {
-    if (!canSendTest) return
-    setSendingTest(true)
+  const resetForm = () => {
+    setEditingId(null)
+    setForm({
+      alias: '',
+      displayName: '',
+      webhookUrl: '',
+      defaultChannel: false,
+    })
+  }
+
+  const loadChannels = useCallback(async () => {
+    setLoading(true)
+    setErrorText(null)
+    try {
+      const nextChannels = await getMattermostChannels()
+      setChannels(nextChannels)
+    } catch {
+      setErrorText('Mattermost 채널 설정을 불러오지 못했습니다.')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void Promise.resolve().then(() => {
+      if (!cancelled) {
+        void loadChannels()
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [loadChannels])
+
+  const handleSaveChannel = async () => {
+    if (!canSave) return
+    setSaving(true)
     setErrorText(null)
     setStatusText(null)
     try {
-      await sendMattermostWebhook({
-        webhookUrl: webhookUrl.trim(),
-        message: message.trim(),
-      })
-      setStatusText('Incoming Webhook으로 테스트 메시지를 보냈습니다.')
+      const payload = {
+        alias: form.alias.trim(),
+        displayName: form.displayName.trim(),
+        webhookUrl: form.webhookUrl.trim(),
+        defaultChannel: form.defaultChannel,
+      }
+      if (editingId === null) {
+        await createMattermostChannel(payload)
+        setStatusText('Mattermost 채널 설정을 추가했습니다.')
+      } else {
+        await updateMattermostChannel(editingId, payload)
+        setStatusText('Mattermost 채널 설정을 수정했습니다.')
+      }
+      resetForm()
+      await loadChannels()
     } catch {
-      setErrorText('테스트 메시지 전송에 실패했습니다. Webhook URL이 올바른지 확인하세요.')
+      setErrorText('채널 설정 저장에 실패했습니다. 별칭과 Webhook URL을 확인하세요.')
     } finally {
-      setSendingTest(false)
+      setSaving(false)
+    }
+  }
+
+  const handleEditChannel = (channel: MattermostChannel) => {
+    setEditingId(channel.id)
+    setStatusText(null)
+    setErrorText(null)
+    setForm({
+      alias: channel.alias,
+      displayName: channel.displayName,
+      webhookUrl: '',
+      defaultChannel: channel.defaultChannel,
+    })
+  }
+
+  const handleDeleteChannel = async (channelId: number) => {
+    setErrorText(null)
+    setStatusText(null)
+    try {
+      await deleteMattermostChannel(channelId)
+      setStatusText('Mattermost 채널 설정을 삭제했습니다.')
+      if (editingId === channelId) {
+        resetForm()
+      }
+      await loadChannels()
+    } catch {
+      setErrorText('채널 설정 삭제에 실패했습니다.')
+    }
+  }
+
+  const handleSetDefaultChannel = async (channelId: number) => {
+    setErrorText(null)
+    setStatusText(null)
+    try {
+      await setDefaultMattermostChannel(channelId)
+      setStatusText('기본 Mattermost 채널을 변경했습니다.')
+      await loadChannels()
+    } catch {
+      setErrorText('기본 채널 변경에 실패했습니다.')
+    }
+  }
+
+  const handleSendTest = async (target: string) => {
+    if (testMessage.trim() === '') return
+    setTestingAlias(target)
+    setErrorText(null)
+    setStatusText(null)
+    try {
+      await sendMattermostMessage({
+        target,
+        message: testMessage.trim(),
+      })
+      setStatusText(`${target} 채널로 테스트 메시지를 보냈습니다.`)
+    } catch {
+      setErrorText('테스트 메시지 전송에 실패했습니다. 채널 설정을 확인하세요.')
+    } finally {
+      setTestingAlias(null)
     }
   }
 
@@ -937,46 +1066,174 @@ function ChannelsContent() {
       <div>
         <h3 className="text-foreground mb-2 text-xl font-semibold">채널 연결</h3>
         <p className="text-muted-foreground text-sm">
-          Mattermost Incoming Webhook URL을 입력해 지정된 채널로 테스트 메시지를 보냅니다.
+          Mattermost 채널 별칭과 Incoming Webhook URL을 등록합니다.
         </p>
       </div>
 
       <div className="bg-muted/30 border-border space-y-4 rounded-xl border p-4">
-        <div className="space-y-3">
-          <label className="block">
-            <span className="text-foreground mb-1.5 block text-xs font-medium">
-              Incoming Webhook URL
-            </span>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block min-w-0">
+            <span className="text-foreground mb-1.5 block text-xs font-medium">채널 별칭</span>
             <input
-              type="url"
-              value={webhookUrl}
-              onChange={(event) => setWebhookUrl(event.target.value)}
-              placeholder="https://meeting.ssafy.com/hooks/..."
+              type="text"
+              value={form.alias}
+              onChange={(event) => setForm((prev) => ({ ...prev, alias: event.target.value }))}
+              placeholder="backend"
               className="border-border bg-input-background text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
             />
           </label>
-          <label className="block">
-            <span className="text-foreground mb-1.5 block text-xs font-medium">테스트 메시지</span>
-            <textarea
-              value={message}
-              onChange={(event) => setMessage(event.target.value)}
-              rows={3}
+          <label className="block min-w-0">
+            <span className="text-foreground mb-1.5 block text-xs font-medium">표시 이름</span>
+            <input
+              type="text"
+              value={form.displayName}
+              onChange={(event) =>
+                setForm((prev) => ({ ...prev, displayName: event.target.value }))
+              }
+              placeholder="백엔드 채널"
               className="border-border bg-input-background text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
             />
           </label>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void handleSendTest()}
-            disabled={!canSendTest || sendingTest}
-            className="bg-muted text-foreground hover:bg-muted/80 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:opacity-40"
-          >
-            {sendingTest && <Loader2 className="h-4 w-4 animate-spin" />}
-            테스트 메시지 보내기
-          </button>
+        <label className="block">
+          <span className="text-foreground mb-1.5 block text-xs font-medium">
+            Incoming Webhook URL
+          </span>
+          <input
+            type="url"
+            value={form.webhookUrl}
+            onChange={(event) => setForm((prev) => ({ ...prev, webhookUrl: event.target.value }))}
+            placeholder={
+              isEditing ? '변경할 때만 새 URL을 입력하세요' : 'https://meeting.ssafy.com/hooks/...'
+            }
+            className="border-border bg-input-background text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+          />
+        </label>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <label className="flex items-center gap-2">
+            <Switch
+              checked={form.defaultChannel}
+              onCheckedChange={(checked) =>
+                setForm((prev) => ({ ...prev, defaultChannel: checked }))
+              }
+            />
+            <span className="text-foreground text-sm">기본 채널로 지정</span>
+          </label>
+          <div className="flex items-center gap-2">
+            {isEditing && (
+              <button
+                type="button"
+                onClick={resetForm}
+                className="border-border text-foreground hover:bg-muted inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors"
+              >
+                <X className="h-4 w-4" />
+                취소
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => void handleSaveChannel()}
+              disabled={!canSave || saving}
+              className="bg-foreground text-background hover:bg-foreground/85 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:opacity-40"
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              {isEditing ? '수정' : '추가'}
+            </button>
+          </div>
         </div>
+      </div>
+
+      <div className="space-y-3">
+        <label className="block">
+          <span className="text-foreground mb-1.5 block text-xs font-medium">테스트 메시지</span>
+          <textarea
+            value={testMessage}
+            onChange={(event) => setTestMessage(event.target.value)}
+            rows={3}
+            className="border-border bg-input-background text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+          />
+        </label>
+
+        {loading && (
+          <div className="text-muted-foreground flex items-center gap-2 text-sm">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            채널 설정을 불러오는 중입니다.
+          </div>
+        )}
+
+        {!loading && channels.length === 0 && (
+          <div className="border-border text-muted-foreground rounded-xl border p-4 text-sm">
+            등록된 Mattermost 채널이 없습니다.
+          </div>
+        )}
+
+        {channels.map((channel) => (
+          <div
+            key={channel.id}
+            className="bg-muted/30 border-border space-y-3 rounded-xl border p-4"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h4 className="text-foreground text-sm font-semibold">{channel.displayName}</h4>
+                  {channel.defaultChannel && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+                      <Star className="h-3 w-3" />
+                      기본
+                    </span>
+                  )}
+                </div>
+                <p className="text-muted-foreground mt-1 text-xs">
+                  alias: <span className="text-foreground">{channel.alias}</span>
+                  {channel.webhookConfigured ? ' · webhook 등록됨' : ''}
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                {!channel.defaultChannel && (
+                  <button
+                    type="button"
+                    onClick={() => void handleSetDefaultChannel(channel.id)}
+                    className="border-border text-foreground hover:bg-muted inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors"
+                  >
+                    <Star className="h-3.5 w-3.5" />
+                    기본
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void handleSendTest(channel.alias)}
+                  disabled={testingAlias === channel.alias || testMessage.trim() === ''}
+                  className="border-border text-foreground hover:bg-muted inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-40"
+                >
+                  {testingAlias === channel.alias ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Send className="h-3.5 w-3.5" />
+                  )}
+                  테스트
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleEditChannel(channel)}
+                  className="border-border text-foreground hover:bg-muted inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  수정
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteChannel(channel.id)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-500 transition-colors hover:bg-red-50 dark:border-red-800 dark:hover:bg-red-950"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  삭제
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
 
         {statusText && (
           <p className="flex items-center gap-1.5 text-xs text-emerald-500">
@@ -988,8 +1245,8 @@ function ChannelsContent() {
       </div>
 
       <div className="border-border text-muted-foreground rounded-xl border p-4 text-sm leading-6">
-        Webhook URL은 Mattermost의 <span className="text-foreground">Integrations</span>에서 대상
-        채널을 선택해 만든 URL입니다. URL 자체가 채널을 포함하므로 별도 채널 선택은 하지 않습니다.
+        대화에서 <span className="text-foreground">백엔드 채널에 보내줘</span>처럼 요청하면 등록된
+        별칭을 기준으로 전송할 수 있습니다. Webhook URL은 목록에 표시하지 않습니다.
       </div>
     </div>
   )
