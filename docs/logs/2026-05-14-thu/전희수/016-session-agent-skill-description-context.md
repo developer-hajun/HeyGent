@@ -1,0 +1,29 @@
+# 세션 에이전트 스킬 설명 컨텍스트 보강
+
+- 날짜: 2026-05-14
+- 작성자: 전희수
+- 관련 브랜치 또는 PR: 현재 작업 브랜치
+- 작업 목적: 팀장 에이전트가 세션 에이전트 후보를 판단할 때 스킬 ID뿐 아니라 실제 스킬 설명까지 참고하도록 보강한다.
+- 변경 요약:
+  - HTTP/WS 세션 실행 입력의 에이전트 프로필 payload에 스킬 설명 목록을 추가했다.
+  - 세션 에이전트 후보 프롬프트에 `스킬 설명`과 스킬 사용 예시를 노출하도록 확장했다.
+  - 후보 스킬 설명이 사용자 요청의 핵심과 직접 맞으면 일반 조언으로 끝내지 않고 세션 에이전트 작업으로 먼저 분리하도록 기준을 명확히 했다.
+  - 후보 전용 스킬과 직접 맞는 경우 첫 tool-call 턴에서 단계 선언 후 세션 에이전트 작업을 호출하도록 절차를 명시했다.
+  - 기본 도구셋이 tuple로 전달될 때 무시되어 `session_agent_task`가 닫히던 문제를 수정했다.
+  - 지하철 유실물처럼 스킬 ID만으로 의미를 추론하기 어려운 요청도 후보 능력을 판단할 근거를 갖게 했다.
+- 주요 파일:
+  - `ai/app/api/http/sessions.py`
+  - `ai/app/api/ws/commands.py`
+  - `ai/app/domain/orchestration/capabilities.py`
+  - `ai/app/domain/orchestration/prompts/prompt_builder.py`
+  - `ai/tests/domain/test_capability_resolver.py`
+  - `ai/tests/test_model_loop_contract.py`
+- 테스트 또는 확인 내용:
+  - `python -m pytest ai\tests\test_model_loop_contract.py -q`
+  - `python -m pytest ai\tests\api\test_ws_commands.py -q`
+  - `python -m pytest ai\tests\domain\test_capability_resolver.py -q`
+- 결정, 이슈, 리스크:
+  - 사용자 문장을 특정 스킬로 고정 매핑하지 않고, 등록된 스킬 카탈로그 설명을 후보 컨텍스트에 붙이는 방식으로 확장성을 유지했다.
+  - 최종 라우팅은 모델 판단에 남아 있으므로 실제 UI 재검증이 필요하다.
+- 다음 단계:
+  - 컨테이너 재빌드 후 새 기본 제공 세션에서 지하철 유실물 요청이 K-에이전트로 분리되는지 확인한다.

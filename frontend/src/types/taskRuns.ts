@@ -91,6 +91,8 @@ export type RawTaskRunSnapshot = {
   pendingApproval?: RawApproval | null
   approvals?: RawApproval[]
   events?: RawTaskEventPayload[]
+  activity_items?: RawActivityTranscriptItem[]
+  activityItems?: RawActivityTranscriptItem[]
   [key: string]: unknown
 }
 
@@ -107,6 +109,25 @@ export type ActivityItemView = {
   occurredAt?: string
   displayContext?: TaskRunDisplayContext
   raw: RawTaskEventPayload
+}
+
+export type RawActivityTranscriptItem = {
+  activity_id?: string
+  activityId?: string
+  task_run_id?: string
+  taskRunId?: string
+  step_run_id?: string | null
+  stepRunId?: string | null
+  title?: string
+  status?: string
+  first_sequence?: number
+  firstSequence?: number
+  last_sequence?: number
+  lastSequence?: number
+  occurred_at?: string
+  occurredAt?: string
+  payload?: unknown
+  [key: string]: unknown
 }
 
 export type TaskRunSummaryView = {
@@ -153,6 +174,8 @@ export type TaskRunEventsReplayResultPayload = {
   task_run_id?: string
   taskRunId?: string
   events?: RawTaskEventPayload[]
+  activity_items?: RawActivityTranscriptItem[]
+  activityItems?: RawActivityTranscriptItem[]
   latest_sequence?: number
   latestSequence?: number
   next_sequence?: number

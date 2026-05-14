@@ -18,7 +18,7 @@ const DEST_PRIORITY: Record<UIDestination, number> = {
 const RUNNING_EVENT_TYPES = new Set(['step.started', 'tool.started', 'search.started'])
 
 // actorAgent.profileKey가 없을 때 kind/id로 AGENT_CONFIGS id를 유추한다.
-// 백엔드가 main 에이전트(CEO)의 profileKey를 내려주지 않아 kind 기반 매핑이 필요하다.
+// 백엔드가 팀장 에이전트의 profileKey를 내려주지 않아 kind 기반 매핑이 필요하다.
 // profileIdMap: 세션 에이전트 패널의 profileId → spriteId(agentXX) 매핑 — 서브에이전트 연동용
 function resolveProfileKey(
   agent?: TaskRunAgentRef | null,

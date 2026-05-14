@@ -7,6 +7,7 @@ import type {
   TaskRunStatusTone,
 } from '@/types/taskRuns'
 import { toTaskRunStatusTone } from '@/utils/taskRunStatusView'
+import { shouldShowAssistantTaskRunProgress } from '@/utils/taskRunDisplayStatus'
 import {
   toStepProgressSentence,
   toUserFacingTaskTitle,
@@ -30,10 +31,21 @@ export function ChatMessageItem({
   onOpenTaskRun,
 }: ChatMessageItemProps) {
   const isUser = message.role === 'user'
-  const taskRunChip = isUser ? undefined : getAssistantTaskRunChip(activities, taskRunSummary)
-  const taskRunProgress = isUser ? undefined : getAssistantTaskRunProgress(stepRuns, taskRunSummary)
   const taskStatus =
     typeof taskRunSummary?.raw?.status === 'string' ? taskRunSummary.raw.status : undefined
+  const showTaskRunProgress =
+    !isUser &&
+    shouldShowAssistantTaskRunProgress({
+      messageStatus: message.status,
+      taskStatus,
+      stepRunCount: stepRuns.length,
+    })
+  const taskRunChip = isUser
+    ? undefined
+    : getAssistantTaskRunChip(activities, taskRunSummary, message.status)
+  const taskRunProgress = showTaskRunProgress
+    ? getAssistantTaskRunProgress(stepRuns, taskRunSummary)
+    : undefined
   const shouldShowMessageBody =
     message.content.trim() !== '' ||
     isUser ||
@@ -57,18 +69,18 @@ export function ChatMessageItem({
             className={
               isUser
                 ? 'rounded-2xl border [border-color:var(--chat-user-border)] px-4 py-3 text-sm leading-6 wrap-anywhere [color:var(--chat-user-foreground)] shadow-sm [background:var(--chat-user-bubble)] dark:shadow-black/10'
-                : 'text-foreground rounded-2xl py-2 text-sm leading-7 [overflow-wrap:anywhere] break-words'
+                : 'selectable-text text-foreground rounded-2xl py-2 text-sm leading-7 [overflow-wrap:anywhere] break-words'
             }
           >
             {message.content.trim() !== '' ? (
               <div className="space-y-2">
                 {isUser && message.work && <WorkContextBadge work={message.work} />}
                 {isUser ? (
-                  <p className="[overflow-wrap:anywhere] break-words whitespace-pre-wrap">
+                  <p className="selectable-text [overflow-wrap:anywhere] break-words whitespace-pre-wrap">
                     {message.content}
                   </p>
                 ) : (
-                  <div className="[overflow-wrap:anywhere] break-words">
+                  <div className="selectable-text [overflow-wrap:anywhere] break-words">
                     <ChatMarkdown content={message.content} />
                   </div>
                 )}
@@ -184,11 +196,27 @@ function getAssistantTaskRunProgress(
 function getAssistantTaskRunChip(
   activities: ActivityItemView[],
   taskRunSummary?: TaskRunSummaryView,
+  messageStatus?: ChatMessageView['status'],
 ): { text: string; tone: TaskRunStatusTone } | undefined {
   const latestActivity = activities.at(-1)
   const taskStatus =
     typeof taskRunSummary?.raw?.status === 'string' ? taskRunSummary.raw.status : undefined
   const latestEventType = latestActivity?.raw.event_type
+
+  if (messageStatus === 'streaming') {
+    if (
+      latestActivity !== undefined &&
+      latestActivity.tone !== 'completed' &&
+      !isAnswerCompletionEvent(latestEventType)
+    ) {
+      return { text: latestActivity.statusText, tone: latestActivity.tone }
+    }
+    return { text: '답변 진행 중', tone: 'running' }
+  }
+
+  if (messageStatus === 'completed') {
+    return { text: '답변 완료', tone: 'completed' }
+  }
 
   if (taskStatus === 'COMPLETED' || isAnswerCompletionEvent(latestEventType)) {
     return { text: '답변 완료', tone: 'completed' }

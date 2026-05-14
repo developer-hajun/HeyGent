@@ -34,6 +34,12 @@ import type {
   SessionMessagesListResultPayload,
 } from '@/types/aiChat'
 import { createClientCommandId, createClientMessageId } from '@/utils/requestId'
+import {
+  mergeLiveMessagesIntoPersistedList,
+  reconcileSessionRunState,
+  resolveCompletedSessionTaskStatus,
+  shouldClearSessionRunFromPersistedMessages,
+} from '@/utils/chatLiveState'
 
 type ChatState = {
   sessionsById: Record<string, RawAiSession>
@@ -442,7 +448,10 @@ const reconcileVisibleSessions = (
   })
 
   visibleSessions.forEach((session) => {
-    nextSessionsById[session.session_id] = session
+    nextSessionsById[session.session_id] = reconcileSessionRunState(
+      previousSessionsById[session.session_id],
+      session,
+    )
   })
 
   return nextSessionsById
@@ -551,9 +560,31 @@ const mergeMessageList = (
     return
   }
 
-  set((state) => ({
-    messagesBySessionId: { ...state.messagesBySessionId, [sessionId]: messages },
-  }))
+  set((state) => {
+    const mergedMessages = mergeLiveMessagesIntoPersistedList(
+      messages,
+      state.messagesBySessionId[sessionId] ?? [],
+      sessionId,
+    )
+    const shouldClearSessionRun = shouldClearSessionRunFromPersistedMessages(
+      state.sessionsById[sessionId],
+      messages,
+    )
+
+    return {
+      messagesBySessionId: {
+        ...state.messagesBySessionId,
+        [sessionId]: mergedMessages,
+      },
+      sessionsById: shouldClearSessionRun
+        ? upsertSessionPreview(state, {
+            sessionId,
+            activeTaskRunId: null,
+            lastTaskRunStatus: 'COMPLETED',
+          })
+        : state.sessionsById,
+    }
+  })
 }
 
 const mergeAcceptedMessage = (
@@ -734,7 +765,9 @@ const mergeAssistantCompleted = (
         sessionId,
         lastMessage: content,
         activeTaskRunId: shouldClearRunningState ? null : taskRunId,
-        lastTaskRunStatus: status,
+        lastTaskRunStatus: shouldClearRunningState
+          ? resolveCompletedSessionTaskStatus(status)
+          : status,
       }),
     }
   })
