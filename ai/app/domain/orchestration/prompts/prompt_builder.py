@@ -334,14 +334,11 @@ def _skill_description_lines(value: object) -> list[str]:
             continue
         name = str(item.get("name") or item.get("skillId") or item.get("skill_id") or "").strip()
         description = str(item.get("description") or "").strip()
-        usage = str(item.get("usage") or "").strip()
         if not name:
             continue
         if len(description) > 120:
             description = description[:117].rstrip() + "..."
-        if len(usage) > 160:
-            usage = usage[:157].rstrip() + "..."
-        detail_parts = [part for part in [description, f"사용 예시={usage}" if usage else ""] if part]
+        detail_parts = [part for part in [description] if part]
         lines.append(f"{name}: " + " / ".join(detail_parts) if detail_parts else name)
     return lines
 

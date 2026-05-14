@@ -58,22 +58,6 @@ def _profile_skill_descriptions(profile_payload: dict[str, Any], *, skill_regist
             {
                 "name": skill_name,
                 "description": str(skill.get("description") or "").strip(),
-                "usage": _skill_usage_excerpt(str(skill.get("body") or "")),
             }
         )
     return descriptions
-
-
-def _skill_usage_excerpt(body: str) -> str:
-    if not body:
-        return ""
-    marker = "## When to use"
-    start = body.find(marker)
-    if start < 0:
-        return ""
-    section = body[start + len(marker) :]
-    next_heading = section.find("\n## ")
-    if next_heading >= 0:
-        section = section[:next_heading]
-    lines = [line.strip(" -\t") for line in section.splitlines()]
-    return " / ".join(line for line in lines if line)[:400].strip()

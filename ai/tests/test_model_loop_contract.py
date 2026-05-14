@@ -295,7 +295,8 @@ def test_work_context_prompt_shows_session_agent_skill_descriptions():
 
     assert "스킬=subway-lost-property" in prompt
     assert "스킬 설명=subway-lost-property: 서울 지하철 유실물 접수와 보관 장소 조회를 돕는다." in prompt
-    assert "사용 예시=\"강남역에서 지갑 잃어버렸는데 어디서 찾아?\"" in prompt
+    assert "사용 예시" not in prompt
+    assert "강남역에서 지갑" not in prompt
 
 
 def test_persistent_memory_prompt_sanitizes_metadata():
