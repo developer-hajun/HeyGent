@@ -116,7 +116,7 @@ export function SessionWorkspaceDetailPanel({
   }
 
   if (session === null) {
-    const title = activePanel === 'ceo' ? '메인 에이전트' : '세션'
+    const title = activePanel === 'ceo' ? '팀장 에이전트' : '세션'
     return (
       <WorkspacePageShell title={title} eyebrow="작업면">
         <p className="text-muted-foreground text-sm">세션 정보를 불러오는 중입니다.</p>

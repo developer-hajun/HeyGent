@@ -45,16 +45,44 @@ def test_capability_resolver_uses_skill_metadata_runtime_toolsets():
     assert "mattermost.send" in capabilities.enabled_tool_names
 
 
-def test_capability_resolver_keeps_unrestricted_toolsets_unrestricted():
+def test_capability_resolver_opens_skill_toolsets_without_requested_toolsets():
     capabilities = resolve_task_capabilities(
         {
-            "enabledSkillNames": ["korea-weather"],
+            "enabledSkillNames": ["mattermost-send"],
         },
         skill_registry=DummySkillRegistry(),
     )
 
-    assert capabilities.enabled_toolsets is None
-    assert capabilities.enabled_tool_names is None
+    assert capabilities.enabled_toolsets == ("skills", "messaging")
+    assert "mattermost.send" in capabilities.enabled_tool_names
+
+
+def test_capability_resolver_keeps_tuple_default_toolsets_with_enabled_skills():
+    capabilities = resolve_task_capabilities(
+        {
+            "enabledSkillNames": ["mattermost-send"],
+        },
+        skill_registry=DummySkillRegistry(),
+        default_toolsets=("skills", "session", "planning", "work"),
+    )
+
+    assert capabilities.enabled_toolsets == ("skills", "session", "planning", "work", "messaging")
+    assert "session_agent_task" in capabilities.enabled_tool_names
+    assert "mattermost.send" in capabilities.enabled_tool_names
+
+
+def test_capability_resolver_respects_explicit_toolsets_without_skills():
+    capabilities = resolve_task_capabilities(
+        {
+            "enabled_toolsets": ["session", "planning"],
+            "enabledSkillNames": ["mattermost-send"],
+        },
+        skill_registry=DummySkillRegistry(),
+    )
+
+    assert capabilities.enabled_toolsets == ("session", "planning")
+    assert "mattermost.send" not in capabilities.enabled_tool_names
+    assert capabilities.skill_required_toolsets == ()
 
 
 def test_apply_task_capabilities_updates_payload_with_diagnostics():
