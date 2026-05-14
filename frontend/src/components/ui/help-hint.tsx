@@ -10,6 +10,7 @@ interface HelpHintProps {
   iconClassName?: string
   side?: 'top' | 'right' | 'bottom' | 'left'
   align?: 'start' | 'center' | 'end'
+  triggerTabIndex?: number
 }
 
 export function HelpHint({
@@ -19,6 +20,7 @@ export function HelpHint({
   iconClassName,
   side = 'top',
   align = 'center',
+  triggerTabIndex,
 }: HelpHintProps) {
   return (
     <HoverCard openDelay={120} closeDelay={80}>
@@ -26,6 +28,7 @@ export function HelpHint({
         <button
           type="button"
           aria-label={label}
+          tabIndex={triggerTabIndex}
           className={cn(
             'text-muted-foreground hover:text-foreground inline-flex items-center justify-center rounded-full transition-colors',
             className,
