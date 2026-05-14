@@ -8,8 +8,6 @@ from pydantic import BaseModel
 
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
 from app.api.deps.openapi_auth import document_bearer_auth
-from app.api.http.device_tokens import get_fcm_token
-from app.domain.notifications.fcm_sender import send_chat_notification
 from app.contracts.session import (
     ArchiveSessionRequest,
     CreateSessionMessageRequest,
@@ -374,10 +372,6 @@ async def _create_message_in_session(
             status=task.status,
         )
         assistant_message_id = assistant_append["message_id"]
-        # FCM 푸시 알림 (등록된 토큰이 있을 때만)
-        fcm_token = get_fcm_token(owner_key)
-        if fcm_token:
-            send_chat_notification(fcm_token, session_id=sessionId, content=assistant_content)
     elif task.status != "WAITING":
         session_store.clear_stale_running_task(owner_key=owner_key, session_id=sessionId, task_run_id=task.task_run_id)
     messages_by_id = {message["id"]: message for message in session_store.list_messages(sessionId)}
