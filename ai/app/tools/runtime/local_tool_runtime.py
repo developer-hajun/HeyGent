@@ -58,6 +58,9 @@ class LocalToolRuntime:
         self._todo_items: list[dict[str, str]] = []
         self._tool_entries = build_runtime_tool_entries(
             {
+                "skills.list": self._list_skills,
+                "skills.read": self._read_skill,
+                "skills.read_file": self._read_skill_file,
                 "skill.execute": self._execute_skill,
                 "session.record": self._record_session_message,
                 "session.search": self._search_sessions,

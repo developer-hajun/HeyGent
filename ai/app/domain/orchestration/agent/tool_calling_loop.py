@@ -9,6 +9,7 @@ from typing import Any
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.core.utils.ids import new_id
+from app.domain.orchestration.capabilities import apply_task_capabilities
 from app.domain.orchestration.agent.tool_guard import ToolGuard, ToolGuardDecision, ToolGuardResult
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse, ToolResultMessage
 from app.domain.orchestration.prompts.prompt_builder import assemble_agent_loop_messages
@@ -54,6 +55,10 @@ class ToolCallingLoopHandler:
         session_agent_executor=None,
     ) -> dict[str, Any]:
         task_input = dict(task.input_payload or {})
+        apply_task_capabilities(
+            task_input,
+            skill_registry=getattr(self.tool_runtime, "skill_registry", None),
+        )
         # 요청 payload의 workspace_root는 API 호출자가 선택한 이번 실행 root로 바인딩한다.
         request_tool_runtime = self._bind_request_tool_runtime(
             workspace_root=task_input.get("workspace_root"),
