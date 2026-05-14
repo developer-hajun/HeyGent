@@ -95,9 +95,19 @@ class SkillCatalogItemResponse(BaseModel):
     default_enabled: bool = Field(default=True, alias="defaultEnabled")
 
 
+class SkillCatalogDocumentResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    document_key: str = Field(alias="documentKey")
+    title: str
+    content: str = ""
+    content_format: str = Field(default="markdown", alias="contentFormat")
+
+
 class SkillCatalogDetailResponse(SkillCatalogItemResponse):
     body: str = ""
     files: list[str] = Field(default_factory=list)
+    documents: list[SkillCatalogDocumentResponse] = Field(default_factory=list)
 
 
 class SkillCatalogListResponse(BaseModel):
