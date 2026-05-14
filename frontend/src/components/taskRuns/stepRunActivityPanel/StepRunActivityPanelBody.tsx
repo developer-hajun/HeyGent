@@ -12,7 +12,6 @@ import {
 } from '@/utils/taskRunStatusView'
 import { findPromptForTaskRun, getTime } from './activityPanelText'
 import { SelectedTaskRunView } from './SelectedTaskRunView'
-import { TaskRunStatusHelpDialog, TaskRunStatusLegend } from './TaskRunStatusIcon'
 import { TaskRunSummaryList } from './TaskRunSummaryList'
 
 const EMPTY_MESSAGES: never[] = []
@@ -209,9 +208,7 @@ export function StepRunActivityPanelBody({
                   {taskRunSummaries.length}개
                 </span>
               )}
-              <TaskRunStatusHelpDialog />
             </h2>
-            <TaskRunStatusLegend />
           </div>
           <button
             type="button"
@@ -231,7 +228,7 @@ export function StepRunActivityPanelBody({
           onFocusTaskRunMessage={onFocusTaskRunMessage}
         />
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <div className="selectable-text min-h-0 flex-1 overflow-y-auto p-4">
         {resolvedSelectedTaskRunId === undefined ? (
           <div className="text-muted-foreground text-sm">선택할 진행 기록이 없습니다.</div>
         ) : (

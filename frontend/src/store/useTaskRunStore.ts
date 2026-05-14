@@ -643,23 +643,32 @@ const inferTaskRunStatusFromEvent = (
       return 'RUNNING'
     case 'step.waiting':
       return 'WAITING'
+    case 'step.completed':
+    case 'step.failed':
+    case 'step.canceled':
+    case 'step.cancelled':
+    case 'tool.completed':
+    case 'search.completed':
+      return existingStatus ?? 'RUNNING'
     default:
       break
   }
 
   const eventStatus = normalizeRealtimeStepRunStatus(event.status)
-  if (eventStatus !== undefined && !isStepTerminalEvent(event.event_type)) {
+  if (eventStatus !== undefined && !isChildTerminalEvent(event.event_type)) {
     return eventStatus
   }
 
   return undefined
 }
 
-const isStepTerminalEvent = (eventType: string) =>
+const isChildTerminalEvent = (eventType: string) =>
   eventType === 'step.completed' ||
   eventType === 'step.failed' ||
   eventType === 'step.canceled' ||
-  eventType === 'step.cancelled'
+  eventType === 'step.cancelled' ||
+  eventType === 'tool.completed' ||
+  eventType === 'search.completed'
 
 const buildRealtimeStepRunPlaceholder = (
   event: RawTaskEventPayload,

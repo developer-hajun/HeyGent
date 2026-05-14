@@ -13,8 +13,8 @@ class RuntimeToolsetDefinition:
 
 RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     "skills": RuntimeToolsetDefinition(
-        description="Legacy skill context marker. Skill catalog is injected through prompt context.",
-        tools=(),
+        description="Skill catalog inspection tools.",
+        tools=("skills.list", "skills.read", "skills.read_file", "skill.execute"),
     ),
     "skill-runtime": RuntimeToolsetDefinition(
         description="Restricted skill execution tools.",

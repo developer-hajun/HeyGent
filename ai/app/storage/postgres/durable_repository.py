@@ -646,8 +646,15 @@ class PostgresTaskRepository(PostgresDurableRepository):
     def _load_all_tasks(self) -> list[TaskRun]:
         connection = self.connection_factory()
         rows = connection.execute("SELECT * FROM run_anchors ORDER BY updated_at DESC, created_at DESC").fetchall()
-        tasks = [_task_from_payload((_normalize_row(row) or {}).get("anchor_payload", {}).get("task")) for row in rows]
-        return [task for task in tasks if task is not None]
+        tasks: list[TaskRun] = []
+        for row in rows:
+            normalized = _normalize_row(row) or {}
+            task = _task_from_payload((normalized.get("anchor_payload") or {}).get("task"))
+            if task is None:
+                continue
+            _apply_anchor_queue_fields(task, normalized)
+            tasks.append(task)
+        return tasks
 
     def _finish_approval(self, approval_id: str, *, status: str, response_payload: dict[str, Any]) -> dict[str, Any] | None:
         connection = self.connection_factory()
@@ -719,6 +726,20 @@ def _normalize_row(row: Any) -> dict[str, Any] | None:
         if isinstance(value, str):
             normalized[key] = json.loads(value)
     return normalized
+
+
+def _apply_anchor_queue_fields(task: TaskRun, row: dict[str, Any]) -> None:
+    task.queue_status = row.get("queue_status") or task.queue_status
+    task.claim_owner = row.get("claim_owner") or task.claim_owner
+    task.queued_at = _dt(row.get("queued_at")) or task.queued_at
+    task.claimed_at = _dt(row.get("claimed_at")) or task.claimed_at
+    task.lease_expires_at = _dt(row.get("lease_expires_at")) or task.lease_expires_at
+    task.heartbeat_at = _dt(row.get("heartbeat_at")) or task.heartbeat_at
+    task.next_attempt_at = _dt(row.get("next_attempt_at")) or task.next_attempt_at
+    task.attempts = int(row.get("attempts") or task.attempts or 0)
+    task.last_claim_error = row.get("last_claim_error") or task.last_claim_error
+    task.revision = int(row.get("revision") or task.revision or 0)
+    task.updated_at = _dt(row.get("updated_at")) or task.updated_at
 
 
 def _task_payload(task: TaskRun) -> dict[str, Any]:

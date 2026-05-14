@@ -2094,15 +2094,33 @@ def _session_list_preview_payload(context: WebSocketCommandContext, *, session_i
         result["last_message_at"] = last_message.get("timestamp")
 
     tasks = context.websocket.app.state.repository.list_tasks(session_key=session_id, limit=50, offset=0)
+    tasks = [task for task in tasks if not _is_expired_running_task(task)]
     if not tasks:
         return result
 
-    active_task = next((task for task in tasks if task.status in _ACTIVE_TASK_STATUSES), None)
+    active_task = next((task for task in tasks if _is_sidebar_active_task(task)), None)
     latest_task = active_task or tasks[0]
     result["last_task_run_status"] = latest_task.status
     if active_task is not None:
         result["active_task_run_id"] = active_task.task_run_id
     return result
+
+
+def _is_sidebar_active_task(task: Any) -> bool:
+    if getattr(task, "status", None) not in _ACTIVE_TASK_STATUSES:
+        return False
+    if _is_expired_running_task(task):
+        return False
+    return True
+
+
+def _is_expired_running_task(task: Any) -> bool:
+    if getattr(task, "status", None) not in _ACTIVE_TASK_STATUSES:
+        return False
+    lease_expires_at = getattr(task, "lease_expires_at", None)
+    if isinstance(lease_expires_at, datetime) and lease_expires_at < utc_now():
+        return True
+    return False
 
 
 def _message_payload(message: dict[str, Any]) -> dict[str, Any]:

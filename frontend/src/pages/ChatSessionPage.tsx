@@ -24,6 +24,7 @@ import {
   toActivityItemView,
   toTaskRunSummaryView,
 } from '@/utils/taskRunStatusView'
+import { shouldHydrateTaskRunOnSessionOpen } from '@/utils/taskRunHydration'
 
 type LoadState = 'loading' | 'ready' | 'error'
 
@@ -117,6 +118,10 @@ export function ChatSessionPage() {
 
     return [...ids]
   }, [messages, sessionId, taskRunsById])
+  const latestMessageTaskRunId = useMemo(
+    () => [...messages].reverse().find((message) => message.taskRunId)?.taskRunId,
+    [messages],
+  )
   const taskRunIdKey = taskRunIds.join('|')
   const activitiesByTaskRunId = useMemo(
     () =>
@@ -266,9 +271,15 @@ export function ChatSessionPage() {
       const hasRuntimeState =
         taskRun !== undefined || taskRunEvents.length > 0 || hasStreamingMessage
 
-      if (!hasRuntimeState) {
+      if (
+        !shouldHydrateTaskRunOnSessionOpen({
+          hasRuntimeState,
+          isLatestMessageTaskRun: taskRunId === latestMessageTaskRunId,
+        })
+      ) {
         // 과거 완료 메시지까지 모두 snapshot/replay 하면 WebSocket command가 폭주해서
-        // 현재 답변의 step event가 뒤로 밀린다. 완료 이력은 활동 패널을 열 때 lazy load한다.
+        // 현재 답변의 step event가 뒤로 밀린다. 다만 최신 답변은 페이지 복귀 직후
+        // 채팅 아래 진행 상태를 복원해야 하므로 snapshot/replay 대상에 포함한다.
         return
       }
 
@@ -342,6 +353,7 @@ export function ChatSessionPage() {
     sessionId,
     socketClient,
     subscribeTask,
+    latestMessageTaskRunId,
     taskRunIdKey,
     taskRunIds,
     taskRunsById,
@@ -467,9 +479,6 @@ export function ChatSessionPage() {
     typeof currentSession?.active_task_run_id === 'string'
       ? currentSession.active_task_run_id
       : undefined
-  const latestMessageTaskRunId = [...messages]
-    .reverse()
-    .find((message) => message.taskRunId)?.taskRunId
   const visibleTaskRunId =
     latestLinkedWorkEvent?.taskRunId ??
     selectedWork?.activeRunId ??

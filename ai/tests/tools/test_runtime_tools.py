@@ -202,12 +202,13 @@ def test_skill_catalog_descriptions_remain_available_to_prompt_builder():
     assert "한국 날씨를 기상청 단기예보 조회서비스" in descriptions["korea-weather"]
 
 
-def test_skills_toolset_is_not_exposed_to_runtime_tools():
+def test_skills_toolset_exposes_runtime_skill_readers():
     runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
 
     definitions = runtime.list_tool_definitions(enabled_toolsets=("skills",))
 
-    assert definitions == []
+    names = {definition["name"] for definition in definitions}
+    assert {"skills.list", "skills.read", "skills.read_file", "skill.execute"}.issubset(names)
 
 
 def test_disabled_skill_readers_are_unavailable_even_with_enabled_skill_context():
@@ -236,12 +237,12 @@ def test_disabled_skill_readers_are_unavailable_even_with_enabled_skill_context(
         enabled_toolsets=("skills",),
     )
 
-    assert listed["ok"] is False
-    assert read_result["ok"] is False
+    assert listed["count"] == 1
+    assert listed["items"] == ["korea-weather"]
+    assert read_result["name"] == "korea-weather"
+    assert read_result["body"] == "# Weather"
     assert file_result["ok"] is False
-    assert listed["error"]["code"] == "tool_unavailable"
-    assert read_result["error"]["code"] == "tool_unavailable"
-    assert file_result["error"]["code"] == "tool_unavailable"
+    assert file_result["error"]["code"] == "skill_disabled"
 
 
 def test_runtime_exposes_heygent_browser_tool_definitions():

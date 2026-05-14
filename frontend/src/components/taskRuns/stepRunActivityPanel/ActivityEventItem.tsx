@@ -35,7 +35,7 @@ export function ActivityEventItem({
           }
         >
           <TaskRunStatusIcon tone={tone} />
-          <span className="min-w-0 flex-1">
+          <span className="selectable-text min-w-0 flex-1">
             <span
               className={
                 compact
@@ -53,8 +53,8 @@ export function ActivityEventItem({
           <div
             className={
               compact
-                ? 'border-border space-y-2 border-t px-2 py-2 pl-8'
-                : 'border-border space-y-2 border-t px-3 py-2 pl-12'
+                ? 'selectable-text border-border space-y-2 border-t px-2 py-2 pl-8'
+                : 'selectable-text border-border space-y-2 border-t px-3 py-2 pl-12'
             }
           >
             {activity.occurredAt && (
@@ -66,7 +66,7 @@ export function ActivityEventItem({
                   <span>{section.label}</span>
                   <ChevronDown className="h-3 w-3 shrink-0 transition-transform group-open/detail:rotate-180" />
                 </summary>
-                <pre className="bg-background/80 border-border text-muted-foreground mt-1 max-h-72 overflow-auto rounded border p-2 text-[11px] leading-4 [overflow-wrap:anywhere] whitespace-pre-wrap">
+                <pre className="selectable-text bg-background/80 border-border text-muted-foreground mt-1 max-h-72 overflow-auto rounded border p-2 text-[11px] leading-4 [overflow-wrap:anywhere] whitespace-pre-wrap">
                   {section.text}
                 </pre>
               </details>
