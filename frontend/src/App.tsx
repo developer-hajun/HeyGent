@@ -15,6 +15,8 @@ import { LoginPage } from '@/pages/LoginPage'
 import { KakaoCallbackPage } from '@/pages/KakaoCallbackPage'
 import { NotionCallbackPage } from '@/pages/NotionCallbackPage'
 import { AiRealtimeProvider } from '@/providers/AiRealtimeProvider'
+import { FcmProvider } from '@/providers/FcmProvider'
+import { Toaster } from '@/components/ui/sonner'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useUIStore } from '@/store/useUIStore'
@@ -167,6 +169,7 @@ function AuthenticatedShell() {
 export default function App() {
   return (
     <BrowserRouter>
+      <Toaster />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/auth/kakao/callback" element={<KakaoCallbackPage />} />
@@ -177,7 +180,9 @@ export default function App() {
             <>
               <ApiKeyOverlay />
               <AiRealtimeProvider>
-                <AuthenticatedShell />
+                <FcmProvider>
+                  <AuthenticatedShell />
+                </FcmProvider>
               </AiRealtimeProvider>
             </>
           }
