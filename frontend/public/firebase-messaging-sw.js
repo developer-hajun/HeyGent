@@ -24,4 +24,11 @@ messaging.onBackgroundMessage((payload) => {
     icon,
     data: payload.data ?? {},
   })
+
+  // 백그라운드 상태의 웹 클라이언트에도 알려서 메시지를 갱신하게 한다
+  self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+    clients.forEach((client) => {
+      client.postMessage({ type: 'FCM_BACKGROUND', data: payload.data ?? {} })
+    })
+  })
 })
