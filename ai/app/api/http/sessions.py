@@ -9,6 +9,11 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel
 
+from app.api.session_agent_profiles import (
+    agent_profile_prompt_payload as _agent_profile_prompt_payload,
+    instruction_bundle_prompt_payload as _instruction_bundle_prompt_payload,
+    profile_model as _profile_model,
+)
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
 from app.api.deps.openapi_auth import document_bearer_auth
 from app.api.memory_context import attach_persistent_memory_context
@@ -412,6 +417,7 @@ async def _create_message_in_session(
     apply_task_capabilities(
         task_input,
         skill_registry=getattr(request.app.state, "skill_registry", None),
+        default_toolsets=tuple(sorted(_PUBLIC_SESSION_TOOLSETS)),
     )
     user_append = session_store.append_user_message_and_start_task(
         owner_key=owner_key,
@@ -746,7 +752,10 @@ def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work
         profile = agent_repository.get_session_agent(profile_id=assignee_agent_id, owner_key=str(work.owner_key))
     if profile is None:
         return
-    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
+    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(
+        profile,
+        skill_registry=getattr(state, "skill_registry", None),
+    )
     profile_model = _profile_model(profile)
     if profile_model:
         task_input["model"] = profile_model
@@ -782,7 +791,10 @@ def _attach_main_agent_context(
     )
     if profile is None:
         return None
-    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
+    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(
+        profile,
+        skill_registry=getattr(state, "skill_registry", None),
+    )
     profile_id = str(profile.get("profile_id") or "").strip()
     _attach_effective_skill_names(
         state,
@@ -829,7 +841,10 @@ def _attach_session_agent_candidates(
     if agent_repository is None:
         return []
     profiles = [
-        _agent_profile_prompt_payload(item)
+        _agent_profile_prompt_payload(
+            item,
+            skill_registry=getattr(state, "skill_registry", None),
+        )
         for item in agent_repository.list_session_agents(session_id=session_id, owner_key=str(owner_key))
     ]
     if profiles:
@@ -855,41 +870,6 @@ def _attach_effective_skill_names(
         requested_skill_names=[str(skill) for skill in list(config.get("skills") or [])],
         explicit_agent_selection=config.get("skillSelectionMode") == "explicit",
     )
-
-
-def _agent_profile_prompt_payload(profile: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "profileId": profile.get("profile_id"),
-        "profileKey": profile.get("profile_key"),
-        "agentType": profile.get("agent_type"),
-        "templateKey": profile.get("template_key"),
-        "configSnapshot": profile.get("config_snapshot") or {},
-    }
-
-
-def _instruction_bundle_prompt_payload(bundle: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "bundleId": bundle.get("bundle_id"),
-        "entryDocumentKey": bundle.get("entry_document_key") or "AGENTS.md",
-        "documents": [
-            {
-                "documentKey": document.get("document_key"),
-                "displayName": document.get("display_name"),
-                "content": document.get("content") or "",
-            }
-            for document in list(bundle.get("documents") or [])
-            if isinstance(document, dict)
-        ],
-    }
-
-
-def _profile_model(profile: dict[str, Any] | None) -> str | None:
-    if profile is None:
-        return None
-    config = profile.get("config_snapshot") if isinstance(profile.get("config_snapshot"), dict) else {}
-    value = config.get("model") or profile.get("model_name")
-    text = str(value or "").strip()
-    return text or None
 
 
 def _apply_work_execution_defaults(task_input: dict[str, Any], *, settings: Any) -> None:

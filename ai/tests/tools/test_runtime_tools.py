@@ -436,6 +436,56 @@ def test_session_agent_task_leaves_parent_waiting_by_default():
     assert work_repository.relations == []
 
 
+def test_session_agent_task_rejects_agent_without_explicit_required_skill():
+    work_repository = FakeRuntimeWorkRepository()
+    parent = WorkItem(
+        work_id="work-parent",
+        identifier="TASK-1",
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        title="부모 작업",
+        description="부모",
+        status="in_progress",
+        assignee_agent_id="CEO",
+    )
+    work_repository.items[parent.work_id] = parent
+    agent_repository = FakeRuntimeAgentRepository(
+        {
+            "profile_id": "agent-dev",
+            "session_id": "session-1",
+            "agent_type": "user_subagent",
+            "profile_key": "session.dev",
+            "config_snapshot": {
+                "name": "개발 에이전트",
+                "role": "engineer",
+                "skills": ["writing-plans"],
+            },
+        }
+    )
+    runtime = LocalToolRuntime(
+        skill_registry=object(),
+        session_store=DummySessionStore(),
+        work_repository=work_repository,
+        agent_repository=agent_repository,
+        runtime_context={"workId": parent.work_id, "enabledSkillNames": ["mattermost-send"]},
+    )
+
+    result = runtime.run_call(
+        name="session_agent_task",
+        args={
+            "title": "Mattermost 전송",
+            "instruction": "mattermost-send 스킬 문서 절차를 따라 기본 채널로 실제 전송하라.",
+            "assigneeAgentId": "agent-dev",
+        },
+        enabled_toolsets=("work",),
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "session_agent_capability_mismatch"
+    assert len(work_repository.items) == 1
+
+
 def test_session_agent_task_can_create_root_work_when_default_agent_session_allows_it():
     work_repository = FakeRuntimeWorkRepository()
     agent_repository = FakeRuntimeAgentRepository(
