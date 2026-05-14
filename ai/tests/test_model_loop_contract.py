@@ -30,14 +30,15 @@ def test_prompt_builder_includes_native_tool_call_and_termination_guidance():
     assert "이미 충분한 정보가 있으면 더 이상 도구를 부르지 말고 일반 답변으로 종료하세요." in prompt
     assert "직전에 같은 도구를 같은 인자로 실행했다면 반복하지 말고 답변 종료를 우선하세요." in prompt
     assert "사용자에게 보일 큰 작업 단계는 step 도구로 선언하고, 세부 체크리스트는 todo 도구로 갱신하세요." in prompt
-    assert "도구를 직접 사용하기 전에, 현재 세션에 등록된 에이전트 중 사용자의 요청을 맡아 처리할 수 있는 후보가 있는지 먼저 살펴봅니다." in prompt
-    assert "요청을 수행할 수 있다고 판단되는 세션 에이전트가 있으면 session_agent_task" in prompt
+    assert "현재 실행 에이전트가 가진 skill이나 로컬 도구로 요청의 핵심을 처리할 수 있으면 먼저 직접 실행 가능성을 검토하세요." in prompt
+    assert "다른 세션 에이전트만 가진 능력이 필요하거나 사용자가 명시적으로 맡기라고 한 경우에만 session_agent_task" in prompt
     assert "session_agent_task 는 작업 보드에 보이는 하위 작업과 실제 세션 에이전트 실행을 묶는 도구입니다." in prompt
-    assert "후보의 이름, 호칭, 할 수 있는 일, 연결된 스킬 설명이 사용자 요청과 맞으면" in prompt
-    assert "후보가 요청의 핵심 부분을 수행할 수 있고, 독립 산출물이나 책임 분리가 자연스러우면" in prompt
-    assert "독립 산출물이나 책임 분리가 자연스러우면 세션 에이전트 작업으로 분리하세요." in prompt
+    assert "후보의 이름, 호칭, 할 수 있는 일, 연결된 스킬 설명이 사용자 요청과 맞아야 합니다." in prompt
+    assert "후보가 요청의 핵심 부분을 수행할 수 있고, 독립 산출물이나 책임 분리가 자연스러울 때" in prompt
+    assert "독립 산출물이나 책임 분리가 자연스러울 때 세션 에이전트 작업으로 분리하세요." in prompt
     assert "분리할 실익이 낮은 작업은 CEO가 직접 처리해도 됩니다." in prompt
     assert "수행할 수 있는 세션 에이전트가 없으면 임의로 배정하지 말고" in prompt
+    assert "requiredSkillNames에 필요한 skill 이름을 담으세요." in prompt
     assert "폴더 경로 자체를 파일명으로 바꾸지 말고 폴더 안에 의미 있는 파일명을 만들어 저장하세요." in prompt
     assert "근거/자료를 찾아 이해하는 단계와, 그 근거로 파일/문서/코드를 작성해 저장하는 단계는 서로 다른 단계입니다." in prompt
     assert "앞 단계는 completed 로 닫고 뒤 단계를 in_progress 로 전환하세요." in prompt
@@ -229,9 +230,9 @@ def test_prompt_builder_promotes_session_agent_task_from_candidate_profiles():
     assert "세션 에이전트 후보:" in prompt
     assert "agent-travel: 이름=교통 예약 에이전트 / 호칭=열차 예약 확인 / 할 수 있는 일=열차 시간표와 예약 가능 여부를 확인한다. / 스킬=seoul-subway-arrival / 참고 분류=travel" in prompt
     assert "agent-report: 이름=보고서 에이전트 / 할 수 있는 일=확인 결과를 사용자에게 전달할 문장으로 정리한다. / 참고 분류=writer" in prompt
-    assert "도구를 직접 사용하기 전에, 현재 세션에 등록된 에이전트 중 사용자의 요청을 맡아 처리할 수 있는 후보가 있는지 먼저 살펴봅니다." in prompt
-    assert "요청을 수행할 수 있다고 판단되는 세션 에이전트가 있으면 session_agent_task" in prompt
-    assert "후보의 이름, 호칭, 할 수 있는 일, 연결된 스킬 설명이 사용자 요청과 맞으면" in prompt
+    assert "현재 실행 에이전트가 가진 skill이나 로컬 도구로 요청의 핵심을 처리할 수 있으면 먼저 직접 실행 가능성을 검토하세요." in prompt
+    assert "다른 세션 에이전트만 가진 능력이 필요하거나 사용자가 명시적으로 맡기라고 한 경우에만 session_agent_task" in prompt
+    assert "후보의 이름, 호칭, 할 수 있는 일, 연결된 스킬 설명이 사용자 요청과 맞아야 합니다." in prompt
     assert "단순 응답, 맥락 정리, 최종 종합" in prompt
     assert "관점/영역별로 독립된 delegate_task" not in prompt
 

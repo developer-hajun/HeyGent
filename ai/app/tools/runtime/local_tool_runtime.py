@@ -689,11 +689,25 @@ class LocalToolRuntime:
                 tool_name="session_agent_task",
             )
 
+        title = str(args.get("title") or "").strip()
+        instruction = str(args.get("instruction") or "").strip()
+        description = str(args.get("description") or instruction or title).strip()
+        required_skill_names = self._required_session_agent_skill_names(
+            args=args,
+            context=context,
+            text_parts=[
+                title,
+                instruction,
+                description,
+                self._optional_text(args.get("expectedDeliverable") or args.get("expected_deliverable")) or "",
+            ],
+        )
         profile = self._resolve_session_agent_profile(
             session_id=parent.session_id,
             owner_key=parent.owner_key,
             assignee_agent_id=self._optional_text(args.get("assigneeAgentId") or args.get("assignee_agent_id")),
             assignee_hint=self._optional_text(args.get("assigneeHint") or args.get("assignee_hint")),
+            required_skill_names=required_skill_names,
         )
         if profile is None:
             return self._tool_error(
@@ -701,10 +715,16 @@ class LocalToolRuntime:
                 message="no available session agent was found for this work",
                 tool_name="session_agent_task",
             )
+        missing_skill_names = self._missing_profile_skills(profile, required_skill_names)
+        if missing_skill_names:
+            config = dict(profile.get("config_snapshot") or {})
+            profile_name = str(config.get("name") or profile.get("profile_key") or profile.get("profile_id") or "session agent")
+            return self._tool_error(
+                code="session_agent_capability_mismatch",
+                message=f"{profile_name} does not have required skills: {', '.join(missing_skill_names)}",
+                tool_name="session_agent_task",
+            )
 
-        title = str(args.get("title") or "").strip()
-        instruction = str(args.get("instruction") or "").strip()
-        description = str(args.get("description") or instruction or title).strip()
         profile_id = str(profile.get("profile_id") or "").strip()
         child = WorkService(self.work_repository).create_from_payload(
             session_id=parent.session_id,
@@ -1110,6 +1130,7 @@ class LocalToolRuntime:
         owner_key: str,
         assignee_agent_id: str | None,
         assignee_hint: str | None,
+        required_skill_names: list[str] | None = None,
     ) -> dict[str, Any] | None:
         if self.agent_repository is None:
             return None
@@ -1128,7 +1149,57 @@ class LocalToolRuntime:
             for profile in profiles:
                 if self._profile_matches_hint(profile, normalized_hint):
                     return profile
+        if required_skill_names:
+            for profile in profiles:
+                if not self._missing_profile_skills(profile, required_skill_names):
+                    return profile
         return profiles[0]
+
+    def _required_session_agent_skill_names(
+        self,
+        *,
+        args: dict[str, Any],
+        context: dict[str, Any],
+        text_parts: list[str],
+    ) -> list[str]:
+        explicit = self._string_list(args.get("requiredSkillNames") or args.get("required_skill_names"))
+        if explicit:
+            return explicit
+
+        parent_skill_names = self._string_list(
+            context.get("enabledSkillNames")
+            or context.get("enabled_skill_names")
+            or context.get("skillNames")
+            or context.get("skill_names")
+        )
+        if not parent_skill_names:
+            target_profile = context.get("targetAgentProfile") or context.get("target_agent_profile")
+            config = target_profile.get("configSnapshot") if isinstance(target_profile, dict) else {}
+            if isinstance(config, dict):
+                parent_skill_names = self._string_list(config.get("skills"))
+        if not parent_skill_names:
+            return []
+
+        haystack = self._normalize_match_text(" ".join(text_parts))
+        required: list[str] = []
+        for skill_name in parent_skill_names:
+            if self._normalize_match_text(skill_name) in haystack:
+                self._append_unique(required, skill_name)
+        return required
+
+    def _missing_profile_skills(self, profile: dict[str, Any], required_skill_names: list[str] | None) -> list[str]:
+        if not required_skill_names:
+            return []
+        config = dict(profile.get("config_snapshot") or {})
+        profile_skill_names = {
+            self._normalize_match_text(skill_name)
+            for skill_name in self._string_list(config.get("skills") or profile.get("skills"))
+        }
+        return [
+            skill_name
+            for skill_name in required_skill_names
+            if self._normalize_match_text(skill_name) not in profile_skill_names
+        ]
 
     @classmethod
     def _profile_matches_hint(cls, profile: dict[str, Any], normalized_hint: str) -> bool:
@@ -1151,6 +1222,11 @@ class LocalToolRuntime:
     @staticmethod
     def _normalize_match_text(value: Any) -> str:
         return re.sub(r"\s+", "", str(value or "").strip().lower())
+
+    @staticmethod
+    def _append_unique(values: list[str], item: str) -> None:
+        if item not in values:
+            values.append(item)
 
     @staticmethod
     def _work_tool_payload(work) -> dict[str, Any]:

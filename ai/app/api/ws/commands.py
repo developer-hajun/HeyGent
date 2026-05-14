@@ -419,6 +419,7 @@ class WebSocketCommandRouter:
         apply_task_capabilities(
             task_input,
             skill_registry=getattr(context.websocket.app.state, "skill_registry", None),
+            default_toolsets=tuple(sorted(_PUBLIC_SESSION_TOOLSETS)),
         )
         # token memory context는 durable payload에 넣지 않는다. backend 호출이 필요해지면
         # context.auth.access_token에서만 꺼내 쓰도록 경계를 고정한다.

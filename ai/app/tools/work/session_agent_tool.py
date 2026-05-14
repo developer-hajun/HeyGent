@@ -48,6 +48,11 @@ SESSION_AGENT_TASK_SCHEMA = {
                 "items": {"type": "string"},
                 "description": "Scope, format, deadline, or other constraints.",
             },
+            "requiredSkillNames": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional skill names the assigned session agent must actually have.",
+            },
             "labelNames": {
                 "type": "array",
                 "items": {"type": "string"},

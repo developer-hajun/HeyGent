@@ -412,6 +412,7 @@ async def _create_message_in_session(
     apply_task_capabilities(
         task_input,
         skill_registry=getattr(request.app.state, "skill_registry", None),
+        default_toolsets=tuple(sorted(_PUBLIC_SESSION_TOOLSETS)),
     )
     user_append = session_store.append_user_message_and_start_task(
         owner_key=owner_key,

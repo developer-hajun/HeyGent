@@ -15,10 +15,16 @@ class TaskCapabilityResolution:
     skill_required_toolsets: tuple[str, ...]
 
 
-def resolve_task_capabilities(task_input: dict[str, Any], *, skill_registry: Any | None = None) -> TaskCapabilityResolution:
+def resolve_task_capabilities(
+    task_input: dict[str, Any],
+    *,
+    skill_registry: Any | None = None,
+    default_toolsets: tuple[str, ...] | list[str] | None = None,
+) -> TaskCapabilityResolution:
     requested_toolsets = _normalized_toolsets(task_input.get("enabled_toolsets"))
     enabled_skill_names = _enabled_skill_names(task_input)
-    if requested_toolsets is None:
+    skill_required_toolsets = _skill_required_toolsets(enabled_skill_names, skill_registry=skill_registry)
+    if requested_toolsets is None and not enabled_skill_names:
         return TaskCapabilityResolution(
             enabled_toolsets=None,
             enabled_skill_names=tuple(enabled_skill_names),
@@ -26,8 +32,7 @@ def resolve_task_capabilities(task_input: dict[str, Any], *, skill_registry: Any
             skill_required_toolsets=(),
         )
 
-    resolved_toolsets = list(requested_toolsets)
-    skill_required_toolsets = _skill_required_toolsets(enabled_skill_names, skill_registry=skill_registry)
+    resolved_toolsets = list(requested_toolsets or _normalized_toolsets(default_toolsets) or ())
     if enabled_skill_names:
         _append_unique(resolved_toolsets, "skills")
     for toolset in skill_required_toolsets:
@@ -42,8 +47,17 @@ def resolve_task_capabilities(task_input: dict[str, Any], *, skill_registry: Any
     )
 
 
-def apply_task_capabilities(task_input: dict[str, Any], *, skill_registry: Any | None = None) -> TaskCapabilityResolution:
-    capabilities = resolve_task_capabilities(task_input, skill_registry=skill_registry)
+def apply_task_capabilities(
+    task_input: dict[str, Any],
+    *,
+    skill_registry: Any | None = None,
+    default_toolsets: tuple[str, ...] | list[str] | None = None,
+) -> TaskCapabilityResolution:
+    capabilities = resolve_task_capabilities(
+        task_input,
+        skill_registry=skill_registry,
+        default_toolsets=default_toolsets,
+    )
     if capabilities.enabled_skill_names:
         task_input["enabledSkillNames"] = list(capabilities.enabled_skill_names)
     if capabilities.enabled_toolsets is not None:

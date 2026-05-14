@@ -45,16 +45,16 @@ def test_capability_resolver_uses_skill_metadata_runtime_toolsets():
     assert "mattermost.send" in capabilities.enabled_tool_names
 
 
-def test_capability_resolver_keeps_unrestricted_toolsets_unrestricted():
+def test_capability_resolver_opens_skill_toolsets_without_requested_toolsets():
     capabilities = resolve_task_capabilities(
         {
-            "enabledSkillNames": ["korea-weather"],
+            "enabledSkillNames": ["mattermost-send"],
         },
         skill_registry=DummySkillRegistry(),
     )
 
-    assert capabilities.enabled_toolsets is None
-    assert capabilities.enabled_tool_names is None
+    assert capabilities.enabled_toolsets == ("skills", "messaging")
+    assert "mattermost.send" in capabilities.enabled_tool_names
 
 
 def test_apply_task_capabilities_updates_payload_with_diagnostics():
