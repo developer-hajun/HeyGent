@@ -78,6 +78,7 @@ import androidx.core.content.ContextCompat
 import com.kakao.sdk.common.KakaoSdk
 import com.kakao.sdk.common.util.Utility
 import com.example.mob.voice.WakeWordForegroundService
+import com.google.firebase.messaging.FirebaseMessaging
 
 private sealed class Screen(
     val route: String,
@@ -195,6 +196,14 @@ private fun MainApp(onLogout: () -> Unit) {
     // 토큰 만료 시 자동 로그아웃
     LaunchedEffect(Unit) {
         RetrofitClient.sessionExpiredEvent.collect { onLogout() }
+    }
+
+    // FCM 토큰 등록 (앱 시작 시 1회)
+    LaunchedEffect(Unit) {
+        FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+            Log.d("FCM", "토큰 등록 요청: ${token.take(20)}...")
+            chatViewModel.registerFcmToken(token)
+        }
     }
 
     // 주기적 동기화 시작
