@@ -616,6 +616,16 @@ class TaskEngine:
 
         if task_status == TaskStatus.COMPLETED:
             await self._emit("task.completed", task, payload=task.result_payload)
+            # FCM 푸시: 웹/다른 기기에서 보낸 메시지도 모바일에 동기화
+            try:
+                fcm_token = get_fcm_token(str(task.owner_key))
+                if fcm_token and task.session_key:
+                    send_chat_notification(fcm_token, session_id=task.session_key, content="")
+                    logger.info(f"FCM 발송 완료: owner={task.owner_key} session={task.session_key}")
+                else:
+                    logger.debug(f"FCM 스킵: token={bool(fcm_token)} session={task.session_key}")
+            except Exception as e:
+                logger.warning(f"FCM 발송 실패 (무시): {e}")
             return task
 
         if task_status == TaskStatus.FAILED:
