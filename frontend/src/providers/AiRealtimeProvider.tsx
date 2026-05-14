@@ -139,6 +139,12 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         useTaskRunStore.getState().handleRealtimeFrame(frame)
         useWorkStore.getState().handleRealtimeFrame(frame)
         recoverTaskRunAfterGap(frame)
+        if (frame.type === 'task.new') {
+          const taskRunId = (frame as { type: string; taskRunId?: string }).taskRunId
+          if (taskRunId && !useAiRealtimeStore.getState().subscriptionsByTaskRunId[taskRunId]) {
+            useAiRealtimeStore.getState().subscribeTask(taskRunId, undefined)
+          }
+        }
       })
 
       socketClient.onMessage((event) => {

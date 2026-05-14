@@ -205,7 +205,7 @@ export function SessionWorkspaceMenu({
           <button
             type="button"
             onClick={() => setDeleteDialogOpen(true)}
-            className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive flex h-12 w-12 items-center justify-center rounded-xl transition-colors"
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive flex h-12 w-12 items-center justify-center rounded-xl transition-colors"
             aria-label="대화 삭제"
           >
             <Trash2 className="h-5 w-5" />
@@ -442,7 +442,7 @@ export function SessionWorkspaceMenu({
         <button
           type="button"
           onClick={() => setDeleteDialogOpen(true)}
-          className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm font-medium transition-colors"
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm font-medium transition-colors"
         >
           <Trash2 className="h-4 w-4 shrink-0" />
           <span className="truncate">대화 삭제</span>
