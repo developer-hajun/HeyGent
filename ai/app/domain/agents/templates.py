@@ -134,7 +134,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         description="특정 전문 에이전트가 없는 일반 요청을 맡아 세션 맥락 기반 조사, 요약, 자료 정리, 실행 보조, 간단한 문서화와 후속 작업 정리를 수행합니다.",
         adapter_type="openai",
         model="gpt-5.4",
-        profile_image="/assets/agents/sub/agent01.png",
+        profile_image="/assets/agents/agent01/idle_front.png",
         skills=("skill-index",),
         documents=(
             (
@@ -164,7 +164,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         description="한국 생활/공공정보 요청을 맡습니다. 날씨, 미세먼지, 한강 수위, 지하철 도착 정보, 지하철역/열차 유실물, 주소/우편번호, 공공화장실, 생활폐기물, 학교 급식, 도서관, 유가, 로또, 부동산 실거래가, 한국어 글자 수 같은 조회와 안내를 처리합니다.",
         adapter_type="openai",
         model="gpt-5.4",
-        profile_image="/assets/agents/sub/agent06.png",
+        profile_image="/assets/agents/agent06/idle_front.png",
         skills=K_SERVICE_SKILL_IDS,
         documents=(
             (
@@ -199,7 +199,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         description="소프트웨어 개발 요청을 맡습니다. 코드 구현, 버그 원인 분석, 리팩터링, 테스트 작성과 실행, 프론트엔드/백엔드 수정, 개발 환경 확인, 변경 요약과 인수인계를 처리합니다.",
         adapter_type="openai",
         model="gpt-5.4",
-        profile_image="/assets/agents/sub/agent03.png",
+        profile_image="/assets/agents/agent03/idle_front.png",
         skills=("subagent-driven-development", "writing-plans"),
         documents=(
             (
@@ -237,7 +237,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         description="품질 검증 요청을 맡습니다. 버그 재현, 수정 확인, 화면 흐름 테스트, 브라우저 기반 동작 확인, 콘솔/네트워크 오류 확인, 검증 리포트와 재현 단계를 정리합니다.",
         adapter_type="openai",
         model="gpt-5.4",
-        profile_image="/assets/agents/sub/agent04.png",
+        profile_image="/assets/agents/agent04/idle_front.png",
         skills=("ux-flow-review",),
         documents=(
             (
@@ -277,7 +277,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         description="제품 경험 검토를 맡습니다. 사용자 흐름, 정보 구조, 화면 위계, 상태 표시, 빈 화면/오류/로딩, 버튼과 입력 상호작용, 사용자 문구와 접근성 문제를 점검합니다.",
         adapter_type="openai",
         model="gpt-5.4",
-        profile_image="/assets/agents/sub/agent05.png",
+        profile_image="/assets/agents/agent05/idle_front.png",
         skills=("ux-flow-review",),
         documents=(
             (
@@ -313,7 +313,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         description="보안 검토 요청을 맡습니다. 인증, 권한, 세션 접근, 비밀값과 토큰 노출, 입력 검증, 경로/명령 주입, 외부 도구 실행 위험, 에이전트 위임 권한 문제를 점검합니다.",
         adapter_type="openai",
         model="gpt-5.4",
-        profile_image="/assets/agents/sub/agent02.png",
+        profile_image="/assets/agents/agent02/idle_front.png",
         skills=(),
         documents=(
             (

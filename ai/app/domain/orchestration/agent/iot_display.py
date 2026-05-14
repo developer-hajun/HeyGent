@@ -99,6 +99,8 @@ class IotDisplayEventAdapter:
             return self._mapping("STEP", "SUCCESS", "done", "STEP_DONE", 1500, 40, "RUNNING", False)
         if event_type in {"tool.started", "search.started"}:
             return self._tool_mapping(payload)
+        if event_type in {"tool.completed", "tool.result"}:
+            return self._tool_completed_mapping(payload)
         if event_type in {"step.started", "step.created"}:
             return self._step_mapping(step=step, payload=payload)
         return None
@@ -115,6 +117,8 @@ class IotDisplayEventAdapter:
 
     def _tool_mapping(self, payload: dict[str, Any]):
         tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").lower()
+        if self._is_message_tool(tool_name):
+            return self._mapping("STEP", "SEND", "sending", "SENDING_MESSAGE", 3000, 50, "RUNNING", False)
         if "search" in tool_name:
             return self._mapping("STEP", "SEARCH", "searching", "SEARCHING", 2500, 45, "RUNNING", False)
         if "http" in tool_name or "api" in tool_name or "web" in tool_name:
@@ -122,6 +126,16 @@ class IotDisplayEventAdapter:
         if "delegate" in tool_name:
             return self._mapping("STEP", "DELEGATE", "delegate", "DELEGATING", 2500, 45, "RUNNING", False)
         return self._mapping("STEP", "TOOL", "tool run", "TOOL_RUNNING", 2500, 40, "RUNNING", False)
+
+    def _tool_completed_mapping(self, payload: dict[str, Any]):
+        tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").lower()
+        if self._is_message_tool(tool_name):
+            return self._mapping("STEP", "SUCCESS", "sent", "STEP_DONE", 1500, 45, "RUNNING", False)
+        return self._mapping("STEP", "SUCCESS", "done", "STEP_DONE", 1500, 35, "RUNNING", False)
+
+    def _is_message_tool(self, tool_name: str) -> bool:
+        normalized = tool_name.replace("_", ".").replace("-", ".")
+        return "mattermost" in normalized or "send.message" in normalized or normalized.endswith(".send") or normalized == "send"
 
     def _mapping(
         self,

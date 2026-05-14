@@ -32,9 +32,10 @@ const BARS: {
 
 interface WhiteboardTokenChartProps {
   summary: CommandUsageSummary | null
+  onOpen?: () => void
 }
 
-export function WhiteboardTokenChart({ summary }: WhiteboardTokenChartProps) {
+export function WhiteboardTokenChart({ summary, onOpen }: WhiteboardTokenChartProps) {
   const maxVal = summary
     ? Math.max(
         summary.inputTokens,
@@ -51,9 +52,11 @@ export function WhiteboardTokenChart({ summary }: WhiteboardTokenChartProps) {
         position: 'absolute',
         inset: 0,
         clipPath: CLIP,
-        pointerEvents: 'none',
+        pointerEvents: onOpen ? 'auto' : 'none',
+        cursor: onOpen ? 'pointer' : 'default',
         zIndex: 5,
       }}
+      onClick={onOpen}
     >
       <div
         style={{
