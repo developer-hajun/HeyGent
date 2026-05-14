@@ -48,6 +48,8 @@ const TASK_STATUS_CLASS: Record<TaskStatus, string> = {
   failed: 'text-red-400',
 }
 
+const EMPTY_AGENT_PANELS: ReturnType<typeof agentProfilesToPanelItems> = []
+
 function AgentInfoPanel({ info, onClose }: { info: AgentVisualizationInfo; onClose: () => void }) {
   return (
     <div className="absolute top-4 right-4 z-30 flex w-72 flex-col rounded-2xl border border-white/15 bg-black/80 shadow-2xl backdrop-blur-md">
@@ -932,7 +934,7 @@ export function AgentStatusPage() {
 
   // 세션의 서브에이전트 패널 목록 — 추가·삭제 시 자동으로 스폰/연동 트리거
   const agentPanels = useSessionStore((s) =>
-    sessionId ? (s.agentPanelsBySessionId[sessionId] ?? []) : [],
+    sessionId ? (s.agentPanelsBySessionId[sessionId] ?? EMPTY_AGENT_PANELS) : EMPTY_AGENT_PANELS,
   )
 
   useEffect(() => {

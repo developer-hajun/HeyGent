@@ -138,9 +138,12 @@ def _receive_until(
     *,
     max_frames: int = 20,
     seen_types: list[str] | None = None,
+    seen_frames: list[dict] | None = None,
 ):
     for _ in range(max_frames):
         frame = websocket.receive_json()
+        if seen_frames is not None:
+            seen_frames.append(frame)
         if seen_types is not None:
             seen_types.append(frame.get("type"))
         if frame.get("type") == frame_type:
@@ -148,10 +151,19 @@ def _receive_until(
     raise AssertionError(f"{frame_type} frame was not received")
 
 
-def _receive_command_frame(websocket, frame_type: str, request_id: str, *, max_frames: int = 40) -> dict:
+def _receive_command_frame(
+    websocket,
+    frame_type: str,
+    request_id: str,
+    *,
+    max_frames: int = 40,
+    seen_frames: list[dict] | None = None,
+) -> dict:
     seen: list[tuple[str | None, str | None]] = []
     for _ in range(max_frames):
         frame = websocket.receive_json()
+        if seen_frames is not None:
+            seen_frames.append(frame)
         seen.append((frame.get("type"), frame.get("requestId")))
         if frame.get("type") == frame_type and frame.get("requestId") == request_id:
             return frame
@@ -546,8 +558,14 @@ def test_ws_session_agent_task_child_taskrun_can_be_subscribed_snapshotted_and_r
         assert parent_start_payload["workStatus"] == "in_progress"
         assert client.app.state.repository.get_task(child_task_run_id) is not None
 
+        observed_after_child_handoff: list[dict] = []
         websocket.send_json({"type": "subscribe.task", "requestId": "req_child_subscribe", "taskRunId": child_task_run_id})
-        subscribed = _receive_until(websocket, "subscribed", max_frames=80)
+        subscribed = _receive_until(
+            websocket,
+            "subscribed",
+            max_frames=80,
+            seen_frames=observed_after_child_handoff,
+        )
         assert subscribed["requestId"] == "req_child_subscribe"
         assert subscribed["taskRunId"] == child_task_run_id
 
@@ -564,6 +582,7 @@ def test_ws_session_agent_task_child_taskrun_can_be_subscribed_snapshotted_and_r
             "taskRun.snapshot.result",
             "req_child_snapshot",
             max_frames=80,
+            seen_frames=observed_after_child_handoff,
         )
         assert snapshot["requestId"] == "req_child_snapshot"
         assert snapshot["payload"]["task"]["task_run_id"] == child_task_run_id
@@ -583,13 +602,25 @@ def test_ws_session_agent_task_child_taskrun_can_be_subscribed_snapshotted_and_r
             "taskRun.events.replay.result",
             "req_child_replay",
             max_frames=80,
+            seen_frames=observed_after_child_handoff,
         )
         assert replay["requestId"] == "req_child_replay"
         assert replay["payload"]["events"]
         assert {event["task_run_id"] for event in replay["payload"]["events"]} == {child_task_run_id}
         assert replay["payload"]["retention_exceeded"] is False
 
-        completed = _receive_until(websocket, "session.message.completed", max_frames=80)
+        # child 구독 ack보다 parent 완료 frame이 먼저 도착할 수 있으므로 이미 본 frame을 재사용한다.
+        completed = next(
+            (
+                frame
+                for frame in observed_after_child_handoff
+                if frame.get("type") == "session.message.completed"
+                and (frame.get("payload") or {}).get("task_run_id") == parent_task_run_id
+            ),
+            None,
+        )
+        if completed is None:
+            completed = _receive_until(websocket, "session.message.completed", max_frames=80)
         assert completed["payload"]["task_run_id"] == parent_task_run_id
         assert completed["payload"]["content"] == "PARENT_DONE"
     finally:
