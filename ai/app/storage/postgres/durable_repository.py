@@ -7,6 +7,7 @@ from typing import Any, Callable
 from app.contracts.event.task_events import TaskEventEnvelope
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
+from app.domain.orchestration.run_lifecycle import classify_task_run_liveness
 from app.domain.tasks.models import StepRun, TaskRun
 
 
@@ -277,6 +278,68 @@ class PostgresTaskRepository(PostgresDurableRepository):
             task.ended_at = task.ended_at or utc_now()
         return self.update_task(task)
 
+    def recover_stale_task_run(self, task_run_id: str, *, reason: str) -> TaskRun | None:
+        task = self.get_task(task_run_id)
+        if task is None or task.status not in {"PENDING", "RUNNING"}:
+            return None
+        liveness = classify_task_run_liveness(task)
+        if not liveness.should_recover:
+            return None
+        now_dt = utc_now()
+        task.status = "FAILED"
+        task.queue_status = "terminal"
+        task.error_message = "실행 상태가 만료되어 자동 복구되었습니다."
+        task.last_claim_error = reason or liveness.reason
+        task.claim_owner = None
+        task.lease_expires_at = None
+        task.heartbeat_at = None
+        task.next_attempt_at = None
+        task.ended_at = task.ended_at or now_dt
+        return self.update_task(task)
+
+    def recover_stale_task_runs(self, *, orphan_after_seconds: int = 300, limit: int = 100) -> list[TaskRun]:
+        recovered: list[TaskRun] = []
+        candidates = self._load_stale_recovery_candidates(orphan_after_seconds=orphan_after_seconds, limit=limit)
+        for task in candidates:
+            liveness = classify_task_run_liveness(task, orphan_after_seconds=orphan_after_seconds)
+            if not liveness.should_recover:
+                continue
+            saved = self.recover_stale_task_run(task.task_run_id, reason=liveness.reason)
+            if saved is not None:
+                recovered.append(saved)
+        return recovered
+
+    def _load_stale_recovery_candidates(self, *, orphan_after_seconds: int, limit: int) -> list[TaskRun]:
+        connection = self.connection_factory()
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM run_anchors
+            WHERE queue_status IN ('claimed', 'running')
+              AND (
+                lease_expires_at < now()
+                OR heartbeat_at < now() - (%s * interval '1 second')
+                OR (
+                  lease_expires_at IS NULL
+                  AND heartbeat_at IS NULL
+                  AND updated_at < now() - (%s * interval '1 second')
+                )
+              )
+            ORDER BY updated_at ASC, created_at ASC
+            LIMIT %s
+            """,
+            (max(1, int(orphan_after_seconds)), max(1, int(orphan_after_seconds)), max(1, int(limit))),
+        ).fetchall()
+        tasks: list[TaskRun] = []
+        for row in rows:
+            normalized = _normalize_row(row) or {}
+            task = _task_from_payload((normalized.get("anchor_payload") or {}).get("task"))
+            if task is None:
+                continue
+            _apply_anchor_queue_fields(task, normalized)
+            tasks.append(task)
+        return tasks
+
     def update_task(self, task: TaskRun) -> TaskRun:
         task.updated_at = utc_now()
         self._save_task_anchor(task)
@@ -286,7 +349,10 @@ class PostgresTaskRepository(PostgresDurableRepository):
         anchor = self.get_run_anchor(task_run_id)
         if not anchor:
             return None
-        return _task_from_payload((anchor.get("anchor_payload") or {}).get("task"))
+        task = _task_from_payload((anchor.get("anchor_payload") or {}).get("task"))
+        if task is not None:
+            _apply_anchor_queue_fields(task, anchor)
+        return task
 
     def list_tasks(self, *, status: str | None = None, session_key: str | None = None, limit: int = 20, offset: int = 0) -> list[TaskRun]:
         tasks = self._load_all_tasks()

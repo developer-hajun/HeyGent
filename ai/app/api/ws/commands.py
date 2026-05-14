@@ -17,6 +17,7 @@ from app.contracts.task.task_status import TaskStatus
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
 from app.domain.orchestration.contracts import OrchestrationRequest
+from app.domain.orchestration.run_lifecycle import classify_task_run_liveness
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
@@ -908,14 +909,24 @@ class WebSocketCommandRouter:
         if projection is not None and session_id:
             for task_run_id in projection.list_active_task_ids(session_key=session_id):
                 task = projection.get_task_snapshot(task_run_id)
-                if task is None or str(task.owner_key) != str(context.auth.user_id):
+                canonical_task = repository.get_task(task_run_id)
+                if canonical_task is None or str(canonical_task.owner_key) != str(context.auth.user_id):
                     continue
-                steps = _projection_steps(projection, task.task_run_id)
-                items_by_task_run_id[task.task_run_id] = _active_task_payload(task, steps, source="active", repository=repository)
+                if not _is_live_active_task(repository, canonical_task):
+                    continue
+                steps = _projection_steps(projection, canonical_task.task_run_id)
+                items_by_task_run_id[canonical_task.task_run_id] = _active_task_payload(
+                    canonical_task,
+                    steps,
+                    source="active",
+                    repository=repository,
+                )
 
         total = repository.count_tasks_by_statuses(_ACTIVE_TASK_STATUSES, session_key=session_id)
         for task in repository.list_tasks_by_statuses(_ACTIVE_TASK_STATUSES, session_key=session_id, limit=max(total, 1), offset=0):
             if task.task_run_id in items_by_task_run_id or str(task.owner_key) != str(context.auth.user_id):
+                continue
+            if not _is_live_active_task(repository, task):
                 continue
             items_by_task_run_id[task.task_run_id] = _active_task_payload(
                 task,
@@ -1590,8 +1601,10 @@ def _refresh_stale_running_guard(context: WebSocketCommandContext, session: dict
     if not task_run_id:
         return session
     task = context.websocket.app.state.repository.get_task(str(task_run_id))
-    if task is not None and str(task.status) in _ACTIVE_TASK_STATUSES:
+    liveness = classify_task_run_liveness(task)
+    if liveness.blocks_session:
         return session
+    _recover_stale_task_if_needed(context.websocket.app.state.repository, task, liveness=liveness)
     # Postgres의 running_task_run_id는 재시작 뒤에도 남는 영속 guard다.
     # TaskRun이 이미 terminal이거나 projection/task row를 잃은 경우에는 다음 명령을 막지 않도록
     # 같은 task_run_id 소유 guard만 정리한다.
@@ -2107,20 +2120,32 @@ def _session_list_preview_payload(context: WebSocketCommandContext, *, session_i
 
 
 def _is_sidebar_active_task(task: Any) -> bool:
-    if getattr(task, "status", None) not in _ACTIVE_TASK_STATUSES:
-        return False
-    if _is_expired_running_task(task):
-        return False
-    return True
+    return classify_task_run_liveness(task).blocks_session
+
+
+def _is_live_active_task(repository: Any, task: Any) -> bool:
+    liveness = classify_task_run_liveness(task)
+    if liveness.blocks_session:
+        return True
+    _recover_stale_task_if_needed(repository, task, liveness=liveness)
+    return False
+
+
+def _recover_stale_task_if_needed(repository: Any, task: Any, *, liveness: Any | None = None) -> None:
+    if task is None:
+        return
+    current_liveness = liveness or classify_task_run_liveness(task)
+    if not current_liveness.should_recover:
+        return
+    recover = getattr(repository, "recover_stale_task_run", None)
+    if recover is None:
+        return
+    recover(str(task.task_run_id), reason=str(current_liveness.reason))
 
 
 def _is_expired_running_task(task: Any) -> bool:
-    if getattr(task, "status", None) not in _ACTIVE_TASK_STATUSES:
-        return False
-    lease_expires_at = getattr(task, "lease_expires_at", None)
-    if isinstance(lease_expires_at, datetime) and lease_expires_at < utc_now():
-        return True
-    return False
+    liveness = classify_task_run_liveness(task)
+    return liveness.should_recover and not liveness.blocks_session
 
 
 def _message_payload(message: dict[str, Any]) -> dict[str, Any]:

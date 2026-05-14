@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from app.clients.backend_auth import BackendAuthVerifyResult
 from app.clients.backend_memory import BackendMemoryItem
+from app.core.time import utc_now
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse
 from app.domain.tasks.models import TaskRun
 
@@ -403,6 +406,71 @@ def test_ws_task_runs_active_list_filters_authenticated_owner(client):
     assert [item["task_run_id"] for item in response["payload"]["task_runs"]] == ["task_active_ws_owner"]
 
 
+def test_ws_task_runs_active_list_hides_orphaned_running_task(client):
+    client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="active-orphan-owner")
+    client.app.state.repository.create_task(
+        TaskRun(
+            task_run_id="task_active_orphan_ws",
+            task_type="agent.loop",
+            owner_key="active-orphan-owner",
+            session_key="session_active_orphan_ws",
+            status="RUNNING",
+            title="orphan command",
+            queue_status="running",
+        )
+    )
+    client.app.state.repository.tasks["task_active_orphan_ws"].updated_at = utc_now() - timedelta(minutes=20)
+
+    with client.websocket_connect("/ai/api/v1/realtime/user/ws") as websocket:
+        websocket.send_json({"type": "auth.start", "accessToken": "token-secret"})
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "taskRuns.active.list",
+                "requestId": "req_active_orphan",
+                "payload": {"sessionId": "session_active_orphan_ws"},
+            }
+        )
+
+        response = websocket.receive_json()
+
+    assert response["type"] == "taskRuns.active.list.result"
+    assert response["payload"]["items"] == []
+    assert response["payload"]["task_runs"] == []
+
+
+def test_ws_task_runs_active_list_hides_projection_only_task(client):
+    client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="active-projection-owner")
+    client.app.state.task_projection_store.save_task_snapshot(
+        TaskRun(
+            task_run_id="task_projection_only_ws",
+            task_type="agent.loop",
+            owner_key="active-projection-owner",
+            session_key="session_projection_only_ws",
+            status="RUNNING",
+            title="projection only",
+        )
+    )
+
+    with client.websocket_connect("/ai/api/v1/realtime/user/ws") as websocket:
+        websocket.send_json({"type": "auth.start", "accessToken": "token-secret"})
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "taskRuns.active.list",
+                "requestId": "req_projection_only",
+                "payload": {"sessionId": "session_projection_only_ws"},
+            }
+        )
+
+        response = websocket.receive_json()
+
+    assert response["type"] == "taskRuns.active.list.result"
+    assert response["payload"]["items"] == []
+
+
 def test_ws_session_undo_rejects_when_session_is_running(client):
     context, websocket = _authenticated_socket(client, user_id="undo-owner")
     try:
@@ -715,6 +783,63 @@ def test_ws_session_update_rejects_running_session(client):
 
         assert response["type"] == "command.error"
         assert response["error"]["code"] == "conflict"
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_session_update_clears_orphaned_running_guard(client):
+    context, websocket = _authenticated_socket(client, user_id="orphaned-update-owner")
+    try:
+        store = client.app.state.session_store
+        store.create_session(
+            session_id="orphaned_update_session",
+            session_key="orphaned_update_session",
+            source="api.session",
+            user_id="orphaned-update-owner",
+            title="멈춘 실행",
+            metadata={"source": "api.session"},
+        )
+        store.append_user_message_and_start_task(
+            owner_key="orphaned-update-owner",
+            session_id="orphaned_update_session",
+            content="멈춘 작업",
+            client_message_id="client_orphaned_update",
+            task_run_id="task_orphaned_update",
+            base_history_version=0,
+        )
+        task = TaskRun(
+            task_run_id="task_orphaned_update",
+            task_type="agent.loop",
+            owner_key="orphaned-update-owner",
+            session_key="orphaned_update_session",
+            status="RUNNING",
+            title="멈춘 실행",
+            queue_status="running",
+        )
+        client.app.state.repository.create_task(task)
+        client.app.state.repository.tasks["task_orphaned_update"].updated_at = utc_now() - timedelta(minutes=20)
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.update",
+                "requestId": "req_orphaned_update",
+                "payload": {
+                    "sessionId": "orphaned_update_session",
+                    "clientCommandId": "cmd_orphaned_update",
+                    "title": "다시 수정 가능",
+                },
+            }
+        )
+
+        response = websocket.receive_json()
+
+        assert response["type"] == "session.updated"
+        assert store.get_session("orphaned_update_session")["running_task_run_id"] is None
+        recovered = client.app.state.repository.get_task("task_orphaned_update")
+        assert recovered is not None
+        assert recovered.status == "FAILED"
+        assert recovered.queue_status == "terminal"
     finally:
         context.__exit__(None, None, None)
 

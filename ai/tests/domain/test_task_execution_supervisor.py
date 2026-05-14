@@ -1,10 +1,13 @@
 import asyncio
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
 
+from app.core.time import utc_now
 from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.orchestration.task_execution_supervisor import TaskExecutionSupervisor, TaskExecutionSupervisorConfig
+from app.domain.tasks.models import TaskRun
 from tests.fakes import InMemoryTaskRepository
 
 
@@ -154,3 +157,83 @@ async def test_task_execution_supervisor_does_not_fail_task_when_completion_call
 
 async def _raise_completion_error(task) -> None:
     raise RuntimeError("websocket is already gone")
+
+
+@pytest.mark.asyncio
+async def test_task_execution_supervisor_recovers_stale_running_tasks_before_claiming():
+    repository = InMemoryTaskRepository()
+    repository.create_task(
+        TaskRun(
+            task_run_id="task-supervisor-stale",
+            task_type="agent.loop",
+            owner_key="42",
+            session_key="session-1",
+            status="RUNNING",
+            queue_status="running",
+            updated_at=utc_now() - timedelta(minutes=20),
+        )
+    )
+    repository.tasks["task-supervisor-stale"].updated_at = utc_now() - timedelta(minutes=20)
+
+    class FakeOrchestrator:
+        async def enqueue_start(self, request: OrchestrationRequest):
+            raise AssertionError("not used")
+
+        async def execute_claimed(self, task):
+            raise AssertionError("stale task must not be executed")
+
+    supervisor = TaskExecutionSupervisor(
+        repository=repository,
+        orchestrator=FakeOrchestrator(),
+        config=TaskExecutionSupervisorConfig(worker_count=1, poll_interval_seconds=0.05),
+        instance_id="test-supervisor",
+    )
+    await supervisor.start()
+    try:
+        for _ in range(20):
+            saved = repository.get_task("task-supervisor-stale")
+            if saved is not None and saved.status == "FAILED":
+                break
+            await asyncio.sleep(0.05)
+    finally:
+        await supervisor.stop()
+
+    saved = repository.get_task("task-supervisor-stale")
+    assert saved is not None
+    assert saved.status == "FAILED"
+    assert saved.queue_status == "terminal"
+
+
+@pytest.mark.asyncio
+async def test_task_execution_supervisor_throttles_stale_recovery_when_idle():
+    class CountingRepository(InMemoryTaskRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.recover_calls = 0
+
+        def recover_stale_task_runs(self, *, orphan_after_seconds: int = 300, limit: int = 100):
+            self.recover_calls += 1
+            return super().recover_stale_task_runs(orphan_after_seconds=orphan_after_seconds, limit=limit)
+
+    repository = CountingRepository()
+
+    class FakeOrchestrator:
+        async def enqueue_start(self, request: OrchestrationRequest):
+            raise AssertionError("not used")
+
+        async def execute_claimed(self, task):
+            raise AssertionError("not used")
+
+    supervisor = TaskExecutionSupervisor(
+        repository=repository,
+        orchestrator=FakeOrchestrator(),
+        config=TaskExecutionSupervisorConfig(worker_count=1, poll_interval_seconds=0.05, recovery_interval_seconds=60),
+        instance_id="test-supervisor",
+    )
+    await supervisor.start()
+    try:
+        await asyncio.sleep(0.22)
+    finally:
+        await supervisor.stop()
+
+    assert repository.recover_calls == 1

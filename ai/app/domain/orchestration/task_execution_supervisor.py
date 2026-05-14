@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from time import monotonic
 from uuid import uuid4
 
 from app.domain.orchestration.contracts import OrchestrationRequest
@@ -20,6 +21,7 @@ class TaskExecutionSupervisorConfig:
     worker_count: int = 2
     lease_seconds: int = 300
     poll_interval_seconds: float = 0.5
+    recovery_interval_seconds: float = 10.0
 
 
 class TaskExecutionSupervisor:
@@ -45,6 +47,7 @@ class TaskExecutionSupervisor:
         self._workers: list[asyncio.Task] = []
         self._completion_callbacks: dict[str, Callable[[TaskRun], Awaitable[None]]] = {}
         self._closed = False
+        self._last_recovery_at: float | None = None
 
     async def start(self) -> None:
         if self._workers:
@@ -89,6 +92,7 @@ class TaskExecutionSupervisor:
             await self._wake_event.wait()
             self._wake_event.clear()
             while not self._closed:
+                await self._recover_stale_task_runs()
                 task = await asyncio.to_thread(
                     self.repository.claim_next_task,
                     claim_owner=claim_owner,
@@ -99,6 +103,20 @@ class TaskExecutionSupervisor:
                 await self._execute_claimed_task(task=task, claim_owner=claim_owner)
             await asyncio.sleep(max(0.05, float(self.config.poll_interval_seconds)))
             self._wake_event.set()
+
+    async def _recover_stale_task_runs(self) -> None:
+        recover = getattr(self.repository, "recover_stale_task_runs", None)
+        if recover is None:
+            return
+        now = monotonic()
+        interval = max(0.05, float(self.config.recovery_interval_seconds))
+        if self._last_recovery_at is not None and now - self._last_recovery_at < interval:
+            return
+        self._last_recovery_at = now
+        try:
+            await asyncio.to_thread(recover, orphan_after_seconds=self.config.lease_seconds)
+        except Exception:
+            logger.exception("TaskRun 만료 실행 복구 중 오류가 발생했습니다.")
 
     async def _execute_claimed_task(self, *, task: TaskRun, claim_owner: str) -> None:
         try:
