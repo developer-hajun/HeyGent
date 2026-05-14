@@ -1,7 +1,10 @@
 import json
 import sys
 import types
+from copy import deepcopy
 
+from app.domain.work.models import WorkComment, WorkItem, WorkRelation
+from app.domain.orchestration.prompts.skill_prompt import SkillLoader, SkillRegistry
 from app.domain.orchestration.runtime_planning.todo_state import (
     apply_tool_results_to_todo_state,
     build_task_todo_payload,
@@ -15,6 +18,83 @@ class DummySessionStore:
     pass
 
 
+class FakeRuntimeWorkRepository:
+    def __init__(self) -> None:
+        self.items: dict[str, WorkItem] = {}
+        self.comments: list[WorkComment] = []
+        self.relations: list[WorkRelation] = []
+        self.next_number = 1
+
+    def next_identifier(self, session_id: str) -> str:
+        self.next_number += 1
+        return f"TASK-{self.next_number}"
+
+    def create_work(self, work: WorkItem, *, client_request_id: str | None = None) -> WorkItem:
+        saved = deepcopy(work)
+        self.items[saved.work_id] = saved
+        return saved
+
+    def get_work(self, work_id: str) -> WorkItem | None:
+        return self.items.get(work_id)
+
+    def get_work_by_client_request_id(
+        self,
+        session_id: str,
+        client_request_id: str,
+    ) -> WorkItem | None:
+        return None
+
+    def set_label_links_by_names(
+        self,
+        work_id: str,
+        *,
+        session_id: str,
+        owner_key: str,
+        label_names: list[str],
+    ) -> list[str]:
+        return label_names
+
+    def inherit_parent_labels(self, work_id: str, parent_id: str) -> list[str]:
+        return []
+
+    def add_comment(self, comment: WorkComment) -> WorkComment:
+        self.comments.append(comment)
+        return comment
+
+    def update_status(self, work_id: str, status: str) -> WorkItem:
+        work = self.items[work_id]
+        self.items[work_id] = WorkItem(**{**_work_dict(work), "status": status})
+        return self.items[work_id]
+
+    def add_relation(
+        self,
+        *,
+        source_work_id: str,
+        target_work_id: str,
+        relation_type: str,
+    ) -> WorkRelation:
+        relation = WorkRelation(
+            source_work_id=source_work_id,
+            target_work_id=target_work_id,
+            relation_type=relation_type,
+        )
+        self.relations.append(relation)
+        return relation
+
+
+class FakeRuntimeAgentRepository:
+    def __init__(self, profile: dict) -> None:
+        self.profile = profile
+
+    def list_session_agents(self, *, session_id: str, owner_key: str) -> list[dict]:
+        return [self.profile]
+
+    def get_session_agent(self, *, profile_id: str, owner_key: str) -> dict | None:
+        if profile_id == self.profile["profile_id"]:
+            return self.profile
+        return None
+
+
 class SearchRecordingSessionStore:
     def __init__(self) -> None:
         self.calls = []
@@ -22,6 +102,10 @@ class SearchRecordingSessionStore:
     def search_transcript_sessions(self, query, *, owner_key, limit=10):
         self.calls.append({"query": query, "owner_key": owner_key, "limit": limit})
         return [{"id": "session_match", "owner_key": owner_key}]
+
+
+def _work_dict(work: WorkItem) -> dict:
+    return {field: getattr(work, field) for field in WorkItem.__dataclass_fields__}
 
 
 def test_runtime_exposes_todo_schema_without_legacy_write_name():
@@ -90,7 +174,7 @@ def test_file_toolset_is_available_for_coding_and_local_core_but_not_safe():
     assert file_tool_names <= resolve_runtime_tool_names(("file",))
     assert file_tool_names <= resolve_runtime_tool_names(("coding",))
     assert file_tool_names <= resolve_runtime_tool_names(("local-core",))
-    assert "delegate_task" in resolve_runtime_tool_names(("local-core",))
+    assert "delegate_task" not in resolve_runtime_tool_names(("local-core",))
     assert file_tool_names.isdisjoint(resolve_runtime_tool_names(("safe",)))
 
 
@@ -99,11 +183,65 @@ def test_runtime_exposes_heygent_web_tool_definitions():
 
     definitions = runtime.list_tool_definitions(enabled_toolsets=("web",))
 
-    assert [definition["name"] for definition in definitions] == ["web_crawl", "web_extract", "web_search"]
+    assert [definition["name"] for definition in definitions] == ["http_get", "web_crawl", "web_extract", "web_search"]
     schema_by_name = {definition["name"]: definition["schema"] for definition in definitions}
+    assert schema_by_name["http_get"]["parameters"]["properties"]["url"]["type"] == "string"
     assert schema_by_name["web_search"]["parameters"]["properties"]["query"]["type"] == "string"
+    assert "skills.read" not in schema_by_name["web_search"]["description"]
     assert schema_by_name["web_extract"]["parameters"]["properties"]["urls"]["items"]["type"] == "string"
     assert schema_by_name["web_crawl"]["parameters"]["properties"]["url"]["type"] == "string"
+
+
+def test_skill_catalog_descriptions_remain_available_to_prompt_builder():
+    registry = SkillRegistry()
+    registry.register_many(SkillLoader().load_builtin())
+
+    descriptions = {item["name"]: item["description"] for item in registry.catalog_items()}
+
+    assert "korea-weather" in descriptions
+    assert "한국 날씨를 기상청 단기예보 조회서비스" in descriptions["korea-weather"]
+
+
+def test_skills_toolset_is_not_exposed_to_runtime_tools():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    definitions = runtime.list_tool_definitions(enabled_toolsets=("skills",))
+
+    assert definitions == []
+
+
+def test_disabled_skill_readers_are_unavailable_even_with_enabled_skill_context():
+    registry = SkillRegistry()
+    registry.register_many(
+        [
+            {"name": "korea-weather", "description": "한국 날씨 조회", "body": "# Weather"},
+            {"name": "zipcode-search", "description": "우편번호 조회", "body": "# Zipcode"},
+        ]
+    )
+    runtime = LocalToolRuntime(
+        skill_registry=registry,
+        session_store=DummySessionStore(),
+        runtime_context={"enabledSkillNames": ["korea-weather"]},
+    )
+
+    listed = runtime.run_call(name="skills.list", args={}, enabled_toolsets=("skills",))
+    read_result = runtime.run_call(
+        name="skills.read",
+        args={"skill_name": "korea-weather"},
+        enabled_toolsets=("skills",),
+    )
+    file_result = runtime.run_call(
+        name="skills.read",
+        args={"skill_name": "zipcode-search"},
+        enabled_toolsets=("skills",),
+    )
+
+    assert listed["ok"] is False
+    assert read_result["ok"] is False
+    assert file_result["ok"] is False
+    assert listed["error"]["code"] == "tool_unavailable"
+    assert read_result["error"]["code"] == "tool_unavailable"
+    assert file_result["error"]["code"] == "tool_unavailable"
 
 
 def test_runtime_exposes_heygent_browser_tool_definitions():
@@ -131,9 +269,9 @@ def test_web_browser_runtime_defaults_use_tolerant_timeouts():
 
 
 def test_web_is_available_in_local_core_and_safe_but_browser_is_explicit():
-    assert {"web_search", "web_extract", "web_crawl"} <= resolve_runtime_tool_names(("web",))
-    assert {"web_search", "web_extract", "web_crawl"} <= resolve_runtime_tool_names(("local-core",))
-    assert {"web_search", "web_extract", "web_crawl"} <= resolve_runtime_tool_names(("safe",))
+    assert {"web_search", "web_extract", "web_crawl", "http_get"} <= resolve_runtime_tool_names(("web",))
+    assert {"web_search", "web_extract", "web_crawl", "http_get"} <= resolve_runtime_tool_names(("local-core",))
+    assert {"web_search", "web_extract", "web_crawl", "http_get"} <= resolve_runtime_tool_names(("safe",))
     assert "browser_navigate" in resolve_runtime_tool_names(("browser",))
     assert "browser_navigate" not in resolve_runtime_tool_names(("local-core",))
 
@@ -157,6 +295,49 @@ def test_web_runtime_invokes_heygent_web_tool(monkeypatch):
     assert result["success"] is True
     assert result["data"]["web"][0]["title"] == "agent tool"
     assert result["limit"] == 2
+
+
+def test_http_get_runtime_fetches_json(monkeypatch):
+    class FakeHeaders:
+        def get_content_charset(self):
+            return "utf-8"
+
+        def get(self, name, default=None):
+            return "application/json" if name == "content-type" else default
+
+    class FakeResponse:
+        status = 200
+        headers = FakeHeaders()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self, limit):
+            return b'{"ok": true, "weather": "clear"}'
+
+    def fake_urlopen(request, timeout=15):
+        assert request.full_url == "https://k-skill-proxy.example/v1/korea-weather/forecast?lat=37.5172&lon=127.0473"
+        return FakeResponse()
+
+    from app.tools.web import web_tools
+
+    monkeypatch.setattr(web_tools, "urlopen", fake_urlopen)
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    result = runtime.run_call(
+        name="http_get",
+        args={
+            "url": "https://k-skill-proxy.example/v1/korea-weather/forecast",
+            "params": {"lat": 37.5172, "lon": 127.0473},
+        },
+        enabled_toolsets=("web",),
+    )
+
+    assert result["ok"] is True
+    assert result["json"] == {"ok": True, "weather": "clear"}
 
 
 def test_browser_runtime_invokes_heygent_browser_tool(monkeypatch):
@@ -208,6 +389,136 @@ def test_delegate_task_runtime_returns_worker_handoff_request():
     assert result["child_session"]["goal"] == "문서 구현 여부 검증"
     assert result["child_session"]["toolsets"] == ["file", "terminal"]
     assert result["child_session"]["metadata"]["profile_key"] == "worker.default"
+
+
+def test_session_agent_task_leaves_parent_waiting_by_default():
+    work_repository = FakeRuntimeWorkRepository()
+    parent = WorkItem(
+        work_id="work-parent",
+        identifier="TASK-1",
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        title="부모 작업",
+        description="부모",
+        status="in_progress",
+        assignee_agent_id="CEO",
+    )
+    work_repository.items[parent.work_id] = parent
+    agent_repository = FakeRuntimeAgentRepository(
+        {
+            "profile_id": "agent-research",
+            "session_id": "session-1",
+            "agent_type": "user_subagent",
+            "profile_key": "session.agent",
+            "config_snapshot": {"name": "Research", "role": "research"},
+        }
+    )
+    runtime = LocalToolRuntime(
+        skill_registry=object(),
+        session_store=DummySessionStore(),
+        work_repository=work_repository,
+        agent_repository=agent_repository,
+        runtime_context={"workId": parent.work_id},
+    )
+
+    result = runtime.run_call(
+        name="session_agent_task",
+        args={"title": "자료 조사", "instruction": "자료를 조사해줘"},
+        enabled_toolsets=("work",),
+    )
+
+    child_id = result["child_work"]["workId"]
+    assert result["ok"] is True
+    assert work_repository.items[parent.work_id].status == "in_progress"
+    assert work_repository.items[child_id].assignee_agent_id == "agent-research"
+    assert work_repository.relations == []
+
+
+def test_session_agent_task_can_create_root_work_when_default_agent_session_allows_it():
+    work_repository = FakeRuntimeWorkRepository()
+    agent_repository = FakeRuntimeAgentRepository(
+        {
+            "profile_id": "agent-travel",
+            "session_id": "session-1",
+            "agent_type": "user_subagent",
+            "profile_key": "session.travel",
+            "config_snapshot": {"name": "Travel", "role": "travel"},
+        }
+    )
+    runtime = LocalToolRuntime(
+        skill_registry=object(),
+        session_store=DummySessionStore(),
+        work_repository=work_repository,
+        agent_repository=agent_repository,
+        runtime_context={
+            "sessionId": "session-1",
+            "ownerKey": "7",
+            "ownerUserId": 7,
+            "prompt": "SRT 예약 가능 여부를 확인해줘.",
+            "allowSessionAgentRootWork": True,
+        },
+    )
+
+    result = runtime.run_call(
+        name="session_agent_task",
+        args={"title": "SRT 예약 확인", "instruction": "부산에서 수서까지 SRT 예약 가능 여부를 확인해줘."},
+        enabled_toolsets=("work",),
+    )
+
+    child_id = result["child_work"]["workId"]
+    parent_id = result["parent_work"]["workId"]
+    assert result["ok"] is True
+    assert result["child_work"]["parentId"] == parent_id
+    assert work_repository.items[parent_id].assignee_agent_id == "CEO"
+    assert work_repository.items[parent_id].source == "session_agent_task"
+    assert work_repository.items[child_id].assignee_agent_id == "agent-travel"
+    assert runtime.runtime_context["workId"] == parent_id
+
+
+def test_session_agent_task_can_record_parent_dependency_without_changing_status():
+    work_repository = FakeRuntimeWorkRepository()
+    parent = WorkItem(
+        work_id="work-parent",
+        identifier="TASK-1",
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        title="부모 작업",
+        description="부모",
+        status="todo",
+        assignee_agent_id="CEO",
+    )
+    work_repository.items[parent.work_id] = parent
+    agent_repository = FakeRuntimeAgentRepository(
+        {
+            "profile_id": "agent-research",
+            "session_id": "session-1",
+            "agent_type": "user_subagent",
+            "profile_key": "session.agent",
+            "config_snapshot": {"name": "Research", "role": "research"},
+        }
+    )
+    runtime = LocalToolRuntime(
+        skill_registry=object(),
+        session_store=DummySessionStore(),
+        work_repository=work_repository,
+        agent_repository=agent_repository,
+        runtime_context={"workId": parent.work_id},
+    )
+
+    result = runtime.run_call(
+        name="session_agent_task",
+        args={"title": "자료 조사", "instruction": "자료를 조사해줘", "blockParentUntilDone": True},
+        enabled_toolsets=("work",),
+    )
+
+    child_id = result["child_work"]["workId"]
+    assert result["ok"] is True
+    assert work_repository.items[parent.work_id].status == "todo"
+    assert work_repository.relations == [
+        WorkRelation(source_work_id=child_id, target_work_id=parent.work_id, relation_type="blocks")
+    ]
 
 
 def test_delegate_task_normalizes_tool_names_to_worker_toolsets():

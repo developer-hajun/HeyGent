@@ -8,6 +8,7 @@ import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
+import { useWorkStore } from '@/store/useWorkStore'
 
 type AiRealtimeProviderProps = {
   children: ReactNode
@@ -39,6 +40,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
   const refreshAttemptedRef = useRef(false)
   const activeRecoveryInFlightRef = useRef(false)
   const pendingRecoveryClientRef = useRef<TaskRunSocketClient | null>(null)
+  const snapshotFetchedTaskRunsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     const clearPingInterval = () => {
@@ -126,6 +128,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         recordRawFrame(frame)
         useChatStore.getState().handleRealtimeFrame(frame)
         useTaskRunStore.getState().handleRealtimeFrame(frame)
+        useWorkStore.getState().handleRealtimeFrame(frame)
         recoverTaskRunAfterGap(frame)
       })
 
@@ -328,10 +331,28 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
       }
 
       const taskRunId = getStringField(payload, 'task_run_id', 'taskRunId')
+      if (taskRunId === undefined) {
+        return
+      }
+
+      // taskRunsById에 없거나 displayContext가 빠진 task run이면 활성 목록을 조회해 displayContext를 채운다.
+      const existingInStore = useTaskRunStore.getState().taskRunsById[taskRunId]
       if (
-        taskRunId === undefined ||
-        useTaskRunStore.getState().replayNeededByTaskRunId[taskRunId] !== true
+        (!existingInStore || !existingInStore.displayContext?.actorAgent) &&
+        !snapshotFetchedTaskRunsRef.current.has(taskRunId)
       ) {
+        snapshotFetchedTaskRunsRef.current.add(taskRunId)
+        void useTaskRunStore
+          .getState()
+          .fetchActiveTaskRuns()
+          .catch((error) => {
+            setLastError(
+              error instanceof Error ? error.message : '활성 TaskRun 목록 조회에 실패했습니다.',
+            )
+          })
+      }
+
+      if (useTaskRunStore.getState().replayNeededByTaskRunId[taskRunId] !== true) {
         return
       }
 

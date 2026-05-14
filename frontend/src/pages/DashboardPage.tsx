@@ -1,950 +1,1111 @@
+import { useEffect, useState, useCallback } from 'react'
 import {
-  Code,
-  Calendar,
-  Apple,
-  Activity,
-  CheckCircle2,
-  TrendingUp,
-  ChevronRight,
+  Server,
+  Wifi,
   Bot,
+  Eye,
   Plus,
-  Footprints,
+  Loader2,
+  KeyRound,
+  Activity,
+  ChevronDown,
+  Heart,
   Moon,
-  Dumbbell,
-  Repeat,
-  Target,
-  CalendarCheck,
+  Footprints,
+  Sparkles,
+  Download,
+  HelpCircle,
+  Bell,
 } from 'lucide-react'
-import { motion, AnimatePresence } from 'motion/react'
-import { useState } from 'react'
-import * as React from 'react'
+import { motion } from 'motion/react'
+import { useNavigate } from 'react-router'
+import { useUIStore } from '@/store/useUIStore'
+import { getIotDevices, deleteIotDevice, pairIotDevice, type IotDevice } from '@/apis/iot'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
-import { useSessionStore } from '@/store/useSessionStore'
+import { HelpHint } from '@/components/ui/help-hint'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { NewSessionModal, type CustomAgentConfig } from '@/components/session/NewSessionModal'
 
-type EventType = 'event' | 'task' | 'repeat'
+// ── Mock 상태 (서버·에이전트) ─────────────────────────────────────────────────
+type ServerStatus = 'ok' | 'error'
+type AgentStatus = 'idle' | 'working'
 
-const eventTypeConfig = {
-  event: {
-    label: '일정',
-    icon: CalendarCheck,
-    defaultColor: { bg: '#3b82f6', border: '#3b82f620', text: '#3b82f6' },
-    description: '시간 기반 일정',
-  },
-  task: {
-    label: '할 일',
-    icon: Target,
-    defaultColor: { bg: '#f59e0b', border: '#f59e0b20', text: '#f59e0b' },
-    description: '마감일 있는 할 일',
-  },
-  repeat: {
-    label: '반복',
-    icon: Repeat,
-    defaultColor: { bg: '#10b981', border: '#10b98120', text: '#10b981' },
-    description: '반복 일정',
-  },
+const MOCK_SERVER: ServerStatus = 'ok'
+const MOCK_AGENT: AgentStatus = 'idle'
+type SamsungHealthData = {
+  stepCount: number
+  activeMinutes: number
+  totalCalories: number
+  activeCalories: number
+  heightCm: number
+  weightKg: number
+  bodyFatPct: number
+  muscleMassKg: number
+  heartRateBpm: number
+  systolicBp: number
+  diastolicBp: number
+  durationMinutes: number
+  sleepScore: number
 }
 
-const availableColors = [
-  { bg: '#3b82f6', border: '#3b82f620', text: '#3b82f6', name: '파란색' },
-  { bg: '#8b5cf6', border: '#8b5cf620', text: '#8b5cf6', name: '보라색' },
-  { bg: '#10b981', border: '#10b98120', text: '#10b981', name: '초록색' },
-  { bg: '#f59e0b', border: '#f59e0b20', text: '#f59e0b', name: '주황색' },
-  { bg: '#ef4444', border: '#ef444420', text: '#ef4444', name: '빨간색' },
-  { bg: '#ec4899', border: '#ec489920', text: '#ec4899', name: '핑크색' },
-  { bg: '#06b6d4', border: '#06b6d420', text: '#06b6d4', name: '청록색' },
-  { bg: '#84cc16', border: '#84cc1620', text: '#84cc16', name: '라임색' },
-  { bg: '#f97316', border: '#f9731620', text: '#f97316', name: '오렌지색' },
-  { bg: '#a855f7', border: '#a855f720', text: '#a855f7', name: '자주색' },
-  { bg: '#14b8a6', border: '#14b8a620', text: '#14b8a6', name: '청록색' },
-  { bg: '#fb923c', border: '#fb923c20', text: '#fb923c', name: '코랄색' },
+const MOCK_SAMSUNG_HEALTH: SamsungHealthData = {
+  stepCount: 7842,
+  activeMinutes: 42,
+  totalCalories: 2180,
+  activeCalories: 412,
+  heightCm: 172,
+  weightKg: 68.4,
+  bodyFatPct: 23.4,
+  muscleMassKg: 28.1,
+  heartRateBpm: 72,
+  systolicBp: 118,
+  diastolicBp: 76,
+  durationMinutes: 384,
+  sleepScore: 78,
+}
+
+const HEALTH_RECOMMENDATIONS = [
+  '활동 시간이 하루 목표보다 18분 부족합니다. 점심 이후 10분, 저녁 이후 8분으로 나누어 걷는 것을 권장합니다.',
+  '수면 시간이 권장량보다 1시간 36분 짧습니다. 오늘은 취침 시간을 30분 앞당겨 회복 시간을 확보해 주세요.',
+  '심박과 혈압은 안정 범위입니다. 체성분 변화는 주간 추이를 함께 확인하면 더 정확한 피드백이 가능합니다.',
 ]
 
-// Calendar Widget Component
-function CalendarWidget({ onClose }: { onClose: () => void }) {
-  const [currentMonth, setCurrentMonth] = useState(new Date())
-  const [selectedDate, setSelectedDate] = useState(new Date())
-  const [eventTitle, setEventTitle] = useState('')
-  const [eventTime, setEventTime] = useState('12:00')
-  const [eventType, setEventType] = useState<EventType>('event')
-  const [eventColor, setEventColor] = useState(eventTypeConfig.event.defaultColor)
-  const [repeatType, setRepeatType] = useState<'daily' | 'weekly' | 'custom'>('daily')
-  const [repeatDays, setRepeatDays] = useState<number[]>([])
-  const [repeatInterval, setRepeatInterval] = useState(1)
+// ── StatusDot ────────────────────────────────────────────────────────────────
+interface StatusDotProps {
+  color: 'emerald' | 'red' | 'amber' | 'muted' | 'blue'
+  pulse?: boolean
+}
 
-  const today = new Date()
-  const year = currentMonth.getFullYear()
-  const month = currentMonth.getMonth()
-
-  const daysInMonth = new Date(year, month + 1, 0).getDate()
-  const daysInPrevMonth = new Date(year, month, 0).getDate()
-  const firstDayOfMonth = new Date(year, month, 1).getDay()
-
-  const handleTypeChange = (type: EventType) => {
-    setEventType(type)
-    setEventColor(eventTypeConfig[type].defaultColor)
-  }
-
-  const toggleRepeatDay = (day: number) => {
-    setRepeatDays((prev) => (prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]))
-  }
-
-  const handleSubmit = () => {
-    if (eventTitle.trim()) {
-      const eventData = {
-        title: eventTitle,
-        date: selectedDate,
-        time: eventTime,
-        type: eventType,
-        color: eventColor,
-        ...(eventType === 'repeat' && {
-          repeat: {
-            type: repeatType,
-            days: repeatDays,
-            interval: repeatInterval,
-          },
-        }),
-      }
-      console.log('New event:', eventData)
-      onClose()
-    }
-  }
-
-  const goToPrevMonth = () => {
-    setCurrentMonth(new Date(year, month - 1, 1))
-  }
-
-  const goToNextMonth = () => {
-    setCurrentMonth(new Date(year, month + 1, 1))
-  }
-
-  // Mock existing events for display on calendar
-  const existingEvents = [
-    { day: today.getDate(), title: '팀 회의', color: '#3b82f6' },
-    { day: today.getDate(), title: '병원 예약', color: '#8b5cf6' },
-    { day: today.getDate() + 1, title: '프로젝트 마감', color: '#f59e0b' },
-    { day: today.getDate() + 2, title: '운동하기', color: '#10b981' },
-    { day: today.getDate() + 5, title: '저녁 약속', color: '#ec4899' },
-  ]
+function StatusDot({ color, pulse }: StatusDotProps) {
+  const colorClass = {
+    emerald: 'bg-emerald-500',
+    red: 'bg-red-500',
+    amber: 'bg-amber-400',
+    muted: 'bg-muted-foreground/50',
+    blue: 'bg-blue-500',
+  }[color]
 
   return (
-    <div className="p-3">
-      <h2 className="text-foreground mb-2 text-xs font-semibold">일정 등록</h2>
+    <span className="relative flex h-2 w-2 shrink-0 items-center justify-center">
+      {pulse && (
+        <span
+          className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${colorClass}`}
+        />
+      )}
+      <span className={`relative inline-flex h-2 w-2 rounded-full ${colorClass}`} />
+    </span>
+  )
+}
 
-      {/* Calendar - Moved to top */}
-      <div className="mb-2.5">
-        <div className="mb-2 flex items-center justify-between">
-          <button onClick={goToPrevMonth} className="hover:bg-muted rounded p-1 transition-colors">
-            <ChevronRight className="text-muted-foreground h-3.5 w-3.5 rotate-180" />
-          </button>
-          <h3 className="text-foreground text-xs font-semibold">
-            {year}년 {month + 1}월
-          </h3>
-          <button onClick={goToNextMonth} className="hover:bg-muted rounded p-1 transition-colors">
-            <ChevronRight className="text-muted-foreground h-3.5 w-3.5" />
-          </button>
+// ── StatusCard ───────────────────────────────────────────────────────────────
+interface StatusCardProps {
+  icon: React.ReactNode
+  title: string
+  statusLabel: string
+  dotColor: StatusDotProps['color']
+  pulse?: boolean
+}
+
+function StatusCard({ icon, title, statusLabel, dotColor, pulse }: StatusCardProps) {
+  return (
+    <div className="border-border bg-card flex flex-col gap-3 rounded-xl border p-4">
+      <div className="flex items-center gap-2">
+        <div className="text-muted-foreground bg-muted/60 flex h-8 w-8 items-center justify-center rounded-lg">
+          {icon}
         </div>
+        <p className="text-muted-foreground text-xs">{title}</p>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <StatusDot color={dotColor} pulse={pulse} />
+        <span className="text-foreground text-sm font-medium">{statusLabel}</span>
+      </div>
+    </div>
+  )
+}
 
-        <div className="border-border overflow-hidden rounded-lg border">
-          <div className="grid grid-cols-7">
-            {['일', '월', '화', '수', '목', '금', '토'].map((day, i) => (
-              <div
-                key={i}
-                className="text-muted-foreground bg-muted/30 border-border border-b py-1.5 text-center text-[9px] font-semibold"
-              >
-                {day}
-              </div>
-            ))}
-          </div>
+// ── IotCard ──────────────────────────────────────────────────────────────────
+function formatLastSeen(lastSeenAt: string | null): string {
+  if (!lastSeenAt) return '-'
+  return new Date(lastSeenAt).toLocaleString('ko-KR', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
 
-          <div className="grid grid-cols-7">
-            {/* Previous month days */}
-            {Array.from({ length: firstDayOfMonth }, (_, i) => {
-              const day = daysInPrevMonth - firstDayOfMonth + i + 1
-              return (
-                <div
-                  key={`prev-${i}`}
-                  className="bg-muted/5 text-muted-foreground/40 border-border min-h-10.5 border-r border-b p-1 text-[10px] last:border-r-0"
-                >
-                  {day}
-                </div>
-              )
-            })}
+interface IotCardProps {
+  loading: boolean
+  device: IotDevice | null
+  onRegister: () => void
+  onDeregister: (deviceId: string) => void
+}
 
-            {/* Current month days */}
-            {Array.from({ length: daysInMonth }, (_, i) => {
-              const day = i + 1
-              const isToday =
-                today.getDate() === day &&
-                today.getMonth() === month &&
-                today.getFullYear() === year
-              const isSelected =
-                selectedDate.getDate() === day &&
-                selectedDate.getMonth() === month &&
-                selectedDate.getFullYear() === year
-              const dayEvents =
-                month === today.getMonth() && year === today.getFullYear()
-                  ? existingEvents.filter((e) => e.day === day)
-                  : []
+function IotCard({ loading, device, onRegister, onDeregister }: IotCardProps) {
+  const isActive = device?.status === 'ACTIVE'
 
-              return (
-                <button
-                  key={day}
-                  onClick={() => setSelectedDate(new Date(year, month, day))}
-                  className={`border-border relative flex min-h-10.5 flex-col items-start border-r border-b p-1 text-[10px] transition-colors last:border-r-0 ${
-                    isSelected ? 'bg-primary/10' : 'hover:bg-muted/30 bg-white'
-                  }`}
-                >
-                  <span
-                    className={`shrink-0 ${
-                      isToday
-                        ? 'bg-primary flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold text-white'
-                        : isSelected
-                          ? 'text-primary font-semibold'
-                          : 'text-foreground'
-                    }`}
-                  >
-                    {day}
-                  </span>
-                  <div className="mt-0.5 w-full space-y-0.5">
-                    {dayEvents.slice(0, 2).map((event, idx) => (
-                      <div
-                        key={idx}
-                        className="truncate rounded px-0.5 py-0.5 text-[7px] leading-tight font-medium text-white"
-                        style={{ backgroundColor: event.color }}
-                      >
-                        {event.title}
-                      </div>
-                    ))}
-                    {dayEvents.length > 2 && (
-                      <div className="text-muted-foreground text-[7px] font-medium">
-                        +{dayEvents.length - 2}
-                      </div>
-                    )}
-                  </div>
-                </button>
-              )
-            })}
-
-            {/* Next month days */}
-            {Array.from({ length: 42 - daysInMonth - firstDayOfMonth }, (_, i) => {
-              const day = i + 1
-              return (
-                <div
-                  key={`next-${i}`}
-                  className="bg-muted/5 text-muted-foreground/40 border-border min-h-10.5 border-r border-b p-1 text-[10px] last:border-r-0"
-                >
-                  {day}
-                </div>
-              )
-            })}
-          </div>
+  return (
+    <div className="border-border bg-card rounded-xl border p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <div className="text-muted-foreground bg-muted/60 flex h-8 w-8 items-center justify-center rounded-lg">
+          <Wifi className="h-4 w-4" />
         </div>
+        <p className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+          IoT 연결
+          <HelpHint label="IoT 연결 도움말" iconClassName="h-3 w-3">
+            <p className="text-foreground font-medium">IoT 연결</p>
+            <p>
+              HeyGent 전용 <span className="text-foreground">기기</span>를 내 계정에 등록하는
+              단계예요.
+            </p>
+            <p>스마트폰에 무선 이어폰을 처음 연결하는 과정과 비슷합니다.</p>
+          </HelpHint>
+        </p>
       </div>
 
-      {/* Event Type Selection */}
-      <div className="mb-2">
-        <label className="text-foreground mb-1 block text-[10px] font-medium">일정 유형</label>
-        <div className="grid grid-cols-3 gap-1">
-          {(Object.keys(eventTypeConfig) as EventType[]).map((type) => {
-            const config = eventTypeConfig[type]
-            const Icon = config.icon
-            const isSelected = eventType === type
-            return (
-              <button
-                key={type}
-                onClick={() => handleTypeChange(type)}
-                className={`rounded-md p-1.5 transition-all ${
-                  isSelected ? 'opacity-100' : 'opacity-30'
-                }`}
-                style={{ backgroundColor: config.defaultColor.bg }}
-              >
-                <Icon className="mx-auto mb-0.5 h-3 w-3 text-white" />
-                <p className="text-[9px] font-medium text-white">{config.label}</p>
-              </button>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Color Selection */}
-      <div className="mb-2">
-        <label className="text-foreground mb-1 block text-[10px] font-medium">컬러</label>
-        <div className="flex flex-wrap gap-1">
-          {availableColors.map((color, i) => (
-            <button
-              key={i}
-              onClick={() => setEventColor(color)}
-              className={`h-5 w-5 rounded transition-all ${
-                eventColor.bg === color.bg
-                  ? 'ring-foreground/20 scale-105 ring-2 ring-offset-1'
-                  : 'hover:scale-105'
-              }`}
-              style={{ backgroundColor: color.bg }}
-              title={color.name}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* Event Details */}
-      <div className="mb-2 space-y-1.5">
-        <div>
-          <label className="text-foreground mb-0.5 block text-[10px] font-medium">제목</label>
-          <input
-            type="text"
-            value={eventTitle}
-            onChange={(e) => setEventTitle(e.target.value)}
-            placeholder={`${eventTypeConfig[eventType].label} 이름 입력`}
-            className="border-border text-foreground placeholder:text-muted-foreground focus:ring-primary/30 w-full rounded-md border bg-white px-2 py-1.5 text-[11px] focus:ring-1 focus:outline-none"
-          />
-        </div>
-
-        <div>
-          <label className="text-foreground mb-0.5 block text-[10px] font-medium">
-            {eventType === 'event' ? '시간' : eventType === 'task' ? '마감 시간' : '시작 시간'}
-          </label>
-          <input
-            type="time"
-            value={eventTime}
-            onChange={(e) => setEventTime(e.target.value)}
-            className="border-border text-foreground focus:ring-primary/30 w-full rounded-md border bg-white px-2 py-1.5 text-[11px] focus:ring-1 focus:outline-none"
-          />
-        </div>
-      </div>
-
-      {/* Repeat Options */}
-      {eventType === 'repeat' && (
-        <div className="bg-muted/30 border-border mb-2 rounded-md border p-2">
-          <label className="text-foreground mb-1 block text-[10px] font-medium">반복 설정</label>
-
-          <div className="space-y-1.5">
-            {/* Repeat Type Selection */}
-            <div className="flex gap-1">
-              <button
-                onClick={() => setRepeatType('daily')}
-                className={`flex-1 rounded px-2 py-1 text-[9px] font-medium transition-colors ${
-                  repeatType === 'daily'
-                    ? 'bg-primary text-white'
-                    : 'border-border text-foreground hover:bg-muted border bg-white'
-                }`}
-              >
-                매일
-              </button>
-              <button
-                onClick={() => setRepeatType('weekly')}
-                className={`flex-1 rounded px-2 py-1 text-[9px] font-medium transition-colors ${
-                  repeatType === 'weekly'
-                    ? 'bg-primary text-white'
-                    : 'border-border text-foreground hover:bg-muted border bg-white'
-                }`}
-              >
-                요일 선택
-              </button>
-              <button
-                onClick={() => setRepeatType('custom')}
-                className={`flex-1 rounded px-2 py-1 text-[9px] font-medium transition-colors ${
-                  repeatType === 'custom'
-                    ? 'bg-primary text-white'
-                    : 'border-border text-foreground hover:bg-muted border bg-white'
-                }`}
-              >
-                주기
-              </button>
-            </div>
-
-            {/* Weekly: Day Selection */}
-            {repeatType === 'weekly' && (
-              <div className="grid grid-cols-7 gap-0.5">
-                {['일', '월', '화', '수', '목', '금', '토'].map((day, i) => (
-                  <button
-                    key={i}
-                    onClick={() => toggleRepeatDay(i)}
-                    className={`h-6 rounded text-[9px] font-medium transition-colors ${
-                      repeatDays.includes(i)
-                        ? 'bg-primary text-white'
-                        : 'border-border text-foreground hover:bg-muted border bg-white'
-                    }`}
-                  >
-                    {day}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Custom: Interval Selection */}
-            {repeatType === 'custom' && (
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="number"
-                  min="1"
-                  max="365"
-                  value={repeatInterval}
-                  onChange={(e) => setRepeatInterval(parseInt(e.target.value) || 1)}
-                  className="border-border focus:ring-primary/30 w-12 rounded border bg-white px-1.5 py-1 text-center text-[10px] focus:ring-1 focus:outline-none"
-                />
-                <span className="text-foreground text-[10px]">일마다 반복</span>
-              </div>
-            )}
-          </div>
+      {loading && (
+        <div className="flex items-center gap-2 py-1">
+          <Loader2 className="text-muted-foreground h-3.5 w-3.5 animate-spin" />
+          <span className="text-muted-foreground text-xs">기기 정보를 불러오는 중...</span>
         </div>
       )}
 
-      {/* Actions */}
-      <div className="flex gap-1.5">
+      {!loading && !device && (
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-muted-foreground text-sm">등록된 디바이스가 없습니다.</span>
+          <button
+            type="button"
+            onClick={onRegister}
+            className="border-border text-foreground hover:bg-accent/50 shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors"
+          >
+            기기 등록하기
+          </button>
+        </div>
+      )}
+
+      {!loading && device && (
+        <div className="space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-0.5">
+              <p className="text-foreground truncate text-sm font-medium">
+                {device.displayName ?? '(이름 없음)'}
+              </p>
+              <p className="text-muted-foreground truncate font-mono text-xs">{device.deviceId}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
+              <StatusDot color={isActive ? 'emerald' : 'amber'} />
+              <span className="text-foreground text-xs font-medium">
+                {isActive ? '연결됨' : '비활성'}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="text-muted-foreground shrink-0 text-xs">마지막 접속</span>
+              <span className="text-foreground truncate text-xs">
+                {formatLastSeen(device.lastSeenAt)}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onDeregister(device.deviceId)}
+              className="shrink-0 text-xs font-medium text-red-500 transition-colors hover:text-red-600"
+            >
+              등록 해제
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BridgeCard() {
+  const [bridgeDownloaded, setBridgeDownloaded] = useState(false)
+
+  const handleBridgeDownloadToggle = () => {
+    setBridgeDownloaded((current) => !current)
+  }
+
+  return (
+    <div className="border-border bg-card flex flex-col justify-between gap-3 rounded-xl border p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="text-muted-foreground bg-muted/60 flex h-8 w-8 items-center justify-center rounded-lg">
+            <Download className="h-4 w-4" />
+          </div>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <p className="text-muted-foreground truncate text-xs">브릿지 프로그램</p>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground rounded-full transition-colors"
+                  aria-label="브릿지 프로그램 도움말"
+                >
+                  <HelpCircle className="h-3.5 w-3.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 text-sm" align="end">
+                <div className="space-y-2">
+                  <p className="text-foreground font-medium">브릿지 프로그램이란?</p>
+                  <p className="text-muted-foreground leading-relaxed">
+                    HeyGent와 로컬 PC 또는 IoT 기기를 연결하는 작은 실행 프로그램입니다. 기기 등록,
+                    로컬 명령 실행, 상태 전달처럼 브라우저만으로 처리하기 어려운 연결 작업을
+                    중계합니다.
+                  </p>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5 pt-2">
+          <StatusDot color={bridgeDownloaded ? 'emerald' : 'amber'} />
+          <span className="text-foreground text-xs font-medium">
+            {bridgeDownloaded ? '다운로드됨' : '확인 필요'}
+          </span>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <p className="text-muted-foreground text-xs leading-relaxed">
+          지금은 실제 파일을 내려받지 않고 다운로드 상태만 확인할 수 있습니다.
+        </p>
         <button
-          onClick={onClose}
-          className="bg-muted text-foreground hover:bg-muted/80 flex-1 rounded-md px-3 py-1.5 text-[10px] font-medium transition-colors"
+          type="button"
+          onClick={handleBridgeDownloadToggle}
+          className="border-border text-foreground hover:bg-accent/50 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors"
         >
-          취소
-        </button>
-        <button
-          onClick={handleSubmit}
-          disabled={!eventTitle.trim()}
-          className="flex-1 rounded-md bg-[#111111] px-3 py-1.5 text-[10px] font-medium text-white transition-colors hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          등록
+          <Download className="h-3.5 w-3.5" />
+          {bridgeDownloaded ? '다운로드 상태 해제' : '다운로드 확인'}
         </button>
       </div>
     </div>
   )
 }
 
-// Month Calendar Component
-function MonthCalendar() {
-  const today = new Date()
-  const [currentDate, setCurrentDate] = useState(today)
-
-  const year = currentDate.getFullYear()
-  const month = currentDate.getMonth()
-
-  const daysInMonth = new Date(year, month + 1, 0).getDate()
-  const daysInPrevMonth = new Date(year, month, 0).getDate()
-  const firstDayOfMonth = new Date(year, month, 1).getDay()
-
-  const goToPrevMonth = () => {
-    setCurrentDate(new Date(year, month - 1, 1))
-  }
-
-  const goToNextMonth = () => {
-    setCurrentDate(new Date(year, month + 1, 1))
-  }
-
-  // Mock existing events for display on calendar
-  const existingEvents = [
-    { day: today.getDate(), title: '팀 회의', color: '#3b82f6' },
-    { day: today.getDate(), title: '병원 예약', color: '#8b5cf6' },
-    { day: today.getDate() + 1, title: '프로젝트 마감', color: '#f59e0b' },
-    { day: today.getDate() + 2, title: '운동하기', color: '#10b981' },
+function LlmTaskNotice() {
+  const taskEvents: Array<{
+    label: string
+    status: string
+    color: StatusDotProps['color']
+    time: string
+  }> = [
+    { label: '건강 데이터 요약 생성', status: '완료', color: 'emerald', time: '방금 전' },
+    { label: 'IoT 연결 상태 분석', status: '처리 중', color: 'blue', time: '1분 전' },
+    { label: '작업 권장 사항 준비', status: '대기', color: 'muted', time: '2분 전' },
   ]
 
   return (
-    <div>
-      <div className="mb-3 flex items-center justify-between">
-        <button onClick={goToPrevMonth} className="hover:bg-muted rounded p-1 transition-colors">
-          <ChevronRight className="text-muted-foreground h-3.5 w-3.5 rotate-180" />
-        </button>
-        <h3 className="text-foreground text-xs font-semibold">
-          {year}년 {month + 1}월
-        </h3>
-        <button onClick={goToNextMonth} className="hover:bg-muted rounded p-1 transition-colors">
-          <ChevronRight className="text-muted-foreground h-3.5 w-3.5" />
-        </button>
+    <aside className="border-border bg-card/95 rounded-xl border p-3 shadow-sm backdrop-blur">
+      <div className="mb-3 flex items-center gap-2">
+        <div className="bg-muted/70 text-muted-foreground flex h-7 w-7 items-center justify-center rounded-lg">
+          <Bell className="h-3.5 w-3.5" />
+        </div>
+        <div>
+          <p className="text-foreground text-xs font-semibold">LLM 작업 알림</p>
+          <p className="text-muted-foreground text-[11px]">작업 처리 이벤트</p>
+        </div>
       </div>
 
-      <div>
-        <div className="mb-1 grid grid-cols-7 gap-1">
-          {['일', '월', '화', '수', '목', '금', '토'].map((day, i) => (
-            <div key={i} className="text-muted-foreground py-1 text-center text-[9px] font-medium">
-              {day}
+      <div className="space-y-3 xl:space-y-4">
+        {taskEvents.map((event) => (
+          <div key={event.label} className="space-y-1">
+            <div className="flex items-start justify-between gap-3">
+              <span className="text-foreground text-xs leading-snug">{event.label}</span>
+              <span className="text-muted-foreground shrink-0 text-[10px]">{event.time}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <StatusDot color={event.color} pulse={event.color === 'blue'} />
+              <span className="text-muted-foreground text-[11px]">{event.status}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </aside>
+  )
+}
+
+// ── DeregisterConfirmModal ────────────────────────────────────────────────────
+interface DeregisterConfirmModalProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onConfirm: () => Promise<void>
+}
+
+function DeregisterConfirmModal({ open, onOpenChange, onConfirm }: DeregisterConfirmModalProps) {
+  const [loading, setLoading] = useState(false)
+
+  const handleConfirm = async () => {
+    setLoading(true)
+    try {
+      await onConfirm()
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm gap-5">
+        <div>
+          <DialogTitle className="text-base">기기 등록을 해제할까요?</DialogTitle>
+          <DialogDescription className="text-muted-foreground mt-2 text-sm leading-relaxed">
+            등록 해제하면 현재 계정과 디바이스의 연결이 끊어집니다.
+            <br />
+            다시 사용하려면 페어링 코드를 입력해 재등록해야 합니다.
+          </DialogDescription>
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenChange(false)}
+            disabled={loading}
+            className="border-border text-foreground hover:bg-accent/50 flex-1 rounded-xl border py-2.5 text-sm font-medium transition-colors disabled:opacity-50"
+          >
+            취소
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={loading}
+            className="flex-1 rounded-xl bg-red-500 py-2.5 text-sm font-medium text-white transition-colors hover:bg-red-600 disabled:opacity-50"
+          >
+            {loading ? '해제 중...' : '등록 해제'}
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ── PairingModal ─────────────────────────────────────────────────────────────
+interface PairingModalProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSuccess: (device: IotDevice) => void
+}
+
+function PairingModal({ open, onOpenChange, onSuccess }: PairingModalProps) {
+  const [pairCode, setPairCode] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [codeError, setCodeError] = useState<string | null>(null)
+  const [apiError, setApiError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const resetForm = () => {
+    setPairCode('')
+    setDisplayName('')
+    setCodeError(null)
+    setApiError(null)
+  }
+
+  const handlePairCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.replace(/\D/g, '').slice(0, 6)
+    setPairCode(value)
+    if (codeError) setCodeError(null)
+  }
+
+  const validate = (): boolean => {
+    if (pairCode.length === 0) {
+      setCodeError('페어링 코드를 입력해 주세요.')
+      return false
+    }
+    if (pairCode.length !== 6) {
+      setCodeError('6자리 숫자를 입력해 주세요.')
+      return false
+    }
+    return true
+  }
+
+  const handleSubmit = async () => {
+    if (!validate()) return
+    setLoading(true)
+    setApiError(null)
+    try {
+      const res = await pairIotDevice({
+        pairCode,
+        ...(displayName.trim() && { displayName: displayName.trim() }),
+      })
+      onSuccess(res.data)
+      onOpenChange(false)
+    } catch {
+      // TODO: UI 확인용 임시 처리 — 실제 API 연동 후 아래 블록 제거하고 setApiError만 남길 것
+      onSuccess({
+        id: 0,
+        deviceId: `mock-${pairCode}`,
+        displayName: displayName.trim() || 'HeyGent',
+        status: 'ACTIVE',
+        lastSeenAt: null,
+        createdAt: null,
+        updatedAt: null,
+      })
+      onOpenChange(false)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(isOpen) => {
+        if (!isOpen) resetForm()
+        onOpenChange(isOpen)
+      }}
+    >
+      <DialogContent className="max-w-sm gap-5">
+        <div>
+          <DialogTitle className="text-base">기기 등록</DialogTitle>
+          <DialogDescription className="text-muted-foreground mt-1 text-sm">
+            기기 화면에 표시된 6자리 페어링 코드를 입력해 주세요.
+          </DialogDescription>
+        </div>
+
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <label className="text-foreground inline-flex items-center gap-1.5 text-sm font-medium">
+              페어링 코드
+              <HelpHint label="페어링 코드 도움말" iconClassName="h-3.5 w-3.5">
+                <p className="text-foreground font-medium">페어링 코드</p>
+                <p>
+                  기기 화면에 잠깐 표시되는{' '}
+                  <span className="text-foreground">6자리 일회용 비밀번호</span>예요.
+                </p>
+                <p>이 코드를 맞춰 넣어야 내 계정과 기기가 짝이 됩니다.</p>
+                <p>시간이 지나면 자동으로 새 코드로 바뀝니다.</p>
+              </HelpHint>
+            </label>
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="6자리 숫자"
+              value={pairCode}
+              onChange={handlePairCodeChange}
+              maxLength={6}
+              className="border-border bg-background text-foreground placeholder:text-muted-foreground focus:border-foreground/40 w-full rounded-lg border px-3 py-2 text-sm tracking-widest transition-colors outline-none"
+            />
+            {codeError && <p className="text-destructive text-xs">{codeError}</p>}
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-foreground text-sm font-medium">
+              기기 이름 <span className="text-muted-foreground font-normal">(선택)</span>
+            </label>
+            <input
+              type="text"
+              placeholder="HeyGent 1"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value.slice(0, 100))}
+              maxLength={100}
+              className="border-border bg-background text-foreground placeholder:text-muted-foreground focus:border-foreground/40 w-full rounded-lg border px-3 py-2 text-sm transition-colors outline-none"
+            />
+            <p className="text-muted-foreground text-right text-xs">{displayName.length}/100</p>
+          </div>
+
+          {apiError && (
+            <p className="text-destructive bg-destructive/5 rounded-lg px-3 py-2 text-xs">
+              {apiError}
+            </p>
+          )}
+        </div>
+
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => onOpenChange(false)}
+            disabled={loading}
+            className="border-border text-foreground hover:bg-accent/50 flex-1 rounded-xl border py-2.5 text-sm font-medium transition-colors disabled:opacity-50"
+          >
+            취소
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={loading}
+            className="bg-foreground text-background hover:bg-foreground/85 flex-1 rounded-xl py-2.5 text-sm font-medium transition-colors disabled:opacity-50"
+          >
+            {loading ? '등록 중...' : '등록하기'}
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ── ActionButton ─────────────────────────────────────────────────────────────
+interface ActionButtonProps {
+  icon: React.ReactNode
+  label: string
+  onClick: () => void
+}
+
+function ActionButton({ icon, label, onClick }: ActionButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="border-border bg-card hover:bg-accent/50 group flex flex-col items-start gap-3 rounded-xl border p-4 transition-colors"
+    >
+      <div className="text-muted-foreground group-hover:text-foreground bg-muted/60 flex h-8 w-8 items-center justify-center rounded-lg transition-colors">
+        {icon}
+      </div>
+      <span className="text-foreground text-sm font-medium">{label}</span>
+    </button>
+  )
+}
+
+// ── HealthMetricCard ─────────────────────────────────────────────────────────
+interface HealthMetricCardProps {
+  icon: React.ReactNode
+  label: string
+  value: string
+  unit?: string
+  /** 진척도 0~1 — 게이지 바 표시 */
+  progress: number
+  hint?: string
+  detail: HealthDetailGroup
+  expanded: boolean
+  onToggle: () => void
+}
+
+function HealthMetricCard({
+  icon,
+  label,
+  value,
+  unit,
+  progress,
+  hint,
+  detail,
+  expanded,
+  onToggle,
+}: HealthMetricCardProps) {
+  const pct = Math.max(0, Math.min(1, progress)) * 100
+  return (
+    <div
+      className={`border-border bg-card flex flex-col gap-2.5 rounded-xl border p-4 ${
+        expanded ? 'lg:col-span-2' : ''
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="text-muted-foreground bg-muted/60 flex h-7 w-7 shrink-0 items-center justify-center rounded-md">
+            {icon}
+          </div>
+          <span className="text-muted-foreground truncate text-xs font-medium">{label}</span>
+        </div>
+        <button
+          type="button"
+          onClick={onToggle}
+          className="border-border text-foreground hover:bg-accent/50 inline-flex shrink-0 items-center gap-1 rounded-lg border px-2 py-1 text-[10px] font-medium transition-colors"
+          aria-expanded={expanded}
+          aria-label={`${label} 상세 정보 ${expanded ? '접기' : '보기'}`}
+        >
+          {expanded ? '접기' : '자세히보기'}
+          <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        </button>
+      </div>
+      <div className="flex items-baseline gap-1">
+        <span className="text-foreground text-xl font-semibold tabular-nums">{value}</span>
+        {unit && <span className="text-muted-foreground text-xs">{unit}</span>}
+      </div>
+      <div className="bg-muted/60 relative h-1 w-full overflow-hidden rounded-full">
+        <div
+          className="bg-foreground/70 absolute inset-y-0 left-0 rounded-full transition-[width] duration-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      {hint && <p className="text-muted-foreground text-[10px]">{hint}</p>}
+
+      {expanded && (
+        <div className="border-border/70 mt-2 space-y-3 border-t pt-3">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-foreground text-sm font-medium">{detail.title}</p>
+              <span className="bg-muted/70 text-muted-foreground rounded-full px-2 py-0.5 text-[10px]">
+                {detail.status}
+              </span>
+            </div>
+            <p className="text-muted-foreground text-xs leading-relaxed">{detail.summary}</p>
+          </div>
+          {detail.items.map((item) => (
+            <div key={item.field} className="bg-muted/35 rounded-lg px-3 py-2">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="text-muted-foreground text-xs">{item.label}</span>
+                <span className="text-muted-foreground/80 font-mono text-[10px]">{item.field}</span>
+              </div>
+              <div className="flex items-end justify-between gap-2">
+                <span className="text-foreground text-sm font-semibold tabular-nums">
+                  {item.value}
+                </span>
+                <span className="text-muted-foreground text-[10px]">{item.note}</span>
+              </div>
             </div>
           ))}
         </div>
-
-        <div className="grid grid-cols-7 gap-1">
-          {/* Previous month days */}
-          {Array.from({ length: firstDayOfMonth }, (_, i) => {
-            const day = daysInPrevMonth - firstDayOfMonth + i + 1
-            return (
-              <div
-                key={`prev-${i}`}
-                className="text-muted-foreground/30 hover:bg-muted/20 flex aspect-square cursor-pointer flex-col items-center justify-start rounded-lg p-1 text-[10px] transition-colors"
-              >
-                <span className="mb-0.5">{day}</span>
-              </div>
-            )
-          })}
-
-          {/* Current month days */}
-          {Array.from({ length: daysInMonth }, (_, i) => {
-            const day = i + 1
-            const isToday =
-              today.getDate() === day && today.getMonth() === month && today.getFullYear() === year
-            const dayEvents =
-              month === today.getMonth() && year === today.getFullYear()
-                ? existingEvents.filter((e) => e.day === day)
-                : []
-
-            return (
-              <div
-                key={day}
-                className="hover:bg-muted/30 flex aspect-square cursor-pointer flex-col items-center justify-start rounded-lg p-1 transition-colors"
-              >
-                <span
-                  className={`mb-0.5 text-[10px] ${
-                    isToday
-                      ? 'bg-primary flex h-5 w-5 items-center justify-center rounded-full font-bold text-white'
-                      : 'text-foreground'
-                  }`}
-                >
-                  {day}
-                </span>
-                {dayEvents.length > 0 && (
-                  <div className="mt-0.5 flex gap-0.5">
-                    {dayEvents.slice(0, 3).map((event, idx) => (
-                      <div
-                        key={idx}
-                        className="h-1 w-1 rounded-full"
-                        style={{ backgroundColor: event.color }}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-
-          {/* Next month days */}
-          {Array.from({ length: 42 - daysInMonth - firstDayOfMonth }, (_, i) => {
-            const day = i + 1
-            return (
-              <div
-                key={`next-${i}`}
-                className="text-muted-foreground/30 hover:bg-muted/20 flex aspect-square cursor-pointer flex-col items-center justify-start rounded-lg p-1 text-[10px] transition-colors"
-              >
-                <span className="mb-0.5">{day}</span>
-              </div>
-            )
-          })}
-        </div>
-      </div>
+      )}
     </div>
   )
 }
 
-const agents = [
-  {
-    name: '코드 리뷰',
-    icon: Code,
-    status: 'idle' as const,
-    statusColor: 'text-muted-foreground',
-    dotColor: 'bg-muted-foreground',
-    accent: '#3b82f6',
-    description: 'PR 분석 및 코드 품질 검토',
-  },
-  {
-    name: '일정 관리',
-    icon: Calendar,
-    status: 'running' as const,
-    statusColor: 'text-primary',
-    dotColor: 'bg-primary',
-    accent: '#8b5cf6',
-    description: '스마트 작업 일정 관리',
-  },
-  {
-    name: '헬스케어',
-    icon: Activity,
-    status: 'ready' as const,
-    statusColor: 'text-emerald-500',
-    dotColor: 'bg-emerald-500',
-    accent: '#10b981',
-    description: '건강 데이터 및 운동 추적',
-  },
-]
+interface HealthFieldItem {
+  field: keyof SamsungHealthData
+  label: string
+  value: string
+  note: string
+}
 
-const recentResults = [
-  {
-    agent: '코드 리뷰 에이전트',
-    task: 'PR #243 검토 — 3개 이슈 발견',
-    time: '2분 전',
-    icon: Code,
-    accent: '#3b82f6',
-  },
-  {
-    agent: '식단 & 웰니스',
-    task: '저녁 메뉴 추천 완료',
-    time: '15분 전',
-    icon: Apple,
-    accent: '#10b981',
-  },
-  {
-    agent: '건강 데이터 컴패니언',
-    task: '오늘 걸음수 목표 달성',
-    time: '1시간 전',
-    icon: Activity,
-    accent: '#f59e0b',
-  },
-]
+interface HealthDetailGroup {
+  icon: React.ReactNode
+  title: string
+  summary: string
+  status: string
+  items: HealthFieldItem[]
+}
 
-const upcomingReminders = [
-  { id: 1, title: '팀 회의', time: '오후 3:00', date: '오늘', type: 'event', color: '#3b82f6' },
-  { id: 2, title: '병원 예약', time: '오후 5:30', date: '오늘', type: 'event', color: '#8b5cf6' },
-  {
-    id: 3,
-    title: '프로젝트 마감',
-    time: '오전 10:00',
-    date: '내일',
-    type: 'task',
-    color: '#f59e0b',
-  },
-  { id: 4, title: '운동하기', time: '오전 7:00', date: '매일', type: 'repeat', color: '#10b981' },
-]
+function formatNumber(value: number) {
+  return value.toLocaleString('ko-KR')
+}
 
-const healthInsights = [
-  {
-    message: '민수님, 오늘 수면 시간이 3시간밖에 안 되네요. 오늘은 일찍 주무세요!',
-    icon: Moon,
-    color: '#8b5cf6',
-    type: 'warning',
-    data: '3시간',
-  },
-  {
-    message: '목표 걸음수 10,000보를 달성하셨어요! 훌륭합니다 👏',
-    icon: Footprints,
-    color: '#3b82f6',
-    type: 'achievement',
-    data: '10,420보',
-  },
-  {
-    message: '오늘 45분 운동하셨네요. 꾸준히 유지하세요!',
-    icon: Dumbbell,
-    color: '#10b981',
-    type: 'good',
-    data: '45분',
-  },
-]
+function formatSleepDuration(minutes: number) {
+  const hours = Math.floor(minutes / 60)
+  const restMinutes = minutes % 60
+  return `${hours}h ${restMinutes}m`
+}
 
+// ── config helpers ───────────────────────────────────────────────────────────
+function serverStatusConfig(s: ServerStatus) {
+  return s === 'ok'
+    ? { label: '정상', color: 'emerald' as const }
+    : { label: '오류', color: 'red' as const }
+}
+
+function agentStatusConfig(s: AgentStatus) {
+  return s === 'idle'
+    ? { label: '대기 중', color: 'muted' as const, pulse: false }
+    : { label: '작업 중', color: 'blue' as const, pulse: true }
+}
+
+// ── DashboardPage ─────────────────────────────────────────────────────────────
 export function DashboardPage() {
-  const { addAgentPanel } = useSessionStore()
-  const [calendarOpen, setCalendarOpen] = useState(false)
-  const [reminderView, setReminderView] = useState<'list' | 'calendar'>('list')
+  const navigate = useNavigate()
+  const { setSidebarCollapsed, setSettingsOpen } = useUIStore()
 
-  const currentHour = new Date().getHours()
-  const greeting =
-    currentHour < 12 ? '좋은 아침입니다' : currentHour < 17 ? '좋은 오후입니다' : '좋은 저녁입니다'
+  const [iotDevices, setIotDevices] = useState<IotDevice[]>([])
+  const [iotLoading, setIotLoading] = useState(true)
+  const [pairingOpen, setPairingOpen] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [pendingDeviceId, setPendingDeviceId] = useState<string | null>(null)
+  const [newSessionOpen, setNewSessionOpen] = useState(false)
+  const [expandedHealthGroups, setExpandedHealthGroups] = useState<string[]>([])
 
-  const handleAgentClick = (agent: (typeof agents)[0]) => {
-    addAgentPanel(agent)
+  const fetchDevices = useCallback(
+    () =>
+      getIotDevices()
+        .then((res) => setIotDevices(res.data))
+        .catch(() => setIotDevices([]))
+        .finally(() => setIotLoading(false)),
+    [],
+  )
+
+  useEffect(() => {
+    void fetchDevices()
+  }, [fetchDevices])
+
+  const handleDeregisterRequest = (deviceId: string) => {
+    setPendingDeviceId(deviceId)
+    setConfirmOpen(true)
   }
 
+  const handleDeregisterConfirm = async () => {
+    if (!pendingDeviceId) return
+    try {
+      await deleteIotDevice(pendingDeviceId)
+    } catch {
+      // TODO: UI 확인용 임시 처리 — 실제 API 연동 후 제거할 것
+    }
+    setConfirmOpen(false)
+    setPendingDeviceId(null)
+    setIotLoading(true)
+    await fetchDevices()
+  }
+
+  const server = serverStatusConfig(MOCK_SERVER)
+  const agent = agentStatusConfig(MOCK_AGENT)
+  const device = iotDevices[0] ?? null
+  const health = MOCK_SAMSUNG_HEALTH
+  const toggleHealthGroup = (title: string) => {
+    setExpandedHealthGroups((current) =>
+      current.includes(title) ? current.filter((item) => item !== title) : [...current, title],
+    )
+  }
+  const healthGroups: HealthDetailGroup[] = [
+    {
+      title: '활동',
+      icon: <Activity className="h-4 w-4" />,
+      summary: `${formatNumber(health.stepCount)}걸음, 활동 ${health.activeMinutes}분을 기록했습니다.`,
+      status: health.activeMinutes >= 60 ? '충분' : '보완 필요',
+      items: [
+        {
+          field: 'stepCount',
+          label: '걸음 수',
+          value: `${formatNumber(health.stepCount)} 걸음`,
+          note: '목표 10,000',
+        },
+        {
+          field: 'activeMinutes',
+          label: '활동 시간',
+          value: `${health.activeMinutes}분`,
+          note: '목표 60분',
+        },
+        {
+          field: 'totalCalories',
+          label: '총 칼로리',
+          value: `${formatNumber(health.totalCalories)} kcal`,
+          note: '일일 소비량',
+        },
+        {
+          field: 'activeCalories',
+          label: '활동 칼로리',
+          value: `${formatNumber(health.activeCalories)} kcal`,
+          note: '운동 기여',
+        },
+      ],
+    },
+    {
+      title: '체성분',
+      icon: <Activity className="h-4 w-4" />,
+      summary: `몸무게 ${health.weightKg}kg, 체지방률 ${health.bodyFatPct}% 기준으로 추이를 확인합니다.`,
+      status: '추이 관찰',
+      items: [
+        {
+          field: 'heightCm',
+          label: '키',
+          value: `${health.heightCm} cm`,
+          note: '기준값',
+        },
+        {
+          field: 'weightKg',
+          label: '몸무게',
+          value: `${health.weightKg} kg`,
+          note: '최근 측정',
+        },
+        {
+          field: 'bodyFatPct',
+          label: '체지방률',
+          value: `${health.bodyFatPct}%`,
+          note: '추이 확인',
+        },
+        {
+          field: 'muscleMassKg',
+          label: '근육량',
+          value: `${health.muscleMassKg} kg`,
+          note: '추이 확인',
+        },
+      ],
+    },
+    {
+      title: '활력',
+      icon: <Heart className="h-4 w-4" />,
+      summary: `심박 ${health.heartRateBpm}bpm, 혈압 ${health.systolicBp}/${health.diastolicBp}mmHg입니다.`,
+      status: '안정',
+      items: [
+        {
+          field: 'heartRateBpm',
+          label: '심박수',
+          value: `${health.heartRateBpm} bpm`,
+          note: '안정 범위',
+        },
+        {
+          field: 'systolicBp',
+          label: '수축기 혈압',
+          value: `${health.systolicBp} mmHg`,
+          note: '정상',
+        },
+        {
+          field: 'diastolicBp',
+          label: '이완기 혈압',
+          value: `${health.diastolicBp} mmHg`,
+          note: '정상',
+        },
+      ],
+    },
+    {
+      title: '수면',
+      icon: <Moon className="h-4 w-4" />,
+      summary: `${formatSleepDuration(health.durationMinutes)} 수면, 수면 점수 ${health.sleepScore}점입니다.`,
+      status: health.durationMinutes >= 420 ? '양호' : '부족',
+      items: [
+        {
+          field: 'durationMinutes',
+          label: '수면 시간',
+          value: formatSleepDuration(health.durationMinutes),
+          note: '목표 8h',
+        },
+        {
+          field: 'sleepScore',
+          label: '수면 점수',
+          value: `${health.sleepScore}점`,
+          note: '보통',
+        },
+      ],
+    },
+  ]
+  const [activityHealth, bodyCompositionHealth, vitalityHealth, sleepHealth] = healthGroups
+  const healthMetricCards = [
+    {
+      detail: activityHealth,
+      icon: <Footprints className="h-4 w-4" />,
+      label: activityHealth.title,
+      value: formatNumber(health.stepCount),
+      unit: '걸음',
+      progress: health.stepCount / 10000,
+      hint: `활동 ${health.activeMinutes}분`,
+    },
+    {
+      detail: bodyCompositionHealth,
+      icon: bodyCompositionHealth.icon,
+      label: bodyCompositionHealth.title,
+      value: String(health.weightKg),
+      unit: 'kg',
+      progress: health.bodyFatPct / 35,
+      hint: `체지방률 ${health.bodyFatPct}%`,
+    },
+    {
+      detail: vitalityHealth,
+      icon: vitalityHealth.icon,
+      label: vitalityHealth.title,
+      value: String(health.heartRateBpm),
+      unit: 'bpm',
+      progress: health.heartRateBpm / 130,
+      hint: `혈압 ${health.systolicBp}/${health.diastolicBp}`,
+    },
+    {
+      detail: sleepHealth,
+      icon: sleepHealth.icon,
+      label: sleepHealth.title,
+      value: formatSleepDuration(health.durationMinutes),
+      unit: '',
+      progress: health.durationMinutes / 480,
+      hint: `수면 점수 ${health.sleepScore}점`,
+    },
+  ]
+
   return (
-    <div className="bg-background flex-1 overflow-x-hidden overflow-y-auto">
-      <div className="mx-auto max-w-3xl space-y-10 px-4 py-6 sm:px-8 sm:py-10">
-        {/* ── Hero Greeting ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 18 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-          className="space-y-1"
-        >
-          <div className="mb-4 flex items-center gap-2.5">
-            <div className="from-primary to-chart-5 flex h-10 w-10 items-center justify-center rounded-xl bg-linear-to-br shadow-sm">
-              <Bot className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <p className="text-muted-foreground text-xs">{greeting}, 민수님</p>
-            </div>
-          </div>
-        </motion.div>
-
-        {/* ── Reminders & Healthcare Grid ── */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {/* Upcoming Reminders & Calendar */}
-          <motion.div
-            initial={{ opacity: 0, y: 14 }}
+    <div className="bg-background flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+      <div className="mx-auto grid w-full max-w-[1290px] grid-cols-1 gap-6 px-6 py-10 xl:grid-cols-[minmax(0,56rem)_18rem] xl:items-start">
+        <div className="space-y-8">
+          {/* 섹션: 시스템 상태 */}
+          <motion.section
+            initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.1 }}
+            transition={{ duration: 0.3 }}
           >
-            <div className="border-border h-full rounded-2xl border bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-50">
-                    <Calendar className="h-4 w-4 text-violet-600" />
-                  </div>
-                  <h3 className="text-foreground text-sm font-semibold">
-                    {reminderView === 'list' ? '예정된 리마인더' : '달력'}
-                  </h3>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="bg-muted flex items-center rounded-lg p-0.5">
-                    <button
-                      onClick={() => setReminderView('list')}
-                      className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
-                        reminderView === 'list'
-                          ? 'text-foreground bg-white shadow-sm'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      목록
-                    </button>
-                    <button
-                      onClick={() => setReminderView('calendar')}
-                      className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
-                        reminderView === 'calendar'
-                          ? 'text-foreground bg-white shadow-sm'
-                          : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                    >
-                      달력
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => setCalendarOpen(true)}
-                    className="flex items-center gap-1.5 rounded-lg bg-[#111111] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-black/80"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    등록
-                  </button>
-                </div>
-              </div>
-
-              <AnimatePresence mode="wait">
-                {reminderView === 'list' ? (
-                  <motion.div
-                    key="list"
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -10 }}
-                    transition={{ duration: 0.2 }}
-                    className="space-y-2"
-                  >
-                    {upcomingReminders.map((reminder, i) => {
-                      const typeIcon =
-                        reminder.type === 'event'
-                          ? CalendarCheck
-                          : reminder.type === 'task'
-                            ? Target
-                            : Repeat
-                      return (
-                        <motion.div
-                          key={reminder.id}
-                          initial={{ opacity: 0, x: -6 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: i * 0.05 }}
-                          className="bg-muted/30 hover:bg-muted/50 hover:border-border flex cursor-pointer items-center gap-3 rounded-xl border border-transparent p-3 transition-colors"
-                        >
-                          <div
-                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"
-                            style={{ backgroundColor: `${reminder.color}15` }}
-                          >
-                            {React.createElement(typeIcon, {
-                              className: 'w-4 h-4',
-                              style: { color: reminder.color },
-                            })}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-foreground truncate text-sm font-medium">
-                              {reminder.title}
-                            </p>
-                            <p className="text-muted-foreground text-xs">
-                              {reminder.date} · {reminder.time}
-                            </p>
-                          </div>
-                          <div
-                            className="h-2 w-2 shrink-0 rounded-full"
-                            style={{ backgroundColor: reminder.color }}
-                          />
-                        </motion.div>
-                      )
-                    })}
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key="calendar"
-                    initial={{ opacity: 0, x: 10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 10 }}
-                    transition={{ duration: 0.2 }}
-                  >
-                    <MonthCalendar />
-                  </motion.div>
-                )}
-              </AnimatePresence>
+            <p className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase">
+              시스템 상태
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <StatusCard
+                icon={<Server className="h-4 w-4" />}
+                title="서버 연결"
+                statusLabel={server.label}
+                dotColor={server.color}
+              />
+              <StatusCard
+                icon={<Bot className="h-4 w-4" />}
+                title="에이전트"
+                statusLabel={agent.label}
+                dotColor={agent.color}
+                pulse={agent.pulse}
+              />
+              <IotCard
+                loading={iotLoading}
+                device={device}
+                onRegister={() => setPairingOpen(true)}
+                onDeregister={handleDeregisterRequest}
+              />
+              <BridgeCard />
             </div>
-          </motion.div>
+          </motion.section>
 
-          {/* Healthcare Dashboard */}
-          <motion.div
-            initial={{ opacity: 0, y: 14 }}
+          {/* 구분선 */}
+          <div className="border-border border-t" />
+
+          {/* 섹션: 빠른 실행 */}
+          <motion.section
+            initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.12 }}
+            transition={{ duration: 0.3, delay: 0.1 }}
           >
-            <div className="border-border h-full rounded-2xl border bg-white p-5 shadow-sm">
-              <div className="mb-4 flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-50">
-                  <Activity className="h-4 w-4 text-emerald-600" />
+            <p className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase">
+              빠른 실행
+            </p>
+            <div className="grid grid-cols-3 gap-3">
+              <ActionButton
+                icon={<Eye className="h-4 w-4" />}
+                label="에이전트 상태 보기"
+                onClick={() => navigate('/agent-status')}
+              />
+              <ActionButton
+                icon={<Plus className="h-4 w-4" />}
+                label="새 작업 요청하기"
+                onClick={() => setNewSessionOpen(true)}
+              />
+              <ActionButton
+                icon={<KeyRound className="h-4 w-4" />}
+                label="API 키 등록"
+                onClick={() => setSettingsOpen(true, 'apiKeys')}
+              />
+            </div>
+          </motion.section>
+
+          {/* 구분선 */}
+          <div className="border-border border-t" />
+
+          {/* 섹션: 건강 정보 — 삼성 Health 데이터 기반 요약 / 피드백 / 권장 사항 */}
+          <motion.section
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.15 }}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+                건강 정보
+              </p>
+              <span className="text-muted-foreground inline-flex items-center gap-1 text-[10px]">
+                <Activity className="h-3 w-3" />
+                Samsung Health 연동
+              </span>
+            </div>
+
+            <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {healthMetricCards.map((card) => (
+                <HealthMetricCard
+                  key={card.detail.title}
+                  icon={card.icon}
+                  label={card.label}
+                  value={card.value}
+                  unit={card.unit}
+                  progress={card.progress}
+                  hint={card.hint}
+                  detail={card.detail}
+                  expanded={expandedHealthGroups.includes(card.detail.title)}
+                  onToggle={() => toggleHealthGroup(card.detail.title)}
+                />
+              ))}
+            </div>
+
+            <div className="border-border bg-card rounded-xl border p-4">
+              <div className="mb-3 flex items-center gap-3">
+                <div className="bg-muted text-foreground/70 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg">
+                  <Sparkles className="h-4 w-4" />
                 </div>
-                <h3 className="text-foreground text-sm font-semibold">헬스케어</h3>
+                <div className="min-w-0">
+                  <p className="text-foreground text-sm font-medium">LLM 건강 검토</p>
+                  <p className="text-muted-foreground text-xs">
+                    요약, 부족한 항목 피드백, 다음 행동 권장 사항
+                  </p>
+                </div>
               </div>
 
-              <div className="space-y-2.5">
-                {healthInsights.map((insight, i) => (
-                  <motion.div
-                    key={i}
-                    initial={{ opacity: 0, x: -6 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.2 + i * 0.05 }}
-                    className={`rounded-xl border p-3 transition-colors ${
-                      insight.type === 'warning'
-                        ? 'border-orange-200/50 bg-orange-50/50'
-                        : insight.type === 'achievement'
-                          ? 'border-blue-200/50 bg-blue-50/50'
-                          : 'border-emerald-200/50 bg-emerald-50/50'
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg"
-                        style={{ backgroundColor: `${insight.color}20` }}
-                      >
-                        <insight.icon className="h-4 w-4" style={{ color: insight.color }} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-foreground text-sm leading-relaxed">{insight.message}</p>
-                        <div className="mt-1 flex items-center gap-2">
-                          <span className="text-xs font-medium" style={{ color: insight.color }}>
-                            {insight.data}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1.3fr]">
+                <div className="bg-muted/35 rounded-lg p-3">
+                  <p className="text-muted-foreground mb-1 text-xs">오늘의 요약</p>
+                  <p className="text-foreground text-sm leading-relaxed">
+                    심박과 혈압은 안정적이며 활동량은 중간 수준입니다. 수면 시간이 짧아 회복 지표가
+                    우선 관리 대상입니다.
+                  </p>
+                </div>
+                <ul className="space-y-2">
+                  {HEALTH_RECOMMENDATIONS.map((tip) => (
+                    <li
+                      key={tip}
+                      className="text-foreground/85 flex items-start gap-2 text-xs leading-relaxed"
+                    >
+                      <span className="bg-switch-on/80 mt-1.5 h-1 w-1 shrink-0 rounded-full" />
+                      <span>{tip}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             </div>
-          </motion.div>
+          </motion.section>
+
+          {/* 구분선 */}
+          <div className="border-border border-t" />
+
+          {/* 섹션: 최근 상태 로그 */}
+          <motion.section
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.2 }}
+          >
+            <p className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase">
+              최근 활동
+            </p>
+            <div className="border-border bg-card divide-border divide-y rounded-xl border">
+              {[
+                { message: '디바이스가 연결되었습니다.', dot: 'emerald', time: '방금 전' },
+                { message: '서버와의 연결이 정상입니다.', dot: 'emerald', time: '1분 전' },
+                { message: '에이전트가 대기 상태입니다.', dot: 'muted', time: '2분 전' },
+              ].map((log, i) => (
+                <div key={i} className="flex items-center justify-between px-4 py-3">
+                  <div className="flex items-center gap-2.5">
+                    <StatusDot color={log.dot as 'emerald' | 'muted'} />
+                    <span className="text-foreground text-sm">{log.message}</span>
+                  </div>
+                  <span className="text-muted-foreground shrink-0 text-xs">{log.time}</span>
+                </div>
+              ))}
+            </div>
+          </motion.section>
         </div>
 
-        {/* Calendar Dialog */}
-        <Dialog open={calendarOpen} onOpenChange={setCalendarOpen}>
-          <DialogContent
-            className="w-[calc(100%-2rem)] max-w-95 p-0 [&>button]:hidden"
-            aria-describedby="calendar-description"
-          >
-            <DialogTitle className="sr-only">일정 등록</DialogTitle>
-            <DialogDescription id="calendar-description" className="sr-only">
-              새로운 일정을 등록하세요
-            </DialogDescription>
-            <CalendarWidget onClose={() => setCalendarOpen(false)} />
-          </DialogContent>
-        </Dialog>
-
-        {/* ── Available Agents ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.15 }}
-        >
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-foreground text-sm font-semibold">전문 에이전트</h2>
-            <button className="text-primary hover:text-primary/80 flex items-center gap-1 text-xs transition-colors">
-              전체 보기 <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {agents.map((agent, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, scale: 0.94 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.2 + i * 0.04 }}
-                className="border-border hover:border-primary/30 group relative rounded-xl border bg-white p-4 transition-all duration-150 hover:shadow-sm"
-              >
-                {/* Add to Right Panel Button */}
-                <button
-                  onClick={() => handleAgentClick(agent)}
-                  className="border-border hover:bg-primary hover:border-primary absolute top-2 right-2 flex items-center gap-1.5 rounded-md border bg-white px-2 py-1 opacity-0 shadow-sm transition-colors group-hover:opacity-100 hover:text-white"
-                  title="우측 모달로 추가"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  <span className="text-xs font-medium">우측 모달로 추가</span>
-                </button>
-
-                <div
-                  className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl"
-                  style={{ backgroundColor: `${agent.accent}14` }}
-                >
-                  <agent.icon className="h-5 w-5" style={{ color: agent.accent }} />
-                </div>
-                <p className="text-foreground mb-1 text-sm leading-snug font-semibold">
-                  {agent.name}
-                </p>
-                <p className="text-muted-foreground mb-2 text-xs leading-snug">
-                  {agent.description}
-                </p>
-                <div className="flex items-center gap-1.5">
-                  <div
-                    className={`h-1.5 w-1.5 rounded-full ${agent.dotColor} ${agent.status === 'running' ? 'animate-pulse' : ''}`}
-                  />
-                  <span className={`text-xs ${agent.statusColor}`}>
-                    {agent.status === 'running'
-                      ? '실행 중'
-                      : agent.status === 'ready'
-                        ? '준비됨'
-                        : '대기 중'}
-                  </span>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
-
-        {/* ── Recent Activity ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.2 }}
-        >
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-foreground text-sm font-semibold">최근 활동</h2>
-            <div className="flex items-center gap-1.5">
-              <TrendingUp className="h-3.5 w-3.5 text-emerald-500" />
-              <span className="text-xs font-medium text-emerald-500">오늘 27개 완료</span>
-            </div>
-          </div>
-          <div className="space-y-2">
-            {recentResults.map((result, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, x: -8 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.3 + i * 0.05 }}
-                className="border-border hover:border-primary/20 flex cursor-pointer items-center gap-3 rounded-xl border bg-white p-4 transition-all duration-150 hover:shadow-sm"
-              >
-                <div
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-                  style={{ backgroundColor: `${result.accent}14` }}
-                >
-                  <result.icon
-                    className="h-4.5 w-4.5"
-                    style={{ color: result.accent, width: '18px', height: '18px' }}
-                  />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-foreground truncate text-sm font-medium">{result.task}</p>
-                  <p className="text-muted-foreground text-xs">{result.agent}</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                  <span className="text-muted-foreground text-xs">{result.time}</span>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        </motion.div>
-
-        {/* Bottom spacer */}
-        <div className="h-4" />
+        <div className="xl:sticky xl:top-[65px] xl:mt-[25px] xl:self-start">
+          <LlmTaskNotice />
+        </div>
       </div>
+
+      <PairingModal
+        open={pairingOpen}
+        onOpenChange={setPairingOpen}
+        onSuccess={(registered) => {
+          setIotDevices([registered])
+          setPairingOpen(false)
+        }}
+      />
+
+      <DeregisterConfirmModal
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        onConfirm={handleDeregisterConfirm}
+      />
+
+      <NewSessionModal
+        open={newSessionOpen}
+        onOpenChange={setNewSessionOpen}
+        onConfirm={(config) => {
+          storePendingSessionConfig(config)
+          setNewSessionOpen(false)
+          if (config && !config.seedDefaultAgents) {
+            setSidebarCollapsed(false)
+            navigate('/agent-status')
+          } else {
+            setSidebarCollapsed(true)
+            navigate('/new-chat')
+          }
+        }}
+      />
     </div>
   )
+}
+
+function storePendingSessionConfig(config: CustomAgentConfig | undefined) {
+  if (config === undefined) {
+    sessionStorage.removeItem('ai-new-session-config')
+    return
+  }
+  sessionStorage.setItem('ai-new-session-config', JSON.stringify(config))
 }

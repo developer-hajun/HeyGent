@@ -1,57 +1,109 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 
-const MIN_WIDTH = 220
-const MAX_WIDTH = 420
-export const DEFAULT_SIDEBAR_WIDTH = 280
+export const DEFAULT_SIDEBAR_WIDTH = 236
+export const DEFAULT_SIDEBAR_COLLAPSED_WIDTH = 64
+export const MIN_SIDEBAR_WIDTH = 200
+export const MAX_SIDEBAR_WIDTH = 480
 
-type RightPanelType = 'schedule' | 'agent' | null
-type Theme = 'light' | 'dark'
+// Keep the favicon aligned with the app theme.
+// Use the dedicated theme favicon assets.
+function applyFavicon(theme: 'dark' | 'light') {
+  const path = theme === 'dark' ? '/favicon_dark.png' : '/favicon_light.png'
+  // cache-busting — 브라우저 favicon 캐시 강제 무효화
+  const href = `${path}?v=${Date.now()}`
+
+  // 1. 정적 HTML 의 prefers-color-scheme 기반 favicon link 모두 제거
+  //    (OS 테마와 앱 테마가 다를 때 브라우저가 정적 link 를 우선해서 동적 갱신이 무시되는 문제 방지)
+  document
+    .querySelectorAll<HTMLLinkElement>('link[rel~="icon"]:not([data-app])')
+    .forEach((el) => el.remove())
+
+  // 2. 동적 (data-app="1") favicon link 갱신
+  let appLink = document.querySelector<HTMLLinkElement>('link[rel="icon"][data-app="1"]')
+  if (!appLink) {
+    appLink = document.createElement('link')
+    appLink.rel = 'icon'
+    appLink.type = 'image/png'
+    appLink.dataset.app = '1'
+    document.head.appendChild(appLink)
+  }
+  appLink.setAttribute('sizes', 'any')
+  appLink.href = href
+
+  // 3. shortcut icon (구형 브라우저 호환)
+  let shortcut = document.querySelector<HTMLLinkElement>('link[rel="shortcut icon"][data-app="1"]')
+  if (!shortcut) {
+    shortcut = document.createElement('link')
+    shortcut.rel = 'shortcut icon'
+    shortcut.dataset.app = '1'
+    document.head.appendChild(shortcut)
+  }
+  shortcut.href = href
+
+  // 4. apple-touch-icon 도 동기 갱신 (홈 화면 바로가기용)
+  let touch = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"][data-app="1"]')
+  if (!touch) {
+    touch = document.createElement('link')
+    touch.rel = 'apple-touch-icon'
+    touch.dataset.app = '1'
+    document.head.appendChild(touch)
+  }
+  touch.href = href
+}
 
 interface UIState {
-  // 테마
-  theme: Theme
-  setTheme: (theme: Theme) => void
-
   // 좌측 사이드바
   sidebarCollapsed: boolean
   sidebarWidth: number
+  sessionWorkspaceCollapsed: boolean
   settingsOpen: boolean
   settingsInitialTab: string
   setSidebarCollapsed: (collapsed: boolean) => void
   setSidebarWidth: (width: number) => void
-  clampSidebarWidth: (width: number) => void
+  setSessionWorkspaceCollapsed: (collapsed: boolean) => void
   setSettingsOpen: (open: boolean, initialTab?: string) => void
 
-  // 우측 패널
-  rightPanelType: RightPanelType
-  setRightPanelType: (type: RightPanelType) => void
-  toggleRightPanel: (type: Exclude<RightPanelType, null>) => void
+  // 채팅 활동 패널
+  taskActivityPanelOpen: boolean
+  setTaskActivityPanelOpen: (open: boolean) => void
+
+  // 테마
+  theme: 'dark' | 'light'
+  setTheme: (theme: 'dark' | 'light') => void
 }
 
-export const useUIStore = create<UIState>((set, get) => ({
-  theme: (localStorage.getItem('heygent-theme') as Theme) ?? 'dark',
-  setTheme: (theme) => {
-    localStorage.setItem('heygent-theme', theme)
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark')
-    } else {
-      document.documentElement.classList.remove('dark')
-    }
-    set({ theme })
-  },
-
-  sidebarCollapsed: false,
-  sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
-  settingsOpen: false,
-  settingsInitialTab: 'general',
-  setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
-  setSidebarWidth: (width) => set({ sidebarWidth: width }),
-  clampSidebarWidth: (width) =>
-    set({ sidebarWidth: Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width)) }),
-  setSettingsOpen: (open, initialTab) =>
-    set({ settingsOpen: open, ...(initialTab ? { settingsInitialTab: initialTab } : {}) }),
-
-  rightPanelType: null,
-  setRightPanelType: (type) => set({ rightPanelType: type }),
-  toggleRightPanel: (type) => set({ rightPanelType: get().rightPanelType === type ? null : type }),
-}))
+export const useUIStore = create<UIState>()(
+  persist(
+    (set) => ({
+      sidebarCollapsed: false,
+      sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
+      sessionWorkspaceCollapsed: false,
+      settingsOpen: false,
+      settingsInitialTab: 'general',
+      setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+      setSidebarWidth: (width) =>
+        set({ sidebarWidth: Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width)) }),
+      setSessionWorkspaceCollapsed: (collapsed) => set({ sessionWorkspaceCollapsed: collapsed }),
+      setSettingsOpen: (open, initialTab) =>
+        set({ settingsOpen: open, ...(initialTab ? { settingsInitialTab: initialTab } : {}) }),
+      taskActivityPanelOpen: false,
+      setTaskActivityPanelOpen: (open) => set({ taskActivityPanelOpen: open }),
+      theme: 'dark',
+      setTheme: (theme) => {
+        document.documentElement.classList.toggle('dark', theme === 'dark')
+        applyFavicon(theme)
+        set({ theme })
+      },
+    }),
+    {
+      name: 'heygent-ui-state',
+      partialize: (state) => ({
+        sidebarCollapsed: state.sidebarCollapsed,
+        sidebarWidth: state.sidebarWidth,
+        sessionWorkspaceCollapsed: state.sessionWorkspaceCollapsed,
+        theme: state.theme,
+      }),
+    },
+  ),
+)

@@ -8,6 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
 from app.api.deps.openapi_auth import document_bearer_auth
 from app.api.deps.task_context import TaskContext, get_task_context
+from app.api.memory_context import attach_persistent_memory_context, select_memory_recall_query
+from app.api.memory_mark_used import mark_used_recalled_memories
+from app.api.memory_observation import attach_memory_observation_to_task
 from app.core.time import utc_now
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_request import CreateTaskRequest, ResumeTaskRequest
@@ -19,6 +22,7 @@ from app.contracts.task.task_response import (
     StepRunResponse,
     StepRunSummaryResponse,
     TaskEventResponse,
+    TaskRunDisplayContextResponse,
     TaskRunFlowActivityResponse,
     TaskRunFlowEdgeResponse,
     TaskRunFlowNodeResponse,
@@ -31,7 +35,9 @@ from app.contracts.task.task_response import (
 )
 from app.contracts.task.task_status import TaskStatus
 from app.domain.orchestration.contracts import OrchestrationRequest
+from app.domain.tasks.display_context import build_task_display_context
 from app.domain.tasks.models import StepRun
+from app.domain.work import WorkService
 
 router = APIRouter(prefix="/taskRuns", tags=["taskRuns"], dependencies=[Depends(document_bearer_auth)])
 
@@ -143,12 +149,16 @@ def _display_task_title(task, *, input_summary: str | None) -> str:
     return task.task_type
 
 
+def _display_context_response(task, step: StepRun | None = None) -> TaskRunDisplayContextResponse:
+    return TaskRunDisplayContextResponse.model_validate(build_task_display_context(task, step))
+
 
 def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse:
     current_step = _select_current_step(task, steps)
     current_step_response = None
     if current_step is not None:
         current_step_response = StepRunSummaryResponse.model_validate(current_step, from_attributes=True)
+        current_step_response.display_context = _display_context_response(task, current_step)
     input_summary = _summarize_task_input_payload(task.input_payload)
     return TaskRunListItemResponse(
         task_run_id=task.task_run_id,
@@ -162,6 +172,7 @@ def _build_task_list_item(task, steps: list[StepRun]) -> TaskRunListItemResponse
         created_at=task.created_at,
         updated_at=task.updated_at,
         current_step=current_step_response,
+        display_context=_display_context_response(task),
     )
 
 
@@ -179,6 +190,7 @@ def _build_active_task_item(
             step_run_id=current_step.step_run_id,
             title=current_step.title,
             status=current_step.status,
+            display_context=_display_context_response(task, current_step),
         )
     input_summary = _summarize_task_input_payload(task.input_payload)
     return ActiveTaskRunListItemResponse(
@@ -192,6 +204,7 @@ def _build_active_task_item(
         updated_at=task.updated_at,
         wait_reason=(task.wait_payload or {}).get("reason"),
         pending_approval=pending_approval,
+        display_context=_display_context_response(task),
     )
 
 
@@ -271,6 +284,7 @@ def _build_task_response(task, context: TaskContext) -> TaskRunResponse:
 
     response = TaskRunResponse.model_validate(task, from_attributes=True)
     response.pending_approval = _build_pending_approval_response(context.repository.get_open_approval(task.task_run_id))
+    response.display_context = _display_context_response(task)
     return response
 
 
@@ -411,6 +425,7 @@ def _build_step_response(
         output_payload=step.output_payload,
         wait_payload=step.wait_payload,
         pending_approval=pending_approval,
+        display_context=_display_context_response(task, step),
         detail_json=step.detail_json,
         summary_message=step.summary_message,
         error_message=step.error_message,
@@ -604,7 +619,17 @@ async def list_active_tasks(
 async def create_task(request: Request, payload: CreateTaskRequest, context: TaskContext = Depends(get_task_context)) -> TaskRunResponse:
     user = await authenticate_http_user(request)
     owner_key = user.user_id if user is not None else payload.owner_key
+    task_input = dict(payload.input_payload)
+    await attach_persistent_memory_context(
+        app_state=request.app.state,
+        task_input=task_input,
+        user_id=str(owner_key),
+        query=select_memory_recall_query(task_input),
+        workspace_key=user.workspace_key if user is not None else None,
+        force_workspace_key=user is not None and bool(user.workspace_key),
+    )
     orchestrator = request.app.state.orchestrator
+    task_execution_supervisor = getattr(request.app.state, "task_execution_supervisor", None)
     active_lock_task_id = None
     if payload.session_key:
         if _has_active_task_for_owner_session(context, owner_key=owner_key, session_key=payload.session_key):
@@ -616,16 +641,31 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
             if not projection.acquire_active_session_lock(payload.session_key, active_lock_task_id, owner_key=owner_key):
                 raise HTTPException(status_code=409, detail="active task already exists in this session")
     try:
-        task = await orchestrator.start(
-            OrchestrationRequest(
-                owner_key=owner_key,
-                session_key=payload.session_key,
-                input_payload=payload.input_payload,
-            )
+        orchestration_request = OrchestrationRequest(
+            owner_key=owner_key,
+            session_key=payload.session_key,
+            input_payload=task_input,
         )
+        if task_execution_supervisor is not None:
+            task = await task_execution_supervisor.submit(orchestration_request)
+        else:
+            task = await orchestrator.start(orchestration_request)
         if payload.session_key and active_lock_task_id and context.task_projection_store is not None:
             context.task_projection_store.release_active_session_lock(payload.session_key, active_lock_task_id, owner_key=owner_key)
             context.task_projection_store.acquire_active_session_lock(payload.session_key, task.task_run_id, owner_key=owner_key)
+        if task_execution_supervisor is None:
+            mark_used_observation = await mark_used_recalled_memories(
+                app_state=request.app.state,
+                task_input=dict(task.input_payload or {}),
+                user_id=str(owner_key),
+                assistant_message=_assistant_content_from_task_result(task),
+                task_run_id=task.task_run_id,
+            )
+            attach_memory_observation_to_task(
+                task=task,
+                repository=context.repository,
+                mark_used=mark_used_observation,
+            )
     except KeyError as error:
         if payload.session_key and active_lock_task_id and context.task_projection_store is not None:
             context.task_projection_store.release_active_session_lock(payload.session_key, active_lock_task_id, owner_key=owner_key)
@@ -634,6 +674,9 @@ async def create_task(request: Request, payload: CreateTaskRequest, context: Tas
         if payload.session_key and active_lock_task_id and context.task_projection_store is not None:
             context.task_projection_store.release_active_session_lock(payload.session_key, active_lock_task_id, owner_key=owner_key)
         raise HTTPException(status_code=400, detail=str(error)) from error
+    work_repository = getattr(request.app.state, "work_repository", None)
+    if work_repository is not None:
+        WorkService(work_repository).apply_linked_task_result(task=task)
     return _build_task_response(task, context)
 
 
@@ -764,6 +807,17 @@ async def list_events(
 
     events = context.repository.list_events(task_run_id)
     return [TaskEventResponse.model_validate(event, from_attributes=True) for event in events[:limit]]
+
+
+def _assistant_content_from_task_result(task: Any) -> str:
+    result_payload = dict(getattr(task, "result_payload", {}) or {})
+    for key in ("text", "output_text", "summary", "message", "content"):
+        value = result_payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    if getattr(task, "progress_summary", None):
+        return str(task.progress_summary)
+    return ""
 
 
 @router.post(

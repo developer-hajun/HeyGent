@@ -1,6 +1,8 @@
 import { useRef, useEffect, useState } from 'react'
 import { AgentSprite } from './AgentSprite'
-import type { AgentRuntime } from './types'
+import { WhiteboardTokenChart } from './WhiteboardTokenChart'
+import type { AgentRuntime, AgentVisualizationInfo } from './types'
+import type { CommandUsageSummary } from '@/apis/aiCommandUsage'
 
 const MAP_WIDTH = 1600
 const MAP_HEIGHT = 900
@@ -10,7 +12,7 @@ function getOfficeMapSrc(): string {
   if (hour >= 8 && hour < 16) return '/assets/maps/office_map_day.png'
   if (hour >= 16 && hour < 18) return '/assets/maps/office_map_sunset.png'
   if (hour >= 6 && hour < 8) return '/assets/maps/office_map_sunset.png'
-  if (hour >= 18 && hour < 20) return '/assets/maps/office_map_dust.png'
+  if (hour >= 18 && hour < 20) return '/assets/maps/office_map_dusk.png'
   return '/assets/maps/office_map_night.png'
 }
 
@@ -32,6 +34,11 @@ interface OfficeMapProps {
   obstacleLineMode?: boolean
   obstacleLines?: Rect[]
   onNewLine?: (line: Rect) => void
+  onAgentClick?: (agentId: string) => void
+  agentInfoMap?: Record<string, AgentVisualizationInfo>
+  selectedAgentId?: string | null
+  spawningIds?: ReadonlySet<string>
+  tokenUsageSummary?: CommandUsageSummary | null
 }
 
 export function OfficeMap({
@@ -45,6 +52,11 @@ export function OfficeMap({
   obstacleLineMode,
   obstacleLines,
   onNewLine,
+  onAgentClick,
+  agentInfoMap,
+  selectedAgentId,
+  spawningIds,
+  tokenUsageSummary,
 }: OfficeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
@@ -83,8 +95,8 @@ export function OfficeMap({
       const s = Math.min(width / MAP_WIDTH, height / MAP_HEIGHT)
       setScale(s)
       setOffset({
-        x: Math.max(0, (width - MAP_WIDTH * s) / 2),
-        y: Math.max(0, (height - MAP_HEIGHT * s) / 2),
+        x: (width - MAP_WIDTH * s) / 2,
+        y: (height - MAP_HEIGHT * s) / 2,
       })
     })
 
@@ -188,8 +200,17 @@ export function OfficeMap({
             display: 'block',
           }}
         />
+        <WhiteboardTokenChart summary={tokenUsageSummary ?? null} />
         {agents.map((agent) => (
-          <AgentSprite key={agent.config.id} agent={agent} onArrived={onAgentArrived} />
+          <AgentSprite
+            key={agent.config.id}
+            agent={agent}
+            onArrived={onAgentArrived}
+            onClick={onAgentClick}
+            hoverInfo={agentInfoMap?.[agent.config.id]}
+            isSelected={selectedAgentId === agent.config.id}
+            isSpawning={spawningIds?.has(agent.config.id) ?? false}
+          />
         ))}
         {ceoMode &&
           (() => {
@@ -209,7 +230,7 @@ export function OfficeMap({
               >
                 <img
                   src={sprite.src}
-                  alt="CEO"
+                  alt="팀장 에이전트"
                   draggable={false}
                   style={{ width: '100%', height: '100%', userSelect: 'none' }}
                 />

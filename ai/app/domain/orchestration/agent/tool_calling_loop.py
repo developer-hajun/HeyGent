@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import re
 from typing import Any
@@ -9,7 +10,7 @@ from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.core.utils.ids import new_id
 from app.domain.orchestration.agent.tool_guard import ToolGuard, ToolGuardDecision, ToolGuardResult
-from app.domain.providers.model.base import AgentMessage, ToolResultMessage
+from app.domain.providers.model.base import AgentMessage, AgentModelResponse, ToolResultMessage
 from app.domain.orchestration.prompts.prompt_builder import assemble_agent_loop_messages
 from app.domain.session.sessions.transcript_store import TranscriptStore
 from app.domain.orchestration.runtime_planning.todo_state import (
@@ -42,12 +43,22 @@ class ToolCallingLoopHandler:
     def execute(self, *, task, step, resume_payload=None) -> dict[str, Any]:
         return asyncio.run(self.execute_async(task=task, step=step, resume_payload=resume_payload))
 
-    async def execute_async(self, *, task, step, resume_payload=None, progress_sink=None, delegate_executor=None) -> dict[str, Any]:
+    async def execute_async(
+        self,
+        *,
+        task,
+        step,
+        resume_payload=None,
+        progress_sink=None,
+        delegate_executor=None,
+        session_agent_executor=None,
+    ) -> dict[str, Any]:
         task_input = dict(task.input_payload or {})
         # 요청 payload의 workspace_root는 API 호출자가 선택한 이번 실행 root로 바인딩한다.
         request_tool_runtime = self._bind_request_tool_runtime(
             workspace_root=task_input.get("workspace_root"),
             owner_key=getattr(task, "owner_key", None),
+            runtime_context=task_input,
         )
         requested_toolsets = self._requested_toolsets(task_input)
         available_tools = self.tool_catalog.list_available_tools(requested_toolsets=requested_toolsets)
@@ -66,6 +77,7 @@ class ToolCallingLoopHandler:
             current_todo_state=current_todo_state,
             progress_sink=progress_sink,
             delegate_executor=delegate_executor,
+            session_agent_executor=session_agent_executor,
         )
 
     async def _execute_native(
@@ -82,6 +94,7 @@ class ToolCallingLoopHandler:
         current_todo_state: dict[str, Any],
         progress_sink,
         delegate_executor=None,
+        session_agent_executor=None,
     ) -> dict[str, Any]:
         """모델 응답과 runtime tool 실행을 번갈아 수행한다.
 
@@ -134,12 +147,12 @@ class ToolCallingLoopHandler:
         llm_call_count = 0
 
         for turn_index in range(1, max_iterations + 1):
-            generated = await asyncio.to_thread(
-                self.provider.respond,
+            generated = await self._respond_with_runtime_context_async(
                 messages=messages,
                 tools=provider_tools,
                 model=model,
                 tool_choice=None,
+                runtime_context=self._model_runtime_context(task=task, step=step, task_input=task_input),
             )
             llm_call_count += 1
             messages.append(generated.message)
@@ -283,6 +296,13 @@ class ToolCallingLoopHandler:
                             accepted_result=result,
                         )
                         delegate_boundary_started = True
+                    if runtime_tool_name == "session_agent_task" and session_agent_executor is not None:
+                        result = await self._execute_session_agent_tool_result(
+                            session_agent_executor=session_agent_executor,
+                            tool_call_id=tool_call.id,
+                            args=tool_call.arguments,
+                            accepted_result=result,
+                        )
                 tool_result = {
                     "tool_call_id": tool_call.id,
                     "name": runtime_tool_name,
@@ -305,19 +325,22 @@ class ToolCallingLoopHandler:
                     args=tool_call.arguments,
                     result=result,
                 )
+                self._sync_dynamic_runtime_context(
+                    task=task,
+                    task_input=task_input,
+                    tool_runtime=tool_runtime,
+                )
             current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
 
-        return self._build_completed_outcome(
+        return self._build_failed_outcome(
             task_input=task_input,
-            prompt=prompt,
             generated=generated,
-            final_text=generated.output_text if generated is not None else "작업 반복 한도에 도달했습니다.",
             tool_results=all_tool_results,
             operations=operations,
             llm_call_count=llm_call_count,
-            resume_payload=resume_payload,
             todo_state=current_todo_state,
             operation_counters=operation_counters,
+            max_iterations=max_iterations,
         )
 
     def _new_turn_messages(
@@ -566,6 +589,26 @@ class ToolCallingLoopHandler:
             accepted_result=dict(accepted_result),
         )
 
+    @staticmethod
+    async def _execute_session_agent_tool_result(
+        *,
+        session_agent_executor,
+        tool_call_id: str,
+        args: dict[str, Any],
+        accepted_result: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not isinstance(accepted_result, dict) or accepted_result.get("ok") is False:
+            return accepted_result
+        child_work = accepted_result.get("child_work")
+        if not isinstance(child_work, dict):
+            return accepted_result
+        return await session_agent_executor(
+            child_work=dict(child_work),
+            tool_call_id=tool_call_id,
+            args=dict(args or {}),
+            accepted_result=dict(accepted_result),
+        )
+
     async def _emit_tool_progress(
         self,
         *,
@@ -770,14 +813,37 @@ class ToolCallingLoopHandler:
             return text[:80]
         return cls._optional_text(args.get("command"))
 
-    def _bind_request_tool_runtime(self, *, workspace_root: Any, owner_key: Any):
+    def _bind_request_tool_runtime(self, *, workspace_root: Any, owner_key: Any, runtime_context: dict[str, Any] | None = None):
         context_binder = getattr(self.tool_runtime, "bind_request_context", None)
         if callable(context_binder):
-            return context_binder(workspace_root=workspace_root, owner_key=owner_key)
+            return context_binder(workspace_root=workspace_root, owner_key=owner_key, runtime_context=runtime_context)
         binder = getattr(self.tool_runtime, "bind_workspace_root", None)
         if callable(binder):
             return binder(workspace_root)
         return self.tool_runtime
+
+    @staticmethod
+    def _sync_dynamic_runtime_context(*, task, task_input: dict[str, Any], tool_runtime) -> None:
+        latest_input = dict(getattr(task, "input_payload", None) or {})
+        dynamic_keys = (
+            "workId",
+            "workIdentifier",
+            "workTitle",
+            "workAssigneeAgentId",
+            "workContext",
+            "workLinkReason",
+        )
+        updates = {
+            key: latest_input[key]
+            for key in dynamic_keys
+            if key in latest_input and task_input.get(key) != latest_input[key]
+        }
+        if not updates:
+            return
+        task_input.update(updates)
+        runtime_context = getattr(tool_runtime, "runtime_context", None)
+        if isinstance(runtime_context, dict):
+            runtime_context.update(updates)
 
     @staticmethod
     def _task_input_for_guard(*, task_input: dict[str, Any], step, resume_payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -869,19 +935,21 @@ class ToolCallingLoopHandler:
         messages.append(tool_message)
         self._append_transcript_message(transcript_session_id, tool_message, tool_name=tool_name)
         # tool_call_id는 assistant가 보낸 호출 id와 정확히 맞아야 replay 시 결과를 대응시킬 수 있다.
-        operations.append(
-            {
-                "key": self._next_operation_key(
-                    operation_counters,
-                    namespace="tool",
-                    base_key=tool_name,
-                ),
-                "title": tool_name,
-                "kind": "tool",
-                "status": self._tool_operation_status(result),
-                "summary": self._tool_summary(result),
-            }
-        )
+        operation = {
+            "key": self._next_operation_key(
+                operation_counters,
+                namespace="tool",
+                base_key=tool_name,
+            ),
+            "title": tool_name,
+            "kind": "tool",
+            "status": self._tool_operation_status(result),
+            "summary": self._tool_summary(result),
+        }
+        operation_error = self._tool_operation_error(result)
+        if operation_error is not None:
+            operation["error"] = operation_error
+        operations.append(operation)
 
     @staticmethod
     def _guard_decision(guard_result: ToolGuardResult) -> ToolGuardDecision:
@@ -889,6 +957,80 @@ class ToolCallingLoopHandler:
         if isinstance(decision, ToolGuardDecision):
             return decision
         return ToolGuardDecision(str(decision))
+
+    def _respond_with_runtime_context(
+        self,
+        *,
+        messages: list[AgentMessage | ToolResultMessage | dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str,
+        tool_choice: dict[str, Any] | str | None,
+        runtime_context: dict[str, Any],
+    ):
+        signature = inspect.signature(self.provider.respond)
+        if "runtime_context" in signature.parameters:
+            return self.provider.respond(
+                messages=messages,
+                tools=tools,
+                model=model,
+                tool_choice=tool_choice,
+                runtime_context=runtime_context,
+            )
+        return self.provider.respond(
+            messages=messages,
+            tools=tools,
+            model=model,
+            tool_choice=tool_choice,
+        )
+
+    async def _respond_with_runtime_context_async(
+        self,
+        *,
+        messages: list[AgentMessage | ToolResultMessage | dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str,
+        tool_choice: dict[str, Any] | str | None,
+        runtime_context: dict[str, Any],
+    ):
+        respond_async = getattr(self.provider, "respond_async", None)
+        if callable(respond_async):
+            signature = inspect.signature(respond_async)
+            if "runtime_context" in signature.parameters:
+                return await respond_async(
+                    messages=messages,
+                    tools=tools,
+                    model=model,
+                    tool_choice=tool_choice,
+                    runtime_context=runtime_context,
+                )
+            return await respond_async(
+                messages=messages,
+                tools=tools,
+                model=model,
+                tool_choice=tool_choice,
+            )
+        return await asyncio.to_thread(
+            self._respond_with_runtime_context,
+            messages=messages,
+            tools=tools,
+            model=model,
+            tool_choice=tool_choice,
+            runtime_context=runtime_context,
+        )
+
+    @staticmethod
+    def _model_runtime_context(*, task, step, task_input: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "user_id": getattr(task, "owner_key", None),
+            "provider_name": task_input.get("provider_name")
+            or task_input.get("providerName")
+            or "openai_api_key",
+            "task_run_id": getattr(task, "task_run_id", None),
+            "step_run_id": getattr(step, "step_run_id", None),
+            "session_id": getattr(task, "session_key", None)
+            or task_input.get("session_id")
+            or task_input.get("sessionId"),
+        }
 
     @staticmethod
     def _guard_payload(guard_result: ToolGuardResult) -> dict[str, Any]:
@@ -994,6 +1136,9 @@ class ToolCallingLoopHandler:
             "metadata": metadata,
             "tool_results": tool_results,
         }
+        work_disposition = self._work_disposition_from_tool_results(tool_results)
+        if work_disposition is not None:
+            result_payload["workDisposition"] = work_disposition
         output_payload = {
             "prompt": prompt,
             "text": final_text,
@@ -1012,6 +1157,12 @@ class ToolCallingLoopHandler:
             # worker 실행은 tool 호출 중간에 이미 StepRun detail 에 반영되지만,
             # 최종 handler detail_json 이 agentDetail 기본값으로 덮어쓰지 않도록 같은 정보를 다시 싣는다.
             detail_json["agentDetail"] = delegate_agent_detail
+        session_agent_detail = self._session_agent_detail_from_tool_results(tool_results)
+        if session_agent_detail is not None:
+            detail_json["agentDetail"] = {
+                **dict(detail_json.get("agentDetail") or {}),
+                **session_agent_detail,
+            }
         observed_steps = self._observed_semantic_steps(tool_results)
         step_summary = self._observed_step_summary(observed_steps)
         if resume_payload is not None:
@@ -1097,6 +1248,62 @@ class ToolCallingLoopHandler:
                     "kind": "approval",
                     "status": "waiting",
                     "summary": approval_reason,
+                },
+            ],
+        }
+
+    def _build_failed_outcome(
+        self,
+        *,
+        task_input: dict[str, Any],
+        generated: AgentModelResponse | None,
+        tool_results: list[dict[str, Any]],
+        operations: list[dict[str, Any]],
+        llm_call_count: int,
+        todo_state: dict[str, Any],
+        operation_counters: dict[str, int],
+        max_iterations: int,
+    ) -> dict[str, Any]:
+        tool_names = [str(item["name"]) for item in tool_results]
+        observed_steps = self._observed_semantic_steps(tool_results)
+        step_summary = self._observed_step_summary(observed_steps)
+        message = f"작업 반복 한도({max_iterations})에 도달했습니다."
+        return {
+            "task_status": TaskStatus.FAILED,
+            "step_status": StepStatus.FAILED,
+            "result_payload": {
+                "text": generated.output_text if generated is not None and generated.output_text else message,
+                "tool_results": tool_results,
+                "error": {
+                    "code": "max_iterations_exceeded",
+                    "maxIterations": max_iterations,
+                },
+            },
+            "output_payload": {
+                "tool_results": tool_results,
+            },
+            "detail_json": self._build_detail_json(
+                tool_names=tool_names,
+                llm_call_count=llm_call_count,
+                model_name=self._model_name(generated, task_input) if generated is not None else None,
+                todo_state=todo_state,
+            ),
+            "todo_state": todo_state,
+            "observed_steps": observed_steps,
+            "summary_message": step_summary or message,
+            "error_message": message,
+            "operations": [
+                *operations,
+                {
+                    "key": self._next_operation_key(
+                        operation_counters,
+                        namespace="loop",
+                        base_key="max_iterations",
+                    ),
+                    "title": "반복 한도 도달",
+                    "kind": "system",
+                    "status": "failed",
+                    "summary": message,
                 },
             ],
         }
@@ -1217,6 +1424,22 @@ class ToolCallingLoopHandler:
         return None
 
     @staticmethod
+    def _work_disposition_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for item in reversed(tool_results):
+            if str(item.get("name") or "") != "work_disposition":
+                continue
+            result = item.get("result")
+            if isinstance(result, dict) and isinstance(result.get("workDisposition"), dict):
+                return dict(result["workDisposition"])
+        for item in reversed(tool_results):
+            if str(item.get("name") or "") != "session_agent_task":
+                continue
+            result = item.get("result")
+            if isinstance(result, dict) and isinstance(result.get("parentWorkDisposition"), dict):
+                return dict(result["parentWorkDisposition"])
+        return None
+
+    @staticmethod
     def _delegate_agent_detail_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, Any] | None:
         workers: list[dict[str, Any]] = []
         for tool_result in tool_results:
@@ -1247,6 +1470,40 @@ class ToolCallingLoopHandler:
             "summary": latest.get("summary"),
             "status": latest.get("status"),
             "workers": workers,
+        }
+
+    @staticmethod
+    def _session_agent_detail_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+        session_agents: list[dict[str, Any]] = []
+        for tool_result in tool_results:
+            if str(tool_result.get("name") or "") != "session_agent_task":
+                continue
+            result = tool_result.get("result")
+            if not isinstance(result, dict):
+                continue
+            child_work = result.get("child_work") or result.get("childWork")
+            if not isinstance(child_work, dict):
+                continue
+            assignee_agent_id = child_work.get("assigneeAgentId") or child_work.get("assignee_agent_id")
+            session_agents.append(
+                {
+                    "agentId": assignee_agent_id,
+                    "workId": child_work.get("workId") or child_work.get("work_id"),
+                    "identifier": child_work.get("identifier"),
+                    "taskRunId": result.get("taskRunId") or result.get("task_run_id"),
+                    "status": result.get("childStatus") or result.get("child_status"),
+                    "summary": result.get("content"),
+                }
+            )
+        if not session_agents:
+            return None
+        latest = session_agents[-1]
+        return {
+            "called": True,
+            "agentId": latest.get("agentId"),
+            "status": latest.get("status"),
+            "summary": latest.get("summary"),
+            "sessionAgents": session_agents,
         }
 
     @staticmethod
@@ -1346,6 +1603,29 @@ class ToolCallingLoopHandler:
                     return f"{key}={value}"
             return json.dumps(result, ensure_ascii=False)[:80]
         return str(result)[:80]
+
+    @classmethod
+    def _tool_operation_error(cls, result: Any) -> dict[str, Any] | None:
+        if not isinstance(result, dict) or result.get("ok") is not False:
+            return None
+
+        raw_error = result.get("error")
+        source = raw_error if isinstance(raw_error, dict) else {}
+        message = cls._optional_text(source.get("message") or (raw_error if isinstance(raw_error, str) else None))
+        if message is None:
+            message = cls._tool_summary(result)
+
+        normalized: dict[str, Any] = {"message": message}
+        code = cls._optional_text(source.get("code"))
+        error_type = cls._optional_text(source.get("type"))
+        retryable = source.get("retryable")
+        if code is not None:
+            normalized["code"] = code
+        if error_type is not None:
+            normalized["type"] = error_type
+        if isinstance(retryable, bool):
+            normalized["retryable"] = retryable
+        return normalized
 
     @staticmethod
     def _next_operation_key(operation_counters: dict[str, int], *, namespace: str, base_key: str) -> str:

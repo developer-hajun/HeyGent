@@ -22,10 +22,33 @@ _SKILLS_TOOL_DEFINITIONS = [
                 "properties": {
                     "skill_name": {
                         "type": "string",
-                        "description": "Skill name from skills.list.",
+                        "description": "Registered skill name.",
                     },
                 },
                 "required": ["skill_name"],
+            },
+        },
+    ),
+    register_runtime_tool_definition(
+        name="skills.read_file",
+        toolset="skills",
+        module="app.tools.skills.skills_tool",
+        summary="Read a file that belongs to a specific skill.",
+        schema={
+            "description": "Read a non-secret text file inside a specific skill directory.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "Registered skill name.",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Path relative to the selected skill directory.",
+                    },
+                },
+                "required": ["skill_name", "path"],
             },
         },
     ),

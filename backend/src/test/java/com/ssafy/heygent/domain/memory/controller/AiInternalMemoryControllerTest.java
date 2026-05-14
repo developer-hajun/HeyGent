@@ -86,7 +86,8 @@ class AiInternalMemoryControllerTest {
             eq("workspace-a"),
             isNull(),
             eq("resource-a"),
-            eq(List.of("project"))
+            eq(List.of("project")),
+            eq(List.of("task_state"))
         )).thenReturn(List.of(memoryResponse(10L)));
 
         mockMvc.perform(get("/internal/ai/memories/recall")
@@ -99,7 +100,8 @@ class AiInternalMemoryControllerTest {
                 .param("scopeType", "WORKSPACE")
                 .param("workspaceKey", "workspace-a")
                 .param("resourceId", "resource-a")
-                .param("tags", "project"))
+                .param("tags", "project")
+                .param("metadataCategories", "task_state"))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data[0].id").value(10L))
             .andExpect(jsonPath("$.data[0].content").value("사용자는 회의록을 짧게 요약하는 것을 선호한다."));
@@ -137,19 +139,20 @@ class AiInternalMemoryControllerTest {
 
     @Test
     void markUsedCallsServiceWithUserIdAndScore() throws Exception {
-        when(userMemoryService.markUsed(USER_ID, 10L, 0.75)).thenReturn(memoryResponse(10L));
+        when(userMemoryService.markUsed(USER_ID, 10L, 0.75, "task_1")).thenReturn(memoryResponse(10L));
 
         mockMvc.perform(post("/internal/ai/memories/{memoryId}/used", 10L)
                 .header("Authorization", "Bearer " + INTERNAL_TOKEN)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(Map.of(
                     "userId", USER_ID,
-                    "usefulnessScore", 0.75
+                    "usefulnessScore", 0.75,
+                    "sourceTaskRunId", "task_1"
                 ))))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.data.id").value(10L));
 
-        verify(userMemoryService).markUsed(USER_ID, 10L, 0.75);
+        verify(userMemoryService).markUsed(USER_ID, 10L, 0.75, "task_1");
     }
 
     private UserMemoryResponse memoryResponse(Long memoryId) {

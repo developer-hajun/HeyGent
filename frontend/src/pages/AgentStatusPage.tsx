@@ -1,12 +1,155 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
+import { useParams } from 'react-router'
 import { OfficeMap } from '@/components/office/OfficeMap'
+import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
+import { useSessionStore } from '@/store/useSessionStore'
+import { useAuthStore } from '@/store/useAuthStore'
+import { getCommandUsage } from '@/apis/aiCommandUsage'
+import { agentProfilesToPanelItems, listSessionAgents } from '@/apis/agents'
+import type { CommandUsageSummary } from '@/apis/aiCommandUsage'
 import type {
   AgentConfig,
   AgentRuntime,
   Destination,
   UIDestination,
   SittingState,
+  AgentVisualizationInfo,
+  AgentActivityStatus,
+  TaskStatus,
 } from '@/components/office/types'
+import { useVisualizationSync } from '@/hooks/useVisualizationSync'
+import { useAgentInfoSync } from '@/hooks/useAgentInfoSync'
+
+const ACTIVITY_STATUS_LABEL: Record<AgentActivityStatus, string> = {
+  spawning: '진입 중',
+  working: '작업 중',
+  resting: '휴식 중',
+  inactive: '비활성',
+}
+
+const ACTIVITY_STATUS_CLASS: Record<AgentActivityStatus, string> = {
+  spawning: 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30',
+  working: 'bg-blue-500/20 text-blue-300 border border-blue-500/30',
+  resting: 'bg-green-500/20 text-green-300 border border-green-500/30',
+  inactive: 'bg-gray-500/20 text-gray-400 border border-gray-500/30',
+}
+
+const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
+  pending: '대기 중',
+  in_progress: '진행 중',
+  completed: '완료',
+  failed: '실패',
+}
+
+const TASK_STATUS_CLASS: Record<TaskStatus, string> = {
+  pending: 'text-yellow-300',
+  in_progress: 'text-blue-300',
+  completed: 'text-green-300',
+  failed: 'text-red-400',
+}
+
+function AgentInfoPanel({ info, onClose }: { info: AgentVisualizationInfo; onClose: () => void }) {
+  return (
+    <div className="absolute top-4 right-4 z-30 flex w-72 flex-col rounded-2xl border border-white/15 bg-black/80 shadow-2xl backdrop-blur-md">
+      {/* 헤더 */}
+      <div className="flex items-start justify-between border-b border-white/10 p-4">
+        <div className="flex items-center gap-3">
+          {info.profileImage ? (
+            <img
+              src={info.profileImage}
+              alt={info.name}
+              className="h-10 w-10 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-500/30 text-sm font-bold text-white">
+              {info.name[0]}
+            </div>
+          )}
+          <div>
+            <p className="text-sm font-semibold text-white">{info.name}</p>
+            <p className="text-xs text-white/50">{info.role}</p>
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          className="text-lg leading-none text-white/30 transition-colors hover:text-white"
+        >
+          ×
+        </button>
+      </div>
+
+      {/* 활동 상태 */}
+      <div className="border-b border-white/10 px-4 py-2.5">
+        <span
+          className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${ACTIVITY_STATUS_CLASS[info.activityStatus]}`}
+        >
+          {ACTIVITY_STATUS_LABEL[info.activityStatus]}
+        </span>
+      </div>
+
+      {/* 현재 작업 */}
+      {info.currentTask && (
+        <div className="border-b border-white/10 px-4 py-3">
+          <p className="mb-1.5 text-xs tracking-wide text-white/35 uppercase">현재 작업</p>
+          <p className="text-sm font-semibold text-white">{info.currentTask.title}</p>
+          {info.currentTask.description && (
+            <p className="mt-1 line-clamp-2 text-xs text-white/50">
+              {info.currentTask.description}
+            </p>
+          )}
+          <span
+            className={`mt-1.5 inline-block text-xs ${TASK_STATUS_CLASS[info.currentTask.status]}`}
+          >
+            ● {TASK_STATUS_LABEL[info.currentTask.status]}
+          </span>
+        </div>
+      )}
+
+      {/* 스킬 */}
+      <div className="border-b border-white/10 px-4 py-3">
+        <p className="mb-1.5 text-xs tracking-wide text-white/35 uppercase">스킬</p>
+        <div className="flex flex-wrap gap-1">
+          {info.skills.map((skill) => (
+            <span key={skill} className="rounded-md bg-white/10 px-2 py-0.5 text-xs text-white/70">
+              {skill}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* 작업 내역 */}
+      <div className="max-h-48 flex-1 overflow-y-auto px-4 py-3">
+        <p className="mb-2 text-xs tracking-wide text-white/35 uppercase">작업 내역</p>
+        {info.taskHistory.length === 0 ? (
+          <p className="text-xs text-white/30">작업 내역 없음</p>
+        ) : (
+          <div className="space-y-2">
+            {info.taskHistory.map((task) => (
+              <div key={task.taskId} className="flex items-start gap-2">
+                <span className="mt-0.5 shrink-0 text-xs text-green-400">✓</span>
+                <div>
+                  <p className="text-xs text-white/80">{task.title}</p>
+                  {task.completedAt && (
+                    <p className="text-xs text-white/30">
+                      {new Date(task.completedAt).toLocaleDateString('ko-KR')}
+                    </p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 편집 버튼 — 추후 편집 모달 연결 */}
+      <div className="border-t border-white/10 px-4 py-3">
+        <button className="w-full rounded-lg bg-white/10 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/20">
+          에이전트 편집
+        </button>
+      </div>
+    </div>
+  )
+}
 
 // 새 에이전트 추가 시 이 배열에 항목만 추가하면 됩니다.
 const AGENT_CONFIGS: AgentConfig[] = [
@@ -120,7 +263,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
       desk: { x: 465, y: 595 },
       sofa: { x: 1185, y: 205 },
       floorLean: { x: 1340, y: 280 },
-      meeting: { x: 850, y: 65 },
+      meeting: { x: 850, y: 75 },
       calling: { x: 1430, y: 840 },
     },
   },
@@ -166,6 +309,30 @@ const AGENT_CONFIGS: AgentConfig[] = [
       floorLean: { x: 1310, y: 460 },
       meeting: { x: 920, y: 220 },
       calling: { x: 1250, y: 660 },
+    },
+  },
+  {
+    id: 'ceo',
+    name: '팀장 에이전트',
+    spritePath: '/assets/agents/ceo',
+    scale: 1.05,
+    stateScales: { walking: 0.85, standing_wait: 0.85, sitting_work: 0.7 },
+    sittingSprites: {
+      sitting_desk: 'ceo_desk',
+      sitting_meeting: 'ceo_explain',
+      sitting_work: 'ceo_work',
+      standing_wait: 'walk_side_stand',
+    },
+    allowedUIDestinations: ['desk', 'meeting', 'work'],
+    destinationLabels: { meeting: '화이트보드', work: '작업' },
+    initialPosition: { x: 1460, y: 700 },
+    destinations: {
+      desk: { x: 310, y: 215 },
+      meeting: { x: 383, y: 493 },
+      work: { x: 275, y: 195 },
+      sofa: { x: 310, y: 215 },
+      floorLean: { x: 310, y: 215 },
+      calling: { x: 310, y: 215 },
     },
   },
 ]
@@ -493,25 +660,7 @@ const DESTINATION_MAP: Record<UIDestination, { targetState: SittingState; label:
   rest: { targetState: 'sitting_sofa', label: '휴식' }, // 런타임에 sofa/floorLean 으로 오버라이드
   meeting: { targetState: 'sitting_meeting', label: '회의' },
   calling: { targetState: 'sitting_calling', label: '전화' },
-}
-
-const STATE_LABELS: Record<string, string> = {
-  idle: '대기 중',
-  walking: '이동 중',
-  sitting_desk: '작업 중',
-  sitting_sofa: '휴식 중',
-  sitting_floor_lean: '휴식 중',
-  sitting_meeting: '회의 중',
-  sitting_calling: '통화 중',
-  standing_wait: '대기 중',
-}
-
-function stateColor(state: string) {
-  if (state === 'sitting_calling') return 'bg-blue-400'
-  if (state.startsWith('sitting')) return 'bg-green-400'
-  if (state === 'walking') return 'bg-yellow-400'
-  if (state === 'standing_wait') return 'bg-orange-400'
-  return 'bg-slate-500'
+  work: { targetState: 'sitting_work', label: '작업' },
 }
 
 function calcDuration(from: { x: number; y: number }, to: { x: number; y: number }): number {
@@ -596,39 +745,149 @@ function isSpotOccupied(
   })
 }
 
-function initAgents(): AgentRuntime[] {
-  return AGENT_CONFIGS.map((config) => ({
-    config,
-    position: { ...config.initialPosition },
-    state: 'idle' as const,
-    targetState: 'sitting_desk' as const,
-    walkFrame: 0 as const,
-    transitionDuration: 3,
-    pendingWaypoints: [],
-    targetPosition: null,
-    standWaitTarget: null,
-    facingRight: false,
-  }))
+const nowMs = Date.now.bind(Date)
+const ALL_AGENT_SLOT_IDS = [
+  'agent01',
+  'agent02',
+  'agent03',
+  'agent04',
+  'agent05',
+  'agent06',
+  'agent07',
+  'agent08',
+  'agent09',
+  'agent10',
+]
+
+function buildProfileIdSpriteMap(
+  panels: Array<{ agent: { profileId?: string; spriteId?: string } }>,
+): Record<string, string> {
+  const map: Record<string, string> = {}
+  const usedSlots = new Set<string>()
+
+  for (const panel of panels) {
+    if (panel.agent.profileId && panel.agent.spriteId) {
+      map[panel.agent.profileId] = panel.agent.spriteId
+      usedSlots.add(panel.agent.spriteId)
+    }
+  }
+
+  for (const panel of panels) {
+    if (!panel.agent.profileId || map[panel.agent.profileId]) continue
+    const slot = ALL_AGENT_SLOT_IDS.find((s) => !usedSlots.has(s))
+    if (!slot) break
+    map[panel.agent.profileId] = slot
+    usedSlots.add(slot)
+  }
+
+  return map
 }
 
-const DESTINATIONS: UIDestination[] = ['desk', 'rest', 'meeting', 'calling']
+function playSpawnSound() {
+  try {
+    const ctx = new AudioContext()
+    const play = () => {
+      ;[1318.51, 1567.98].forEach((freq, i) => {
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+        osc.type = 'sine'
+        osc.frequency.value = freq
+        const t = ctx.currentTime + i * 0.12
+        gain.gain.setValueAtTime(0.18, t)
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.45)
+        osc.start(t)
+        osc.stop(t + 0.45)
+      })
+    }
+    // 페이지 내 이동으로 진입한 경우 AudioContext가 이미 running 상태이므로 즉시 재생됨
+    // 직접 URL 접근 시 브라우저가 차단하면 소리 없이 무시
+    void ctx.resume().then(play)
+  } catch {
+    // AudioContext 미지원 환경 무시
+  }
+}
 
 export function AgentStatusPage() {
-  const [agents, setAgents] = useState<AgentRuntime[]>(initAgents)
-  const [selectedId, setSelectedId] = useState('agent01')
-  const [ceoMode, setCeoMode] = useState<'desk' | 'explain'>('desk')
-  const [panelTop, setPanelTop] = useState(false)
-  const [obstacleMode, setObstacleMode] = useState(false)
-  const [lineMode, setLineMode] = useState(false)
-  const [drawnRects, setDrawnRects] = useState<
-    { x1: number; y1: number; x2: number; y2: number }[]
-  >([])
-  const [drawnLines, setDrawnLines] = useState<
-    { x1: number; y1: number; x2: number; y2: number }[]
-  >([])
+  const { sessionId } = useParams()
+  const agents = useAgentVisualizationStore((s) => s.agentRuntimes)
+  const setAgents = useAgentVisualizationStore((s) => s.setAgentRuntimes)
+  const addSpawnedKey = useAgentVisualizationStore((s) => s.addSpawnedKey)
   const [navmeshGrid, setNavmeshGrid] = useState<boolean[][] | null>(null)
+  const [spawningIds, setSpawningIds] = useState<ReadonlySet<string>>(new Set())
+  const [tokenUsageSummary, setTokenUsageSummary] = useState<CommandUsageSummary | null>(null)
+
+  useEffect(() => {
+    void getCommandUsage({})
+      .then((d) => setTokenUsageSummary(d.summary))
+      .catch(() => {
+        // 임시 mock — API 연동 전 화이트보드 차트 미리보기용
+        setTokenUsageSummary({
+          inputTokens: 8400,
+          outputTokens: 3200,
+          cachedInputTokens: 1500,
+          reasoningTokens: 900,
+          totalTokens: 11600,
+          estimatedCostUsd: 0.0842,
+          currency: 'USD',
+          recordCount: 47,
+        })
+      })
+  }, [])
   const runtimeGridRef = useRef<boolean[][]>(OBSTACLE_GRID)
   const walkTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({})
+  const lastSpawnSoundRef = useRef<number>(0)
+  const initialSessionAgentProfileIdsRef = useRef<Set<string>>(new Set())
+  const capturedInitialAgentPanelsRef = useRef(false)
+
+  const { agentInfoMap, selectedAgentId, selectAgent } = useAgentVisualizationStore()
+  const accessToken = useAuthStore((s) => s.accessToken)
+  const setAgentPanelsForSession = useSessionStore((s) => s.setAgentPanelsForSession)
+
+  // 세션 전환(sessionId 변경) 시에만 에이전트 상태를 초기화한다.
+  // 같은 세션 재진입이면 clearVisualizationState 내부에서 no-op 처리되어 위치가 보존된다.
+  // 언마운트 시에는 walk 타이머만 정리하고 상태는 유지 — 돌아왔을 때 그대로 표시된다.
+  useEffect(() => {
+    Object.values(walkTimersRef.current).forEach((t) => clearTimeout(t))
+    walkTimersRef.current = {}
+    initialSessionAgentProfileIdsRef.current = new Set()
+    capturedInitialAgentPanelsRef.current = false
+    useAgentVisualizationStore.getState().clearVisualizationState(sessionId ?? null)
+    return () => {
+      Object.values(walkTimersRef.current).forEach((t) => clearTimeout(t))
+      walkTimersRef.current = {}
+    }
+  }, [sessionId])
+
+  useEffect(() => {
+    if (!sessionId || sessionId.startsWith('pending_session_') || accessToken === null) return
+
+    let cancelled = false
+    void listSessionAgents(sessionId)
+      .then((profiles) => {
+        if (cancelled) return
+        const panels = agentProfilesToPanelItems(profiles)
+        const spawnedKeys = useAgentVisualizationStore.getState().spawnedKeys
+        const hasSpawnedSubAgent = spawnedKeys.some((id) => id !== 'ceo')
+        const fetchedProfileIdMap = buildProfileIdSpriteMap(panels)
+        const initialProfileIds = hasSpawnedSubAgent
+          ? profiles
+              .map((profile) => profile.profileId)
+              .filter((profileId) => spawnedKeys.includes(fetchedProfileIdMap[profileId]))
+          : profiles.map((profile) => profile.profileId)
+        initialSessionAgentProfileIdsRef.current = new Set(initialProfileIds)
+        capturedInitialAgentPanelsRef.current = true
+        setAgentPanelsForSession(sessionId, panels)
+      })
+      .catch(() => {
+        // 사이드바/서브에이전트 패널에서도 동일 데이터를 불러오므로 실패 시 기존 캐시를 유지한다.
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [accessToken, sessionId, setAgentPanelsForSession])
 
   useEffect(() => {
     let cancelled = false
@@ -648,22 +907,27 @@ export function AgentStatusPage() {
   }, [])
 
   useEffect(() => {
-    const g = (navmeshGrid ?? OBSTACLE_GRID).map((r) => [...r])
-    for (const rect of drawnRects) {
-      for (let gy = Math.floor(rect.y1 / CELL); gy <= Math.floor(rect.y2 / CELL); gy++) {
-        for (let gx = Math.floor(rect.x1 / CELL); gx <= Math.floor(rect.x2 / CELL); gx++) {
-          if (gy >= 0 && gy < GRID_H && gx >= 0 && gx < GRID_W) g[gy][gx] = true
+    runtimeGridRef.current = (navmeshGrid ?? OBSTACLE_GRID).map((r) => [...r])
+    if (navmeshGrid === null) return
+    // navmesh 로드 완료 — OBSTACLE_GRID로 이미 이동 중이던 에이전트가 있으면
+    // navmesh 기준으로 경로를 재계산해 장애물 회피를 정확히 적용한다.
+    setAgents((prev) => {
+      if (!prev.some((a) => a.state === 'walking')) return prev
+      return prev.map((a) => {
+        if (a.state !== 'walking' || !a.targetPosition) return a
+        const pathGrid = withAgentBlockers(runtimeGridRef.current, prev, a.config.id)
+        const newWaypoints = findPath(a.position, a.targetPosition, undefined, pathGrid, undefined)
+        const first = newWaypoints[0]
+        if (!first) return a
+        return {
+          ...a,
+          position: { ...first },
+          transitionDuration: calcDuration(a.position, first),
+          pendingWaypoints: newWaypoints.slice(1),
         }
-      }
-    }
-    for (const line of drawnLines) {
-      for (const cell of rasterizeLine(line.x1, line.y1, line.x2, line.y2)) {
-        if (cell.gy >= 0 && cell.gy < GRID_H && cell.gx >= 0 && cell.gx < GRID_W)
-          g[cell.gy][cell.gx] = true
-      }
-    }
-    runtimeGridRef.current = g
-  }, [drawnLines, drawnRects, navmeshGrid])
+      })
+    })
+  }, [navmeshGrid, setAgents])
 
   const clearWalkTimer = (agentId: string) => {
     const timer = walkTimersRef.current[agentId]
@@ -673,11 +937,239 @@ export function AgentStatusPage() {
     }
   }
 
-  const handleMove = (agentId: string, destination: UIDestination) => {
-    setAgents((prev) => {
-      const agent = prev.find((a) => a.config.id === agentId)
-      if (!agent || agent.state === 'walking') return prev
+  // 세션의 서브에이전트 패널 목록 — 추가·삭제 시 자동으로 스폰/연동 트리거
+  const agentPanels = useSessionStore((s) =>
+    sessionId ? (s.agentPanelsBySessionId[sessionId] ?? []) : [],
+  )
 
+  useEffect(() => {
+    if (capturedInitialAgentPanelsRef.current) return
+    const profileIds = agentPanels
+      .map((panel) => panel.agent.profileId)
+      .filter((profileId): profileId is string => typeof profileId === 'string')
+    if (profileIds.length === 0) return
+    const spawnedKeys = useAgentVisualizationStore.getState().spawnedKeys
+    const hasSpawnedSubAgent = spawnedKeys.some((id) => id !== 'ceo')
+    const currentProfileIdMap = buildProfileIdSpriteMap(agentPanels)
+    initialSessionAgentProfileIdsRef.current = new Set(
+      hasSpawnedSubAgent
+        ? profileIds.filter((profileId) => spawnedKeys.includes(currentProfileIdMap[profileId]))
+        : profileIds,
+    )
+    capturedInitialAgentPanelsRef.current = true
+  }, [agentPanels])
+
+  // profileId → spriteId(agentXX) 매핑 — task run의 actorAgent.profileId로 시각화 ID 조회
+  const profileIdMap = useMemo<Record<string, string>>(() => {
+    return buildProfileIdSpriteMap(agentPanels)
+  }, [agentPanels])
+
+  const handleMove = (agentId: string, rawDestination: UIDestination) => {
+    // CEO 전용 목적지 매핑
+    //   작업 중(desk) → work 좌표에서 ceo_work 스프라이트
+    //   완료(rest)   → desk 좌표에서 ceo_desk 스프라이트
+    const destination: UIDestination =
+      agentId === 'ceo' && rawDestination === 'desk'
+        ? 'work'
+        : agentId === 'ceo' && rawDestination === 'rest'
+          ? 'desk'
+          : rawDestination
+
+    // 미등록 에이전트 자동 스폰
+    const spawnedKeys = useAgentVisualizationStore.getState().spawnedKeys
+    if (!spawnedKeys.includes(agentId) && AGENT_CONFIGS.some((c) => c.id === agentId)) {
+      addSpawnedKey(agentId)
+
+      if (agentId === 'ceo' && rawDestination === 'desk') {
+        // CEO 첫 등장(작업 중): ceo_work에 직접 배치 + 세션 서브에이전트 휴게공간 동시 배치
+        const unspawnedSubs = Object.entries(profileIdMap).filter(
+          ([, spriteId]) =>
+            !spawnedKeys.includes(spriteId) && AGENT_CONFIGS.some((c) => c.id === spriteId),
+        )
+        unspawnedSubs.forEach(([, spriteId]) => addSpawnedKey(spriteId))
+        setAgents((prev) => {
+          const ceoConfig = AGENT_CONFIGS.find((c) => c.id === 'ceo')!
+          const workPos = ceoConfig.destinations.work!
+          const ceoRuntime: AgentRuntime = {
+            config: ceoConfig,
+            position: { ...workPos },
+            state: 'sitting_work',
+            targetState: 'sitting_work',
+            walkFrame: 0,
+            transitionDuration: 0,
+            pendingWaypoints: [],
+            targetPosition: null,
+            standWaitTarget: null,
+            facingRight: false,
+          }
+          const subRuntimes: AgentRuntime[] = []
+          for (const [, spriteId] of unspawnedSubs) {
+            const config = AGENT_CONFIGS.find((c) => c.id === spriteId)
+            if (!config || prev.some((a) => a.config.id === spriteId)) continue
+            const all = [...prev, ceoRuntime, ...subRuntimes]
+            const freeSofa = SOFA_SPOTS.find((spot) => !isSpotOccupied(spot, all, spriteId))
+            const position = freeSofa ?? config.destinations.floorLean ?? config.initialPosition
+            const state = (freeSofa ? 'sitting_sofa' : 'sitting_floor_lean') as SittingState
+            subRuntimes.push({
+              config,
+              position: { ...position },
+              state,
+              targetState: state,
+              walkFrame: 0,
+              transitionDuration: 0,
+              pendingWaypoints: [],
+              targetPosition: null,
+              standWaitTarget: null,
+              facingRight: false,
+            })
+          }
+          return [...prev, ceoRuntime, ...subRuntimes]
+        })
+        // CEO만 전구 표시 + 효과음
+        setSpawningIds((s) => new Set([...s, 'ceo']))
+        setTimeout(() => {
+          setSpawningIds((s) => {
+            const n = new Set(s)
+            n.delete('ceo')
+            return n
+          })
+        }, 2500)
+        playSpawnSound()
+        return
+      }
+
+      // 서브에이전트('+' 버튼) 첫 등장: 엘리베이터 입장 + 전구 + 효과음
+      setSpawningIds((s) => new Set([...s, agentId]))
+      const now = nowMs()
+      if (now - lastSpawnSoundRef.current > 2000) {
+        lastSpawnSoundRef.current = now
+        playSpawnSound()
+      }
+      setTimeout(() => {
+        setSpawningIds((s) => {
+          const n = new Set(s)
+          n.delete(agentId)
+          return n
+        })
+      }, 2500)
+    }
+
+    setAgents((prevAgents) => {
+      // 아직 agents 배열에 없으면 initialPosition에 먼저 렌더링한 뒤 다음 프레임에서 이동 시작
+      // — 같은 렌더에서 spawn + walk를 동시에 처리하면 CSS transform 전환의 "from" 상태가 없어
+      //   onTransitionEnd가 발화하지 않아 walking 애니메이션이 멈추지 않는다.
+      if (!prevAgents.some((a) => a.config.id === agentId)) {
+        const config = AGENT_CONFIGS.find((c) => c.id === agentId)
+        if (!config) return prevAgents
+        if (agentId === 'ceo' && rawDestination === 'rest') {
+          const deskPosition = config.destinations.desk
+          if (!deskPosition) return prevAgents
+          return [
+            ...prevAgents,
+            {
+              config,
+              position: { ...deskPosition },
+              state: 'sitting_desk' as const,
+              targetState: 'sitting_desk' as const,
+              walkFrame: 0 as const,
+              transitionDuration: 0,
+              pendingWaypoints: [],
+              targetPosition: null,
+              standWaitTarget: null,
+              facingRight: false,
+            },
+          ]
+        }
+        requestAnimationFrame(() => handleMove(agentId, rawDestination))
+        return [
+          ...prevAgents,
+          {
+            config,
+            position: { ...config.initialPosition },
+            state: 'idle' as const,
+            targetState: 'sitting_desk' as const,
+            walkFrame: 0 as const,
+            transitionDuration: 3,
+            pendingWaypoints: [],
+            targetPosition: null,
+            standWaitTarget: null,
+            facingRight: false,
+          },
+        ]
+      }
+      const prev = prevAgents
+
+      const agent = prev.find((a) => a.config.id === agentId)
+      if (!agent) return prev
+      if (agentId === 'ceo' && rawDestination === 'rest') {
+        const deskPosition = agent.config.destinations.desk
+        if (!deskPosition) return prev
+        const alreadyAtDesk =
+          agent.state === 'sitting_desk' &&
+          agent.targetState === 'sitting_desk' &&
+          Math.abs(agent.position.x - deskPosition.x) < 1 &&
+          Math.abs(agent.position.y - deskPosition.y) < 1
+        clearWalkTimer('ceo')
+        if (!alreadyAtDesk) playSpawnSound()
+        return prev.map((a) =>
+          a.config.id === 'ceo'
+            ? {
+                ...a,
+                position: { ...deskPosition },
+                state: 'sitting_desk',
+                targetState: 'sitting_desk',
+                walkFrame: 0,
+                transitionDuration: 0,
+                pendingWaypoints: [],
+                targetPosition: null,
+                standWaitTarget: null,
+                facingRight: false,
+              }
+            : a,
+        )
+      }
+      if (agent.state === 'walking') {
+        // 이동 중 목적지 변경: 경로는 유지하고 도착 시 전환할 targetState만 갱신
+        // rest는 소파 빈 자리 탐색이 필요해 mid-walk 갱신 불가 — 나머지만 처리
+        if (destination !== 'rest') {
+          const newTargetState = DESTINATION_MAP[destination as UIDestination]?.targetState
+          if (newTargetState && agent.targetState !== newTargetState) {
+            return prev.map((a) =>
+              a.config.id === agentId ? { ...a, targetState: newTargetState } : a,
+            )
+          }
+        }
+        return prev
+      }
+
+      if (
+        agentId === 'ceo' &&
+        (destination === 'desk' || destination === 'work') &&
+        (agent.state === 'sitting_desk' || agent.state === 'sitting_work')
+      ) {
+        const nextPosition = agent.config.destinations[destination as Destination]
+        const nextState = DESTINATION_MAP[destination as UIDestination]?.targetState
+        if (!nextPosition || !nextState || agent.state === nextState) return prev
+        clearWalkTimer('ceo')
+        return prev.map((a) =>
+          a.config.id === 'ceo'
+            ? {
+                ...a,
+                position: { ...nextPosition },
+                state: nextState,
+                targetState: nextState,
+                walkFrame: 0,
+                transitionDuration: 0,
+                pendingWaypoints: [],
+                targetPosition: null,
+                standWaitTarget: null,
+              }
+            : a,
+        )
+      }
+
+      // CEO: sitting_work ↔ sitting_desk 즉시 전환 (걷기 없이)
+      // — 두 좌표가 근접해 걸어가기 어색하며, idle(첫 등장) 상태는 통과시켜 정상 walk 처리
       // ── rest → 소파 빈 자리 우선 배정, 둘 다 차면 floorLean ──────────────
       let internalDest: Destination
       let destPoint: { x: number; y: number }
@@ -688,14 +1180,22 @@ export function AgentStatusPage() {
           destPoint = { ...freeSofaSpot }
         } else {
           internalDest = 'floorLean'
-          destPoint = { ...agent.config.destinations.floorLean }
+          destPoint = { ...agent.config.destinations.floorLean! }
         }
       } else {
         internalDest = destination
-        destPoint = { ...agent.config.destinations[internalDest] }
+        const rawPoint = agent.config.destinations[internalDest]
+        if (!rawPoint) return prev
+        destPoint = { ...rawPoint }
+
+        // 책상 자리가 점유된 경우 대기 줄 대신 회의 목적지로 바로 전환
+        if (internalDest === 'desk' && isSpotOccupied(destPoint, prev, agentId)) {
+          internalDest = 'meeting'
+          destPoint = { ...agent.config.destinations.meeting! }
+        }
       }
 
-      const destConfig = agent.config.destinations[internalDest]
+      const destConfig = agent.config.destinations[internalDest]!
 
       // internalDest 에 맞는 실제 앉기 상태
       const resolvedTargetState: SittingState =
@@ -703,7 +1203,7 @@ export function AgentStatusPage() {
           ? 'sitting_sofa'
           : internalDest === 'floorLean'
             ? 'sitting_floor_lean'
-            : DESTINATION_MAP[destination].targetState
+            : DESTINATION_MAP[internalDest as UIDestination].targetState
 
       // 목적지 자리가 이미 점유 중이면 옆에 서 있는 상태로 전환
       const targetState: SittingState = isSpotOccupied(destPoint, prev, agentId)
@@ -737,8 +1237,11 @@ export function AgentStatusPage() {
         findPath(agent.position, destPoint, passableRects, pathGrid, passableLines)
 
       const lastStop = waypoints[waypoints.length - 1]
+      // 소파는 SOFA_SPOTS의 고정 좌표를 항상 사용 — isOccupiedByAnotherAgent 반경(90px)이 소파 두 자리 간격(~51px)보다 커서 좌표가 셀 중심으로 벗어나는 문제 방지
       const finalPosition =
-        lastStop && isOccupiedByAnotherAgent(destPoint, prev, agentId) ? lastStop : destPoint
+        internalDest !== 'sofa' && lastStop && isOccupiedByAnotherAgent(destPoint, prev, agentId)
+          ? lastStop
+          : destPoint
       const allStops = waypoints
       const firstStop = allStops[0]
       if (!firstStop) {
@@ -800,6 +1303,113 @@ export function AgentStatusPage() {
     })
   }
 
+  useVisualizationSync(handleMove, sessionId, profileIdMap)
+  useAgentInfoSync(sessionId)
+
+  // handleMove는 매 렌더마다 새로 생성되므로 타이머 콜백에서는 항상 최신 버전을 참조
+  const handleMoveRef = useRef(handleMove)
+  useEffect(() => {
+    handleMoveRef.current = handleMove
+  })
+
+  // CEO가 스폰된 상태에서 profileIdMap이 갱신될 때 미스폰 서브에이전트를 휴게공간에 보완 배치
+  // — profileIdMap이 늦게 로드되거나(listSessionAgents 지연) '+' 버튼으로 패널이 추가될 때 처리
+  // — ceoInSpawnedKeys를 의존성에 두지 않음: addSpawnedKey('ceo')가 동기 리렌더를 유발해
+  //   setAgents(CEO) 실행 전에 이 이펙트가 먼저 실행되어 서브에이전트가 CEO보다 먼저 등장하는 문제 방지
+  useEffect(() => {
+    const store = useAgentVisualizationStore.getState()
+    if (!store.spawnedKeys.includes('ceo')) return
+    const unspawnedSubs = Object.entries(profileIdMap).filter(
+      ([, spriteId]) =>
+        !store.spawnedKeys.includes(spriteId) && AGENT_CONFIGS.some((c) => c.id === spriteId),
+    )
+    if (unspawnedSubs.length === 0) return
+
+    const directRestSubs = unspawnedSubs.filter(
+      ([profileId]) =>
+        !capturedInitialAgentPanelsRef.current ||
+        initialSessionAgentProfileIdsRef.current.has(profileId),
+    )
+    const elevatorSubs = unspawnedSubs.filter(
+      ([profileId]) =>
+        capturedInitialAgentPanelsRef.current &&
+        !initialSessionAgentProfileIdsRef.current.has(profileId),
+    )
+
+    if (directRestSubs.length > 0) {
+      directRestSubs.forEach(([, spriteId]) => addSpawnedKey(spriteId))
+      setAgents((prev) => {
+        const newAgents: AgentRuntime[] = []
+        for (const [, spriteId] of directRestSubs) {
+          const config = AGENT_CONFIGS.find((c) => c.id === spriteId)
+          if (!config || prev.some((a) => a.config.id === spriteId)) continue
+          const all = [...prev, ...newAgents]
+          const freeSofa = SOFA_SPOTS.find((spot) => !isSpotOccupied(spot, all, spriteId))
+          const position = freeSofa ?? config.destinations.floorLean ?? config.initialPosition
+          const state = (freeSofa ? 'sitting_sofa' : 'sitting_floor_lean') as SittingState
+          newAgents.push({
+            config,
+            position: { ...position },
+            state,
+            targetState: state,
+            walkFrame: 0,
+            transitionDuration: 0,
+            pendingWaypoints: [],
+            targetPosition: null,
+            standWaitTarget: null,
+            facingRight: false,
+          })
+        }
+        return [...prev, ...newAgents]
+      })
+    }
+
+    for (const [, spriteId] of elevatorSubs) {
+      handleMoveRef.current(spriteId, 'rest')
+    }
+  }, [profileIdMap, setAgents, addSpawnedKey])
+
+  // CEO가 sitting_work 상태이고 서브에이전트가 있으면 주기적으로 explain(화이트보드) 좌표로 이동
+  const ceoState = useAgentVisualizationStore(
+    (s) => s.agentRuntimes.find((a) => a.config.id === 'ceo')?.state,
+  )
+  const hasSubAgents = useAgentVisualizationStore((s) =>
+    s.agentRuntimes.some((a) => a.config.id !== 'ceo'),
+  )
+
+  useEffect(() => {
+    if (!hasSubAgents || ceoState !== 'sitting_work') return
+    // 40~80초 사이 랜덤 간격으로 explain 좌표로 이동
+    const delay = 40_000 + Math.random() * 40_000
+    const timer = setTimeout(() => {
+      const ceo = useAgentVisualizationStore
+        .getState()
+        .agentRuntimes.find((a) => a.config.id === 'ceo')
+      const subs = useAgentVisualizationStore
+        .getState()
+        .agentRuntimes.filter((a) => a.config.id !== 'ceo')
+      if (ceo?.state === 'sitting_work' && subs.length > 0) {
+        handleMoveRef.current('ceo', 'meeting')
+      }
+    }, delay)
+    return () => clearTimeout(timer)
+  }, [ceoState, hasSubAgents])
+
+  // CEO가 explain(sitting_meeting) 도착 후 15~25초 뒤 work로 복귀
+  useEffect(() => {
+    if (ceoState !== 'sitting_meeting') return
+    const delay = 15_000 + Math.random() * 10_000
+    const timer = setTimeout(() => {
+      const ceo = useAgentVisualizationStore
+        .getState()
+        .agentRuntimes.find((a) => a.config.id === 'ceo')
+      if (ceo?.state === 'sitting_meeting') {
+        handleMoveRef.current('ceo', 'desk') // CEO 매핑: 'desk' → work 좌표
+      }
+    }, delay)
+    return () => clearTimeout(timer)
+  }, [ceoState])
+
   const handleAgentArrived = (agentId: string) => {
     setAgents((prev) => {
       const agent = prev.find((a) => a.config.id === agentId)
@@ -846,179 +1456,21 @@ export function AgentStatusPage() {
     })
   }
 
-  const handleReset = (agentId: string) => {
-    clearWalkTimer(agentId)
-    setAgents((prev) =>
-      prev.map((a) =>
-        a.config.id === agentId
-          ? {
-              ...a,
-              position: { ...a.config.initialPosition },
-              state: 'idle' as const,
-              targetState: 'sitting_desk' as const,
-              walkFrame: 0 as const,
-              pendingWaypoints: [],
-              targetPosition: null,
-              standWaitTarget: null,
-              facingRight: false,
-            }
-          : a,
-      ),
-    )
-  }
-
-  const selectedAgent = agents.find((a) => a.config.id === selectedId)
-
-  const handleNewRect = (rect: { x1: number; y1: number; x2: number; y2: number }) => {
-    setDrawnRects((prev) => [...prev, rect])
-  }
-
-  const handleNewLine = (line: { x1: number; y1: number; x2: number; y2: number }) => {
-    setDrawnLines((prev) => [...prev, line])
-  }
+  const selectedInfo = selectedAgentId ? agentInfoMap[selectedAgentId] : null
 
   return (
     <div className="relative flex flex-1 overflow-hidden">
       <OfficeMap
         agents={agents}
         onAgentArrived={handleAgentArrived}
-        ceoMode={ceoMode}
-        obstacleMode={obstacleMode}
-        obstacleRects={drawnRects}
-        onNewRect={handleNewRect}
-        obstacleLineMode={lineMode}
-        obstacleLines={drawnLines}
-        onNewLine={handleNewLine}
+        ceoMode={null}
+        onAgentClick={selectAgent}
+        agentInfoMap={agentInfoMap}
+        selectedAgentId={selectedAgentId}
+        spawningIds={spawningIds}
+        tokenUsageSummary={tokenUsageSummary}
       />
-
-      {/* 장애물 좌표 패널 */}
-      {(drawnRects.length > 0 || drawnLines.length > 0) && (
-        <div className="absolute top-4 left-4 z-20 max-w-xs">
-          <div className="flex flex-col gap-2 rounded-xl border border-red-500/40 bg-black/80 px-4 py-3 backdrop-blur-md">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-red-400">
-                장애물 좌표 (사각형 {drawnRects.length} / 선 {drawnLines.length})
-              </span>
-              <button
-                onClick={() => {
-                  setDrawnRects([])
-                  setDrawnLines([])
-                }}
-                className="text-xs text-white/40 hover:text-white"
-              >
-                전체 삭제
-              </button>
-            </div>
-            {drawnRects.length > 0 && (
-              <pre className="font-mono text-xs whitespace-pre-wrap text-green-300">
-                {drawnRects
-                  .map((r) => `{ x1: ${r.x1}, y1: ${r.y1}, x2: ${r.x2}, y2: ${r.y2} },`)
-                  .join('\n')}
-              </pre>
-            )}
-            {drawnLines.length > 0 && (
-              <pre className="font-mono text-xs whitespace-pre-wrap text-orange-300">
-                {drawnLines.map((l) => `선: (${l.x1},${l.y1})→(${l.x2},${l.y2})`).join('\n')}
-              </pre>
-            )}
-          </div>
-        </div>
-      )}
-
-      <div className={`absolute left-1/2 z-20 -translate-x-1/2 ${panelTop ? 'top-4' : 'bottom-6'}`}>
-        <div className="flex flex-col gap-2.5 rounded-2xl border border-white/20 bg-black/60 px-5 py-3 shadow-2xl backdrop-blur-md">
-          {/* 에이전트 탭 */}
-          <div className="flex items-center gap-1.5">
-            {agents.map((agent) => (
-              <button
-                key={agent.config.id}
-                onClick={() => setSelectedId(agent.config.id)}
-                className={`relative rounded-lg px-3 py-1 text-xs font-bold transition-colors ${
-                  selectedId === agent.config.id
-                    ? 'bg-white text-gray-900'
-                    : 'bg-white/10 text-white/60 hover:bg-white/20 hover:text-white'
-                }`}
-              >
-                {agent.config.id.replace('agent', '')}
-                <span
-                  className={`absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full border border-black/50 ${stateColor(agent.state)} ${agent.state === 'walking' ? 'animate-pulse' : ''}`}
-                />
-              </button>
-            ))}
-            <div className="mx-0.5 h-4 w-px bg-white/20" />
-            <button
-              onClick={() => setPanelTop((prev) => !prev)}
-              className="rounded-lg bg-white/10 px-2 py-1 text-xs text-white/60 transition-colors hover:bg-white/20 hover:text-white"
-              title="패널 위치 이동"
-            >
-              {panelTop ? '▼' : '▲'}
-            </button>
-            <div className="mx-0.5 h-4 w-px bg-white/20" />
-            <button
-              onClick={() => {
-                setObstacleMode((prev) => !prev)
-                setLineMode(false)
-              }}
-              className={`rounded-lg px-3 py-1 text-xs font-bold transition-colors ${
-                obstacleMode
-                  ? 'bg-red-500 text-white'
-                  : 'bg-white/10 text-white/60 hover:bg-white/20 hover:text-white'
-              }`}
-            >
-              {obstacleMode ? '사각형 그리기 중...' : '사각형 장애물'}
-            </button>
-            <button
-              onClick={() => {
-                setLineMode((prev) => !prev)
-                setObstacleMode(false)
-              }}
-              className={`rounded-lg px-3 py-1 text-xs font-bold transition-colors ${
-                lineMode
-                  ? 'bg-orange-500 text-white'
-                  : 'bg-white/10 text-white/60 hover:bg-white/20 hover:text-white'
-              }`}
-            >
-              {lineMode ? '선 그리기 중...' : '선 장애물'}
-            </button>
-            <div className="mx-0.5 h-4 w-px bg-white/20" />
-            <button
-              onClick={() => setCeoMode((prev) => (prev === 'desk' ? 'explain' : 'desk'))}
-              className="rounded-lg bg-amber-400 px-3 py-1 text-xs font-bold text-gray-900 transition-colors hover:bg-amber-300"
-            >
-              {ceoMode === 'desk' ? 'CEO 책상' : 'CEO 화이트보드'}
-            </button>
-          </div>
-
-          {/* 선택된 에이전트 이동 */}
-          {selectedAgent && (
-            <div className="flex items-center gap-3">
-              <div className="flex w-20 shrink-0 flex-col">
-                <span className="text-sm font-medium text-white">{selectedAgent.config.name}</span>
-                <span className="text-xs text-white/50">{STATE_LABELS[selectedAgent.state]}</span>
-              </div>
-              <div className="flex gap-1.5">
-                {DESTINATIONS.map((dest) => (
-                  <button
-                    key={dest}
-                    onClick={() => handleMove(selectedAgent.config.id, dest)}
-                    disabled={selectedAgent.state === 'walking'}
-                    className="rounded-lg bg-white/90 px-3 py-1.5 text-xs font-semibold text-gray-900 shadow-sm transition-opacity hover:bg-white disabled:cursor-not-allowed disabled:opacity-30"
-                  >
-                    {DESTINATION_MAP[dest].label}
-                  </button>
-                ))}
-              </div>
-              <button
-                onClick={() => handleReset(selectedAgent.config.id)}
-                disabled={selectedAgent.state === 'idle'}
-                className="rounded-lg border border-white/30 px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-30"
-              >
-                초기화
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
+      {selectedInfo && <AgentInfoPanel info={selectedInfo} onClose={() => selectAgent(null)} />}
     </div>
   )
 }

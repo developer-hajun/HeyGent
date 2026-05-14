@@ -23,6 +23,7 @@ from app.cli import RemoteCLIClient, _SlashCommandCompleter, _should_open_slash_
 import app.cli.ui.prompt as PROMPT_UI
 import app.cli.ui.tasks_browser as TASK_BROWSER_UI
 from app.core.config import get_settings
+from app.domain.providers.model.base import AgentMessage, AgentModelResponse
 from app.cli.ui.output import _display_width, render_box, render_plain_box
 
 CLI_MAIN_MODULE = importlib.import_module("app.cli.main")
@@ -53,6 +54,21 @@ class FakeRemoteClient:
         return self.responses.popleft()
 
 
+def _patch_local_provider_response(monkeypatch, text: str = "CLI_DONE") -> None:
+    async def fake_respond_async(self, messages, tools, model, tool_choice=None, runtime_context=None):
+        return AgentModelResponse(
+            provider_name="openai_api",
+            model=model,
+            message=AgentMessage(role="assistant", content=text, tool_calls=[]),
+            output_text=text,
+            tool_calls=[],
+            finish_reason="stop",
+            metadata={"model": model},
+        )
+
+    monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond_async", fake_respond_async)
+
+
 def _make_test_access_token() -> str:
     header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).decode().rstrip("=")
     payload = base64.urlsafe_b64encode(
@@ -64,7 +80,7 @@ def _make_test_access_token() -> str:
 def test_remote_client_does_not_duplicate_api_prefix():
     client = RemoteCLIClient(base_url="http://127.0.0.1:8000/ai/api/v1", timeout_seconds=10)
 
-    assert client._normalize_request_path("/ai/api/v1/providers/openai_oauth/auth") == "/providers/openai_oauth/auth"
+    assert client._normalize_request_path("/ai/api/v1/providers/openai_api/auth") == "/providers/openai_api/auth"
     assert client._normalize_request_path("/ai/api/v1/ready") == "/ready"
 
 
@@ -660,7 +676,7 @@ def test_initial_login_choice_uses_windows_console_arrows(monkeypatch, capsys):
 def test_remote_client_keeps_origin_base_url_paths():
     client = RemoteCLIClient(base_url="http://127.0.0.1:8000", timeout_seconds=10)
 
-    assert client._normalize_request_path("/ai/api/v1/providers/openai_oauth/auth") == "/ai/api/v1/providers/openai_oauth/auth"
+    assert client._normalize_request_path("/ai/api/v1/providers/openai_api/auth") == "/ai/api/v1/providers/openai_api/auth"
 
 
 def test_shell_slash_tasks_runs_browser(monkeypatch):
@@ -684,6 +700,7 @@ def test_shell_slash_tasks_runs_browser(monkeypatch):
 def test_cli_create_task_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+    _patch_local_provider_response(monkeypatch)
 
     exit_code = main(["--mode", "local", "create-task", "--prompt", "cli"])
     captured = capsys.readouterr().out
@@ -696,6 +713,7 @@ def test_cli_create_task_local(monkeypatch, tmp_path, capsys):
 def test_cli_create_task_prompt_shortcut(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-prompt.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
+    _patch_local_provider_response(monkeypatch)
 
     exit_code = main(["--mode", "local", "create-task", "--prompt", "한 줄 요약해줘"])
     captured = capsys.readouterr().out
@@ -714,7 +732,7 @@ def test_cli_list_commands_local(monkeypatch, tmp_path, capsys):
     assert provider_code == 0
     assert "[HeyGent CLI] 프로바이더 목록" in provider_output
     assert "OpenAI Status" in provider_output
-    assert "openai_oauth" in provider_output
+    assert "openai_api" in provider_output
 
 
 def test_cli_health_local(monkeypatch, tmp_path, capsys):
@@ -746,32 +764,18 @@ def test_cli_provider_auth_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-provider-auth.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    exit_code = main(["--mode", "local", "provider-auth", "--provider", "openai_oauth"])
+    exit_code = main(["--mode", "local", "provider-auth", "--provider", "openai_api"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
     assert "[HeyGent CLI] 프로바이더 인증 시작 결과" in captured
-    assert '"status": "authorization_required"' in captured
+    assert '"status": "configuration_required"' in captured
 
 
 def test_cli_openai_onboarding_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-onboard.db"
-    auth_path = tmp_path / "auth.json"
-    auth_path.write_text(
-        json.dumps(
-            {
-                "auth_mode": "chatgpt",
-                "tokens": {
-                    "access_token": _make_test_access_token(),
-                    "refresh_token": "refresh-test",
-                    "account_id": "acct_test",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
-    monkeypatch.setenv("HEYGENT_OPENAI_AUTH_FILE", str(auth_path))
+    monkeypatch.setenv("HEYGENT_OPENAI_API_KEY", "sk-test")
 
     exit_code = main(["--mode", "local", "onboard-openai", "--allow-local-auth-fallback", "--no-run-check"])
     captured = capsys.readouterr().out
@@ -788,39 +792,28 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
         [
             FakeResponse(
                 {
-                    "provider_name": "openai_oauth",
-                    "status": "authorization_required",
-                    "detail": "go",
-                    "authorization_url": "https://auth.openai.test/start",
-                    "redirect_uri": "http://localhost:1455/auth/callback",
-                    "scopes": ["openid", "profile", "email", "offline_access"],
-                    "state": "state_123",
-                    "missing_env": [],
-                    "metadata": {"pkce_required": True},
-                }
-            ),
-            FakeResponse(
-                {
-                    "provider_name": "openai_oauth",
+                    "provider_name": "openai_api",
                     "status": "connected",
-                    "connected": True,
-                    "detail": "done",
-                    "scopes": ["openid", "profile", "email", "offline_access"],
-                    "expires_at": "2099-01-01T00:00:00+00:00",
-                    "metadata": {"account_id": "acct_test"},
+                    "detail": "OpenAI API key 가 설정되어 있어 바로 사용할 수 있습니다",
+                    "authorization_url": None,
+                    "redirect_uri": None,
+                    "scopes": [],
+                    "state": None,
+                    "missing_env": [],
+                    "metadata": {"auth_type": "api_key"},
                 }
             ),
             FakeResponse(
                 {
-                    "provider_name": "openai_oauth",
+                    "provider_name": "openai_api",
                     "healthy": True,
                     "configured": True,
                     "connected": True,
-                    "auth_type": "oauth",
+                    "auth_type": "api_key",
                     "detail": "connected",
                     "missing_env": [],
-                    "scopes": ["openid", "profile", "email", "offline_access"],
-                    "expires_at": "2099-01-01T00:00:00+00:00",
+                    "scopes": [],
+                    "expires_at": None,
                 }
             ),
             FakeResponse(
@@ -829,7 +822,7 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
                     "task_type": "agent.loop",
                     "status": "COMPLETED",
                     "input_payload": {"prompt": "테스트"},
-                    "result_payload": {"provider_name": "openai_oauth", "text": "연결 확인 완료", "metadata": {"mode": "live"}},
+                    "result_payload": {"provider_name": "openai_api", "text": "연결 확인 완료", "metadata": {"mode": "live"}},
                     "wait_payload": {},
                     "error_message": None,
                     "progress_summary": "done",
@@ -839,93 +832,67 @@ def test_cli_openai_onboarding_remote_one_click(monkeypatch, capsys):
         ]
     )
 
-    class FakeListener:
-        def wait(self, timeout, *, poll_interval=0.2):
-            return {"ok": True, "payload": fake_client.request("POST", "/ai/api/v1/providers/openai_oauth/callback").json()}
-
-        def close(self):
-            return None
-
     monkeypatch.setattr("builtins.input", lambda prompt="": "YES")
     monkeypatch.setattr(CLI_MAIN_MODULE, "_build_transport", lambda args: fake_client)
-    monkeypatch.setattr(CLI_MAIN_MODULE, "_open_browser", lambda url: True)
-    monkeypatch.setattr(CLI_MAIN_MODULE, "_start_local_oauth_callback_listener", lambda *args, **kwargs: FakeListener())
 
     exit_code = main(["onboard-openai", "--wait-seconds", "1", "--check-prompt", "테스트"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "OpenAI 연결이 필요합니다." in captured
-    assert "Login URL" in captured
-    assert "Waiting for authentication..." in captured
-    assert "Connected ✓" in captured
+    assert "이미 OpenAI 연결이 준비되어 있습니다." in captured
     assert "온보딩 완료. 이제 바로 사용할 수 있어." in captured
 
 
-def test_cli_openai_onboarding_ctrl_c_while_waiting(monkeypatch, capsys):
+def test_cli_openai_onboarding_reports_missing_api_key(monkeypatch, capsys):
     fake_client = FakeRemoteClient(
         [
             FakeResponse(
                 {
-                    "provider_name": "openai_oauth",
-                    "status": "authorization_required",
-                    "detail": "go",
-                    "authorization_url": "https://auth.openai.test/start",
-                    "redirect_uri": "http://localhost:1455/auth/callback",
-                    "scopes": ["openid"],
-                    "state": "state_123",
-                    "missing_env": [],
-                    "metadata": {"pkce_required": True},
+                    "provider_name": "openai_api",
+                    "status": "configuration_required",
+                    "detail": "HEYGENT_OPENAI_API_KEY 를 설정하면 바로 사용할 수 있습니다",
+                    "authorization_url": None,
+                    "redirect_uri": None,
+                    "scopes": [],
+                    "state": None,
+                    "missing_env": ["HEYGENT_OPENAI_API_KEY"],
+                    "metadata": {"auth_type": "api_key"},
                 }
             )
         ]
     )
 
-    class InterruptingListener:
-        closed = False
-
-        def wait(self, timeout, *, poll_interval=0.2):
-            raise KeyboardInterrupt
-
-        def close(self):
-            self.closed = True
-
-    listener = InterruptingListener()
     monkeypatch.setattr(CLI_MAIN_MODULE, "_build_transport", lambda args: fake_client)
-    monkeypatch.setattr(CLI_MAIN_MODULE, "_open_browser", lambda url: True)
-    monkeypatch.setattr(CLI_MAIN_MODULE, "_start_local_oauth_callback_listener", lambda *args, **kwargs: listener)
 
     exit_code = main(["onboard-openai", "--yes", "--wait-seconds", "120"])
     captured = capsys.readouterr().out
 
-    assert exit_code == 130
-    assert listener.closed is True
-    assert "Waiting for authentication..." in captured
-    assert "로그인을 취소하고 종료할게." in captured
+    assert exit_code == 0
+    assert "HEYGENT_OPENAI_API_KEY" in captured
 
 
 def test_cli_provider_refresh_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-refresh.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    exit_code = main(["--mode", "local", "provider-refresh", "--provider", "openai_oauth"])
+    exit_code = main(["--mode", "local", "provider-refresh", "--provider", "openai_api"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
     assert "[HeyGent CLI] 프로바이더 연결 갱신 결과" in captured
-    assert '"status": "reconnect_required"' in captured or '"status": "not_connected"' in captured
+    assert '"status": "configuration_required"' in captured
 
 
 def test_cli_provider_disconnect_local(monkeypatch, tmp_path, capsys):
     db_path = tmp_path / "cli-disconnect.db"
     monkeypatch.setenv("HEYGENT_AI_DB_PATH", str(db_path))
 
-    exit_code = main(["--mode", "local", "provider-disconnect", "--provider", "openai_oauth"])
+    exit_code = main(["--mode", "local", "provider-disconnect", "--provider", "openai_api"])
     captured = capsys.readouterr().out
 
     assert exit_code == 0
     assert "[HeyGent CLI] 프로바이더 연결 해제 결과" in captured
-    assert '"status": "disconnected"' in captured
+    assert '"status": "env_managed"' in captured
 
 
 def test_cli_help_text_is_korean():
@@ -977,7 +944,7 @@ def test_cli_shell_interrupt(monkeypatch, tmp_path, capsys):
                 "task_type": "agent.loop",
                 "status": "COMPLETED",
                 "input_payload": {"prompt": prompt},
-                "result_payload": {"provider_name": "openai_oauth", "text": "늦게 도착한 응답", "metadata": {"mode": "live", "model": "gpt-5.4"}},
+                "result_payload": {"provider_name": "openai_api", "text": "늦게 도착한 응답", "metadata": {"mode": "live", "model": "gpt-5.4"}},
                 "wait_payload": {},
                 "error_message": None,
                 "progress_summary": "done",
@@ -1003,11 +970,11 @@ def test_cli_shell_auth_asks_before_reconnect(monkeypatch, capsys):
         [
             FakeResponse(
                 {
-                    "provider_name": "openai_oauth",
+                    "provider_name": "openai_api",
                     "healthy": True,
                     "configured": True,
                     "connected": True,
-                    "auth_type": "oauth",
+                    "auth_type": "api_key",
                     "detail": "connected",
                     "missing_env": [],
                     "scopes": ["openid"],
@@ -1016,11 +983,11 @@ def test_cli_shell_auth_asks_before_reconnect(monkeypatch, capsys):
             ),
             FakeResponse(
                 {
-                    "provider_name": "openai_oauth",
+                    "provider_name": "openai_api",
                     "healthy": True,
                     "configured": True,
                     "connected": True,
-                    "auth_type": "oauth",
+                    "auth_type": "api_key",
                     "detail": "connected",
                     "missing_env": [],
                     "scopes": ["openid"],
@@ -1072,25 +1039,25 @@ def test_cli_shell_initial_login_runs_before_banner(monkeypatch, capsys):
         [
             FakeResponse(
                 {
-                    "provider_name": "openai_oauth",
+                    "provider_name": "openai_api",
                     "healthy": True,
                     "configured": True,
                     "connected": False,
-                    "auth_type": "oauth",
+                    "auth_type": "api_key",
                     "detail": "not connected",
                     "missing_env": [],
                     "scopes": ["openid"],
                     "expires_at": None,
                 }
             ),
-            FakeResponse({"provider_name": "openai_oauth", "status": "connected", "connected": True, "detail": "done", "expires_at": "2099-01-01T00:00:00+00:00"}),
+            FakeResponse({"provider_name": "openai_api", "status": "connected", "connected": True, "detail": "done", "expires_at": "2099-01-01T00:00:00+00:00"}),
             FakeResponse(
                 {
-                    "provider_name": "openai_oauth",
+                    "provider_name": "openai_api",
                     "healthy": True,
                     "configured": True,
                     "connected": True,
-                    "auth_type": "oauth",
+                    "auth_type": "api_key",
                     "detail": "connected",
                     "missing_env": [],
                     "scopes": ["openid"],
@@ -1099,11 +1066,11 @@ def test_cli_shell_initial_login_runs_before_banner(monkeypatch, capsys):
             ),
             FakeResponse(
                 {
-                    "provider_name": "openai_oauth",
+                    "provider_name": "openai_api",
                     "healthy": True,
                     "configured": True,
                     "connected": True,
-                    "auth_type": "oauth",
+                    "auth_type": "api_key",
                     "detail": "connected",
                     "missing_env": [],
                     "scopes": ["openid"],
@@ -1130,11 +1097,11 @@ def test_cli_shell_initial_login_ctrl_c_exits(monkeypatch, capsys):
         [
             FakeResponse(
                 {
-                    "provider_name": "openai_oauth",
+                    "provider_name": "openai_api",
                     "healthy": True,
                     "configured": True,
                     "connected": False,
-                    "auth_type": "oauth",
+                    "auth_type": "api_key",
                     "detail": "not connected",
                     "missing_env": [],
                     "scopes": ["openid"],
@@ -1165,11 +1132,11 @@ def test_cli_shell_initial_login_wait_cancel_exits_without_banner(monkeypatch, c
         [
             FakeResponse(
                 {
-                    "provider_name": "openai_oauth",
+                    "provider_name": "openai_api",
                     "healthy": True,
                     "configured": True,
                     "connected": False,
-                    "auth_type": "oauth",
+                    "auth_type": "api_key",
                     "detail": "not connected",
                     "missing_env": [],
                     "scopes": ["openid"],

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.clients.backend_auth import BackendAuthVerifyResult
+from app.clients.backend_memory import BackendMemoryItem
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse
 from app.domain.tasks.models import TaskRun
 
@@ -14,7 +15,7 @@ class FakeBackendAuthClient:
 
 
 def _patch_respond(monkeypatch, text: str = "WS_COMMAND_DONE") -> None:
-    def fake_respond(self, messages, tools, model, tool_choice=None):
+    def fake_respond(self, messages, tools, model, tool_choice=None, runtime_context=None):
         return AgentModelResponse(
             provider_name="openai_api",
             model=model,
@@ -25,8 +26,18 @@ def _patch_respond(monkeypatch, text: str = "WS_COMMAND_DONE") -> None:
             metadata={"model": model},
         )
 
+    async def fake_respond_async(self, messages, tools, model, tool_choice=None, runtime_context=None):
+        return fake_respond(
+            self,
+            messages=messages,
+            tools=tools,
+            model=model,
+            tool_choice=tool_choice,
+            runtime_context=runtime_context,
+        )
+
     monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond", fake_respond)
-    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.respond", fake_respond)
+    monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond_async", fake_respond_async)
 
 
 def _patch_respond_failure(monkeypatch) -> None:
@@ -116,10 +127,51 @@ def test_ws_session_message_create_returns_accepted_before_completed_and_stores_
         context.__exit__(None, None, None)
 
 
+def test_ws_session_message_create_attaches_backend_memory_context(client, monkeypatch):
+    client.app.state.backend_memory_client.memories = [
+        BackendMemoryItem(
+            id=21,
+            memory_type="PREFERENCE",
+            store_type="PROFILE",
+            scope_type="GLOBAL",
+            content="사용자는 코드 변경 내역을 기능 단위로 분리해 보길 원한다.",
+        )
+    ]
+    _patch_respond(monkeypatch, text="WS_MEMORY_DONE")
+    context, websocket = _authenticated_socket(client, user_id="77")
+    try:
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.create",
+                "requestId": "req_memory",
+                "payload": {
+                    "content": "이번 작업 커밋 분리해줘",
+                    "clientMessageId": "client_msg_memory_1",
+                    "model": "gpt-test",
+                    "inputPayload": {"persistent_memory_context": "client supplied context"},
+                },
+            }
+        )
+
+        accepted = websocket.receive_json()
+        assert accepted["type"] == "session.message.accepted"
+        completed = _receive_until(websocket, "session.message.completed")
+        assert completed["payload"]["content"] == "WS_MEMORY_DONE"
+
+        task = client.app.state.repository.get_task(accepted["payload"]["task_run_id"])
+        assert task is not None
+        assert "사용자는 코드 변경 내역을 기능 단위로 분리해 보길 원한다." in task.input_payload["persistent_memory_context"]
+        assert "client supplied context" not in str(task.input_payload)
+        assert client.app.state.backend_memory_client.calls[-1]["user_id"] == "77"
+    finally:
+        context.__exit__(None, None, None)
+
+
 def test_ws_followup_message_passes_previous_public_messages_without_current_user(client, monkeypatch):
     provider_calls: list[dict] = []
 
-    def fake_respond(self, messages, tools, model, tool_choice=None):
+    def fake_respond(self, messages, tools, model, tool_choice=None, runtime_context=None):
         provider_calls.append({"messages": messages, "tools": tools, "model": model, "tool_choice": tool_choice})
         return AgentModelResponse(
             provider_name="openai_api",
@@ -131,8 +183,18 @@ def test_ws_followup_message_passes_previous_public_messages_without_current_use
             metadata={"model": model},
         )
 
+    async def fake_respond_async(self, messages, tools, model, tool_choice=None, runtime_context=None):
+        return fake_respond(
+            self,
+            messages=messages,
+            tools=tools,
+            model=model,
+            tool_choice=tool_choice,
+            runtime_context=runtime_context,
+        )
+
     monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond", fake_respond)
-    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.respond", fake_respond)
+    monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond_async", fake_respond_async)
     context, websocket = _authenticated_socket(client, user_id="ws-followup-owner")
     try:
         session_store = client.app.state.session_store
@@ -877,7 +939,7 @@ def test_ws_session_settings_snapshot_wins_over_message_overrides(client, monkey
         task = client.app.state.repository.get_task(accepted["payload"]["task_run_id"])
 
         assert task is not None
-        assert task.input_payload["model"] == "gpt-session-patch"
+        assert task.input_payload["model"] == "gpt-5.4"
         assert task.input_payload["system_prompt_snapshot"] == "세션에 저장된 시스템 프롬프트"
         assert task.input_payload["toolsets"] == ["session", "planning"]
         assert task.input_payload["enabled_toolsets"] == ["session", "planning"]

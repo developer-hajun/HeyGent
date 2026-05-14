@@ -1,12 +1,14 @@
 package com.ssafy.heygent.domain.iot.controller;
 
 import com.ssafy.heygent.domain.iot.dto.DevicePairRequest;
+import com.ssafy.heygent.domain.iot.dto.DeviceInteractionRequest;
 import com.ssafy.heygent.domain.iot.dto.DeviceRegisterRequest;
 import com.ssafy.heygent.domain.iot.dto.DeviceResponse;
 import com.ssafy.heygent.domain.iot.dto.DeviceStatusUpdateRequest;
 import com.ssafy.heygent.domain.iot.dto.DisplayPublishResult;
 import com.ssafy.heygent.domain.iot.dto.DisplayPublishTestRequest;
 import com.ssafy.heygent.domain.iot.service.DevicePairingService;
+import com.ssafy.heygent.domain.iot.service.DeviceDisplayCoordinator;
 import com.ssafy.heygent.domain.iot.service.DeviceService;
 import com.ssafy.heygent.global.config.security.CustomUserPrincipal;
 import com.ssafy.heygent.global.exception.ApiResponse;
@@ -34,6 +36,7 @@ public class DeviceController {
 
     private final DeviceService deviceService;
     private final DevicePairingService devicePairingService;
+    private final DeviceDisplayCoordinator deviceDisplayCoordinator;
 
     @Operation(summary = "IoT 디바이스 등록")
     @PostMapping
@@ -89,5 +92,19 @@ public class DeviceController {
         @Valid @RequestBody DisplayPublishTestRequest request
     ) {
         return ApiResponse.success(deviceService.publishTest(principal.getUserId(), deviceId, request));
+    }
+
+    @Operation(summary = "IoT 디바이스 터치 상호작용 처리")
+    @PostMapping("/{deviceId}/interactions")
+    public ApiResponse<DisplayPublishResult> handleInteraction(
+        @AuthenticationPrincipal CustomUserPrincipal principal,
+        @PathVariable String deviceId,
+        @Valid @RequestBody DeviceInteractionRequest request
+    ) {
+        return ApiResponse.success(deviceDisplayCoordinator.handleInteraction(
+            principal.getUserId(),
+            deviceId,
+            request
+        ));
     }
 }

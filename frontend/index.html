@@ -2,7 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Favicon uses dedicated theme assets. -->
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="any"
+      href="/favicon_light.png"
+      media="(prefers-color-scheme: light)"
+    />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="any"
+      href="/favicon_dark.png"
+      media="(prefers-color-scheme: dark)"
+    />
+    <!-- iOS / Android home screen icons. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/favicon_light.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/favicon_dark.png" media="(prefers-color-scheme: dark)" />
+    <!-- PWA / Mask icon -->
+    <link rel="shortcut icon" href="/favicon_light.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>HeyGent</title>
   </head>

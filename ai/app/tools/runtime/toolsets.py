@@ -13,8 +13,8 @@ class RuntimeToolsetDefinition:
 
 RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     "skills": RuntimeToolsetDefinition(
-        description="Skill browsing and reading tools.",
-        tools=("skills.list", "skills.read"),
+        description="Legacy skill context marker. Skill catalog is injected through prompt context.",
+        tools=(),
     ),
     "skill-runtime": RuntimeToolsetDefinition(
         description="Restricted skill execution tools.",
@@ -34,7 +34,11 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "web": RuntimeToolsetDefinition(
         description="Web research, extraction, and crawl tools.",
-        tools=("web_search", "web_extract", "web_crawl"),
+        tools=("web_search", "web_extract", "web_crawl", "http_get"),
+    ),
+    "messaging": RuntimeToolsetDefinition(
+        description="Outbound messaging tools.",
+        tools=("mattermost.send",),
     ),
     "browser": RuntimeToolsetDefinition(
         description="Browser automation tools.",
@@ -68,9 +72,13 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
         description="Worker delegation tools.",
         tools=("delegate_task",),
     ),
+    "work": RuntimeToolsetDefinition(
+        description="Work board assignment tools.",
+        tools=("session_agent_task", "work_disposition"),
+    ),
     "local-core": RuntimeToolsetDefinition(
         description="Current minimal local runtime tool bundle.",
-        includes=("skills", "session", "planning", "terminal", "file", "web", "delegation"),
+        includes=("skills", "session", "planning", "terminal", "file", "web", "work"),
     ),
 }
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.core.time import utc_now
+from app.core.utils.ids import new_id
 from app.domain.orchestration.agent.step_handler import StepHandler
 from app.domain.orchestration.approval import ApprovalRuntime, ApprovalService
 from app.domain.orchestration.delegation import ChildSessionLauncher, DelegateRuntime
@@ -27,6 +29,7 @@ from app.domain.orchestration.runtime_planning.todo_state import (
 )
 from app.domain.orchestration.result_inspector import OutcomeInspector
 from app.domain.session.sessions.transcript_store import TranscriptStore
+from app.domain.work import WorkComment, WorkService
 from app.domain.tasks.detail import (
     build_model_decision_detail,
     build_planning_detail,
@@ -35,9 +38,14 @@ from app.domain.tasks.detail import (
     merge_step_detail,
     semantic_key_of,
 )
+from app.domain.tasks.display_context import build_task_display_context
 from app.domain.tasks.events import build_task_event
 from app.domain.tasks.repository import TaskRepository
 from app.domain.tasks.models import StepRun, TaskRun
+
+
+logger = logging.getLogger(__name__)
+TRACKED_SKILL_TOOL_NAMES = {"skill.execute"}
 
 
 class TaskEngine:
@@ -52,6 +60,11 @@ class TaskEngine:
         planner: Planner,
         tool_registry,
         session_store: TranscriptStore | None = None,
+        work_repository=None,
+        agent_repository=None,
+        skill_repository=None,
+        settings=None,
+        iot_display_adapter=None,
     ) -> None:
         self.repository = repository
         self.broadcaster = broadcaster
@@ -59,6 +72,12 @@ class TaskEngine:
         self.child_session_launcher = child_session_launcher
         self.planner = planner
         self.tool_registry = tool_registry
+        self.session_store = session_store
+        self.work_repository = work_repository
+        self.agent_repository = agent_repository
+        self.skill_repository = skill_repository
+        self.settings = settings
+        self.iot_display_adapter = iot_display_adapter
         self.approval_runtime = ApprovalRuntime()
         self.delegate_runtime = DelegateRuntime(child_session_launcher, session_store=session_store)
         self.outcome_inspector = OutcomeInspector()
@@ -69,6 +88,14 @@ class TaskEngine:
         await self._emit("task.created", task)
         return await self._execute_initial(task=task, handler=handler, resume_payload=None)
 
+    async def enqueue_pending(self, *, task: TaskRun) -> TaskRun:
+        saved = self.repository.create_pending_task(task)
+        await self._emit("task.created", saved)
+        return saved
+
+    async def run_claimed(self, *, task: TaskRun, handler) -> TaskRun:
+        return await self._execute_initial(task=task, handler=handler, resume_payload=None)
+
     async def _execute_initial(self, *, task: TaskRun, handler, resume_payload: dict | None) -> TaskRun:
         ensure_task_transition(task.status, TaskStatus.RUNNING)
         task.status = TaskStatus.RUNNING
@@ -76,6 +103,7 @@ class TaskEngine:
         task.wait_payload = {}
         task.current_step_run_id = None
         self.repository.update_task(task)
+        self._touch_linked_work_run(task)
         await self._emit("task.started", task)
 
         try:
@@ -88,6 +116,7 @@ class TaskEngine:
                     resume_payload=resume_payload,
                     progress_sink=progress_sink,
                     delegate_executor=self._build_delegate_executor(task=task, handler=handler, progress_sink=progress_sink),
+                    session_agent_executor=self._build_session_agent_work_executor(task=task, handler=handler, progress_sink=progress_sink),
                 )
             )
         except Exception as error:
@@ -450,6 +479,7 @@ class TaskEngine:
         )
         self.repository.update_task(task)
         self.repository.update_step(step)
+        self._touch_linked_work_run(task)
         await self._emit("task.started", task)
         await self._emit("step.started", task, step)
 
@@ -463,6 +493,7 @@ class TaskEngine:
                     resume_payload=resume_payload,
                     progress_sink=progress_sink,
                     delegate_executor=self._build_delegate_executor(task=task, handler=handler, progress_sink=progress_sink),
+                    session_agent_executor=self._build_session_agent_work_executor(task=task, handler=handler, progress_sink=progress_sink),
                 )
             )
         except Exception as error:
@@ -556,6 +587,7 @@ class TaskEngine:
         return redacted
 
     async def _apply_task_outcome_without_step(self, *, task: TaskRun, outcome: dict) -> TaskRun:
+        await self._ensure_skill_work_link_from_outcome(task=task, outcome=outcome)
         task_status = outcome["task_status"]
         if task_status == TaskStatus.WAITING:
             task_status = TaskStatus.FAILED
@@ -600,6 +632,7 @@ class TaskEngine:
         # operation-only outcome 은 새 StepRun 생성 사유가 아니다. semanticKey 가 유지되는 한
         # result_inspector 가 기존 step.detail_json.operationDetail 에 operation 을 누적한다.
         outcome = self.outcome_inspector.inspect(step=step, outcome=outcome)
+        await self._ensure_skill_work_link_from_outcome(task=task, outcome=outcome)
         task_status = outcome["task_status"]
         step_status = outcome["step_status"]
         was_step_completed = step.status == StepStatus.COMPLETED
@@ -731,19 +764,180 @@ class TaskEngine:
 
         async def sink(*, event_type: str, summary_message: str | None = None, payload: dict | None = None) -> None:
             nonlocal current_step
+            payload = payload or {}
             observed_step = await self._materialize_progress_step(
                 task=task,
                 handler=handler,
                 event_type=event_type,
-                payload=payload or {},
+                payload=payload,
             )
             if observed_step is not None:
                 current_step = observed_step
                 sink.current_step = current_step
+            linked_work_payload = await self._ensure_skill_work_link(task=task, event_type=event_type, payload=payload)
+            if linked_work_payload is not None:
+                await self._emit("work.linked", task, current_step, payload=linked_work_payload)
+            self._touch_linked_work_run(task)
             await self._emit(event_type, task, current_step, payload=payload, summary_message=summary_message)
 
         sink.current_step = current_step
         return sink
+
+    def _touch_linked_work_run(self, task: TaskRun) -> None:
+        if self.work_repository is None:
+            return
+        work_id = self._work_id_from_input(dict(task.input_payload or {}))
+        if not work_id:
+            return
+        touch_run = getattr(self.work_repository, "touch_run", None)
+        if callable(touch_run):
+            touch_run(work_id, task.task_run_id)
+
+    async def _ensure_skill_work_link(self, *, task: TaskRun, event_type: str, payload: dict) -> dict | None:
+        if event_type != "tool.completed":
+            return None
+        if self.work_repository is None:
+            return None
+        task_input = dict(task.input_payload or {})
+        if self._work_id_from_input(task_input):
+            return None
+        tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").strip()
+        if tool_name not in TRACKED_SKILL_TOOL_NAMES:
+            return None
+        result = payload.get("result")
+        if isinstance(result, dict) and result.get("ok") is False:
+            return None
+        session_id = str(task.session_key or "").strip()
+        if not session_id:
+            return None
+
+        skill_name = self._skill_name_from_tool_payload(payload)
+        prompt = str(task_input.get("prompt") or "").strip()
+        title = self._skill_work_title(skill_name=skill_name, prompt=prompt)
+        service = WorkService(self.work_repository)
+        work = service.create_from_payload(
+            session_id=session_id,
+            owner_key=str(task.owner_key),
+            owner_user_id=self._int_or_none(task.owner_key),
+            client_request_id=f"skill-work:{task.task_run_id}",
+            payload={
+                "source": "skill_use",
+                "title": title,
+                "description": prompt or title,
+                "rawUserInput": prompt or title,
+                "executionInstruction": prompt or title,
+                "expectedDeliverable": "스킬 실행 결과를 반영한 답변",
+                "acceptanceCriteria": ["스킬 실행 결과가 최종 답변에 반영됨"],
+                "constraints": [],
+                "labelNames": ["execution"],
+                "metadata": {
+                    "createdFrom": "skill_use",
+                    "triggerTool": tool_name,
+                    "skillName": skill_name,
+                    "taskRunId": task.task_run_id,
+                },
+            },
+        )
+        service.mark_run_started(work_id=work.work_id, task_run_id=task.task_run_id)
+        next_input = {
+            **task_input,
+            "workId": work.work_id,
+            "workIdentifier": work.identifier,
+            "workTitle": work.title,
+            "workAssigneeAgentId": work.assignee_agent_id or "CEO",
+            "workContext": self.work_repository.context_preview(work.work_id),
+            "workLinkReason": "skill_use",
+        }
+        task.input_payload = next_input
+        self.repository.update_task(task)
+        return {
+            "reason": "skill_use",
+            "workId": work.work_id,
+            "workIdentifier": work.identifier,
+            "workTitle": work.title,
+            "workStatus": work.status,
+            "workAssigneeAgentId": work.assignee_agent_id,
+            "taskRunId": task.task_run_id,
+            "triggerTool": tool_name,
+            "skillName": skill_name,
+            "linkedWork": {
+                "workId": work.work_id,
+                "identifier": work.identifier,
+                "title": work.title,
+                "status": work.status,
+                "assigneeAgentId": work.assignee_agent_id,
+                "latestRunId": task.task_run_id,
+            },
+        }
+
+    async def _ensure_skill_work_link_from_outcome(self, *, task: TaskRun, outcome: dict) -> dict | None:
+        if self._work_id_from_input(dict(task.input_payload or {})):
+            return None
+        for tool_result in self._tool_results_from_outcome(outcome):
+            tool_name = str(tool_result.get("name") or "").strip()
+            if tool_name not in TRACKED_SKILL_TOOL_NAMES:
+                continue
+            result = tool_result.get("result")
+            if isinstance(result, dict) and result.get("ok") is False:
+                continue
+            payload = {
+                "tool_name": tool_name,
+                "input": dict(tool_result.get("args") or {}),
+                "result": result if isinstance(result, dict) else {},
+            }
+            return await self._ensure_skill_work_link(task=task, event_type="tool.completed", payload=payload)
+        return None
+
+    @staticmethod
+    def _tool_results_from_outcome(outcome: dict) -> list[dict]:
+        results: list[dict] = []
+        for container_key in ("result_payload", "output_payload"):
+            container = outcome.get(container_key)
+            if not isinstance(container, dict):
+                continue
+            for item in container.get("tool_results") or []:
+                if isinstance(item, dict):
+                    results.append(item)
+        deduped: list[dict] = []
+        seen: set[tuple[str, str]] = set()
+        for item in results:
+            key = (str(item.get("tool_call_id") or ""), str(item.get("name") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        return deduped
+
+    @staticmethod
+    def _work_id_from_input(task_input: dict) -> str | None:
+        candidate = task_input.get("workId") or task_input.get("work_id")
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+        return None
+
+    @staticmethod
+    def _skill_name_from_tool_payload(payload: dict) -> str | None:
+        for container in (payload.get("input"), payload.get("result")):
+            if not isinstance(container, dict):
+                continue
+            value = container.get("skill_name") or container.get("skillName") or container.get("name")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+
+    @staticmethod
+    def _skill_work_title(*, skill_name: str | None, prompt: str) -> str:
+        if skill_name:
+            return f"{skill_name} 스킬 실행"
+        first_line = " ".join((prompt.splitlines()[0] if prompt.splitlines() else prompt).split())
+        return (first_line[:40].rstrip() + " 스킬 실행") if first_line else "스킬 실행"
+
+    @staticmethod
+    def _int_or_none(value) -> int | None:
+        try:
+            return int(str(value))
+        except (TypeError, ValueError):
+            return None
 
     def _build_delegate_executor(self, *, task: TaskRun, handler, progress_sink):
         async def execute_delegate(*, child_session: dict, tool_call_id: str, args: dict, accepted_result: dict) -> dict:
@@ -783,6 +977,344 @@ class TaskEngine:
 
         return execute_delegate
 
+    def _build_session_agent_work_executor(self, *, task: TaskRun, handler, progress_sink):
+        async def execute_session_agent_work(*, child_work: dict, tool_call_id: str, args: dict, accepted_result: dict) -> dict:
+            if self.work_repository is None or self.agent_repository is None:
+                return {
+                    **accepted_result,
+                    "ok": False,
+                    "error": {"code": "work_runtime_unavailable", "message": "work runtime is not configured"},
+                }
+
+            step = getattr(progress_sink, "current_step", None)
+            if step is None and task.current_step_run_id:
+                step = self.repository.get_step(task.current_step_run_id)
+            if step is None:
+                return {
+                    **accepted_result,
+                    "ok": False,
+                    "content": "session_agent_task 실행 전에 step 도구로 현재 의미 단계를 먼저 in_progress로 선언해야 합니다.",
+                    "error": {
+                        "code": "step_required_before_session_agent_task",
+                        "message": "session_agent_task requires an active LLM-declared step.",
+                    },
+                }
+            if step.status == StepStatus.PENDING:
+                step.status = StepStatus.RUNNING
+                step.started_at = step.started_at or task.started_at or utc_now()
+                task.current_step_run_id = step.step_run_id
+                self.repository.update_task(task)
+                self.repository.update_step(step)
+                progress_sink.current_step = step
+                await self._emit("step.started", task, step)
+
+            work_id = str(child_work.get("workId") or child_work.get("work_id") or "").strip()
+            work = self.work_repository.get_work(work_id) if work_id else None
+            if work is None:
+                return {
+                    **accepted_result,
+                    "ok": False,
+                    "error": {"code": "child_work_not_found", "message": "child work was not found"},
+                }
+
+            await self._notify_step_updated(
+                self._step_update_notifier(progress_sink=progress_sink, task=task),
+                step=step,
+                event_type="step.updated",
+                payload={
+                    "reason": "session_agent_work.started",
+                    "workId": work.work_id,
+                    "identifier": work.identifier,
+                    "assigneeAgentId": work.assignee_agent_id,
+                    "status": "RUNNING",
+                },
+                summary_message=f"{work.identifier} 세션 에이전트 실행 중",
+            )
+
+            task_run_id = new_id("task")
+            service = WorkService(self.work_repository)
+            service.mark_run_started(work_id=work.work_id, task_run_id=task_run_id)
+            try:
+                child_input = self._build_session_agent_work_input(parent_task=task, work=work)
+                child_task = self.planner.materialize_task(
+                    owner_key=work.owner_key,
+                    session_key=work.session_id,
+                    input_payload=child_input,
+                    handler=handler,
+                    task_run_id=task_run_id,
+                )
+                child_task = await self.run(task=child_task, handler=handler)
+                updated_work = service.apply_task_result(work_id=work.work_id, task=child_task)
+                if updated_work is not None:
+                    self._record_session_agent_parent_result_comment(work=updated_work, task=child_task)
+            except Exception as error:
+                self.work_repository.update_run_status(work.work_id, task_run_id, "FAILED")
+                failed_work = service.mark_run_start_failed(work_id=work.work_id, reason=str(error))
+                await self._notify_step_updated(
+                    self._step_update_notifier(progress_sink=progress_sink, task=task),
+                    step=step,
+                    event_type="step.updated",
+                    payload={
+                        "reason": "session_agent_work.failed",
+                        "workId": failed_work.work_id,
+                        "identifier": failed_work.identifier,
+                        "assigneeAgentId": failed_work.assignee_agent_id,
+                        "taskRunId": task_run_id,
+                        "status": "FAILED",
+                    },
+                    summary_message=f"{work.identifier} 세션 에이전트 실행 실패",
+                )
+                return {
+                    **accepted_result,
+                    "ok": False,
+                    "content": f"{work.identifier} 세션 에이전트 실행 실패: {error}",
+                    "taskRunId": task_run_id,
+                    "childStatus": "FAILED",
+                    "error": {"message": str(error)},
+                }
+
+            child_status = self._task_status_value(child_task.status)
+            ok = child_status == TaskStatus.COMPLETED.value
+            final_work = updated_work or self.work_repository.get_work(work.work_id) or work
+            parent_disposition = self._parent_disposition_from_session_agent_work(work=final_work, task=child_task)
+            await self._notify_step_updated(
+                self._step_update_notifier(progress_sink=progress_sink, task=task),
+                step=step,
+                event_type="step.updated",
+                payload={
+                    "reason": "session_agent_work.completed",
+                    "workId": work.work_id,
+                    "identifier": work.identifier,
+                    "assigneeAgentId": work.assignee_agent_id,
+                    "taskRunId": child_task.task_run_id,
+                    "status": child_status,
+                },
+                summary_message=f"{work.identifier} 세션 에이전트 실행 완료",
+            )
+            return {
+                **accepted_result,
+                "ok": ok,
+                "content": self._session_agent_work_tool_content(work=final_work, task=child_task),
+                "taskRunId": child_task.task_run_id,
+                "childStatus": child_status,
+                "childWorkStatus": final_work.status,
+                "parentWorkDisposition": parent_disposition,
+            }
+
+        return execute_session_agent_work
+
+    def _build_session_agent_work_input(self, *, parent_task: TaskRun, work) -> dict:
+        parent_input = dict(parent_task.input_payload or {})
+        payload = {
+            "prompt": work.execution_instruction or work.description or work.title,
+            "workId": work.work_id,
+            "workIdentifier": work.identifier,
+            "workAssigneeAgentId": work.assignee_agent_id,
+            "workContext": self.work_repository.context_preview(work.work_id) if self.work_repository is not None else {},
+            "conversation_history": [],
+            "system_prompt_snapshot": parent_input.get("system_prompt_snapshot") or "",
+            "model": parent_input.get("model"),
+            "enabled_toolsets": ["skills", "session", "planning", "terminal", "file", "web", "browser", "work"],
+            "toolsets": ["skills", "session", "planning", "terminal", "file", "web", "browser", "work"],
+            "max_iterations": self._work_execution_max_iterations(),
+            "parentWorkId": work.parent_id,
+        }
+        self._attach_session_agent_profile(payload, work=work)
+        transcript_session_id = self._create_work_transcript_session(parent_task=parent_task, work=work, model=payload.get("model"))
+        if transcript_session_id:
+            payload["transcript_session_id"] = transcript_session_id
+        return payload
+
+    def _attach_session_agent_profile(self, payload: dict, *, work) -> None:
+        if self.agent_repository is None:
+            return
+        profile_id = str(work.assignee_agent_id or "").strip()
+        if not profile_id:
+            return
+        profile = self.agent_repository.get_session_agent(profile_id=profile_id, owner_key=str(work.owner_key))
+        if profile is None:
+            return
+        profile_model = self._profile_model(profile)
+        if profile_model:
+            payload["model"] = profile_model
+        payload["targetAgentProfile"] = {
+            "profileId": profile.get("profile_id"),
+            "profileKey": profile.get("profile_key"),
+            "profileVersion": profile.get("profile_version"),
+            "agentType": profile.get("agent_type"),
+            "templateKey": profile.get("template_key"),
+            "configSnapshot": profile.get("config_snapshot") or {},
+        }
+        self._attach_session_agent_skill_names(payload, profile=profile, profile_id=profile_id, owner_key=str(work.owner_key))
+        bundle = self.agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
+        if bundle is not None:
+            payload["targetAgentInstructions"] = {
+                "bundleId": bundle.get("bundle_id"),
+                "entryDocumentKey": bundle.get("entry_document_key") or "AGENTS.md",
+                "documents": [
+                    {
+                        "documentKey": document.get("document_key"),
+                        "displayName": document.get("display_name"),
+                        "content": document.get("content") or "",
+                    }
+                    for document in list(bundle.get("documents") or [])
+                    if isinstance(document, dict)
+                ],
+            }
+
+    def _attach_session_agent_skill_names(
+        self,
+        payload: dict,
+        *,
+        profile: dict,
+        profile_id: str,
+        owner_key: str,
+    ) -> None:
+        config = profile.get("config_snapshot") if isinstance(profile.get("config_snapshot"), dict) else {}
+        requested_skill_names = [str(skill) for skill in list(config.get("skills") or [])]
+        if self.skill_repository is not None:
+            payload["enabledSkillNames"] = self.skill_repository.effective_skill_names(
+                owner_key=owner_key,
+                profile_id=profile_id or None,
+                requested_skill_names=requested_skill_names,
+                explicit_agent_selection=config.get("skillSelectionMode") == "explicit",
+            )
+            return
+        payload["enabledSkillNames"] = [skill.strip() for skill in requested_skill_names if skill.strip()]
+
+    @staticmethod
+    def _profile_model(profile: dict) -> str | None:
+        config = profile.get("config_snapshot") if isinstance(profile.get("config_snapshot"), dict) else {}
+        value = config.get("model") or profile.get("model_name")
+        text = str(value or "").strip()
+        return text or None
+
+    def _create_work_transcript_session(self, *, parent_task: TaskRun, work, model: str | None) -> str | None:
+        if self.session_store is None:
+            return None
+        session_id = new_id("agent_session")
+        parent_input = dict(parent_task.input_payload or {})
+        parent_session_id = str(parent_input.get("transcript_session_id") or "").strip() or None
+        agent_metadata = self._agent_profile_metadata_for_work(work)
+        self.session_store.create_session(
+            session_id=session_id,
+            session_key=work.session_id,
+            source="agent.loop",
+            user_id=work.owner_key,
+            model=model,
+            parent_session_id=parent_session_id,
+            title=str(work.title or work.identifier)[:120],
+            metadata={
+                "source": "agent.loop",
+                "work_id": work.work_id,
+                "work_identifier": work.identifier,
+                "parent_work_id": work.parent_id,
+                "assignee_agent_id": work.assignee_agent_id,
+                **agent_metadata,
+            },
+        )
+        return session_id
+
+    def _agent_profile_metadata_for_work(self, work) -> dict[str, object]:
+        if self.agent_repository is None:
+            return {}
+        profile_id = str(work.assignee_agent_id or "").strip()
+        if not profile_id:
+            return {}
+        profile = self.agent_repository.get_session_agent(profile_id=profile_id, owner_key=str(work.owner_key))
+        if profile is None:
+            return {}
+        return {
+            "agent_profile_id": profile_id,
+            "agent_profile_version": int(profile.get("profile_version") or 1),
+            "agent_config_snapshot": dict(profile.get("config_snapshot") or {}),
+        }
+
+    def _record_session_agent_parent_result_comment(self, *, work, task: TaskRun) -> None:
+        if self.work_repository is None or not work.parent_id:
+            return
+        disposition = task.result_payload.get("workDisposition") if isinstance(task.result_payload, dict) else None
+        summary = str(disposition.get("summary") or "").strip() if isinstance(disposition, dict) else ""
+        body = f"{work.identifier} 세션 에이전트 실행이 {_work_status_label(work.status)} 상태로 끝났습니다."
+        if summary:
+            body = f"{body}\n요약: {summary}"
+        self.work_repository.add_comment(
+            WorkComment(
+                comment_id=new_id("comment"),
+                work_id=work.parent_id,
+                author_type="system",
+                task_run_id=task.task_run_id,
+                body=body,
+                metadata={
+                    "reason": "session_agent_work_result",
+                    "childWorkId": work.work_id,
+                    "childStatus": work.status,
+                    "taskRunId": task.task_run_id,
+                },
+            )
+        )
+
+    def _work_execution_max_iterations(self) -> int:
+        raw_value = getattr(self.settings, "work_execution_max_iterations", 24) if self.settings is not None else 24
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            value = 24
+        return max(1, value)
+
+    @staticmethod
+    def _task_status_value(status) -> str:
+        return str(getattr(status, "value", status))
+
+    @staticmethod
+    def _session_agent_work_tool_content(*, work, task: TaskRun) -> str:
+        status = TaskEngine._task_status_value(task.status)
+        summary = ""
+        if isinstance(task.result_payload, dict):
+            text = task.result_payload.get("text") or task.result_payload.get("summary")
+            if isinstance(text, str):
+                summary = text.strip()
+        if summary:
+            return f"{work.identifier} 세션 에이전트 실행 결과({status}): {summary}"
+        return f"{work.identifier} 세션 에이전트 실행이 {status} 상태로 종료되었습니다."
+
+    @staticmethod
+    def _parent_disposition_from_session_agent_work(*, work, task: TaskRun) -> dict | None:
+        if not work.parent_id:
+            return None
+        child_status = str(work.status or "").strip()
+        if child_status == "blocked":
+            parent_status = "blocked"
+        elif child_status == "done":
+            parent_status = "done"
+        else:
+            parent_status = "in_review"
+        disposition = task.result_payload.get("workDisposition") if isinstance(task.result_payload, dict) else None
+        summary = str(disposition.get("summary") or "").strip() if isinstance(disposition, dict) else ""
+        next_action = str(disposition.get("nextAction") or disposition.get("next_action") or "").strip() if isinstance(disposition, dict) else ""
+        return {
+            "workId": work.parent_id,
+            "status": parent_status,
+            "summary": summary or f"{work.identifier} 세션 에이전트 실행 결과를 반영했습니다.",
+            "nextAction": next_action,
+        }
+
+    @staticmethod
+    def _step_update_notifier(*, progress_sink, task: TaskRun):
+        async def emit_step_update(*, step, event_type: str, payload: dict, summary_message: str | None = None) -> None:
+            if progress_sink is None:
+                return
+            progress_sink.current_step = step
+            await progress_sink(event_type=event_type, summary_message=summary_message, payload=payload)
+
+        return emit_step_update
+
+    @staticmethod
+    async def _notify_step_updated(callback, *, step, event_type: str, payload: dict, summary_message: str | None = None) -> None:
+        if callback is None:
+            return
+        await callback(step=step, event_type=event_type, payload=payload, summary_message=summary_message)
+
     async def _materialize_progress_step(self, *, task: TaskRun, handler, event_type: str, payload: dict) -> StepRun | None:
         """tool_call 관찰값에서 StepRun(LLM이 판단한 자연어 의미 단계)을 즉시 만든다.
 
@@ -818,6 +1350,8 @@ class TaskEngine:
     ) -> None:
         event_status = self._event_status(event_type=event_type, task=task, step=step)
         event_summary = summary_message if summary_message is not None else self._event_summary(event_type=event_type, task=task, step=step)
+        event_payload = self._event_payload(event_type=event_type, step=step, payload=payload)
+        event_payload["displayContext"] = build_task_display_context(task, step)
         event = build_task_event(
             event_type=event_type,
             task_run_id=task.task_run_id,
@@ -825,10 +1359,22 @@ class TaskEngine:
             producer="task_engine",
             status=event_status,
             summary_message=event_summary,
-            payload=self._event_payload(event_type=event_type, step=step, payload=payload),
+            payload=event_payload,
         )
         saved_event = self.repository.append_event(event)
         await self.broadcaster.publish(saved_event)
+        if self.iot_display_adapter is not None:
+            try:
+                await self.iot_display_adapter.publish(
+                    event_type=event_type,
+                    task=task,
+                    step=step,
+                    status=event_status,
+                    summary_message=event_summary,
+                    payload=event_payload,
+                )
+            except Exception:
+                logger.exception("failed to publish iot display event")
 
     @staticmethod
     def _event_status(*, event_type: str, task: TaskRun, step: StepRun | None = None) -> str:
@@ -895,3 +1441,14 @@ class TaskEngine:
             ),
         )
         self.repository.update_step(current_step)
+
+
+def _work_status_label(status: str) -> str:
+    return {
+        "todo": "대기",
+        "in_progress": "진행 중",
+        "in_review": "검토 중",
+        "blocked": "차단됨",
+        "done": "완료",
+        "cancelled": "취소됨",
+    }.get(str(status or ""), str(status or ""))

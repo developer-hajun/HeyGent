@@ -98,7 +98,7 @@ class WakeWordForegroundService : Service(), RecognitionListener {
         if (bucket != lastLevelBucket || now - lastRmsLogAtMillis >= RMS_LOG_INTERVAL_MS) {
             lastLevelBucket = bucket
             lastRmsLogAtMillis = now
-            Log.d(TAG, "Mic level: $level/100 (rms=${"%.1f".format(Locale.US, rmsdB)}dB)")
+            //Log.d(TAG, "Mic level: $level/100 (rms=${"%.1f".format(Locale.US, rmsdB)}dB)")
         }
     }
 

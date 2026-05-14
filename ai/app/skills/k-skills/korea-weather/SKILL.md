@@ -48,6 +48,20 @@ metadata:
 
 ### 2. Query the short-term forecast endpoint
 
+`http_get` runtime tool 이 있으면 먼저 사용한다. `terminal.run`/`curl`은 `http_get`이 없을 때만 fallback으로 사용한다. `web_search`로 일반 검색하지 않는다.
+
+예시 tool call:
+
+```json
+{
+  "url": "https://k-skill-proxy.nomadamas.org/v1/korea-weather/forecast",
+  "params": {
+    "lat": 37.5172,
+    "lon": 127.0473
+  }
+}
+```
+
 격자 좌표가 이미 있으면 그대로 넣고, 위도/경도만 있으면 proxy 에 그대로 넘긴다.
 
 ```bash

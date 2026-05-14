@@ -27,24 +27,17 @@ class Settings:
     postgres_migrations_enabled: bool = True
     api_base_url: str | None = None
     openai_api_key: str | None = None
-    openai_oauth_client_id: str | None = "app_EMoamEEZ73f0CkXaXp7hrann"
-    openai_oauth_client_secret: str | None = None
-    openai_oauth_redirect_uri: str | None = "http://localhost:1455/auth/callback"
-    openai_oauth_authorize_url: str | None = "https://auth.openai.com/oauth/authorize"
-    openai_oauth_token_url: str | None = "https://auth.openai.com/oauth/token"
-    openai_oauth_scopes: list[str] = field(default_factory=lambda: ["openid", "profile", "email", "offline_access"])
-    openai_auth_file: Path | None = None
-    openai_api_base_url: str = "https://chatgpt.com/backend-api"
     openai_rest_api_base_url: str = "https://api.openai.com/v1"
     openai_response_model: str = "gpt-5.4"
     openai_embedding_model: str = "text-embedding-3-small"
     backend_base_url: str = "http://127.0.0.1:8080"
     backend_auth_verify_url: str = "http://127.0.0.1:8080/internal/ai/auth/validate"
+    backend_bridge_auth_verify_url: str = "http://127.0.0.1:8080/internal/bridge/auth/validate"
     backend_memory_timeout_seconds: float = 5.0
     internal_service_token: str | None = None
     redis_url: str | None = None
     cors_allowed_origins: list[str] = field(default_factory=list)
-    cors_allowed_methods: list[str] = field(default_factory=lambda: ["GET", "POST", "OPTIONS"])
+    cors_allowed_methods: list[str] = field(default_factory=lambda: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
     cors_allowed_headers: list[str] = field(
         default_factory=lambda: ["Authorization", "Content-Type", "X-Workspace-Key"]
     )
@@ -57,12 +50,18 @@ class Settings:
     ws_auth_rate_limit_window_seconds: int = 60
     task_projection_ttl_seconds: int = 3600
     task_projection_max_events: int = 200
+    task_execution_queue_enabled: bool = False
+    task_execution_worker_count: int = 2
+    task_execution_lease_seconds: int = 300
+    task_execution_poll_interval_seconds: float = 0.5
     public_session_limit_per_user: int = 10
     agent_model_request_timeout_seconds: float = 300.0
     agent_model_stream_timeout_seconds: float = 300.0
     agent_loop_default_max_iterations: int = 90
     agent_loop_worker_default_max_iterations: int = 80
     agent_loop_max_iterations: int = 120
+    work_execution_max_iterations: int = 24
+    # DEPRECATED: 단일 공유 토큰 시절 잔재. 현재는 backend /internal/bridge/auth/validate 로 검증.
     bridge_token: str | None = None
 
     def resolved_api_base_url(self) -> str:
@@ -72,14 +71,6 @@ class Settings:
             return self.api_base_url.rstrip("/")
         normalized_prefix = "/" + self.api_prefix.strip("/")
         return f"http://{self.host}:{self.port}{normalized_prefix}"
-
-    def resolved_openai_oauth_redirect_uri(self) -> str:
-        """OpenAI OAuth callback URL 을 계산한다."""
-
-        if self.openai_oauth_redirect_uri:
-            return self.openai_oauth_redirect_uri.rstrip("/")
-        return "http://localhost:1455/auth/callback"
-
 
 def load_dotenv_values(env_file: Path | None = None) -> dict[str, str]:
     """간단한 .env 파서를 직접 제공한다.
@@ -169,14 +160,6 @@ def get_settings() -> Settings:
         ),
         api_base_url=_read_env("HEYGENT_API_BASE_URL", None, dotenv_values),
         openai_api_key=_read_env("HEYGENT_OPENAI_API_KEY", None, dotenv_values),
-        openai_oauth_client_id=_read_env("HEYGENT_OPENAI_OAUTH_CLIENT_ID", "app_EMoamEEZ73f0CkXaXp7hrann", dotenv_values),
-        openai_oauth_client_secret=_read_env("HEYGENT_OPENAI_OAUTH_CLIENT_SECRET", None, dotenv_values),
-        openai_oauth_redirect_uri=_read_env("HEYGENT_OPENAI_OAUTH_REDIRECT_URI", "http://localhost:1455/auth/callback", dotenv_values),
-        openai_oauth_authorize_url=_read_env("HEYGENT_OPENAI_OAUTH_AUTHORIZE_URL", "https://auth.openai.com/oauth/authorize", dotenv_values),
-        openai_oauth_token_url=_read_env("HEYGENT_OPENAI_OAUTH_TOKEN_URL", "https://auth.openai.com/oauth/token", dotenv_values),
-        openai_oauth_scopes=_parse_scopes(_read_env("HEYGENT_OPENAI_OAUTH_SCOPES", "openid,profile,email,offline_access", dotenv_values)),
-        openai_auth_file=_parse_optional_path(_read_env("HEYGENT_OPENAI_AUTH_FILE", None, dotenv_values)),
-        openai_api_base_url=_read_env("HEYGENT_OPENAI_API_BASE_URL", "https://chatgpt.com/backend-api", dotenv_values),
         openai_rest_api_base_url=_read_env("HEYGENT_OPENAI_REST_API_BASE_URL", "https://api.openai.com/v1", dotenv_values),
         openai_response_model=_read_env("HEYGENT_OPENAI_RESPONSE_MODEL", "gpt-5.4", dotenv_values),
         openai_embedding_model=_read_env("HEYGENT_OPENAI_EMBEDDING_MODEL", "text-embedding-3-small", dotenv_values),
@@ -184,6 +167,11 @@ def get_settings() -> Settings:
         backend_auth_verify_url=_read_env(
             "HEYGENT_BACKEND_AUTH_VERIFY_URL",
             "http://127.0.0.1:8080/internal/ai/auth/validate",
+            dotenv_values,
+        ),
+        backend_bridge_auth_verify_url=_read_env(
+            "HEYGENT_BACKEND_BRIDGE_AUTH_VERIFY_URL",
+            "http://127.0.0.1:8080/internal/bridge/auth/validate",
             dotenv_values,
         ),
         backend_memory_timeout_seconds=_parse_float(
@@ -194,7 +182,7 @@ def get_settings() -> Settings:
         redis_url=_read_env("HEYGENT_REDIS_URL", None, dotenv_values),
         cors_allowed_origins=_parse_csv(_read_env("HEYGENT_CORS_ALLOWED_ORIGINS", "", dotenv_values)),
         cors_allowed_methods=_parse_csv(
-            _read_env("HEYGENT_CORS_ALLOWED_METHODS", "GET,POST,OPTIONS", dotenv_values)
+            _read_env("HEYGENT_CORS_ALLOWED_METHODS", "GET,POST,PUT,PATCH,DELETE,OPTIONS", dotenv_values)
         ),
         cors_allowed_headers=_parse_csv(
             _read_env("HEYGENT_CORS_ALLOWED_HEADERS", "Authorization,Content-Type,X-Workspace-Key", dotenv_values)
@@ -232,6 +220,22 @@ def get_settings() -> Settings:
             _read_env("HEYGENT_TASK_PROJECTION_MAX_EVENTS", 200, dotenv_values),
             default=200,
         ),
+        task_execution_queue_enabled=_parse_bool(
+            _read_env("HEYGENT_TASK_EXECUTION_QUEUE_ENABLED", "false", dotenv_values),
+            default=False,
+        ),
+        task_execution_worker_count=_parse_int(
+            _read_env("HEYGENT_TASK_EXECUTION_WORKER_COUNT", 2, dotenv_values),
+            default=2,
+        ),
+        task_execution_lease_seconds=_parse_int(
+            _read_env("HEYGENT_TASK_EXECUTION_LEASE_SECONDS", 300, dotenv_values),
+            default=300,
+        ),
+        task_execution_poll_interval_seconds=_parse_float(
+            _read_env("HEYGENT_TASK_EXECUTION_POLL_INTERVAL_SECONDS", 0.5, dotenv_values),
+            default=0.5,
+        ),
         public_session_limit_per_user=_parse_int(
             _read_env("HEYGENT_PUBLIC_SESSION_LIMIT_PER_USER", 10, dotenv_values),
             default=10,
@@ -255,6 +259,10 @@ def get_settings() -> Settings:
         agent_loop_max_iterations=_parse_int(
             _read_env("HEYGENT_AGENT_LOOP_MAX_ITERATIONS", 120, dotenv_values),
             default=120,
+        ),
+        work_execution_max_iterations=_parse_int(
+            _read_env("HEYGENT_WORK_EXECUTION_MAX_ITERATIONS", 24, dotenv_values),
+            default=24,
         ),
         bridge_token=_read_env("HEYGENT_BRIDGE_TOKEN", None, dotenv_values),
     )

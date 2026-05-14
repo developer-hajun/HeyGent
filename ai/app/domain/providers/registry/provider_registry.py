@@ -27,19 +27,25 @@ class ProviderRegistry:
     def health(self) -> list[ProviderHealthResponse]:
         return [self._providers[name].health() for name in self.list_names()]
 
+    async def aclose(self) -> None:
+        for provider in self._providers.values():
+            close = getattr(provider, "aclose", None)
+            if callable(close):
+                await close()
+
     def preferred_model_provider(self) -> BaseProvider:
         """기본 handler 가 사용할 모델 provider 를 고른다.
 
-        우선순위는 API key 기반 OpenAI, 그다음 OAuth 기반 OpenAI 다.
-        둘 다 없으면 등록 순서의 첫 provider 를 사용한다.
+        현재 런타임 모델 호출은 backend provider credential을 발급받는
+        API key 기반 OpenAI provider를 기본으로 사용한다.
         """
 
-        for provider_name in ("openai_api", "openai_oauth"):
+        for provider_name in ("openai_api",):
             provider = self._providers.get(provider_name)
             if provider is None:
                 continue
             health = provider.health()
-            if health.connected or health.configured:
+            if health.connected or health.configured or getattr(provider, "auth_type", None) == "api_key":
                 return provider
 
         try:

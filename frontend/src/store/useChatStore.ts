@@ -17,7 +17,10 @@ import {
   isJsonObject,
 } from '@/realtime/aiRealtimeTypes'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
+import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
+import { useSessionStore, type AgentPanelItem } from '@/store/useSessionStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
+import { agentProfilesToPanelItems, listSessionAgents } from '@/apis/agents'
 import type {
   AiModelOption,
   AiModelProviderOption,
@@ -65,6 +68,65 @@ type ChatState = {
   fetchModelOptions: (sessionId?: string) => Promise<ModelOptionsResultPayload>
   handleRealtimeFrame: (frame: AiRealtimeRawFrame) => void
   clearChatState: () => void
+}
+
+const SESSION_AGENT_SPRITE_SLOTS = [
+  'agent01',
+  'agent02',
+  'agent03',
+  'agent04',
+  'agent05',
+  'agent06',
+  'agent07',
+  'agent08',
+  'agent09',
+  'agent10',
+]
+
+function getSessionSubAgentSpriteIds(panels: AgentPanelItem[]) {
+  const usedSlots = new Set<string>()
+  const spriteIds: string[] = []
+
+  for (const panel of panels) {
+    if (panel.agent.spriteId) {
+      spriteIds.push(panel.agent.spriteId)
+      usedSlots.add(panel.agent.spriteId)
+    }
+  }
+
+  for (const panel of panels) {
+    if (panel.agent.spriteId) continue
+    const slot = SESSION_AGENT_SPRITE_SLOTS.find((id) => !usedSlots.has(id))
+    if (!slot) break
+    spriteIds.push(slot)
+    usedSlots.add(slot)
+  }
+
+  return [...new Set(spriteIds)]
+}
+
+function startVisualizationForSession(
+  sessionId: string,
+  taskRunId: string,
+  panels: AgentPanelItem[],
+) {
+  useAgentVisualizationStore.getState().startSessionWork({
+    sessionId,
+    taskRunId,
+    subAgentSpriteIds: getSessionSubAgentSpriteIds(panels),
+  })
+}
+
+function refreshVisualizationSessionAgents(sessionId: string, taskRunId: string) {
+  void listSessionAgents(sessionId)
+    .then((profiles) => {
+      const panels = agentProfilesToPanelItems(profiles)
+      useSessionStore.getState().setAgentPanelsForSession(sessionId, panels)
+      startVisualizationForSession(sessionId, taskRunId, panels)
+    })
+    .catch(() => {
+      // 시각화 보강 조회 실패 시 채팅 전송 흐름은 유지한다.
+    })
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -147,6 +209,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const clientMessageId = inputClientMessageId ?? createClientMessageId()
     const optimisticSessionId = sessionId ?? `pending_session_${clientMessageId}`
+    const optimisticWork = getWorkContextFromInputPayload(inputPayload)
     // 서버 accepted가 오기 전에도 사용자가 보낸 문장을 즉시 보여 주기 위한 임시 메시지다.
     // accepted를 받으면 서버/DB message id와 실제 session id로 치환한다.
     const optimisticMessage: ChatMessageView = {
@@ -157,6 +220,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       status: 'optimistic',
       clientMessageId,
       createdAt: new Date().toISOString(),
+      work: optimisticWork,
     }
     // accepted 왕복을 기다리면 첫 입력에서 DB append/TaskRun 생성 시간이 그대로 비어 보인다.
     // 텍스트는 서버 이벤트가 올 때 채우고, 즉시 보이는 상태는 스피너 전용 placeholder로만 둔다.
@@ -184,6 +248,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         [clientMessageId]: optimisticSessionId,
       },
     }))
+    const visualizationSessionId = sessionId ?? optimisticSessionId
+    const sessionPanels =
+      useSessionStore.getState().agentPanelsBySessionId[visualizationSessionId] ?? []
+    startVisualizationForSession(visualizationSessionId, clientMessageId, sessionPanels)
+    if (
+      sessionId !== undefined &&
+      !sessionId.startsWith('pending_session_') &&
+      sessionPanels.length === 0
+    ) {
+      refreshVisualizationSessionAgents(sessionId, clientMessageId)
+    }
 
     try {
       const frame = await useAiRealtimeStore
@@ -210,6 +285,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       return frame
     } catch (error) {
+      useAgentVisualizationStore.getState().settleCeoAtDesk(clientMessageId)
       markOptimisticMessageFailed(clientMessageId, set)
       throw error
     }
@@ -410,6 +486,7 @@ const toChatMessageView = (message: RawAiMessage): ChatMessageView => ({
   clientMessageId:
     typeof message.client_message_id === 'string' ? message.client_message_id : undefined,
   createdAt: typeof message.created_at === 'string' ? message.created_at : undefined,
+  work: getWorkContextFromMetadata(message.metadata),
   raw: message,
 })
 
@@ -493,6 +570,13 @@ const mergeAcceptedMessage = (
 
   if (sessionId === undefined) {
     return
+  }
+  if (taskRunId !== undefined) {
+    const sessionPanels = useSessionStore.getState().agentPanelsBySessionId[sessionId] ?? []
+    startVisualizationForSession(sessionId, taskRunId, sessionPanels)
+    if (sessionPanels.length === 0) {
+      refreshVisualizationSessionAgents(sessionId, taskRunId)
+    }
   }
 
   const previousSessionId =
@@ -629,6 +713,8 @@ const mergeAssistantCompleted = (
   if (sessionId === undefined || messageId === undefined) {
     return
   }
+
+  useAgentVisualizationStore.getState().settleCeoAtDesk(taskRunId)
 
   set((state) => {
     const nextMessages = upsertAssistantMessage(state.messagesBySessionId[sessionId] ?? [], {
@@ -848,6 +934,9 @@ const mergeTaskEventCompletionPayload = (
 
   const content = getTaskEventCompletionContent(payload)
   const nextStatus: ChatMessageStatus = eventType === 'task.completed' ? 'completed' : 'failed'
+  if (eventType === 'task.completed') {
+    useAgentVisualizationStore.getState().settleCeoAtDesk(taskRunId)
+  }
 
   set((state) => {
     const messagesBySessionId = { ...state.messagesBySessionId }
@@ -1210,5 +1299,39 @@ const normalizeRawAiMessage = (value: unknown): RawAiMessage | null => {
     client_message_id:
       getStringField(value, 'client_message_id', 'clientMessageId') ??
       (typeof value.client_message_id === 'string' ? value.client_message_id : undefined),
+  }
+}
+
+const getWorkContextFromInputPayload = (payload?: JsonObject) => {
+  if (!isJsonObject(payload)) {
+    return undefined
+  }
+  const id = getStringField(payload, 'workId', 'work_id')
+  if (id === undefined) {
+    return undefined
+  }
+  return {
+    id,
+    identifier: getStringField(payload, 'workIdentifier', 'work_identifier'),
+    title: getStringField(payload, 'workTitle', 'work_title'),
+    assigneeAgentId:
+      getStringField(payload, 'workAssigneeAgentId', 'work_assignee_agent_id') ?? null,
+  }
+}
+
+const getWorkContextFromMetadata = (metadata?: JsonObject | null) => {
+  if (!isJsonObject(metadata)) {
+    return undefined
+  }
+  const id = getStringField(metadata, 'work_id', 'workId')
+  if (id === undefined) {
+    return undefined
+  }
+  return {
+    id,
+    identifier: getStringField(metadata, 'work_identifier', 'workIdentifier'),
+    title: getStringField(metadata, 'work_title', 'workTitle'),
+    assigneeAgentId:
+      getStringField(metadata, 'work_assignee_agent_id', 'workAssigneeAgentId') ?? null,
   }
 }

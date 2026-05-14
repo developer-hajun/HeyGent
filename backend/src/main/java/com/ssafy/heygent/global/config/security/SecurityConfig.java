@@ -43,10 +43,10 @@ public class SecurityConfig {
                                 "/swagger-ui.html",
                                 "/auth/notion/callback",
                                 "/auth/callback",
-                                "/api/v1/ai/openai/oauth/callback",
-                                "/api/v1/ai/codex/oauth/callback",
                                 "/api/v1/iot/pairing/start",
                                 "/api/v1/iot/pairing/devices/*/status",
+                                "/api/v1/bridge/pair",
+                                "/api/v1/bridge/unpair",
                                 "/api/v3/api-docs/**",
                                 "/api/swagger-ui/**",
                                 "/api/swagger-ui.html"

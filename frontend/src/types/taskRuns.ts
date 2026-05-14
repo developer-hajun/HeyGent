@@ -1,13 +1,41 @@
 import type { JsonObject, RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
 
-export type RawTaskRunStatus =
+export type TaskRunAgentKind = 'main' | 'user_subagent' | 'worker' | 'domain'
+
+export type TaskRunStatus =
   | 'PENDING'
   | 'RUNNING'
   | 'WAITING'
+  | 'BLOCKED'
   | 'COMPLETED'
   | 'FAILED'
-  | 'CANCELLED'
-  | string
+  | 'CANCELED'
+
+export type TaskRunSource = 'active' | 'recent'
+
+export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELED'
+
+export type TaskRunAgentRef = {
+  id: string
+  kind: TaskRunAgentKind
+  profileId?: string | null
+  profileKey?: string | null
+  displayName: string
+  agentSessionId?: string | null
+  status?: string | null
+  summary?: string | null
+}
+
+export type TaskRunDisplayContext = {
+  sessionId?: string | null
+  taskRunId: string
+  stepRunId?: string | null
+  assigneeAgent: TaskRunAgentRef
+  actorAgent: TaskRunAgentRef
+  delegatedAgents: TaskRunAgentRef[]
+}
+
+export type RawTaskRunStatus = TaskRunStatus | 'CANCELLED' | string
 
 export type RawTaskRun = {
   task_run_id: string
@@ -19,6 +47,7 @@ export type RawTaskRun = {
   updated_at?: string | null
   completed_at?: string | null
   last_sequence?: number | null
+  displayContext?: TaskRunDisplayContext | null
   [key: string]: unknown
 }
 
@@ -35,6 +64,7 @@ export type RawStepRun = {
   sequence?: number | null
   started_at?: string | null
   completed_at?: string | null
+  displayContext?: TaskRunDisplayContext | null
   [key: string]: unknown
 }
 
@@ -42,7 +72,7 @@ export type RawApproval = {
   approval_id: string
   task_run_id: string
   step_run_id?: string | null
-  status?: 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED' | string
+  status?: ApprovalStatus | 'CANCELLED' | string
   title?: string | null
   description?: string | null
   payload?: JsonObject | null
@@ -75,6 +105,7 @@ export type ActivityItemView = {
   tone: TaskRunStatusTone
   sequence?: number
   occurredAt?: string
+  displayContext?: TaskRunDisplayContext
   raw: RawTaskEventPayload
 }
 
@@ -98,19 +129,99 @@ export type TaskRunDetailSummaryView = TaskRunSummaryView & {
 }
 
 export type TaskRunsActiveListResultPayload = {
-  task_runs?: RawTaskRun[]
-  taskRuns?: RawTaskRun[]
-  items?: RawTaskRun[]
+  task_runs?: RawActiveTaskRun[]
+  taskRuns?: RawActiveTaskRun[]
+  items?: RawActiveTaskRun[]
+  total_count?: number
+  totalCount?: number
   [key: string]: unknown
+}
+
+export type RawActiveTaskRun = RawTaskRun & {
+  source?: TaskRunSource
+  current_step_run_id?: string | null
+  currentStepRunId?: string | null
+  current_step?: RawStepRun | null
+  currentStep?: RawStepRun | null
+  wait_reason?: string | null
+  waitReason?: string | null
+  pending_approval?: RawApproval | null
+  pendingApproval?: RawApproval | null
 }
 
 export type TaskRunEventsReplayResultPayload = {
   task_run_id?: string
   taskRunId?: string
   events?: RawTaskEventPayload[]
+  latest_sequence?: number
+  latestSequence?: number
   next_sequence?: number
   nextSequence?: number
   retention_exceeded?: boolean
   retentionExceeded?: boolean
+  [key: string]: unknown
+}
+
+export type TaskRunFlowActivity = {
+  event_type?: string
+  eventType?: string
+  status?: RawTaskRunStatus | null
+  summary_message?: string | null
+  summaryMessage?: string | null
+  occurred_at?: string | null
+  occurredAt?: string | null
+}
+
+export type TaskRunFlowWorkerSession = {
+  session_id?: string
+  sessionId?: string
+  status?: string | null
+  summary?: string | null
+  agent_id?: string | null
+  agentId?: string | null
+  profile_key?: string | null
+  profileKey?: string | null
+}
+
+export type TaskRunFlowNode = {
+  step_run_id?: string
+  stepRunId?: string
+  step_order?: number
+  stepOrder?: number
+  title?: string | null
+  status?: RawTaskRunStatus | null
+  step_type?: string
+  stepType?: string
+  worker_session_id?: string | null
+  workerSessionId?: string | null
+  worker_session?: TaskRunFlowWorkerSession | null
+  workerSession?: TaskRunFlowWorkerSession | null
+  activity?: TaskRunFlowActivity[]
+  [key: string]: unknown
+}
+
+export type TaskRunFlowEdge = {
+  from_step_run_id?: string | null
+  fromStepRunId?: string | null
+  to_step_run_id?: string | null
+  toStepRunId?: string | null
+  to_task_run_id?: string | null
+  toTaskRunId?: string | null
+  to_agent_session_id?: string | null
+  toAgentSessionId?: string | null
+  relation?: string
+  [key: string]: unknown
+}
+
+export type TaskRunFlowResponse = {
+  task_run_id?: string
+  taskRunId?: string
+  status?: RawTaskRunStatus | null
+  title?: string | null
+  current_step_run_id?: string | null
+  currentStepRunId?: string | null
+  summary?: string | null
+  nodes?: TaskRunFlowNode[]
+  edges?: TaskRunFlowEdge[]
   [key: string]: unknown
 }

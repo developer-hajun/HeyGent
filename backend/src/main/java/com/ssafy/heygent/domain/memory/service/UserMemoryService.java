@@ -3,10 +3,12 @@ package com.ssafy.heygent.domain.memory.service;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -16,6 +18,7 @@ import org.springframework.util.StringUtils;
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryCandidatesRequest;
 import com.ssafy.heygent.domain.memory.dto.request.CreateMemoryRequest;
 import com.ssafy.heygent.domain.memory.dto.request.MarkMemoryUsedRequest;
+import com.ssafy.heygent.domain.memory.dto.response.UserMemoryEventResponse;
 import com.ssafy.heygent.domain.memory.dto.response.UserMemoryResponse;
 import com.ssafy.heygent.domain.memory.embedding.MemoryEmbeddingService;
 import com.ssafy.heygent.domain.memory.entity.MemoryEventType;
@@ -45,6 +48,16 @@ public class UserMemoryService {
     private static final double MIN_RECALL_SIMILARITY = 0.35;
     private static final double MAX_RECALL_DISTANCE = 1.0 - MIN_RECALL_SIMILARITY;
     private static final double SEMANTIC_DUPLICATE_SIMILARITY = 0.92;
+    private static final Set<String> ALLOWED_METADATA_CATEGORIES = Set.of(
+        "preference",
+        "profile",
+        "fact",
+        "instruction",
+        "procedure",
+        "event",
+        "reason",
+        "task_state"
+    );
 
     private final UserMemoryRepository userMemoryRepository;
     private final UserMemoryVectorRepository userMemoryVectorRepository;
@@ -190,6 +203,13 @@ public class UserMemoryService {
             .toList();
     }
 
+    public List<UserMemoryEventResponse> getMemoryEvents(Long userId, Long memoryId) {
+        findOwnedMemory(userId, memoryId);
+        return userMemoryEventService.findEvents(userId, memoryId).stream()
+            .map(UserMemoryEventResponse::from)
+            .toList();
+    }
+
     @Transactional
     public List<UserMemoryResponse> recall(
         Long userId,
@@ -201,9 +221,11 @@ public class UserMemoryService {
         String workspaceKey,
         String sessionKey,
         String resourceId,
-        List<String> tags
+        List<String> tags,
+        List<String> metadataCategories
     ) {
         int normalizedLimit = normalizeRecallLimit(limit);
+        List<String> normalizedMetadataCategories = normalizeMetadataCategories(metadataCategories);
         List<UserMemory> memories;
 
         if (StringUtils.hasText(query)) {
@@ -217,7 +239,8 @@ public class UserMemoryService {
                 workspaceKey,
                 sessionKey,
                 resourceId,
-                tags
+                tags,
+                normalizedMetadataCategories
             );
         } else {
             memories = recallByFilters(
@@ -229,7 +252,8 @@ public class UserMemoryService {
                 workspaceKey,
                 sessionKey,
                 resourceId,
-                tags
+                tags,
+                normalizedMetadataCategories
             );
         }
 
@@ -257,7 +281,8 @@ public class UserMemoryService {
         String workspaceKey,
         String sessionKey,
         String resourceId,
-        List<String> tags
+        List<String> tags,
+        List<String> metadataCategories
     ) {
         List<Double> queryEmbedding = memoryEmbeddingService.embed(query.trim());
         List<Long> memoryIds = userMemoryVectorRepository.searchIds(
@@ -270,6 +295,7 @@ public class UserMemoryService {
             sessionKey,
             resourceId,
             tags,
+            metadataCategories,
             MIN_CONFIDENCE_TO_STORE,
             MIN_IMPORTANCE_TO_STORE,
             MAX_RECALL_DISTANCE,
@@ -287,7 +313,8 @@ public class UserMemoryService {
                 workspaceKey,
                 sessionKey,
                 resourceId,
-                tags
+                tags,
+                metadataCategories
             );
         }
 
@@ -311,10 +338,11 @@ public class UserMemoryService {
         String workspaceKey,
         String sessionKey,
         String resourceId,
-        List<String> tags
+        List<String> tags,
+        List<String> metadataCategories
     ) {
         List<ScoredMemory> scoredMemories = findRecallCandidates(userId, storeType, memoryType, scopeType).stream()
-            .filter(memory -> matchesMetadata(memory, workspaceKey, sessionKey, resourceId, tags))
+            .filter(memory -> matchesMetadata(memory, workspaceKey, sessionKey, resourceId, tags, metadataCategories))
             .filter(memory -> StringUtils.hasText(memory.getEmbeddingText()))
             .map(memory -> new ScoredMemory(
                 memory,
@@ -343,10 +371,11 @@ public class UserMemoryService {
         String workspaceKey,
         String sessionKey,
         String resourceId,
-        List<String> tags
+        List<String> tags,
+        List<String> metadataCategories
     ) {
         return findRecallCandidates(userId, storeType, memoryType, scopeType).stream()
-            .filter(memory -> matchesMetadata(memory, workspaceKey, sessionKey, resourceId, tags))
+            .filter(memory -> matchesMetadata(memory, workspaceKey, sessionKey, resourceId, tags, metadataCategories))
             .limit(limit)
             .toList();
     }
@@ -394,13 +423,35 @@ public class UserMemoryService {
 
     @Transactional
     public UserMemoryResponse markUsed(Long userId, Long memoryId, Double usefulnessScore) {
+        return markUsed(userId, memoryId, usefulnessScore, null);
+    }
+
+    @Transactional
+    public UserMemoryResponse markUsed(
+        Long userId,
+        Long memoryId,
+        Double usefulnessScore,
+        String sourceTaskRunId
+    ) {
         UserMemory memory = findOwnedMemory(userId, memoryId);
         if (memory.getStatus() != MemoryStatus.ACTIVE || !isNotExpired(memory, LocalDateTime.now())) {
             throw new CustomException(ErrorCode.RESOURCE_NOT_FOUND);
         }
 
+        String normalizedTaskRunId = trimToNull(sourceTaskRunId);
+        if (userMemoryEventService.existsEvent(memory, MemoryEventType.USED, normalizedTaskRunId)) {
+            return UserMemoryResponse.from(memory);
+        }
+
         memory.markUsed(LocalDateTime.now(), usefulnessScore);
-        userMemoryEventService.record(memory, MemoryEventType.USED, usefulnessScore, Map.of());
+        userMemoryEventService.record(
+            memory,
+            MemoryEventType.USED,
+            usefulnessScore,
+            Map.of(),
+            normalizedTaskRunId,
+            null
+        );
         return UserMemoryResponse.from(memory);
     }
 
@@ -416,6 +467,7 @@ public class UserMemoryService {
     ) {
         UserMemory targetMemory = findOwnedMemory(userId, request.getTargetMemoryId());
         validateTargetCanChange(targetMemory);
+        List<UserMemory> additionalTargetMemories = findAdditionalTargetMemories(userId, request, targetMemory.getId());
 
         UserMemoryResponse savedResponse = saveMemory(
             userId,
@@ -432,7 +484,42 @@ public class UserMemoryService {
             "supersededByMemoryId", savedResponse.getId(),
             "operationType", eventType.name()
         ));
+        additionalTargetMemories.forEach(memory -> invalidateAdditionalTargetMemory(memory, savedResponse, request, eventType));
         return savedResponse;
+    }
+
+    private List<UserMemory> findAdditionalTargetMemories(Long userId, CreateMemoryRequest request, Long primaryTargetMemoryId) {
+        List<Long> additionalTargetMemoryIds = request.getAdditionalTargetMemoryIds();
+        if (additionalTargetMemoryIds == null || additionalTargetMemoryIds.isEmpty()) {
+            return List.of();
+        }
+
+        LinkedHashSet<Long> uniqueTargetMemoryIds = additionalTargetMemoryIds.stream()
+            .filter(Objects::nonNull)
+            .filter(memoryId -> !memoryId.equals(primaryTargetMemoryId))
+            .collect(LinkedHashSet::new, LinkedHashSet::add, LinkedHashSet::addAll);
+
+        return uniqueTargetMemoryIds.stream()
+            .map(memoryId -> {
+                UserMemory memory = findOwnedMemory(userId, memoryId);
+                validateTargetCanChange(memory);
+                return memory;
+            })
+            .toList();
+    }
+
+    private void invalidateAdditionalTargetMemory(
+        UserMemory memory,
+        UserMemoryResponse savedResponse,
+        CreateMemoryRequest request,
+        MemoryEventType eventType
+    ) {
+        memory.invalidate(savedResponse.getId(), trimToNull(request.getUpdateReason()), LocalDateTime.now());
+        userMemoryEventService.record(memory, MemoryEventType.INVALIDATED, null, Map.of(
+            "supersededByMemoryId", savedResponse.getId(),
+            "operationType", eventType.name(),
+            "additionalTarget", true
+        ));
     }
 
     private Optional<UserMemory> findSemanticDuplicateMemory(
@@ -637,7 +724,8 @@ public class UserMemoryService {
         String workspaceKey,
         String sessionKey,
         String resourceId,
-        List<String> tags
+        List<String> tags,
+        List<String> metadataCategories
     ) {
         Map<String, Object> metadata = memory.getMetadata();
         if (!matchesMetadataValue(metadata, "workspaceKey", workspaceKey)) {
@@ -649,7 +737,7 @@ public class UserMemoryService {
         if (!matchesMetadataValue(metadata, "resourceId", resourceId)) {
             return false;
         }
-        return matchesTags(metadata, tags);
+        return matchesTags(metadata, tags) && matchesMetadataCategories(metadata, metadataCategories);
     }
 
     private boolean matchesMetadataValue(Map<String, Object> metadata, String key, String expectedValue) {
@@ -683,6 +771,36 @@ public class UserMemoryService {
             .toList();
 
         return normalizedTags.stream().anyMatch(normalizedStoredTags::contains);
+    }
+
+    private boolean matchesMetadataCategories(Map<String, Object> metadata, List<String> metadataCategories) {
+        List<String> normalizedCategories = normalizeMetadataCategories(metadataCategories);
+        if (normalizedCategories.isEmpty()) {
+            return true;
+        }
+        if (metadata == null) {
+            return false;
+        }
+        Object category = metadata.get("category");
+        return category != null && normalizedCategories.contains(category.toString().trim());
+    }
+
+    private List<String> normalizeMetadataCategories(List<String> metadataCategories) {
+        if (metadataCategories == null) {
+            return List.of();
+        }
+        return metadataCategories.stream()
+            .filter(StringUtils::hasText)
+            .map(category -> category.trim().toLowerCase().replace("-", "_"))
+            .peek(this::validateMetadataCategory)
+            .distinct()
+            .toList();
+    }
+
+    private void validateMetadataCategory(String category) {
+        if (!ALLOWED_METADATA_CATEGORIES.contains(category)) {
+            throw new CustomException(ErrorCode.INVALID_INPUT_VALUE);
+        }
     }
 
     private boolean isNotExpired(UserMemory memory, LocalDateTime now) {

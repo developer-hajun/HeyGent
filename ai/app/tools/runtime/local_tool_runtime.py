@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.utils.ids import new_id
+from app.domain.work import WorkComment, WorkService
 from app.domain.session.sessions.transcript_store import TranscriptStore
 from app.tools.runtime.registry import build_runtime_tool_entries, list_runtime_tool_definitions
 from app.tools.runtime.toolsets import resolve_runtime_tool_names
@@ -20,6 +21,7 @@ BRIDGE_ROUTABLE_TOOLS = {"terminal.run", "read_file", "write_file", "patch", "se
 MAX_TERMINAL_STREAM_CHARS = 12_000
 MAX_TOOL_RESULT_STRING_CHARS = 20_000
 MAX_TOOL_RESULT_TRUNCATED_FIELDS = 20
+MAX_SKILL_RESOURCE_BYTES = 200_000
 SECRET_FILE_NAME_PATTERN = re.compile(
     r"(^|[._-])(secret|secrets|token|password|passwd|credential|credentials|env)($|[._-])",
     re.IGNORECASE,
@@ -40,28 +42,36 @@ class LocalToolRuntime:
         workspace_root: str | os.PathLike[str] | None = None,
         bridge_session_manager=None,
         owner_key: str | None = None,
+        work_repository=None,
+        agent_repository=None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> None:
         self.skill_registry = skill_registry
         self.session_store = session_store
         self.bridge_session_manager = bridge_session_manager
         self.owner_key = str(owner_key) if owner_key else None
+        self.work_repository = work_repository
+        self.agent_repository = agent_repository
+        self.runtime_context = dict(runtime_context or {})
         self.workspace_root = self._resolve_workspace_root(workspace_root)
         self._step_items: list[dict[str, str]] = []
         self._todo_items: list[dict[str, str]] = []
         self._tool_entries = build_runtime_tool_entries(
             {
-                "skills.list": self._list_skills,
-                "skills.read": self._read_skill,
                 "skill.execute": self._execute_skill,
                 "session.record": self._record_session_message,
                 "session.search": self._search_sessions,
                 "step": self._step,
                 "todo": self._todo,
                 "delegate_task": self._delegate_task,
+                "session_agent_task": self._session_agent_task,
+                "work_disposition": self._work_disposition,
+                "mattermost.send": self._send_mattermost_message,
                 "terminal.run": self._run_terminal_command,
                 "web_search": self._run_web_search,
                 "web_extract": self._run_web_extract,
                 "web_crawl": self._run_web_crawl,
+                "http_get": self._run_http_get,
                 "browser_navigate": self._run_browser_navigate,
                 "browser_snapshot": self._run_browser_snapshot,
                 "browser_click": self._run_browser_click,
@@ -99,6 +109,9 @@ class LocalToolRuntime:
             workspace_root=workspace_root,
             bridge_session_manager=self.bridge_session_manager,
             owner_key=self.owner_key,
+            work_repository=self.work_repository,
+            agent_repository=self.agent_repository,
+            runtime_context=self.runtime_context,
         )
         bound._step_items = [dict(item) for item in self._step_items]
         bound._todo_items = [dict(item) for item in self._todo_items]
@@ -109,6 +122,7 @@ class LocalToolRuntime:
         *,
         workspace_root: str | os.PathLike[str] | None = None,
         owner_key: str | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> "LocalToolRuntime":
         bound = self.__class__(
             skill_registry=self.skill_registry,
@@ -116,6 +130,9 @@ class LocalToolRuntime:
             workspace_root=workspace_root if workspace_root is not None else self.workspace_root,
             bridge_session_manager=self.bridge_session_manager,
             owner_key=owner_key or self.owner_key,
+            work_repository=self.work_repository,
+            agent_repository=self.agent_repository,
+            runtime_context=runtime_context if runtime_context is not None else self.runtime_context,
         )
         bound._step_items = [dict(item) for item in self._step_items]
         bound._todo_items = [dict(item) for item in self._todo_items]
@@ -203,14 +220,15 @@ class LocalToolRuntime:
         return entry.handler(dict(args))
 
     def _maybe_route_via_bridge(self, *, tool_name: str, args: dict[str, Any]) -> dict[str, Any] | None:
-        """브릿지가 연결돼 있으면 도구 호출을 위임하고 결과 dict를 그대로 반환한다.
+        """현재 요청 user 의 브릿지가 연결돼 있으면 도구 호출을 위임하고 결과 dict를 그대로 반환한다.
 
         결과 형식은 기존 로컬 실행과 동일해야 한다 (브릿지 executor가 맞춤).
         브릿지 미연결·타임아웃 등은 _tool_error 형식으로 변환.
         """
 
         manager = self.bridge_session_manager
-        if manager is None or not manager.is_alive():
+        user_id = self.owner_key
+        if manager is None or not user_id or not manager.is_alive(user_id):
             return self._tool_error(
                 code="bridge_not_connected",
                 message="로컬 브릿지가 연결되어 있지 않습니다",
@@ -221,7 +239,7 @@ class LocalToolRuntime:
         from app.bridge import BridgeDisconnected, BridgeError, BridgeTimeout
 
         try:
-            return manager.execute_sync(name=tool_name, args=args)
+            return manager.execute_sync(user_id=user_id, name=tool_name, args=args)
         except BridgeTimeout as error:
             return self._tool_error(code="bridge_timeout", message=str(error), tool_name=tool_name)
         except BridgeDisconnected as error:
@@ -234,14 +252,28 @@ class LocalToolRuntime:
             )
 
     def _list_skills(self, args: dict[str, Any]) -> dict[str, object]:
-        names = sorted(getattr(self.skill_registry, "_skills", {}).keys())
+        skills = self._runtime_skills()
+        names = sorted(skills.keys())
         return {
             "count": len(names),
             "items": names,
+            "skills": [
+                {
+                    "name": name,
+                    "description": str(skills[name].get("description") or ""),
+                }
+                for name in names
+            ],
         }
 
     def _read_skill(self, args: dict[str, Any]) -> dict[str, object]:
         skill_name = str(args["skill_name"])
+        if not self._is_runtime_skill_enabled(skill_name):
+            return self._tool_error(
+                code="skill_disabled",
+                message=f"disabled skill: {skill_name}",
+                tool_name="skills.read",
+            )
         skill = getattr(self.skill_registry, "_skills", {}).get(skill_name)
         if skill is None:
             raise KeyError(skill_name)
@@ -251,9 +283,73 @@ class LocalToolRuntime:
             "body": str(skill.get("body") or ""),
         }
 
+    def _read_skill_file(self, args: dict[str, Any]) -> dict[str, object]:
+        skill_name = str(args["skill_name"])
+        if not self._is_runtime_skill_enabled(skill_name):
+            return self._tool_error(
+                code="skill_disabled",
+                message=f"disabled skill: {skill_name}",
+                tool_name="skills.read_file",
+            )
+
+        skill = getattr(self.skill_registry, "_skills", {}).get(skill_name)
+        if skill is None:
+            return self._tool_error(
+                code="skill_not_found",
+                message=f"unknown skill: {skill_name}",
+                tool_name="skills.read_file",
+            )
+
+        document_path = self._resolve_skill_document_path(skill.get("path"))
+        if document_path is None or not self._is_allowed_skill_path(document_path):
+            return self._tool_error(
+                code="skill_path_not_allowed",
+                message="skill document path must stay inside app/skills",
+                tool_name="skills.read_file",
+            )
+
+        resource_path = self._resolve_skill_resource_path(document_path, args.get("path"))
+        if resource_path is None:
+            return self._tool_error(
+                code="skill_file_not_allowed",
+                message="skill file path must stay inside the selected skill",
+                tool_name="skills.read_file",
+            )
+        if not resource_path.exists() or not resource_path.is_file():
+            return self._tool_error(
+                code="skill_file_not_found",
+                message="skill file not found",
+                tool_name="skills.read_file",
+            )
+
+        raw = resource_path.read_bytes()
+        truncated = len(raw) > MAX_SKILL_RESOURCE_BYTES
+        raw = raw[:MAX_SKILL_RESOURCE_BYTES]
+        if b"\x00" in raw:
+            return self._tool_error(
+                code="skill_file_not_text",
+                message="skill file is not a text file",
+                tool_name="skills.read_file",
+            )
+
+        return {
+            "ok": True,
+            "skill_name": skill_name,
+            "path": resource_path.relative_to(document_path.parent).as_posix(),
+            "content": raw.decode("utf-8", errors="replace"),
+            "bytes_read": len(raw),
+            "truncated": truncated,
+        }
+
     def _execute_skill(self, args: dict[str, Any]) -> dict[str, object]:
         skill_name = str(args.get("skill_name") or "").strip()
         action = str(args.get("action") or "").strip()
+        if not self._is_runtime_skill_enabled(skill_name):
+            return self._tool_error(
+                code="skill_disabled",
+                message=f"disabled skill: {skill_name}",
+                tool_name="skill.execute",
+            )
         if action != "inspect":
             return self._tool_error(
                 code="unsupported_skill_action",
@@ -285,6 +381,26 @@ class LocalToolRuntime:
             "files": self._list_skill_files(document_path),
             "content": str(skill.get("body") or ""),
         }
+
+    def _runtime_skills(self) -> dict[str, Any]:
+        skills = getattr(self.skill_registry, "_skills", {})
+        allowed = self._runtime_enabled_skill_names()
+        if allowed is None:
+            return skills
+        return {name: skills[name] for name in sorted(allowed) if name in skills}
+
+    def _runtime_enabled_skill_names(self) -> set[str] | None:
+        if "enabledSkillNames" not in self.runtime_context:
+            return None
+        return {
+            str(item).strip()
+            for item in list(self.runtime_context.get("enabledSkillNames") or [])
+            if str(item).strip()
+        }
+
+    def _is_runtime_skill_enabled(self, skill_name: str) -> bool:
+        allowed = self._runtime_enabled_skill_names()
+        return allowed is None or skill_name in allowed
 
     def _record_session_message(self, args: dict[str, Any]) -> dict[str, object]:
         session_key = str(args.get("session_key") or "runtime-probe")
@@ -364,6 +480,16 @@ class LocalToolRuntime:
 
     def _run_web_crawl(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.web.web_tools", "web_crawl_handler", args)
+
+    def _run_http_get(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler("app.tools.web.web_tools", "http_get_handler", args)
+
+    def _send_mattermost_message(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler(
+            "app.tools.messaging.mattermost_tool",
+            "send_mattermost_message_handler",
+            args,
+        )
 
     def _run_browser_navigate(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_navigate_handler", args)
@@ -514,6 +640,175 @@ class LocalToolRuntime:
             "child_session": child_session,
         }
 
+    def _session_agent_task(self, args: dict[str, Any]) -> dict[str, Any]:
+        """세션 보드에 보이는 하위 작업을 만들고 실행 엔진이 깨울 계약을 만든다."""
+
+        if self.work_repository is None or self.agent_repository is None:
+            return self._tool_error(
+                code="work_runtime_unavailable",
+                message="work runtime repositories are not configured",
+                tool_name="session_agent_task",
+            )
+
+        context = dict(self.runtime_context or {})
+        parent_work_id = self._optional_text(context.get("workId") or context.get("work_id"))
+        if not parent_work_id:
+            if context.get("allowSessionAgentRootWork") is True or context.get("allow_session_agent_root_work") is True:
+                parent = self._create_session_agent_root_work(args=args, context=context)
+                if parent is None:
+                    return self._tool_error(
+                        code="work_context_required",
+                        message="session_agent_task requires a connected CEO work item",
+                        tool_name="session_agent_task",
+                    )
+                self.runtime_context["workId"] = parent.work_id
+                self.runtime_context["workIdentifier"] = parent.identifier
+                self.runtime_context["workAssigneeAgentId"] = parent.assignee_agent_id
+                parent_work_id = parent.work_id
+            else:
+                return self._tool_error(
+                    code="work_context_required",
+                    message="session_agent_task requires a connected CEO work item",
+                    tool_name="session_agent_task",
+                )
+        else:
+            parent = self.work_repository.get_work(parent_work_id)
+            if parent is None:
+                return self._tool_error(
+                    code="work_not_found",
+                    message="connected work item was not found",
+                    tool_name="session_agent_task",
+                )
+        if str(parent.assignee_agent_id or "CEO") != "CEO":
+            return self._tool_error(
+                code="ceo_work_required",
+                message="only CEO-owned work can create child work for session agents",
+                tool_name="session_agent_task",
+            )
+
+        profile = self._resolve_session_agent_profile(
+            session_id=parent.session_id,
+            owner_key=parent.owner_key,
+            assignee_agent_id=self._optional_text(args.get("assigneeAgentId") or args.get("assignee_agent_id")),
+            assignee_hint=self._optional_text(args.get("assigneeHint") or args.get("assignee_hint")),
+        )
+        if profile is None:
+            return self._tool_error(
+                code="session_agent_not_found",
+                message="no available session agent was found for this work",
+                tool_name="session_agent_task",
+            )
+
+        title = str(args.get("title") or "").strip()
+        instruction = str(args.get("instruction") or "").strip()
+        description = str(args.get("description") or instruction or title).strip()
+        profile_id = str(profile.get("profile_id") or "").strip()
+        child = WorkService(self.work_repository).create_from_payload(
+            session_id=parent.session_id,
+            owner_key=parent.owner_key,
+            owner_user_id=parent.owner_user_id,
+            payload={
+                "title": title,
+                "description": description,
+                "rawUserInput": instruction,
+                "executionInstruction": instruction,
+                "assigneeAgentId": profile_id,
+                "parentId": parent.work_id,
+                "expectedDeliverable": self._optional_text(args.get("expectedDeliverable") or args.get("expected_deliverable")),
+                "acceptanceCriteria": self._string_list(args.get("acceptanceCriteria") or args.get("acceptance_criteria")),
+                "constraints": self._string_list(args.get("constraints")),
+                "labelNames": self._string_list(args.get("labelNames") or args.get("label_names")),
+                "metadata": {
+                    "createdByWorkId": parent.work_id,
+                    "createdByTool": "session_agent_task",
+                },
+            },
+            client_request_id=None,
+        )
+        block_parent_until_done = args.get("blockParentUntilDone", args.get("block_parent_until_done"))
+        if block_parent_until_done is True:
+            self.work_repository.add_relation(
+                source_work_id=child.work_id,
+                target_work_id=parent.work_id,
+                relation_type="blocks",
+            )
+        self.work_repository.add_comment(
+            WorkComment(
+                comment_id=new_id("comment"),
+                work_id=parent.work_id,
+                author_type="system",
+                body=f"{child.identifier} 하위 작업을 만들고 세션 에이전트에게 배정했습니다.",
+                metadata={"childWorkId": child.work_id, "assigneeAgentId": profile_id},
+            )
+        )
+        config = dict(profile.get("config_snapshot") or {})
+        return {
+            "ok": True,
+            "content": f"{child.identifier} child work accepted: {child.title}",
+            "parent_work": self._work_tool_payload(parent),
+            "child_work": self._work_tool_payload(child),
+            "agent": {
+                "profileId": profile_id,
+                "name": str(config.get("name") or profile.get("profile_key") or profile_id),
+                "role": str(config.get("role") or profile.get("agent_type") or "user_subagent"),
+            },
+            "startExecution": True,
+        }
+
+    def _create_session_agent_root_work(self, *, args: dict[str, Any], context: dict[str, Any]):
+        session_id = self._optional_text(context.get("sessionId") or context.get("session_id"))
+        owner_key = self._optional_text(context.get("ownerKey") or context.get("owner_key"))
+        if not session_id or not owner_key:
+            return None
+        owner_user_id = self._optional_int(context.get("ownerUserId") or context.get("owner_user_id"))
+        prompt = str(context.get("prompt") or "").strip()
+        title = str(args.get("title") or prompt or "세션 에이전트 작업").strip()
+        description = str(prompt or args.get("description") or title).strip()
+        return WorkService(self.work_repository).create_from_payload(
+            session_id=session_id,
+            owner_key=owner_key,
+            owner_user_id=owner_user_id,
+            payload={
+                "title": title,
+                "description": description,
+                "rawUserInput": prompt,
+                "executionInstruction": description,
+                "assigneeAgentId": "CEO",
+                "source": "session_agent_task",
+                "metadata": {"createdByTool": "session_agent_task"},
+            },
+            client_request_id=None,
+        )
+
+    def _work_disposition(self, args: dict[str, Any]) -> dict[str, Any]:
+        context = dict(self.runtime_context or {})
+        work_id = self._optional_text(context.get("workId") or context.get("work_id"))
+        if not work_id:
+            return self._tool_error(
+                code="work_context_required",
+                message="work_disposition requires a connected work item",
+                tool_name="work_disposition",
+            )
+        status = self._optional_text(args.get("status"))
+        if status not in {"todo", "in_progress", "in_review", "blocked", "done", "cancelled"}:
+            return self._tool_error(
+                code="invalid_work_status",
+                message="work_disposition status is invalid",
+                tool_name="work_disposition",
+            )
+        summary = str(args.get("summary") or "").strip()
+        next_action = self._optional_text(args.get("nextAction") or args.get("next_action"))
+        return {
+            "ok": True,
+            "content": f"work disposition accepted: {status}",
+            "workDisposition": {
+                "workId": work_id,
+                "status": status,
+                "summary": summary,
+                "nextAction": next_action,
+            },
+        }
+
     def _run_terminal_command(self, args: dict[str, Any]) -> dict[str, Any]:
         argv = list(args.get("argv") or []) or None
         command = args.get("command")
@@ -564,6 +859,9 @@ class LocalToolRuntime:
         if tool_name in FILE_TOOL_NAMES:
             # 모델이 workspace_root를 넓혀도 서버가 바인딩한 루트만 사용한다.
             trusted_args["workspace_root"] = str(self.workspace_root)
+        if tool_name == "mattermost.send":
+            # 사용자 식별자는 모델 인자가 아니라 서버가 바인딩한 owner_key만 신뢰한다.
+            trusted_args["_trusted_user_id"] = self.owner_key
         return trusted_args
 
     def _resolve_terminal_cwd(self, value: Any) -> str:
@@ -722,6 +1020,20 @@ class LocalToolRuntime:
     def _is_secret_skill_file(relative_path: Path) -> bool:
         return any(SECRET_FILE_NAME_PATTERN.search(part) for part in relative_path.parts)
 
+    @classmethod
+    def _resolve_skill_resource_path(cls, document_path: Path, value: Any) -> Path | None:
+        raw_value = str(value or "").strip().replace("\\", "/")
+        if not raw_value:
+            return None
+        relative_path = Path(raw_value)
+        if relative_path.is_absolute() or cls._is_secret_skill_file(relative_path):
+            return None
+        skill_dir = document_path.parent.resolve(strict=False)
+        candidate = (skill_dir / relative_path).resolve(strict=False)
+        if not cls._is_relative_to(candidate, skill_dir):
+            return None
+        return candidate
+
     @staticmethod
     def _is_relative_to(path: Path, root: Path) -> bool:
         try:
@@ -758,6 +1070,7 @@ class LocalToolRuntime:
             "web_search": "web",
             "web_extract": "web",
             "web_crawl": "web",
+            "http_get": "web",
             "read_file": "file",
             "write_file": "file",
             "patch": "file",
@@ -786,6 +1099,82 @@ class LocalToolRuntime:
                 continue
             normalized.append(name)
         return normalized or ["skills", "terminal", "file", "web"]
+
+    def _resolve_session_agent_profile(
+        self,
+        *,
+        session_id: str,
+        owner_key: str,
+        assignee_agent_id: str | None,
+        assignee_hint: str | None,
+    ) -> dict[str, Any] | None:
+        if self.agent_repository is None:
+            return None
+        if assignee_agent_id:
+            profile = self.agent_repository.get_session_agent(profile_id=assignee_agent_id, owner_key=owner_key)
+            if profile is not None and str(profile.get("session_id") or "") == session_id:
+                if str(profile.get("agent_type") or "") == "user_subagent":
+                    return profile
+            return None
+
+        profiles = list(self.agent_repository.list_session_agents(session_id=session_id, owner_key=owner_key))
+        if not profiles:
+            return None
+        if assignee_hint:
+            normalized_hint = self._normalize_match_text(assignee_hint)
+            for profile in profiles:
+                if self._profile_matches_hint(profile, normalized_hint):
+                    return profile
+        return profiles[0]
+
+    @classmethod
+    def _profile_matches_hint(cls, profile: dict[str, Any], normalized_hint: str) -> bool:
+        config = dict(profile.get("config_snapshot") or {})
+        values = [
+            profile.get("profile_id"),
+            profile.get("profile_key"),
+            profile.get("template_key"),
+            config.get("name"),
+            config.get("displayName"),
+            config.get("role"),
+            config.get("title"),
+            config.get("description"),
+        ]
+        for skill in list(config.get("skills") or []):
+            values.append(skill)
+        haystack = cls._normalize_match_text(" ".join(str(value or "") for value in values))
+        return bool(normalized_hint and normalized_hint in haystack)
+
+    @staticmethod
+    def _normalize_match_text(value: Any) -> str:
+        return re.sub(r"\s+", "", str(value or "").strip().lower())
+
+    @staticmethod
+    def _work_tool_payload(work) -> dict[str, Any]:
+        return {
+            "workId": work.work_id,
+            "identifier": work.identifier,
+            "sessionId": work.session_id,
+            "title": work.title,
+            "description": work.description,
+            "status": work.status,
+            "assigneeAgentId": work.assignee_agent_id,
+            "parentId": work.parent_id,
+            "executionInstruction": work.execution_instruction,
+        }
+
+    @staticmethod
+    def _string_list(value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        try:
+            return int(str(value))
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _optional_positive_int(value: Any) -> int | None:
