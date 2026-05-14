@@ -70,6 +70,7 @@ class LocalToolRuntime:
                 "session_agent_task": self._session_agent_task,
                 "work_disposition": self._work_disposition,
                 "mattermost.send": self._send_mattermost_message,
+                "notion.execute": self._execute_notion,
                 "terminal.run": self._run_terminal_command,
                 "web_search": self._run_web_search,
                 "web_extract": self._run_web_extract,
@@ -494,6 +495,13 @@ class LocalToolRuntime:
             args,
         )
 
+    def _execute_notion(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler(
+            "app.tools.notion.notion_tool",
+            "execute_notion_handler",
+            args,
+        )
+
     def _run_browser_navigate(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_navigate_handler", args)
 
@@ -884,6 +892,11 @@ class LocalToolRuntime:
             trusted_args["workspace_root"] = str(self.workspace_root)
         if tool_name == "mattermost.send":
             # 사용자 식별자는 모델 인자가 아니라 서버가 바인딩한 owner_key만 신뢰한다.
+            trusted_args["_trusted_user_id"] = self.owner_key
+        if tool_name == "notion.execute":
+            # 사용자 식별자는 모델 인자가 아니라 서버가 바인딩한 owner_key만 신뢰한다.
+            trusted_args.pop("userId", None)
+            trusted_args.pop("user_id", None)
             trusted_args["_trusted_user_id"] = self.owner_key
         return trusted_args
 

@@ -192,6 +192,49 @@ def test_runtime_exposes_heygent_web_tool_definitions():
     assert schema_by_name["web_crawl"]["parameters"]["properties"]["url"]["type"] == "string"
 
 
+def test_runtime_exposes_notion_execute_only_for_notion_toolset():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    definitions = runtime.list_tool_definitions(enabled_toolsets=("notion",))
+
+    assert [definition["name"] for definition in definitions] == ["notion.execute"]
+    schema = definitions[0]["schema"]
+    assert "commands" in schema["parameters"]["properties"]
+    assert "notion.execute" not in resolve_runtime_tool_names(("local-core",))
+
+
+def test_notion_runtime_binds_owner_user_id_and_ignores_model_user_id(monkeypatch):
+    captured = {}
+
+    def fake_execute_notion_handler(args):
+        captured.update(args)
+        return {"ok": True, "results": []}
+
+    from app.tools.notion import notion_tool
+
+    monkeypatch.setattr(notion_tool, "execute_notion_handler", fake_execute_notion_handler)
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore()).bind_request_context(owner_key="7")
+
+    result = runtime.run_call(
+        name="notion.execute",
+        args={
+            "userId": 999,
+            "commands": [
+                {
+                    "method": "POST",
+                    "endpoint": "/v1/search",
+                    "params": {"query": "테스트용입니다"},
+                }
+            ],
+        },
+        enabled_toolsets=("notion",),
+    )
+
+    assert result["ok"] is True
+    assert captured["_trusted_user_id"] == "7"
+    assert "userId" not in captured
+
+
 def test_skill_catalog_descriptions_remain_available_to_prompt_builder():
     registry = SkillRegistry()
     registry.register_many(SkillLoader().load_builtin())
