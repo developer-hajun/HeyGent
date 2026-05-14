@@ -1,5 +1,5 @@
 import aiAxiosInstance from './aiAxiosInstance'
-import type { RawTaskRun } from '@/types/taskRuns'
+import type { RawTaskRun, TaskRunFlowResponse } from '@/types/taskRuns'
 
 type TaskRunListResponse = {
   items?: RawTaskRun[]
@@ -18,4 +18,14 @@ export async function listTaskRuns(input: {
     },
   })
   return data.items ?? []
+}
+
+export async function getTaskRun(taskRunId: string): Promise<RawTaskRun> {
+  const { data } = await aiAxiosInstance.get<RawTaskRun>(`/taskRuns/${taskRunId}`)
+  return data
+}
+
+export async function getTaskRunFlow(taskRunId: string): Promise<TaskRunFlowResponse> {
+  const { data } = await aiAxiosInstance.get<TaskRunFlowResponse>(`/taskRuns/${taskRunId}/flow`)
+  return data
 }

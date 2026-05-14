@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import type { TaskRunSummaryView } from '@/types/taskRuns'
 import { toUserFacingTaskTitle } from './activityPanelText'
-import { TaskRunStatusIcon } from './TaskRunStatusIcon'
+import { TaskRunStatusBadge, TaskRunStatusIcon } from './TaskRunStatusIcon'
 
 export function TaskRunSummaryList({
   summaries,
@@ -63,9 +63,11 @@ export function TaskRunSummaryList({
           <span className="text-foreground line-clamp-2 block text-sm leading-5 font-medium [overflow-wrap:anywhere] break-words">
             {toAlbumCardTitle(selectedSummary.title)}
           </span>
-          <span className="text-muted-foreground mt-1 truncate text-xs">
-            {selectedSummary.statusText}
-          </span>
+          <TaskRunStatusBadge
+            tone={selectedSummary.tone}
+            label={selectedSummary.statusText}
+            className="mt-1 w-fit max-w-full"
+          />
         </span>
       </button>
       {hasNext ? (

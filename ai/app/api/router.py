@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.http.agents import router as agents_router
 from app.api.http.agent_sessions import router as agent_sessions_router
 from app.api.http.bridge_internal import router as bridge_internal_router
+from app.api.http.device_tokens import router as device_tokens_router
 from app.api.http.health import router as health_router
 from app.api.http.providers import router as providers_router
 from app.api.http.sessions import router as sessions_router
@@ -25,6 +26,7 @@ def build_api_router(settings: Settings) -> APIRouter:
     api_router = APIRouter(prefix=settings.api_prefix)
     api_router.include_router(health_router)
     api_router.include_router(sessions_router)
+    api_router.include_router(device_tokens_router)
     api_router.include_router(work_router)
     api_router.include_router(agents_router)
     api_router.include_router(tasks_router)
