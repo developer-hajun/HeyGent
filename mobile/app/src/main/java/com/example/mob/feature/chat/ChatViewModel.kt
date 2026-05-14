@@ -130,9 +130,9 @@ class ChatViewModel : ViewModel() {
 
                 if (resp.assistantMessage != null) {
                     // ── 즉시 완료 (COMPLETED) ─────────────────────────────
-                    resp.assistantMessage.toChatMessage()?.let {
-                        _messages.value = _messages.value + it
-                    }
+                    // append 대신 API에서 재조회: FCM과의 race condition으로 인한 중복 방지
+                    val msgResp = RetrofitClient.aiApiService.getChatSessionMessages(resp.sessionId)
+                    _messages.value = msgResp.items.mapNotNull { it.toChatMessage() }
                     _isProcessing.value = false
                     loadSessions()
                 } else {
