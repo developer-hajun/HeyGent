@@ -144,6 +144,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
           setCommandClient(commandClient)
           setAuthStatus('authenticated')
           setConnectionStatus('authenticated')
+          socketClient.subscribeAll()
           void useChatStore
             .getState()
             .fetchSessions()
