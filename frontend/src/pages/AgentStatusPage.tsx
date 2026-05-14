@@ -140,13 +140,6 @@ function AgentInfoPanel({ info, onClose }: { info: AgentVisualizationInfo; onClo
           </div>
         )}
       </div>
-
-      {/* 편집 버튼 — 추후 편집 모달 연결 */}
-      <div className="border-t border-white/10 px-4 py-3">
-        <button className="w-full rounded-lg bg-white/10 py-1.5 text-xs font-medium text-white transition-colors hover:bg-white/20">
-          에이전트 편집
-        </button>
-      </div>
     </div>
   )
 }
@@ -224,7 +217,7 @@ const AGENT_CONFIGS: AgentConfig[] = [
     destinations: {
       desk: { x: 825, y: 520 },
       sofa: { x: 1185, y: 205 },
-      floorLean: { x: 1535, y: 425 },
+      floorLean: { x: 1090, y: 415 },
       meeting: { x: 415, y: 130 },
       calling: { x: 1334, y: 665 },
     },
@@ -1304,7 +1297,7 @@ export function AgentStatusPage() {
   }
 
   useVisualizationSync(handleMove, sessionId, profileIdMap)
-  useAgentInfoSync(sessionId)
+  useAgentInfoSync(sessionId, profileIdMap)
 
   // handleMove는 매 렌더마다 새로 생성되므로 타이머 콜백에서는 항상 최신 버전을 참조
   const handleMoveRef = useRef(handleMove)
