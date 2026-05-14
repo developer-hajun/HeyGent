@@ -9,6 +9,7 @@ import com.example.mob.data.remote.ChatWebSocketClient
 import com.example.mob.data.remote.RetrofitClient
 import com.example.mob.data.remote.SendChatMessageRequest
 import com.example.mob.data.remote.WsTaskEvent
+import com.example.mob.fcm.FcmEventBus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,6 +50,20 @@ class ChatViewModel : ViewModel() {
         // 태스크 이벤트 수신 루프
         viewModelScope.launch {
             wsClient.events.collect { event -> onTaskEvent(event) }
+        }
+        // FCM 수신 시 현재 세션 메시지 갱신
+        viewModelScope.launch {
+            FcmEventBus.sessionRefreshEvent.collect { sessionId ->
+                val target = sessionId ?: _activeSessionId.value ?: return@collect
+                Log.d("ChatViewModel", "FCM 수신 → 메시지 갱신: sessionId=$target")
+                try {
+                    val resp = RetrofitClient.aiApiService.getChatSessionMessages(target)
+                    _messages.value = resp.items.mapNotNull { it.toChatMessage() }
+                    loadSessions()
+                } catch (e: Exception) {
+                    Log.e("ChatViewModel", "FCM 갱신 실패: ${e.message}", e)
+                }
+            }
         }
     }
 
