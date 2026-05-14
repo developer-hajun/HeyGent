@@ -727,10 +727,21 @@ class LocalToolRuntime:
         if missing_skill_names:
             config = dict(profile.get("config_snapshot") or {})
             profile_name = str(config.get("name") or profile.get("profile_key") or profile.get("profile_id") or "session agent")
+            profile_id = str(profile.get("profile_id") or "").strip()
             return self._tool_error(
                 code="session_agent_capability_mismatch",
                 message=f"{profile_name} does not have required skills: {', '.join(missing_skill_names)}",
                 tool_name="session_agent_task",
+                details={
+                    "recoverable": True,
+                    "requiredSkillNames": required_skill_names,
+                    "missingSkillNames": missing_skill_names,
+                    "agent": {
+                        "profileId": profile_id,
+                        "name": profile_name,
+                        "skills": self._profile_skill_names(profile),
+                    },
+                },
             )
 
         profile_id = str(profile.get("profile_id") or "").strip()
@@ -1203,16 +1214,19 @@ class LocalToolRuntime:
     def _missing_profile_skills(self, profile: dict[str, Any], required_skill_names: list[str] | None) -> list[str]:
         if not required_skill_names:
             return []
-        config = dict(profile.get("config_snapshot") or {})
         profile_skill_names = {
             self._normalize_match_text(skill_name)
-            for skill_name in self._string_list(config.get("skills") or profile.get("skills"))
+            for skill_name in self._profile_skill_names(profile)
         }
         return [
             skill_name
             for skill_name in required_skill_names
             if self._normalize_match_text(skill_name) not in profile_skill_names
         ]
+
+    def _profile_skill_names(self, profile: dict[str, Any]) -> list[str]:
+        config = dict(profile.get("config_snapshot") or {})
+        return self._string_list(config.get("skills") or profile.get("skills"))
 
     @classmethod
     def _profile_matches_hint(cls, profile: dict[str, Any], normalized_hint: str) -> bool:
@@ -1294,13 +1308,16 @@ class LocalToolRuntime:
         }
 
     @staticmethod
-    def _tool_error(*, code: str, message: str, tool_name: str) -> dict[str, Any]:
+    def _tool_error(*, code: str, message: str, tool_name: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
+        error = {
+            "code": code,
+            "message": message,
+            "tool_name": tool_name,
+        }
+        if details:
+            error.update(details)
         payload = {
-            "error": {
-                "code": code,
-                "message": message,
-                "tool_name": tool_name,
-            }
+            "error": error
         }
         return {
             "ok": False,

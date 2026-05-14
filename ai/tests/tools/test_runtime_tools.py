@@ -526,6 +526,14 @@ def test_session_agent_task_rejects_agent_without_explicit_required_skill():
 
     assert result["ok"] is False
     assert result["error"]["code"] == "session_agent_capability_mismatch"
+    assert result["error"]["recoverable"] is True
+    assert result["error"]["requiredSkillNames"] == ["mattermost-send"]
+    assert result["error"]["missingSkillNames"] == ["mattermost-send"]
+    assert result["error"]["agent"] == {
+        "profileId": "agent-dev",
+        "name": "개발 에이전트",
+        "skills": ["writing-plans"],
+    }
     assert len(work_repository.items) == 1
 
 
