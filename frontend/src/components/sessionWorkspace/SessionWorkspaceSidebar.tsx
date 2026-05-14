@@ -14,6 +14,7 @@ import { useChatStore } from '@/store/useChatStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useUIStore } from '@/store/useUIStore'
 import { agentProfilesToPanelItems, listSessionAgents } from '@/apis/agents'
+import { pickTopSession } from '@/components/layout/sessionListUtils'
 
 export function SessionWorkspaceSidebar() {
   const location = useLocation()
@@ -23,6 +24,7 @@ export function SessionWorkspaceSidebar() {
   const setSessionWorkspaceCollapsed = useUIStore((state) => state.setSessionWorkspaceCollapsed)
   const setSelectedSessionId = useSessionStore((state) => state.setSelectedSessionId)
   const setAgentPanelsForSession = useSessionStore((state) => state.setAgentPanelsForSession)
+  const pinnedSessionIds = useSessionStore((state) => state.pinnedSessionIds)
   const sessionsById = useChatStore((state) => state.sessionsById)
   const deleteSession = useChatStore((state) => state.deleteSession)
   const connectionStatus = useAiRealtimeStore((state) => state.connectionStatus)
@@ -91,8 +93,14 @@ export function SessionWorkspaceSidebar() {
 
   const handleDeleteSession = async () => {
     await deleteSession(sessionId)
-    setSelectedSessionId(null)
-    navigate('/new-chat', { replace: true })
+    const nextSession = pickTopSession(sessionsById, pinnedSessionIds, sessionId ?? undefined)
+    if (nextSession !== null) {
+      setSelectedSessionId(nextSession.session_id)
+      navigate(`/session/${nextSession.session_id}`, { replace: true })
+    } else {
+      setSelectedSessionId(null)
+      navigate('/', { replace: true })
+    }
   }
 
   return (

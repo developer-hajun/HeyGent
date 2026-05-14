@@ -186,7 +186,7 @@ function getStepExecutionLabel(
 ) {
   const delegatedAgentName = getDelegatedAgentName(step, activities, agentNameMap)
   if (delegatedAgentName !== undefined) {
-    return `CEO가 ${delegatedAgentName}에게 위임`
+    return `팀장이 ${delegatedAgentName}에게 위임`
   }
 
   const actorName = resolveAgentDisplayName(step.displayContext?.actorAgent, agentNameMap)
