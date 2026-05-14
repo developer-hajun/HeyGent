@@ -55,6 +55,7 @@ Use `notion.execute` after reading this document and, when needed, the reference
 3. For writes, build the smallest command that satisfies the request.
 4. If the operation changes, deletes, moves, or restructures content, explain the intended target and ask for confirmation unless the user already explicitly approved that exact action.
 5. For temporary live tests, use clear Korean marker text such as `테스트용입니다`, then clean up only the test artifact that was created by the current test.
+6. When creating a temporary page that must be cleaned up, never use `parent: {"workspace": true}`. Search for or ask the user for an existing parent page and create the page under `parent: {"page_id": "..."}` so it can be archived afterward.
 
 ## Command Rules
 
@@ -64,6 +65,8 @@ Use `notion.execute` after reading this document and, when needed, the reference
 - For `POST` and `PATCH`, put the request body in `params`.
 - `DELETE` commands are allowed by the backend proxy, but treat them as explicit-user-confirmation operations.
 - Inspect each command result's `success` field; HTTP success does not mean every command succeeded.
+- `POST /v1/pages` with `parent.workspace: true` is blocked by the runtime because Notion does not allow API archiving of workspace-level pages. Use an existing `page_id` parent for test pages and cleanup flows.
+- Do not use `POST /v1/blocks/{block_id}/children`. Use `GET` for reading children and `PATCH` for appending children.
 
 ## First Scope
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from app.clients.backend_notion import BackendNotionClient, BackendNotionClientError
@@ -77,12 +78,20 @@ def execute_notion_handler(args: dict[str, Any]) -> dict[str, Any]:
     commands = _normalize_commands(args.get("commands"))
     if not commands:
         return _tool_error("missing_commands", "실행할 Notion 명령이 없습니다.")
+    blocked_commands = [command for command in commands if command.get("blocked") is True]
+    if blocked_commands:
+        first_error = blocked_commands[0].get("error") if isinstance(blocked_commands[0].get("error"), dict) else {}
+        return _tool_error(
+            str(first_error.get("code") or "blocked_command"),
+            str(first_error.get("message") or "차단된 Notion 명령입니다."),
+        )
 
     try:
         results = BackendNotionClient().execute(user_id=user_id, commands=commands)
     except BackendNotionClientError as error:
         return _tool_error("backend_request_failed", str(error))
 
+    results = _normalize_results(commands, results)
     success_count = sum(1 for item in results if item.get("success") is True)
     failed_count = sum(1 for item in results if item.get("success") is False)
     return {
@@ -122,8 +131,54 @@ def _normalize_commands(value: Any) -> list[dict[str, Any]]:
         params = item.get("params")
         if isinstance(params, dict):
             command["params"] = params
+        validation_error = _validate_safe_command(command)
+        if validation_error is not None:
+            commands.append(validation_error)
+            continue
         commands.append(command)
     return commands
+
+
+def _validate_safe_command(command: dict[str, Any]) -> dict[str, Any] | None:
+    params = command.get("params")
+    if (
+        command.get("method") == "POST"
+        and command.get("endpoint") == "/v1/pages"
+        and isinstance(params, dict)
+        and isinstance(params.get("parent"), dict)
+        and params["parent"].get("workspace") is True
+    ):
+        return {
+            "method": "BLOCKED",
+            "endpoint": "/v1/pages",
+            "notionVersion": command.get("notionVersion") or DEFAULT_NOTION_VERSION,
+            "blocked": True,
+            "error": {
+                "code": "workspace_parent_page_blocked",
+                "message": (
+                    "Notion workspace-level pages cannot be archived through the API. "
+                    "Search or ask for an existing parent page, then create the test page under that page_id."
+                ),
+            },
+        }
+    if (
+        command.get("method") == "POST"
+        and re.fullmatch(r"/v1/blocks/[^/]+/children", str(command.get("endpoint") or ""))
+    ):
+        return {
+            "method": "BLOCKED",
+            "endpoint": str(command.get("endpoint") or ""),
+            "notionVersion": command.get("notionVersion") or DEFAULT_NOTION_VERSION,
+            "blocked": True,
+            "error": {
+                "code": "invalid_block_children_method",
+                "message": (
+                    "Use GET /v1/blocks/{block_id}/children to read children, or PATCH "
+                    "/v1/blocks/{block_id}/children to append children. POST is not a valid Notion method for this path."
+                ),
+            },
+        }
+    return None
 
 
 def _coerce_user_id(value: Any) -> int | None:
@@ -132,6 +187,38 @@ def _coerce_user_id(value: Any) -> int | None:
     if isinstance(value, str) and value.strip().isdigit():
         return int(value.strip())
     return None
+
+
+def _normalize_results(commands: list[dict[str, Any]], results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for index, result in enumerate(results):
+        command = commands[index] if index < len(commands) else {}
+        if _is_already_archived_success(command, result):
+            fixed = dict(result)
+            fixed["success"] = True
+            fixed["errorCode"] = None
+            fixed["errorMessage"] = None
+            fixed["data"] = {
+                "in_trash": True,
+                "note": "Page was already archived before this retry.",
+            }
+            normalized.append(fixed)
+            continue
+        normalized.append(result)
+    return normalized
+
+
+def _is_already_archived_success(command: dict[str, Any], result: dict[str, Any]) -> bool:
+    params = command.get("params")
+    message = str(result.get("errorMessage") or "").lower()
+    return (
+        command.get("method") == "PATCH"
+        and str(command.get("endpoint") or "").startswith("/v1/pages/")
+        and isinstance(params, dict)
+        and params.get("in_trash") is True
+        and result.get("success") is False
+        and ("already archived" in message or ("is archived" in message and "unarchive" in message))
+    )
 
 
 def _tool_error(code: str, message: str) -> dict[str, Any]:
