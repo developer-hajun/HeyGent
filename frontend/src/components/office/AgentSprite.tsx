@@ -7,6 +7,10 @@ const SPAWN_KEYFRAMES = `
   0%   { opacity: 0; transform: scale(0.2); }
   100% { opacity: 1; transform: scale(1); }
 }
+@keyframes workingPulse {
+  0%, 100% { opacity: 0.95; transform: scale(1); }
+  50%       { opacity: 0.5;  transform: scale(0.88); }
+}
 `
 
 function injectSpawnStyles() {
@@ -137,6 +141,33 @@ export function AgentSprite({
         </div>
       )}
 
+      {/* 작업 중 전구 — CEO가 ceo_work(sitting_work) 상태일 때 상시 표시 */}
+      {!isSpawning && agent.config.id === 'ceo' && agent.state === 'sitting_work' && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '100%',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            marginBottom: 6,
+            pointerEvents: 'none',
+            zIndex: 40,
+          }}
+        >
+          <span
+            style={{
+              display: 'block',
+              fontSize: 22,
+              lineHeight: 1,
+              animation: 'workingPulse 2s ease-in-out infinite',
+              filter: 'drop-shadow(0 0 8px rgba(253, 224, 71, 0.85))',
+            }}
+          >
+            💡
+          </span>
+        </div>
+      )}
+
       {/* 호버 툴팁 */}
       {showTooltip && (
         <div
@@ -175,7 +206,6 @@ export function AgentSprite({
                 style={{
                   borderTop: '1px solid rgba(255,255,255,0.08)',
                   paddingTop: 8,
-                  marginBottom: 8,
                 }}
               >
                 <div
@@ -201,43 +231,6 @@ export function AgentSprite({
                   }}
                 >
                   ● {TASK_STATUS_LABEL[hoverInfo.currentTask.status]}
-                </div>
-              </div>
-            )}
-
-            {/* 작업 내역 */}
-            {hoverInfo.taskHistory.length > 0 && (
-              <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 8 }}>
-                <div
-                  style={{
-                    color: 'rgba(255,255,255,0.35)',
-                    fontSize: 10,
-                    marginBottom: 6,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.05em',
-                  }}
-                >
-                  작업 내역
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {hoverInfo.taskHistory.slice(0, 3).map((task) => (
-                    <div
-                      key={task.taskId}
-                      style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}
-                    >
-                      <span style={{ color: '#86efac', fontSize: 11, flexShrink: 0 }}>✓</span>
-                      <span
-                        style={{ color: 'rgba(255,255,255,0.65)', fontSize: 11, lineHeight: 1.4 }}
-                      >
-                        {task.title}
-                      </span>
-                    </div>
-                  ))}
-                  {hoverInfo.taskHistory.length > 3 && (
-                    <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10, marginTop: 2 }}>
-                      +{hoverInfo.taskHistory.length - 3}개 더보기
-                    </div>
-                  )}
                 </div>
               </div>
             )}

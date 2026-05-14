@@ -18,7 +18,6 @@ import {
   ChevronDown,
   Check,
   Eye,
-  EyeOff,
   Search,
   Globe,
   Loader2,
@@ -74,6 +73,8 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void
   sessionId?: string
   initialTab?: SettingsTab
+  /** true이면 좌측 탭 사이드바를 숨기고 initialTab 하나만 단독으로 보여준다. */
+  singleTab?: boolean
 }
 
 type SettingsTab = 'general' | 'skills' | 'models' | 'personalization' | 'apiKeys' | 'external'
@@ -81,7 +82,13 @@ type SettingsTab = 'general' | 'skills' | 'models' | 'personalization' | 'apiKey
 const isVisibleSettingsTab = (tab?: SettingsTab): tab is 'apiKeys' | 'external' =>
   tab === 'apiKeys' || tab === 'external'
 
-export function SettingsDialog({ open, onOpenChange, sessionId, initialTab }: SettingsDialogProps) {
+export function SettingsDialog({
+  open,
+  onOpenChange,
+  sessionId,
+  initialTab,
+  singleTab = false,
+}: SettingsDialogProps) {
   const [prevOpen, setPrevOpen] = useState(open)
   const [activeTab, setActiveTab] = useState<SettingsTab>(
     isVisibleSettingsTab(initialTab) ? initialTab : 'apiKeys',
@@ -115,28 +122,30 @@ export function SettingsDialog({ open, onOpenChange, sessionId, initialTab }: Se
         </DialogDescription>
 
         <div className="flex h-full min-w-0 flex-1 overflow-hidden">
-          {/* Left Sidebar */}
-          <div className="border-border bg-muted/30 flex w-52 shrink-0 flex-col border-r p-4">
-            <div className="mb-6">
-              <h2 className="text-foreground text-lg font-semibold">설정</h2>
+          {/* Left Sidebar — singleTab 모드일 땐 숨김 */}
+          {!singleTab && (
+            <div className="border-border bg-muted/30 flex w-52 shrink-0 flex-col border-r p-4">
+              <div className="mb-6">
+                <h2 className="text-foreground text-lg font-semibold">설정</h2>
+              </div>
+              <div className="space-y-1">
+                {tabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-colors ${
+                      activeTab === tab.id
+                        ? 'text-foreground bg-white shadow-sm'
+                        : 'text-muted-foreground hover:bg-muted'
+                    }`}
+                  >
+                    <tab.icon className="h-4 w-4 shrink-0" />
+                    <span className="text-sm font-medium">{tab.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="space-y-1">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-colors ${
-                    activeTab === tab.id
-                      ? 'text-foreground bg-white shadow-sm'
-                      : 'text-muted-foreground hover:bg-muted'
-                  }`}
-                >
-                  <tab.icon className="h-4 w-4 shrink-0" />
-                  <span className="text-sm font-medium">{tab.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+          )}
 
           {/* Right Content */}
           <div className="relative min-h-0 flex-1 overflow-y-auto p-6">
@@ -950,10 +959,22 @@ const API_KEY_GUIDES = {
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
+// 등록된 API 키가 있다는 시각적 표시 — 실제 값과는 무관하며 자릿수만 비슷하게 점으로 채운 placeholder
+const MASKED_KEY_LENGTHS: Record<string, number> = {
+  openai_api_key: 51, // sk-... 약 51자
+  gemini_api_key: 39, // AIza... 약 39자
+  claude_api_key: 108, // sk-ant-api03-... 약 108자
+}
+
+function getMaskedKeyPlaceholder(providerName: string): string {
+  const length = MASKED_KEY_LENGTHS[providerName] ?? 40
+  return '•'.repeat(length)
+}
+
 function ApiKeysContent() {
   const [apiKeys, setApiKeys] = useState([
-    { id: 'openai_api_key' as const, name: 'OpenAI API', value: '', visible: false },
-    { id: 'gemini_api_key' as const, name: 'Gemini API', value: '', visible: false },
+    { id: 'openai_api_key' as const, name: 'OpenAI API', value: '' },
+    { id: 'gemini_api_key' as const, name: 'Gemini API', value: '' },
   ])
   const [connectedProviders, setConnectedProviders] = useState<Record<string, boolean>>({})
 
@@ -997,10 +1018,6 @@ function ApiKeysContent() {
   const [saveErrors, setSaveErrors] = useState<Record<string, string | null>>({})
   const [deleteStatuses, setDeleteStatuses] = useState<Record<string, SaveStatus>>({})
 
-  const toggleVisibility = (id: string) => {
-    setApiKeys((prev) => prev.map((k) => (k.id === id ? { ...k, visible: !k.visible } : k)))
-  }
-
   const handleDelete = async (id: ProviderName) => {
     setDeleteStatuses((prev) => ({ ...prev, [id]: 'saving' }))
     try {
@@ -1038,16 +1055,16 @@ function ApiKeysContent() {
       <div>
         <div className="mb-2 flex items-center gap-2">
           <h3 className="text-foreground text-xl font-semibold">API 키</h3>
-          <HelpHint label="API 키 도움말" iconClassName="h-4 w-4">
-            <p className="text-foreground font-medium">API 키</p>
+          <HelpHint label="API 키 도움말" iconClassName="h-4 w-4" triggerTabIndex={-1}>
+            <p className="text-foreground font-medium">API 키란?</p>
             <p>
-              외부 AI 서비스를 사용하기 위한 <span className="text-foreground">출입증</span>이에요.
+              OpenAI·Gemini 같은 외부 AI 서비스를 내 계정으로 쓰기 위한{' '}
+              <span className="text-foreground">출입증</span>이에요.
             </p>
-            <p>각 서비스 홈페이지에 로그인해 발급받아 붙여넣어 주세요.</p>
-            <p>예) OpenAI: platform.openai.com → API keys.</p>
-            <p>
-              비밀번호처럼 다뤄야 하니{' '}
-              <span className="text-foreground">남과 공유하지 마세요.</span>
+            <p>각 서비스 홈페이지에서 발급받아 여기에 붙여넣으면 끝입니다.</p>
+            <p className="text-red-500 dark:text-red-400">
+              ⚠ 비밀번호와 같은 정보입니다. 절대 다른 사람과 공유하거나 메신저·문서에 붙여넣지
+              마세요.
             </p>
           </HelpHint>
         </div>
@@ -1058,12 +1075,7 @@ function ApiKeysContent() {
 
       <div className="space-y-3">
         {apiKeys.map(
-          (key: {
-            id: 'openai_api_key' | 'gemini_api_key'
-            name: string
-            value: string
-            visible: boolean
-          }) => {
+          (key: { id: 'openai_api_key' | 'gemini_api_key'; name: string; value: string }) => {
             const guide = API_KEY_GUIDES[key.id]
             return (
               <div
@@ -1098,23 +1110,20 @@ function ApiKeysContent() {
                 {/* 입력창 */}
                 <div className="relative">
                   <input
-                    type={key.visible ? 'text' : 'password'}
+                    type="password"
                     value={key.value}
                     onChange={(e) =>
                       setApiKeys((prev) =>
                         prev.map((k) => (k.id === key.id ? { ...k, value: e.target.value } : k)),
                       )
                     }
-                    placeholder={guide.placeholder}
-                    className="border-border text-foreground placeholder:text-muted-foreground focus:ring-ring/20 w-full rounded-lg border bg-transparent py-2 pr-10 pl-3 text-sm focus:ring-2 focus:outline-none"
+                    placeholder={
+                      connectedProviders[key.id]
+                        ? getMaskedKeyPlaceholder(key.id)
+                        : guide.placeholder
+                    }
+                    className="border-border text-foreground placeholder:text-muted-foreground/80 focus:ring-ring/20 w-full rounded-lg border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
                   />
-                  <button
-                    type="button"
-                    onClick={() => toggleVisibility(key.id)}
-                    className="text-muted-foreground hover:text-foreground absolute top-1/2 right-3 -translate-y-1/2 transition-colors"
-                  >
-                    {key.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                  </button>
                 </div>
 
                 {/* 저장/삭제 버튼 행 */}

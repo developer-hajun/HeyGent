@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { listSessionAgents, getSessionMainAgent } from '@/apis/agents'
+import { listSessionAgents, getSessionMainAgent, deriveSpriteId } from '@/apis/agents'
 import type { AgentActivityStatus, TaskStatus, VisualizationTask } from '@/components/office/types'
 import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
@@ -36,14 +36,48 @@ function getStepRunUpdatedAt(stepRun: RawStepRun): string | undefined {
   return typeof stepRun.updated_at === 'string' ? stepRun.updated_at : undefined
 }
 
-function resolveTaskRunProfileKey(taskRun: RawTaskRun): string | null {
-  const actorAgent = taskRun.displayContext?.actorAgent
-  return actorAgent?.profileKey ?? (actorAgent?.kind === 'main' ? 'ceo' : null)
+// 백엔드는 completed_at 대신 ended_at을 사용한다.
+function getStepRunEndedAt(stepRun: RawStepRun): string | undefined {
+  const raw = stepRun as Record<string, unknown>
+  if (typeof raw.ended_at === 'string') return raw.ended_at
+  if (typeof raw.endedAt === 'string') return raw.endedAt
+  return undefined
 }
 
-function resolveSessionTaskRunProfileKey(taskRun: RawTaskRun, sessionId?: string): string | null {
+// 백엔드는 goal을 StepRunResponse.semantic.goal에 중첩해서 제공한다.
+function getStepRunGoal(stepRun: RawStepRun): string {
+  if (typeof stepRun.goal === 'string') return stepRun.goal
+  const raw = stepRun as Record<string, unknown>
+  const semantic = raw.semantic
+  if (typeof semantic === 'object' && semantic !== null) {
+    const goal = (semantic as Record<string, unknown>).goal
+    if (typeof goal === 'string') return goal
+  }
+  return ''
+}
+
+// profileIdMap(profileId → spriteId)을 사용해 actorAgent를 spriteId로 해석한다.
+// useVisualizationSync의 resolveProfileKey와 동일한 우선순위로 처리한다.
+function resolveTaskRunSpriteId(
+  taskRun: RawTaskRun,
+  profileIdMap?: Record<string, string>,
+): string | null {
+  const actorAgent = taskRun.displayContext?.actorAgent
+  if (!actorAgent) return null
+  if (actorAgent.kind === 'main') return 'ceo'
+  const mappedKey = actorAgent.profileId ?? actorAgent.id
+  const fromMap = mappedKey != null ? profileIdMap?.[mappedKey] : undefined
+  if (fromMap) return fromMap
+  return actorAgent.profileKey ?? null
+}
+
+function resolveSessionTaskRunSpriteId(
+  taskRun: RawTaskRun,
+  sessionId?: string,
+  profileIdMap?: Record<string, string>,
+): string | null {
   return (
-    resolveTaskRunProfileKey(taskRun) ??
+    resolveTaskRunSpriteId(taskRun, profileIdMap) ??
     (sessionId !== undefined && taskRun.session_id === sessionId ? 'ceo' : null)
   )
 }
@@ -65,7 +99,7 @@ function pickCurrentTask(
     return {
       taskId: activeStep.step_run_id,
       title: activeStep.title ?? taskRun.title ?? '작업 진행 중',
-      description: typeof activeStep.goal === 'string' ? activeStep.goal : '',
+      description: getStepRunGoal(activeStep),
       status: 'in_progress',
       startedAt: activeStep.started_at ?? undefined,
     }
@@ -77,7 +111,7 @@ function pickCurrentTask(
   return {
     taskId: taskRun.task_run_id,
     title: taskRun.title ?? '작업 진행 중',
-    description: typeof taskRun.goal === 'string' ? taskRun.goal : '',
+    description: '',
     status: toTaskStatus(taskRun.status),
     startedAt: taskRun.created_at ?? undefined,
   }
@@ -88,15 +122,15 @@ function pickTaskHistory(taskRun: RawTaskRun, stepRuns: RawStepRun[]): Visualiza
     .filter((sr) => TERMINAL_STATUSES.has(sr.status?.toUpperCase() ?? ''))
     .sort(
       (a, b) =>
-        getTimestamp(b.completed_at ?? getStepRunUpdatedAt(b)) -
-        getTimestamp(a.completed_at ?? getStepRunUpdatedAt(a)),
+        getTimestamp(b.completed_at ?? getStepRunEndedAt(b) ?? getStepRunUpdatedAt(b)) -
+        getTimestamp(a.completed_at ?? getStepRunEndedAt(a) ?? getStepRunUpdatedAt(a)),
     )
     .map((sr) => ({
       taskId: sr.step_run_id,
       title: sr.title ?? '완료된 작업',
       description: '',
       status: toTaskStatus(sr.status),
-      completedAt: sr.completed_at ?? undefined,
+      completedAt: sr.completed_at ?? getStepRunEndedAt(sr) ?? undefined,
     }))
 
   if (stepHistory.length > 0) return stepHistory.slice(0, 5)
@@ -105,18 +139,33 @@ function pickTaskHistory(taskRun: RawTaskRun, stepRuns: RawStepRun[]): Visualiza
     return []
   }
 
+  const rawTaskRun = taskRun as Record<string, unknown>
+  const taskEndedAt =
+    typeof rawTaskRun.ended_at === 'string'
+      ? rawTaskRun.ended_at
+      : typeof rawTaskRun.endedAt === 'string'
+        ? rawTaskRun.endedAt
+        : undefined
+
   return [
     {
       taskId: taskRun.task_run_id,
       title: taskRun.title ?? '작업',
-      description: typeof taskRun.goal === 'string' ? taskRun.goal : '',
+      description: '',
       status: toTaskStatus(taskRun.status),
-      completedAt: taskRun.completed_at ?? taskRun.updated_at ?? undefined,
+      completedAt: taskRun.completed_at ?? taskEndedAt ?? taskRun.updated_at ?? undefined,
     },
   ]
 }
 
-export function useAgentInfoSync(sessionId?: string) {
+type CachedSubAgentProfile = {
+  name: string
+  role: string
+  skills: string[]
+  profileImage?: string
+}
+
+export function useAgentInfoSync(sessionId?: string, profileIdMap?: Record<string, string>) {
   const taskRunsById = useTaskRunStore((s) => s.taskRunsById)
   const stepRunsById = useTaskRunStore((s) => s.stepRunsById)
   const fetchSessionTaskRuns = useTaskRunStore((s) => s.fetchSessionTaskRuns)
@@ -125,6 +174,13 @@ export function useAgentInfoSync(sessionId?: string) {
   const selectedAgentId = useAgentVisualizationStore((s) => s.selectedAgentId)
   const fetchedTaskRunIds = useRef<Set<string>>(new Set())
   const fetchedSessionIds = useRef<Set<string>>(new Set())
+  // profileId → profile data 캐시 — profileIdMap이 늦게 도착해도 spriteId 매핑에 재사용한다.
+  const cachedProfilesRef = useRef<Map<string, CachedSubAgentProfile>>(new Map())
+  // async 콜백에서 항상 최신 profileIdMap을 읽기 위한 ref
+  const profileIdMapRef = useRef(profileIdMap)
+  useEffect(() => {
+    profileIdMapRef.current = profileIdMap
+  }, [profileIdMap])
 
   useEffect(() => {
     const sessionIds = new Set<string>()
@@ -145,13 +201,18 @@ export function useAgentInfoSync(sessionId?: string) {
       void listSessionAgents(currentSessionId)
         .then((profiles) => {
           for (const profile of profiles) {
-            if (!profile.profileKey) continue
-            updateAgentInfo(profile.profileKey, {
+            const profileData: CachedSubAgentProfile = {
               name: profile.name,
               role: profile.role,
               skills: profile.skills,
               ...(profile.profileImage ? { profileImage: profile.profileImage } : {}),
-            })
+            }
+            // profileId 기준으로 캐시 — profileIdMap이 나중에 도착해도 재매핑 가능
+            cachedProfilesRef.current.set(profile.profileId, profileData)
+            // profileIdMap에서 즉시 spriteId를 찾거나 deriveSpriteId 폴백을 사용한다.
+            const spriteId =
+              profileIdMapRef.current?.[profile.profileId] ?? deriveSpriteId(profile.profileImage)
+            if (spriteId) updateAgentInfo(spriteId, profileData)
           }
         })
         .catch(() => {})
@@ -159,8 +220,11 @@ export function useAgentInfoSync(sessionId?: string) {
       void getSessionMainAgent(currentSessionId)
         .then((profile) => {
           const profileData = {
-            name: profile.name,
-            role: profile.role,
+            name: '팀장',
+            role:
+              profile.role && profile.role !== 'ceo' && profile.role !== 'main'
+                ? profile.role
+                : '팀장 에이전트',
             skills: profile.skills,
             ...(profile.profileImage ? { profileImage: profile.profileImage } : {}),
           }
@@ -173,8 +237,17 @@ export function useAgentInfoSync(sessionId?: string) {
     }
   }, [fetchSessionTaskRuns, sessionId, taskRunsById, updateAgentInfo])
 
+  // profileIdMap이 늦게 채워지면 캐시된 프로필 데이터를 올바른 spriteId로 재매핑한다.
   useEffect(() => {
-    const updatesByProfileKey = new Map<
+    if (!profileIdMap) return
+    for (const [profileId, spriteId] of Object.entries(profileIdMap)) {
+      const profileData = cachedProfilesRef.current.get(profileId)
+      if (profileData) updateAgentInfo(spriteId, profileData)
+    }
+  }, [profileIdMap, updateAgentInfo])
+
+  useEffect(() => {
+    const updatesBySpriteId = new Map<
       string,
       {
         latestTaskRun: RawTaskRun
@@ -188,18 +261,18 @@ export function useAgentInfoSync(sessionId?: string) {
     )
 
     for (const taskRun of taskRuns) {
-      const profileKey = resolveSessionTaskRunProfileKey(taskRun, sessionId)
-      if (!profileKey) continue
+      const spriteId = resolveSessionTaskRunSpriteId(taskRun, sessionId, profileIdMap)
+      if (!spriteId) continue
 
       const agentStepRuns = Object.values(stepRunsById).filter(
         (sr) => sr.task_run_id === taskRun.task_run_id,
       )
       const currentTask = pickCurrentTask(taskRun, agentStepRuns)
       const taskHistory = pickTaskHistory(taskRun, agentStepRuns)
-      const update = updatesByProfileKey.get(profileKey)
+      const update = updatesBySpriteId.get(spriteId)
 
       if (update === undefined) {
-        updatesByProfileKey.set(profileKey, {
+        updatesBySpriteId.set(spriteId, {
           latestTaskRun: taskRun,
           currentTask,
           taskHistory,
@@ -214,8 +287,8 @@ export function useAgentInfoSync(sessionId?: string) {
       }
     }
 
-    for (const [profileKey, update] of updatesByProfileKey) {
-      updateAgentInfo(profileKey, {
+    for (const [spriteId, update] of updatesBySpriteId) {
+      updateAgentInfo(spriteId, {
         activityStatus:
           update.currentTask !== undefined
             ? 'working'
@@ -224,18 +297,20 @@ export function useAgentInfoSync(sessionId?: string) {
         ...(update.taskHistory.length > 0 ? { taskHistory: update.taskHistory.slice(0, 5) } : {}),
       })
     }
-  }, [sessionId, taskRunsById, stepRunsById, updateAgentInfo])
+  }, [sessionId, taskRunsById, stepRunsById, updateAgentInfo, profileIdMap])
 
   useEffect(() => {
     if (!selectedAgentId) return
 
     const taskRun = Object.values(taskRunsById)
-      .filter((tr) => resolveSessionTaskRunProfileKey(tr, sessionId) === selectedAgentId)
+      .filter(
+        (tr) => resolveSessionTaskRunSpriteId(tr, sessionId, profileIdMap) === selectedAgentId,
+      )
       .sort((a, b) => getTaskRunSortTime(b) - getTaskRunSortTime(a))[0]
     if (!taskRun) return
     if (fetchedTaskRunIds.current.has(taskRun.task_run_id)) return
 
     fetchedTaskRunIds.current.add(taskRun.task_run_id)
     void fetchSnapshot(taskRun.task_run_id)
-  }, [fetchSnapshot, selectedAgentId, sessionId, taskRunsById])
+  }, [fetchSnapshot, selectedAgentId, sessionId, taskRunsById, profileIdMap])
 }

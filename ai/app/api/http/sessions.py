@@ -417,7 +417,7 @@ async def _create_message_in_session(
     apply_task_capabilities(
         task_input,
         skill_registry=getattr(request.app.state, "skill_registry", None),
-        default_toolsets=tuple(sorted(_PUBLIC_SESSION_TOOLSETS)),
+        default_toolsets=_default_agent_loop_toolsets(request.app.state),
     )
     user_append = session_store.append_user_message_and_start_task(
         owner_key=owner_key,
@@ -464,6 +464,13 @@ async def _create_message_in_session(
         query=payload.content,
         workspace_key=user.workspace_key or session.get("workspace_key"),
     )
+
+    ws_manager = getattr(request.app.state, "ws_manager", None)
+    if ws_manager is not None:
+        await ws_manager.broadcast(
+            {"type": "task.new", "taskRunId": task_run_id, "sessionId": sessionId},
+            f"work:{owner_key}",
+        )
 
     if run_in_background:
         task_execution_supervisor = getattr(request.app.state, "task_execution_supervisor", None)
@@ -1484,6 +1491,18 @@ def _apply_session_settings_snapshot(task_input: dict[str, Any], settings: dict[
     if "delegationPolicy" in snapshot:
         task_input["delegation_policy"] = dict(snapshot["delegationPolicy"])
     task_input["system_prompt_snapshot"] = get_system_prompt_snapshot(session)
+
+
+def _default_agent_loop_toolsets(state: Any) -> tuple[str, ...]:
+    tool_catalog = getattr(state, "tool_catalog", None)
+    default_toolsets = getattr(tool_catalog, "default_toolsets", None)
+    if isinstance(default_toolsets, tuple):
+        return default_toolsets
+    if isinstance(default_toolsets, list):
+        return tuple(str(item) for item in default_toolsets if str(item).strip())
+    # 세션 설정 allowlist는 사용자가 저장할 수 있는 안전한 설정 범위이고,
+    # 기본 실행 권한은 실제 agent.loop 런타임 조립값을 우선 신뢰한다.
+    return tuple(sorted(_PUBLIC_SESSION_TOOLSETS))
 
 
 def _row_get(row: Any, key: str) -> Any:

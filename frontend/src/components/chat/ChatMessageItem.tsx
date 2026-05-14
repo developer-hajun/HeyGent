@@ -69,7 +69,7 @@ export function ChatMessageItem({
             className={
               isUser
                 ? 'rounded-2xl border [border-color:var(--chat-user-border)] px-4 py-3 text-sm leading-6 wrap-anywhere [color:var(--chat-user-foreground)] shadow-sm [background:var(--chat-user-bubble)] dark:shadow-black/10'
-                : 'selectable-text text-foreground rounded-2xl py-2 text-sm leading-7 [overflow-wrap:anywhere] break-words'
+                : 'selectable-text text-foreground rounded-2xl py-2 text-base leading-7 wrap-anywhere'
             }
           >
             {message.content.trim() !== '' ? (

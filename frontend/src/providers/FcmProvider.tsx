@@ -34,6 +34,22 @@ export function FcmProvider({ children }: FcmProviderProps) {
 
     let unsubscribeForeground: (() => void) | null = null
 
+    const handleRefresh = (sessionId: string | undefined) => {
+      void useChatStore.getState().fetchSessions()
+      if (sessionId) {
+        void useChatStore.getState().fetchMessages(sessionId)
+      }
+    }
+
+    const handleSwMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'FCM_BACKGROUND') {
+        console.info('[FCM] 백그라운드 메시지 수신 (SW):', event.data)
+        handleRefresh(event.data.data?.sessionId)
+      }
+    }
+
+    navigator.serviceWorker.addEventListener('message', handleSwMessage)
+
     const init = async () => {
       console.info('[FCM] 알림 권한 요청 중...')
       const permission = await Notification.requestPermission()
@@ -65,10 +81,7 @@ export function FcmProvider({ children }: FcmProviderProps) {
         console.info('[FCM] 포그라운드 메시지 수신:', payload)
         const title = payload.notification?.title ?? '새 알림'
         const body = payload.notification?.body
-
-        // 세션 목록 새로고침 (앱에서 보낸 메시지 반영)
-        void useChatStore.getState().fetchSessions()
-
+        handleRefresh(payload.data?.sessionId)
         toast(title, { description: body })
       })
     }
@@ -77,6 +90,7 @@ export function FcmProvider({ children }: FcmProviderProps) {
 
     return () => {
       unsubscribeForeground?.()
+      navigator.serviceWorker.removeEventListener('message', handleSwMessage)
     }
   }, [isAuthenticated, vapidKey])
 
