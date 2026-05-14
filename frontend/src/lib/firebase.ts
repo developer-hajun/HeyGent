@@ -1,8 +1,6 @@
-import { initializeApp } from 'firebase/app'
+import { initializeApp, getApps, getApp } from 'firebase/app'
 import { getMessaging, getToken, onMessage } from 'firebase/messaging'
 import type { Messaging } from 'firebase/messaging'
-
-const apiKey = import.meta.env.VITE_FIREBASE_API_KEY as string | undefined
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY as string,
@@ -13,8 +11,10 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID as string,
 }
 
-export const isFirebaseConfigured = (): boolean =>
-  typeof apiKey === 'string' && apiKey.trim() !== ''
+export const isFirebaseConfigured = (): boolean => {
+  const key = import.meta.env.VITE_FIREBASE_API_KEY as string | undefined
+  return typeof key === 'string' && key.trim() !== ''
+}
 
 let messaging: Messaging | null = null
 
@@ -22,10 +22,11 @@ export const getFirebaseMessaging = (): Messaging | null => {
   if (!isFirebaseConfigured()) return null
   if (messaging) return messaging
   try {
-    const app = initializeApp(firebaseConfig)
+    const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp()
     messaging = getMessaging(app)
     return messaging
-  } catch {
+  } catch (e) {
+    console.warn('[FCM] Firebase 초기화 실패:', e)
     return null
   }
 }
@@ -42,8 +43,11 @@ export const registerFcmServiceWorker = async (): Promise<ServiceWorkerRegistrat
   swUrl.searchParams.set('appId', firebaseConfig.appId)
 
   try {
-    return await navigator.serviceWorker.register(swUrl.toString())
-  } catch {
+    const reg = await navigator.serviceWorker.register(swUrl.toString())
+    console.info('[FCM] Service Worker 등록 완료:', reg.scope)
+    return reg
+  } catch (e) {
+    console.warn('[FCM] Service Worker 등록 실패:', e)
     return null
   }
 }
