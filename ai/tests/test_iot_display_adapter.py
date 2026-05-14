@@ -100,3 +100,61 @@ async def test_non_numeric_owner_is_skipped() -> None:
     )
 
     assert client.payloads == []
+
+
+async def test_mattermost_tool_started_uses_sending_message_text_key() -> None:
+    client = RecordingIotDisplayClient()
+    adapter = IotDisplayEventAdapter(client)
+
+    await adapter.publish(
+        event_type="tool.started",
+        task=task_run(),
+        step=step_run(),
+        status="RUNNING",
+        summary_message="메타모스트 전송 중",
+        payload={"tool_name": "mattermost.send"},
+    )
+
+    payload = client.payloads[0]
+    assert payload.type == "STEP"
+    assert payload.icon == "SEND"
+    assert payload.text_key == "SENDING_MESSAGE"
+
+
+async def test_tool_completed_clears_tool_running_with_step_done() -> None:
+    client = RecordingIotDisplayClient()
+    adapter = IotDisplayEventAdapter(client)
+
+    await adapter.publish(
+        event_type="tool.completed",
+        task=task_run(),
+        step=step_run(),
+        status="RUNNING",
+        summary_message="전송 완료",
+        payload={"tool_name": "mattermost.send"},
+    )
+
+    payload = client.payloads[0]
+    assert payload.type == "STEP"
+    assert payload.icon == "SUCCESS"
+    assert payload.text_key == "STEP_DONE"
+
+
+async def test_task_completed_publishes_terminal_done_payload() -> None:
+    client = RecordingIotDisplayClient()
+    adapter = IotDisplayEventAdapter(client)
+
+    await adapter.publish(
+        event_type="task.completed",
+        task=task_run(status="COMPLETED"),
+        step=step_run(status="COMPLETED"),
+        status="COMPLETED",
+        summary_message="작업 완료",
+        payload={},
+    )
+
+    payload = client.payloads[0]
+    assert payload.type == "DONE"
+    assert payload.icon == "SUCCESS"
+    assert payload.text_key == "DONE_SUCCESS"
+    assert payload.focus is True
