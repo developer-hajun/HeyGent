@@ -15,6 +15,7 @@ import { LoginPage } from '@/pages/LoginPage'
 import { KakaoCallbackPage } from '@/pages/KakaoCallbackPage'
 import { NotionCallbackPage } from '@/pages/NotionCallbackPage'
 import { AiRealtimeProvider } from '@/providers/AiRealtimeProvider'
+import { FcmProvider } from '@/providers/FcmProvider'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useUIStore } from '@/store/useUIStore'
@@ -177,7 +178,9 @@ export default function App() {
             <>
               <ApiKeyOverlay />
               <AiRealtimeProvider>
-                <AuthenticatedShell />
+                <FcmProvider>
+                  <AuthenticatedShell />
+                </FcmProvider>
               </AiRealtimeProvider>
             </>
           }
