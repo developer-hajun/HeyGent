@@ -1301,7 +1301,6 @@ function ChannelsContent() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [form, setForm] = useState({
     alias: '',
-    displayName: '',
     webhookUrl: '',
     defaultChannel: false,
   })
@@ -1313,16 +1312,12 @@ function ChannelsContent() {
   const [errorText, setErrorText] = useState<string | null>(null)
 
   const isEditing = editingId !== null
-  const canSave =
-    form.alias.trim() !== '' &&
-    form.displayName.trim() !== '' &&
-    (isEditing || form.webhookUrl.trim() !== '')
+  const canSave = form.alias.trim() !== '' && (isEditing || form.webhookUrl.trim() !== '')
 
   const resetForm = () => {
     setEditingId(null)
     setForm({
       alias: '',
-      displayName: '',
       webhookUrl: '',
       defaultChannel: false,
     })
@@ -1361,7 +1356,7 @@ function ChannelsContent() {
     try {
       const payload = {
         alias: form.alias.trim(),
-        displayName: form.displayName.trim(),
+        displayName: form.alias.trim(),
         webhookUrl: form.webhookUrl.trim(),
         defaultChannel: form.defaultChannel,
       }
@@ -1387,7 +1382,6 @@ function ChannelsContent() {
     setErrorText(null)
     setForm({
       alias: channel.alias,
-      displayName: channel.displayName,
       webhookUrl: '',
       defaultChannel: channel.defaultChannel,
     })
@@ -1448,30 +1442,19 @@ function ChannelsContent() {
       </div>
 
       <div className="bg-muted/30 border-border space-y-4 rounded-xl border p-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block min-w-0">
-            <span className="text-foreground mb-1.5 block text-xs font-medium">채널 별칭</span>
-            <input
-              type="text"
-              value={form.alias}
-              onChange={(event) => setForm((prev) => ({ ...prev, alias: event.target.value }))}
-              placeholder="backend"
-              className="border-border bg-input-background text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-            />
-          </label>
-          <label className="block min-w-0">
-            <span className="text-foreground mb-1.5 block text-xs font-medium">표시 이름</span>
-            <input
-              type="text"
-              value={form.displayName}
-              onChange={(event) =>
-                setForm((prev) => ({ ...prev, displayName: event.target.value }))
-              }
-              placeholder="백엔드 채널"
-              className="border-border bg-input-background text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-            />
-          </label>
-        </div>
+        <label className="block min-w-0">
+          <span className="text-foreground mb-1.5 block text-xs font-medium">채널 별칭</span>
+          <input
+            type="text"
+            value={form.alias}
+            onChange={(event) => setForm((prev) => ({ ...prev, alias: event.target.value }))}
+            placeholder="free 또는 자유채널"
+            className="border-border bg-input-background text-foreground placeholder:text-muted-foreground focus:ring-primary/20 w-full rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+          />
+          <span className="text-muted-foreground mt-1.5 block text-xs">
+            대화에서 이 별칭을 말하면 해당 Mattermost 채널로 전송합니다.
+          </span>
+        </label>
 
         <label className="block">
           <span className="text-foreground mb-1.5 block text-xs font-medium">
@@ -1554,7 +1537,7 @@ function ChannelsContent() {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h4 className="text-foreground text-sm font-semibold">{channel.displayName}</h4>
+                  <h4 className="text-foreground text-sm font-semibold">{channel.alias}</h4>
                   {channel.defaultChannel && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
                       <Star className="h-3 w-3" />
@@ -1563,7 +1546,7 @@ function ChannelsContent() {
                   )}
                 </div>
                 <p className="text-muted-foreground mt-1 text-xs">
-                  alias: <span className="text-foreground">{channel.alias}</span>
+                  채팅 호출 이름: <span className="text-foreground">{channel.alias}</span>
                   {channel.webhookConfigured ? ' · webhook 등록됨' : ''}
                 </p>
               </div>
@@ -1622,7 +1605,7 @@ function ChannelsContent() {
       </div>
 
       <div className="border-border text-muted-foreground rounded-xl border p-4 text-sm leading-6">
-        대화에서 <span className="text-foreground">백엔드 채널에 보내줘</span>처럼 요청하면 등록된
+        대화에서 <span className="text-foreground">free 채널에 보내줘</span>처럼 요청하면 등록된
         별칭을 기준으로 전송할 수 있습니다. Webhook URL은 목록에 표시하지 않습니다.
       </div>
     </div>

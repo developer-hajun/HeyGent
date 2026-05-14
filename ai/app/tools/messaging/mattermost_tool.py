@@ -20,7 +20,7 @@ MATTERMOST_SEND_SCHEMA = {
         "properties": {
             "target": {
                 "type": "string",
-                "description": "Optional Mattermost channel alias such as backend, frontend, e105, or default.",
+                "description": "Optional Mattermost channel alias such as backend, frontend, free, 자유채널, or e105.",
             },
             "message": {
                 "type": "string",
