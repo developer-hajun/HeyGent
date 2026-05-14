@@ -1304,7 +1304,7 @@ export function AgentStatusPage() {
   }
 
   useVisualizationSync(handleMove, sessionId, profileIdMap)
-  useAgentInfoSync(sessionId)
+  useAgentInfoSync(sessionId, profileIdMap)
 
   // handleMove는 매 렌더마다 새로 생성되므로 타이머 콜백에서는 항상 최신 버전을 참조
   const handleMoveRef = useRef(handleMove)
