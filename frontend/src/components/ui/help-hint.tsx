@@ -124,7 +124,6 @@ export function HelpHint({
         collisionPadding={12}
         onMouseEnter={handleContentEnter}
         onMouseLeave={handleContentLeave}
-        onOpenAutoFocus={(event) => event.preventDefault()}
         className="w-72 space-y-2 text-left text-xs leading-relaxed break-keep whitespace-normal"
       >
         {children}

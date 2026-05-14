@@ -824,9 +824,11 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
     const stage2Band = progressBand(sp, 0.58, 0.99)
     const stage2Eased = easeInOut(stage2Band)
     const stage2Accel = easeIn(stage2Band)
-    const sphereRotationBand = progressBand(sp, 0.58, 0.85)
+    const sphereSettleBand = progressBand(sp, 0.58, 0.72)
+    const sphereSettleEased = easeInOut(sphereSettleBand)
+    const sphereRotationBand = progressBand(sp, 0.72, 0.99)
     const sphereRotationEased = easeInOut(sphereRotationBand)
-    const sphereAbsorbBand = progressBand(sp, 0.85, 0.99)
+    const sphereAbsorbBand = progressBand(sp, 0.81, 0.99)
     const sphereAbsorbEased = easeInOut(sphereAbsorbBand)
     const sphereAbsorbAccel = easeIn(sphereAbsorbBand)
 
@@ -867,7 +869,7 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
 
       // 통합 코어 내 자리 — Stage 2 시 회전 + 반경 수축
       const isCoreMainHub = nd.clusterId === 0 && nd.tier === 'hub' && nd.r >= 8
-      const sphereTurn = -sphereRotationEased * Math.PI * 3
+      const sphereTurn = -sphereRotationEased * Math.PI * 5
       const sphereShell = sphereBaseR * (0.22 + Math.pow(clamp01(nd.mergeR / 140), 0.72) * 0.78)
       const orbR = isCoreMainHub ? 0 : sphereShell * (1 - sphereAbsorbEased * 0.96)
       const latitude = Math.sin(nd.phase * 1.37 + nd.mergeA * 0.23) * 1.08
@@ -894,16 +896,16 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
       const ty = homeY + (orbY - homeY) * stage1Eased
 
       // Stage 2 후반 스프링 가속 — 빨려드는 느낌
-      const sk = SK + stage2Accel * 0.07 + sphereAbsorbAccel * 0.05
+      const sk = SK + stage2Accel * 0.045 + sphereSettleEased * 0.045 + sphereAbsorbAccel * 0.05
       addVelocity(nd, (tx - nd.x) * sk, (ty - nd.y) * sk)
-      const sphereLock = progressBand(sp, 0.58, 0.64) * (1 - sphereAbsorbBand * 0.08)
+      const sphereLock = sphereSettleEased * (1 - sphereAbsorbBand * 0.08)
       if (sphereLock > 0.02) {
-        addVelocity(nd, (tx - nd.x) * sphereLock * 0.8, (ty - nd.y) * sphereLock * 0.8)
+        addVelocity(nd, (tx - nd.x) * sphereLock * 0.22, (ty - nd.y) * sphereLock * 0.22)
       }
 
       // 구체 회전 구간: 점을 목표 좌표에 직접 고정 — 스크롤 속도와 무관하게
       // 점 간 거리/구체 크기가 일정하게 유지되도록 물리 lag 제거
-      const sphereSnap = clamp01(progressBand(sp, 0.6, 0.7))
+      const sphereSnap = sphereSettleEased * 0.18 + sphereRotationBand * 0.18
       if (sphereSnap > 0.001) {
         snapNodeToTarget(nd, tx, ty, sphereSnap)
       }
@@ -1383,6 +1385,7 @@ export function LoginPage() {
   const [scrollProgress, setScrollProgress] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
   const bgPhraseRef = useRef<HTMLDivElement>(null)
+  const bgPhraseWordRefs = useRef<Record<string, HTMLSpanElement | null>>({})
   const phraseTiltFrameRef = useRef<number | null>(null)
   const [devLoginLoading, setDevLoginLoading] = useState(false)
   const [devLoginError, setDevLoginError] = useState<string | null>(null)
@@ -1438,15 +1441,48 @@ export function LoginPage() {
   }, [])
 
   useEffect(() => {
-    const setPhraseTransform = (
-      rotateX: number,
-      rotateY: number,
-      translateX: number,
-      translateY: number,
-    ) => {
-      const phrase = bgPhraseRef.current
-      if (!phrase) return
-      phrase.style.transform = `perspective(1100px) translate3d(${translateX}px, ${translateY}px, 0) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`
+    const setPhraseWordTransforms = (clientX: number, clientY: number) => {
+      const viewportX = (clientX / window.innerWidth - 0.5) * 2
+      const viewportY = (clientY / window.innerHeight - 0.5) * 2
+
+      const groups = [['handle', 'everything', 'you'], ['for']]
+
+      groups.forEach((group) => {
+        const words = group
+          .map((key) => bgPhraseWordRefs.current[key])
+          .filter((word): word is HTMLSpanElement => word !== null)
+        if (words.length === 0) return
+
+        const rects = words.map((word) => word.getBoundingClientRect())
+        const left = Math.min(...rects.map((rect) => rect.left))
+        const right = Math.max(...rects.map((rect) => rect.right))
+        const top = Math.min(...rects.map((rect) => rect.top))
+        const bottom = Math.max(...rects.map((rect) => rect.bottom))
+        const centerX = (left + right) / 2
+        const centerY = (top + bottom) / 2
+        const localX = Math.max(-1, Math.min(1, (clientX - centerX) / (window.innerWidth * 0.34)))
+        const localY = Math.max(-1, Math.min(1, (clientY - centerY) / (window.innerHeight * 0.32)))
+        const proximity = 1 - Math.min(1, Math.hypot(localX, localY))
+        const intensity = 0.86 + proximity * 0.56
+        const rotateX = localY * -10.5 * intensity
+        const rotateY = localX * 12.5 * intensity
+        const translateX = localX * 16 + viewportX * 5
+        const translateY = localY * 11 + viewportY * 4
+        const translateZ = proximity * 30
+        const scale = 1 + proximity * 0.022
+
+        words.forEach((word) => {
+          word.style.transform = `perspective(1100px) translate3d(${translateX}px, ${translateY}px, ${translateZ}px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale(${scale})`
+        })
+      })
+    }
+
+    const resetPhraseWordTransforms = () => {
+      Object.values(bgPhraseWordRefs.current).forEach((word) => {
+        if (!word) return
+        word.style.transform =
+          'perspective(1100px) translate3d(0px, 0px, 0px) rotateX(0deg) rotateY(0deg) scale(1)'
+      })
     }
 
     const onPointerMove = (event: PointerEvent) => {
@@ -1455,10 +1491,7 @@ export function LoginPage() {
       }
 
       phraseTiltFrameRef.current = requestAnimationFrame(() => {
-        const normalizedX = (event.clientX / window.innerWidth - 0.5) * 2
-        const normalizedY = (event.clientY / window.innerHeight - 0.5) * 2
-
-        setPhraseTransform(normalizedY * -4.5, normalizedX * 5.5, normalizedX * 8, normalizedY * 5)
+        setPhraseWordTransforms(event.clientX, event.clientY)
       })
     }
 
@@ -1467,7 +1500,7 @@ export function LoginPage() {
         cancelAnimationFrame(phraseTiltFrameRef.current)
         phraseTiltFrameRef.current = null
       }
-      setPhraseTransform(0, 0, 0, 0)
+      resetPhraseWordTransforms()
     }
 
     window.addEventListener('pointermove', onPointerMove, { passive: true })
@@ -1698,39 +1731,62 @@ export function LoginPage() {
             width: 'fit-content',
             margin: '0 auto',
             padding: '0.14em 0',
-            transform: 'perspective(1100px) translate3d(0px, 0px, 0) rotateX(0deg) rotateY(0deg)',
             transformStyle: 'preserve-3d',
             transformOrigin: '50% 50%',
-            transition: 'transform 0.18s ease-out',
             userSelect: 'none',
-            willChange: 'transform, opacity',
+            willChange: 'opacity',
           }}
           aria-hidden="true"
         >
           {(
             [
-              { key: 'handle', before: '', accent: 'H', after: 'andle' },
-              { key: 'everything-for', before: '', accent: 'E', after: 'verything for' },
-              { key: 'you', before: '', accent: 'Y', after: 'ou' },
+              [{ key: 'handle', before: '', accent: 'H', after: 'andle' }],
+              [
+                { key: 'everything', before: '', accent: 'E', after: 'verything' },
+                { key: 'for', before: '', accent: 'f', after: 'or' },
+              ],
+              [{ key: 'you', before: '', accent: 'Y', after: 'ou' }],
             ] as const
-          ).map(({ key, before, accent, after }) => (
+          ).map((line) => (
             <span
-              key={key}
+              key={line.map((word) => word.key).join('-')}
               style={{
-                fontFamily:
-                  '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif',
-                fontSize: 'clamp(42px, 8vw, 96px)',
-                fontWeight: 760,
-                letterSpacing: 0,
-                lineHeight: 1.16,
-                textTransform: 'none',
+                display: 'flex',
+                alignItems: 'baseline',
+                gap: line.length > 1 ? '0.84em' : '0.28em',
                 whiteSpace: 'nowrap',
-                textRendering: 'geometricPrecision',
+                transformStyle: 'preserve-3d',
               }}
             >
-              {before && <span style={{ color: 'rgba(240,240,242,0.22)' }}>{before}</span>}
-              <span style={{ color: 'rgba(240,240,242,0.66)' }}>{accent}</span>
-              <span style={{ color: 'rgba(240,240,242,0.24)' }}>{after}</span>
+              {line.map(({ key, before, accent, after }) => (
+                <span
+                  key={key}
+                  ref={(node) => {
+                    bgPhraseWordRefs.current[key] = node
+                  }}
+                  style={{
+                    display: 'inline-block',
+                    fontFamily:
+                      '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif',
+                    fontSize: 'clamp(42px, 8vw, 96px)',
+                    fontWeight: 760,
+                    letterSpacing: 0,
+                    lineHeight: 1.16,
+                    textTransform: 'none',
+                    textRendering: 'geometricPrecision',
+                    transform:
+                      'perspective(1100px) translate3d(0px, 0px, 0px) rotateX(0deg) rotateY(0deg) scale(1)',
+                    transformOrigin: '50% 50%',
+                    transformStyle: 'preserve-3d',
+                    transition: 'transform 0.16s ease-out',
+                    willChange: 'transform',
+                  }}
+                >
+                  {before && <span style={{ color: 'rgba(240,240,242,0.22)' }}>{before}</span>}
+                  <span style={{ color: 'rgba(240,240,242,0.66)' }}>{accent}</span>
+                  <span style={{ color: 'rgba(240,240,242,0.24)' }}>{after}</span>
+                </span>
+              ))}
             </span>
           ))}
         </div>
