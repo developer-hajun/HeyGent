@@ -382,7 +382,7 @@ class WebSocketCommandRouter:
         apply_task_capabilities(
             task_input,
             skill_registry=getattr(context.websocket.app.state, "skill_registry", None),
-            default_toolsets=tuple(sorted(_PUBLIC_SESSION_TOOLSETS)),
+            default_toolsets=_default_agent_loop_toolsets(context.websocket.app.state),
         )
         # token memory context는 durable payload에 넣지 않는다. backend 호출이 필요해지면
         # context.auth.access_token에서만 꺼내 쓰도록 경계를 고정한다.
@@ -1976,6 +1976,18 @@ def _apply_session_settings_snapshot(task_input: dict[str, Any], settings: dict[
     if "delegationPolicy" in snapshot:
         task_input["delegation_policy"] = dict(snapshot["delegationPolicy"])
     task_input["system_prompt_snapshot"] = get_system_prompt_snapshot(session)
+
+
+def _default_agent_loop_toolsets(state: Any) -> tuple[str, ...]:
+    tool_catalog = getattr(state, "tool_catalog", None)
+    default_toolsets = getattr(tool_catalog, "default_toolsets", None)
+    if isinstance(default_toolsets, tuple):
+        return default_toolsets
+    if isinstance(default_toolsets, list):
+        return tuple(str(item) for item in default_toolsets if str(item).strip())
+    # 세션 설정 allowlist는 사용자가 저장할 수 있는 안전한 설정 범위이고,
+    # 기본 실행 권한은 실제 agent.loop 런타임 조립값을 우선 신뢰한다.
+    return tuple(sorted(_PUBLIC_SESSION_TOOLSETS))
 
 
 async def _list_openai_models_for_user(state: Any, *, user_id: str, fallback_model: str) -> list[str]:
