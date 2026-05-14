@@ -1,3 +1,7 @@
+---
+title: 제외된 엔드포인트
+---
+
 # Excluded Notion Proxy Endpoints
 
 These endpoints are not part of the first runtime scope.

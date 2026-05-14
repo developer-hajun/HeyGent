@@ -1,3 +1,7 @@
+---
+title: 실행 제한 정책
+---
+
 # Notion Execution Policy
 
 ## Runtime Boundary

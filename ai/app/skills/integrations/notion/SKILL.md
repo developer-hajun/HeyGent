@@ -1,6 +1,6 @@
 ---
 name: "notion"
-description: "사용자의 연결된 Notion 워크스페이스에서 페이지, 데이터소스, 데이터베이스를 검색하고 조회하며, 페이지 본문 markdown 조회, 페이지 생성/수정, 댓글 작성, 데이터소스 질의가 필요할 때 사용합니다. Composio Notion 연결과 backend 프록시를 전제로 하며 OAuth 토큰 발급, multipart 파일 업로드, 검증되지 않은 삭제 작업은 기본 작업 흐름에서 제외합니다."
+description: "사용자의 연결된 Notion 워크스페이스에서 페이지와 데이터베이스를 검색, 조회, 작성하고 조사 결과를 보고서 형태로 정리할 때 사용합니다. Composio Notion 연결과 backend 프록시를 전제로 하며 OAuth 토큰 발급, multipart 파일 업로드, 검증되지 않은 삭제 작업은 기본 작업 흐름에서 제외합니다."
 ---
 
 # Notion Skill
@@ -13,7 +13,8 @@ Use this skill when the user asks to work with their connected Notion workspace:
 - Read page metadata, page markdown, block children, comments, users, or schemas.
 - Create a page, append page content, update page markdown, or write a comment.
 - Query a known data source with filters, sorts, cursors, or page size.
-- Prepare API examples for the backend Notion proxy.
+- Turn research or structured findings into a readable Notion report page.
+- Prepare or update lightweight Notion databases for repeatable tracking work.
 
 Do not use this skill for direct Notion OAuth client operations or multipart file uploads.
 
@@ -23,9 +24,15 @@ Required runtime toolset: `notion`
 
 Use `notion.execute` after reading this document and, when needed, the reference files:
 
-- `references/notion-proxy-api.md`: supported command candidates.
-- `references/excluded-endpoints.md`: endpoints excluded from the first runtime scope.
+- `references/notion-api-basics.md`: search, read, create, query, and update command examples.
+- `references/block-types.md`: Notion block shapes for page content.
+- `references/report-page-patterns.md`: page-first report composition patterns.
+- `references/database-patterns.md`: when and how to use data sources/databases.
+- `references/notion-style-guide.md`: restrained, readable Notion-style document layout.
+- `references/managed-document-patterns.md`: report artifact and revision thinking.
+- `references/notion-proxy-api.md`: complete supported command candidates.
 - `references/execution-policy.md`: execution policy and test cleanup notes.
+- `references/excluded-endpoints.md`: endpoints excluded from the first runtime scope.
 
 `notion.execute` accepts only `commands`. Do not include `userId`; the runtime binds the authenticated TaskRun owner.
 
@@ -52,10 +59,15 @@ Use `notion.execute` after reading this document and, when needed, the reference
    - Search with `POST /v1/search`.
    - Read target page or data source metadata.
    - Read page markdown or block children when editing existing content.
-3. For writes, build the smallest command that satisfies the request.
-4. If the operation changes, deletes, moves, or restructures content, explain the intended target and ask for confirmation unless the user already explicitly approved that exact action.
-5. For temporary live tests, use clear Korean marker text such as `테스트용입니다`, then clean up only the test artifact that was created by the current test.
-6. When creating a temporary page that must be cleaned up, never use `parent: {"workspace": true}`. Search for or ask the user for an existing parent page and create the page under `parent: {"page_id": "..."}` so it can be archived afterward.
+3. Choose the output form:
+   - Use a Notion page for one-off reports, briefs, summaries, meeting notes, or research write-ups.
+   - Use a data source/database only for repeatable lists, tracking, status management, or user-requested structured records.
+4. For report pages, read `references/report-page-patterns.md` and `references/block-types.md` before writing.
+5. For database work, read `references/database-patterns.md` before creating or querying data sources.
+6. For writes, build the smallest command that satisfies the request.
+7. If the operation changes, deletes, moves, or restructures content, explain the intended target and ask for confirmation unless the user already explicitly approved that exact action.
+8. For temporary live tests, use clear Korean marker text such as `테스트용입니다`, then clean up only the test artifact that was created by the current test when cleanup is requested.
+9. When creating a temporary page that must be cleaned up, never use `parent: {"workspace": true}`. Search for or ask the user for an existing parent page and create the page under `parent: {"page_id": "..."}` so it can be archived afterward.
 
 ## Command Rules
 

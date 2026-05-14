@@ -1,3 +1,7 @@
+---
+title: 프록시 API 목록
+---
+
 # Notion Proxy API Reference
 
 Use these command candidates with `notion.execute`.
