@@ -40,6 +40,7 @@ class AgentTemplateResponse(BaseModel):
     adapter_type: str = Field(alias="adapterType")
     model: str | None = None
     profile_image: str | None = Field(default=None, alias="profileImage")
+    visual_key: str | None = Field(default=None, alias="visualKey")
     skills: list[str] = Field(default_factory=list)
     entry_document_key: str = Field(alias="entryDocumentKey")
     documents: list[AgentInstructionDocumentResponse] = Field(default_factory=list)
@@ -61,6 +62,7 @@ class AgentProfileResponse(BaseModel):
     adapter_type: str | None = Field(default=None, alias="adapterType")
     model: str | None = None
     profile_image: str | None = Field(default=None, alias="profileImage")
+    visual_key: str | None = Field(default=None, alias="visualKey")
     skills: list[str] = Field(default_factory=list)
     instruction_bundle_id: str | None = Field(default=None, alias="instructionBundleId")
     entry_document_key: str | None = Field(default=None, alias="entryDocumentKey")
