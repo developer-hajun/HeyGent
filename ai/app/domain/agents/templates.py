@@ -51,7 +51,7 @@ MAIN_AGENT_TEMPLATE = BuiltinAgentTemplate(
     adapter_type="openai",
     model="gpt-5.4",
     profile_image="/assets/agents/ceo/ceo_profile.png",
-    skills=(),
+    skills=("mattermost-send",),
     documents=(
         (
             "AGENTS.md",

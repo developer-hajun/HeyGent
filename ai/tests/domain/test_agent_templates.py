@@ -23,6 +23,10 @@ def test_main_agent_template_does_not_include_heartbeat_document():
     assert "HEARTBEAT.md" not in document_keys
 
 
+def test_main_agent_template_includes_mattermost_send_skill():
+    assert "mattermost-send" in MAIN_AGENT_TEMPLATE.skills
+
+
 def test_builtin_agent_template_skills_exist_in_builtin_catalog():
     catalog_skill_names = {skill["name"] for skill in SkillLoader().load_builtin()}
     template_skills = {

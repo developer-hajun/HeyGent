@@ -33,6 +33,15 @@ def resolve_task_capabilities(
         )
 
     resolved_toolsets = list(requested_toolsets or _normalized_toolsets(default_toolsets) or ())
+    skills_allowed = requested_toolsets is None or "skills" in requested_toolsets or "skill-runtime" in requested_toolsets
+    if not skills_allowed:
+        enabled_tool_names = tuple(sorted(resolve_runtime_tool_names(resolved_toolsets) or ()))
+        return TaskCapabilityResolution(
+            enabled_toolsets=tuple(resolved_toolsets),
+            enabled_skill_names=tuple(enabled_skill_names),
+            enabled_tool_names=enabled_tool_names,
+            skill_required_toolsets=(),
+        )
     if enabled_skill_names:
         _append_unique(resolved_toolsets, "skills")
     for toolset in skill_required_toolsets:
