@@ -5,7 +5,10 @@ from app.api.session_agent_profiles import (
     instruction_bundle_prompt_payload,
     profile_model,
 )
-from app.domain.orchestration.prompts.prompt_builder import _build_session_agent_profile_lines
+from app.domain.orchestration.prompts.prompt_builder import (
+    _build_session_agent_profile_lines,
+    _build_session_agent_skill_description_lines,
+)
 
 
 class DummySkillRegistry:
@@ -75,9 +78,39 @@ def test_session_agent_profile_lines_do_not_include_when_to_use_examples():
     lines = _build_session_agent_profile_lines([payload])
 
     assert len(lines) == 1
-    assert "subway-lost-property: 지하철 유실물 공식 조회 경로를 안내한다." in lines[0]
+    assert "스킬=subway-lost-property" in lines[0]
+    assert "스킬 설명" not in lines[0]
+    assert "지하철 유실물 공식 조회 경로를 안내한다." not in lines[0]
     assert "사용 예시" not in lines[0]
     assert "강남역에서 지갑" not in lines[0]
+
+
+def test_session_agent_skill_descriptions_are_deduplicated_across_candidates():
+    payload = agent_profile_prompt_payload(
+        {
+            "profile_id": "agent-k",
+            "profile_key": "session.k",
+            "agent_type": "user_subagent",
+            "template_key": "k_services",
+            "config_snapshot": {
+                "name": "K-에이전트",
+                "skills": ["subway-lost-property"],
+            },
+        },
+        skill_registry=DummySkillRegistry(),
+    )
+    other_payload = {
+        **payload,
+        "profileId": "agent-general",
+        "configSnapshot": {
+            "name": "기본 에이전트",
+            "skills": ["subway-lost-property"],
+        },
+    }
+
+    lines = _build_session_agent_skill_description_lines([payload, other_payload])
+
+    assert lines == ["subway-lost-property: 지하철 유실물 공식 조회 경로를 안내한다."]
 
 
 def test_instruction_bundle_prompt_payload_accepts_camel_and_snake_document_keys():

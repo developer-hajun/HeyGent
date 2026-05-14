@@ -33,7 +33,7 @@ def test_prompt_builder_includes_native_tool_call_and_termination_guidance():
     assert "현재 실행 에이전트가 가진 skill이나 로컬 도구로 요청의 핵심을 처리할 수 있으면 먼저 직접 실행 가능성을 검토하세요." in prompt
     assert "다른 세션 에이전트만 가진 능력이 필요하거나 사용자가 명시적으로 맡기라고 한 경우에만 session_agent_task" in prompt
     assert "session_agent_task 는 작업 보드에 보이는 하위 작업과 실제 세션 에이전트 실행을 묶는 도구입니다." in prompt
-    assert "후보의 이름, 호칭, 할 수 있는 일, 연결된 스킬 설명이 사용자 요청과 맞아야 합니다." in prompt
+    assert "후보의 이름, 호칭, 할 수 있는 일, 연결된 스킬 이름과 공용 스킬 설명이 사용자 요청과 맞아야 합니다." in prompt
     assert "후보가 요청의 핵심 부분을 수행할 수 있고, 독립 산출물이나 책임 분리가 자연스러울 때" in prompt
     assert "독립 산출물이나 책임 분리가 자연스러울 때 세션 에이전트 작업으로 분리하세요." in prompt
     assert "분리할 실익이 낮은 작업은 CEO가 직접 처리해도 됩니다." in prompt
@@ -232,7 +232,7 @@ def test_prompt_builder_promotes_session_agent_task_from_candidate_profiles():
     assert "agent-report: 이름=보고서 에이전트 / 할 수 있는 일=확인 결과를 사용자에게 전달할 문장으로 정리한다. / 참고 분류=writer" in prompt
     assert "현재 실행 에이전트가 가진 skill이나 로컬 도구로 요청의 핵심을 처리할 수 있으면 먼저 직접 실행 가능성을 검토하세요." in prompt
     assert "다른 세션 에이전트만 가진 능력이 필요하거나 사용자가 명시적으로 맡기라고 한 경우에만 session_agent_task" in prompt
-    assert "후보의 이름, 호칭, 할 수 있는 일, 연결된 스킬 설명이 사용자 요청과 맞아야 합니다." in prompt
+    assert "후보의 이름, 호칭, 할 수 있는 일, 연결된 스킬 이름과 공용 스킬 설명이 사용자 요청과 맞아야 합니다." in prompt
     assert "다른 세션 에이전트 후보의 skill 이름이나 설명과 직접 맞고" in prompt
     assert "첫 tool-call 턴에서 step 도구로 현재 단계를 in_progress 로 선언한 뒤 session_agent_task" in prompt
     assert "단순 응답, 맥락 정리, 최종 종합" in prompt
@@ -294,9 +294,43 @@ def test_work_context_prompt_shows_session_agent_skill_descriptions():
     )
 
     assert "스킬=subway-lost-property" in prompt
-    assert "스킬 설명=subway-lost-property: 서울 지하철 유실물 접수와 보관 장소 조회를 돕는다." in prompt
+    assert "세션 에이전트 공용 스킬 설명:" in prompt
+    assert "subway-lost-property: 서울 지하철 유실물 접수와 보관 장소 조회를 돕는다." in prompt
     assert "사용 예시" not in prompt
     assert "강남역에서 지갑" not in prompt
+
+
+def test_work_context_prompt_deduplicates_shared_session_agent_skill_descriptions():
+    prompt = build_work_context_prompt(
+        input_payload={
+            "sessionAgentProfiles": [
+                {
+                    "profileId": "agent-k",
+                    "configSnapshot": {"name": "K-에이전트", "skills": ["subway-lost-property"]},
+                    "skillDescriptions": [
+                        {
+                            "name": "subway-lost-property",
+                            "description": "서울 지하철 유실물 접수와 보관 장소 조회를 돕는다.",
+                        }
+                    ],
+                },
+                {
+                    "profileId": "agent-general",
+                    "configSnapshot": {"name": "기본 에이전트", "skills": ["subway-lost-property"]},
+                    "skillDescriptions": [
+                        {
+                            "name": "subway-lost-property",
+                            "description": "서울 지하철 유실물 접수와 보관 장소 조회를 돕는다.",
+                        }
+                    ],
+                },
+            ]
+        }
+    )
+
+    assert prompt.count("subway-lost-property: 서울 지하철 유실물 접수와 보관 장소 조회를 돕는다.") == 1
+    assert "agent-k: 이름=K-에이전트 / 스킬=subway-lost-property" in prompt
+    assert "agent-general: 이름=기본 에이전트 / 스킬=subway-lost-property" in prompt
 
 
 def test_persistent_memory_prompt_sanitizes_metadata():
