@@ -69,7 +69,7 @@ const CLUSTER_DEFS: ClusterDef[] = [
     ry: 0.24,
     label: 'MEMORY',
     title: 'MEMORY',
-    desc: '이전 대화와 세션 맥락을 기억하고 이어줍니다.',
+    desc: '이전 대화와 세션 맥락을\n장기기억으로 이어갑니다.',
     keywords: 'Session Context · Recall · Persistence',
     count: 40,
     spread: 104,
@@ -82,10 +82,10 @@ const CLUSTER_DEFS: ClusterDef[] = [
     id: 2,
     rx: 0.76,
     ry: 0.35,
-    label: 'PLANNING',
-    title: 'PLANNING',
-    desc: '일정, 리마인더, 할 일을 정리하고 관리합니다.',
-    keywords: 'Schedule · Reminder · Task Management',
+    label: 'AGENT WORKSPACE',
+    title: 'AGENT WORKSPACE',
+    desc: '가상 사무실 속 에이전트들을 통해\n작업의 진행 상태와 흐름을 확인합니다.',
+    keywords: 'Virtual Office · Status Tracking · Work History',
     count: 36,
     spread: 96,
     isMain: false,
@@ -213,6 +213,13 @@ function advanceNode(node: NetNode, damping: number): void {
   node.vy *= damping
   node.x += node.vx
   node.y += node.vy
+}
+
+function snapNodeToTarget(node: NetNode, tx: number, ty: number, factor: number): void {
+  node.x += (tx - node.x) * factor
+  node.y += (ty - node.y) * factor
+  node.vx *= 1 - factor
+  node.vy *= 1 - factor
 }
 
 function advancePulse(pulse: Pulse, speedMultiplier: number): void {
@@ -817,9 +824,9 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
     const stage2Band = progressBand(sp, 0.58, 0.99)
     const stage2Eased = easeInOut(stage2Band)
     const stage2Accel = easeIn(stage2Band)
-    const sphereRotationBand = progressBand(sp, 0.58, 0.92)
+    const sphereRotationBand = progressBand(sp, 0.58, 0.85)
     const sphereRotationEased = easeInOut(sphereRotationBand)
-    const sphereAbsorbBand = progressBand(sp, 0.92, 0.99)
+    const sphereAbsorbBand = progressBand(sp, 0.85, 0.99)
     const sphereAbsorbEased = easeInOut(sphereAbsorbBand)
     const sphereAbsorbAccel = easeIn(sphereAbsorbBand)
 
@@ -876,12 +883,11 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
       const rollTurn = 0.12
       const x2 = x1 * Math.cos(rollTurn) - y1 * Math.sin(rollTurn)
       const y2 = x1 * Math.sin(rollTurn) + y1 * Math.cos(rollTurn)
-      const perspective = Math.max(0.86, Math.min(1.18, 680 / (680 + z2)))
       const depthFace = clamp01(0.5 - z2 / Math.max(orbR * 2.4, 1))
-      orbitDepths.set(nd, 1 + (perspective - 1) * stage2Band * 1.25)
       orbitLights.set(nd, 1 + stage2Band * (0.62 + depthFace * 0.62 - 1))
-      const orbX = cx + x2 * perspective
-      const orbY = cy + y2 * perspective
+      // perspective의 위치 영향 제거 — 점의 화면 좌표는 일정한 구체 좌표 그대로 (크기·구체 형태 변화 방지)
+      const orbX = cx + x2
+      const orbY = cy + y2
 
       // Stage 1 진행: home → orbit 위치 / Stage 2: orbit는 점차 중심으로 수렴
       const tx = homeX + (orbX - homeX) * stage1Eased
@@ -893,6 +899,13 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
       const sphereLock = progressBand(sp, 0.58, 0.64) * (1 - sphereAbsorbBand * 0.08)
       if (sphereLock > 0.02) {
         addVelocity(nd, (tx - nd.x) * sphereLock * 0.8, (ty - nd.y) * sphereLock * 0.8)
+      }
+
+      // 구체 회전 구간: 점을 목표 좌표에 직접 고정 — 스크롤 속도와 무관하게
+      // 점 간 거리/구체 크기가 일정하게 유지되도록 물리 lag 제거
+      const sphereSnap = clamp01(progressBand(sp, 0.6, 0.7))
+      if (sphereSnap > 0.001) {
+        snapNodeToTarget(nd, tx, ty, sphereSnap)
       }
 
       // 마우스 인터랙션 (hero 상태에만)
@@ -1084,16 +1097,19 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
       ctx.fill()
     }
 
-    // ── Stage 2: 버튼 자리 흡수 glow ─────────────────────
-    if (stage2Eased > 0.02) {
+    // ── Stage 2: 버튼 자리 흡수 glow — 점이 모두 사라지면 함께 페이드아웃 ─────
+    const glowVisibility = 1 - sphereAbsorbEased
+    if (stage2Eased > 0.02 && glowVisibility > 0.01) {
+      const innerAlpha = stage2Eased * 0.2 * glowVisibility
       const inner = ctx.createRadialGradient(cx * dpr, cy * dpr, 0, cx * dpr, cy * dpr, 36 * dpr)
-      inner.addColorStop(0, `rgba(240,240,244,${(stage2Eased * 0.2).toFixed(3)})`)
+      inner.addColorStop(0, `rgba(240,240,244,${innerAlpha.toFixed(3)})`)
       inner.addColorStop(1, 'rgba(240,240,244,0)')
       ctx.beginPath()
       ctx.arc(cx * dpr, cy * dpr, 36 * dpr, 0, Math.PI * 2)
       ctx.fillStyle = inner
       ctx.fill()
 
+      const outerAlpha = stage2Eased * 0.1 * glowVisibility
       const outer = ctx.createRadialGradient(
         cx * dpr,
         cy * dpr,
@@ -1102,7 +1118,7 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
         cy * dpr,
         130 * dpr,
       )
-      outer.addColorStop(0, `rgba(215,215,220,${(stage2Eased * 0.1).toFixed(3)})`)
+      outer.addColorStop(0, `rgba(215,215,220,${outerAlpha.toFixed(3)})`)
       outer.addColorStop(1, 'rgba(215,215,220,0)')
       ctx.beginPath()
       ctx.arc(cx * dpr, cy * dpr, 130 * dpr, 0, Math.PI * 2)
@@ -1122,7 +1138,6 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
       const mBoost = mDist < MR ? 1 + (1 - mDist / MR) * (nd.tier === 'hub' ? 0.55 : 0.28) : 1
       const hBoost = isHov ? (isCore ? 1.65 : 1.42) : hc !== null ? (isCore ? 0.55 : 0.38) : 1
       const breathe = 1 + Math.sin(t * 0.46 + nd.phase) * (nd.tier === 'hub' ? 0.08 : 0.04)
-      const depthScale = orbitDepths.get(nd) ?? 1
       const depthLight = orbitLights.get(nd) ?? 1
 
       // Stage 2 노드 크기 수축 (빨려들기)
@@ -1142,9 +1157,10 @@ function AgentCanvas({ hoveredCluster, onClusterHover, scrollProgress }: CanvasP
             : 1 - sphereAbsorbEased * 0.96
 
       const alpha = Math.min(nd.baseAlpha * mBoost * hBoost * breathe * tierFade * depthLight, 1.0)
+      // 회전 중 perspective 영향으로 점이 커졌다 작아지는 현상 방지 — 크기는 depthScale을 무시
       const radius = Math.max(
         nd.tier === 'hub' ? 0.14 : 0.07,
-        nd.r * (isHov ? (isCore ? 1.3 : 1.2) : 1) * breathe * scaleShrink * depthScale,
+        nd.r * (isHov ? (isCore ? 1.3 : 1.2) : 1) * breathe * scaleShrink,
       )
 
       if (alpha < 0.01) continue
@@ -1366,6 +1382,8 @@ export function LoginPage() {
   const [hoveredCluster, setHoveredCluster] = useState<number | null>(null)
   const [scrollProgress, setScrollProgress] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const bgPhraseRef = useRef<HTMLDivElement>(null)
+  const phraseTiltFrameRef = useRef<number | null>(null)
   const [devLoginLoading, setDevLoginLoading] = useState(false)
   const [devLoginError, setDevLoginError] = useState<string | null>(null)
 
@@ -1419,6 +1437,53 @@ export function LoginPage() {
     return () => el.removeEventListener('scroll', onScroll)
   }, [])
 
+  useEffect(() => {
+    const setPhraseTransform = (
+      rotateX: number,
+      rotateY: number,
+      translateX: number,
+      translateY: number,
+    ) => {
+      const phrase = bgPhraseRef.current
+      if (!phrase) return
+      phrase.style.transform = `perspective(1100px) translate3d(${translateX}px, ${translateY}px, 0) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`
+    }
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (phraseTiltFrameRef.current !== null) {
+        cancelAnimationFrame(phraseTiltFrameRef.current)
+      }
+
+      phraseTiltFrameRef.current = requestAnimationFrame(() => {
+        const normalizedX = (event.clientX / window.innerWidth - 0.5) * 2
+        const normalizedY = (event.clientY / window.innerHeight - 0.5) * 2
+
+        setPhraseTransform(normalizedY * -4.5, normalizedX * 5.5, normalizedX * 8, normalizedY * 5)
+      })
+    }
+
+    const resetTilt = () => {
+      if (phraseTiltFrameRef.current !== null) {
+        cancelAnimationFrame(phraseTiltFrameRef.current)
+        phraseTiltFrameRef.current = null
+      }
+      setPhraseTransform(0, 0, 0, 0)
+    }
+
+    window.addEventListener('pointermove', onPointerMove, { passive: true })
+    window.addEventListener('blur', resetTilt)
+    document.addEventListener('mouseleave', resetTilt)
+
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('blur', resetTilt)
+      document.removeEventListener('mouseleave', resetTilt)
+      if (phraseTiltFrameRef.current !== null) {
+        cancelAnimationFrame(phraseTiltFrameRef.current)
+      }
+    }
+  }, [])
+
   const hovered =
     hoveredCluster !== null ? (CLUSTER_DEFS.find((c) => c.id === hoveredCluster) ?? null) : null
 
@@ -1426,12 +1491,12 @@ export function LoginPage() {
   const copyOpacity = clamp01(1 - progressBand(scrollProgress, 0.06, 0.24))
   const copyTranslateY = progressBand(scrollProgress, 0.06, 0.24) * -28
 
-  // 로그인 버튼 — Stage 2 시점부터 등장 (fade + 가벼운 translateY)
-  const loginOpacity = clamp01(progressBand(scrollProgress, 0.9, 0.99))
+  // 로그인 버튼 — 점이 모두 사라진 직후 등장 (fade + 가벼운 translateY)
+  const loginOpacity = clamp01(progressBand(scrollProgress, 0.99, 1.0))
   const loginTranslateY = (1 - loginOpacity) * 18
 
-  // Stage 2 끝 무렵부터 살짝 추가 강조 ("응축된 진입점" 느낌)
-  const loginEmphasis = clamp01(progressBand(scrollProgress, 0.94, 1.0))
+  // 스크롤 완료 직후 살짝 추가 강조 ("응축된 진입점" 느낌)
+  const loginEmphasis = clamp01(progressBand(scrollProgress, 0.995, 1.0))
 
   const hintOpacity = clamp01(1 - progressBand(scrollProgress, 0.02, 0.12))
 
@@ -1541,6 +1606,7 @@ export function LoginPage() {
                   lineHeight: 1.7,
                   marginBottom: hovered.keywords ? 10 : 0,
                   wordBreak: 'keep-all',
+                  whiteSpace: 'pre-line',
                   fontFamily:
                     '-apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif',
                 }}
@@ -1614,6 +1680,7 @@ export function LoginPage() {
 
         {/* 배경 문구 — 스크롤 끝부분에 fade in, 로그인 버튼 아래 영역에 배치하여 겹치지 않음 */}
         <div
+          ref={bgPhraseRef}
           style={{
             position: 'fixed',
             left: 0,
@@ -1631,8 +1698,12 @@ export function LoginPage() {
             width: 'fit-content',
             margin: '0 auto',
             padding: '0.14em 0',
-            transition: 'none',
+            transform: 'perspective(1100px) translate3d(0px, 0px, 0) rotateX(0deg) rotateY(0deg)',
+            transformStyle: 'preserve-3d',
+            transformOrigin: '50% 50%',
+            transition: 'transform 0.18s ease-out',
             userSelect: 'none',
+            willChange: 'transform, opacity',
           }}
           aria-hidden="true"
         >
@@ -1664,7 +1735,7 @@ export function LoginPage() {
           ))}
         </div>
 
-        {/* Login reveal — Stage 2 시점부터 등장 */}
+        {/* Login reveal — 점이 사라진 직후 부드럽게 등장 */}
         <div
           style={{
             position: 'fixed',
@@ -1679,7 +1750,7 @@ export function LoginPage() {
             alignItems: 'center',
             gap: 14,
             pointerEvents: loginOpacity > 0.5 ? 'auto' : 'none',
-            transition: 'none',
+            transition: 'opacity 0.45s ease-out, transform 0.45s ease-out',
           }}
         >
           <p
@@ -1803,7 +1874,7 @@ export function LoginPage() {
         >
           <p
             style={{
-              color: 'rgba(168,168,172,0.36)',
+              color: 'rgba(245,245,247,0.92)',
               fontSize: 9,
               fontFamily: 'monospace',
               letterSpacing: '0.18em',
@@ -1825,7 +1896,7 @@ export function LoginPage() {
               width="5"
               height="9"
               rx="2.5"
-              stroke="rgba(168,168,172,0.28)"
+              stroke="rgba(245,245,247,0.85)"
               strokeWidth="1"
             />
             <rect
@@ -1834,12 +1905,12 @@ export function LoginPage() {
               width="2"
               height="3"
               rx="1"
-              fill="rgba(168,168,172,0.42)"
+              fill="rgba(245,245,247,0.95)"
               style={{ animation: 'scrollDot 1.9s ease-in-out infinite' }}
             />
             <path
               d="M4 18l4 5 4-5"
-              stroke="rgba(168,168,172,0.24)"
+              stroke="rgba(245,245,247,0.8)"
               strokeWidth="1"
               strokeLinecap="round"
               strokeLinejoin="round"
