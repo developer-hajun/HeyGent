@@ -22,6 +22,7 @@ from app.domain.orchestration.run_lifecycle import classify_task_run_liveness
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
+from app.domain.tasks.activity_transcript import build_activity_transcript
 from app.domain.tasks.display_context import build_task_display_context
 from app.domain.work import WorkService
 logger = logging.getLogger(__name__)
@@ -979,6 +980,8 @@ class WebSocketCommandRouter:
             "pending_approval": pending_approval,
             "approvals": [pending_approval] if pending_approval is not None else [],
             "events": events,
+            "activity_items": build_activity_transcript(events),
+            "activityItems": build_activity_transcript(events),
         }
         if include_steps:
             step_payloads = [_step_payload_with_display_context(task, step) for step in steps]
@@ -1035,11 +1038,14 @@ class WebSocketCommandRouter:
                 events = durable_events
 
         latest_sequence = max((int(event.get("sequence") or 0) for event in events), default=None)
+        activity_items = build_activity_transcript(events)
         return (
             "taskRun.events.replay.result",
             {
                 "task_run_id": task_run_id,
                 "events": events,
+                "activity_items": activity_items,
+                "activityItems": activity_items,
                 "latest_sequence": latest_sequence,
                 "retention_exceeded": retention_exceeded,
             },

@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from app.clients.backend_auth import BackendAuthVerifyResult
 from app.clients.backend_memory import BackendMemoryItem
+from app.contracts.event.task_events import TaskEventEnvelope
 from app.core.time import utc_now
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse
 from app.domain.tasks.models import TaskRun
@@ -404,6 +405,65 @@ def test_ws_task_runs_active_list_filters_authenticated_owner(client):
     assert response["requestId"] == "req_active"
     assert [item["task_run_id"] for item in response["payload"]["items"]] == ["task_active_ws_owner"]
     assert [item["task_run_id"] for item in response["payload"]["task_runs"]] == ["task_active_ws_owner"]
+
+
+def test_ws_task_run_snapshot_and_replay_include_activity_transcript(client):
+    client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="activity-owner")
+    client.app.state.repository.create_task(
+        TaskRun(
+            task_run_id="task_activity_ws",
+            task_type="agent.loop",
+            owner_key="activity-owner",
+            session_key="session_activity_ws",
+            status="COMPLETED",
+            title="activity command",
+        )
+    )
+    for sequence, event_type in ((1, "tool.started"), (2, "tool.completed")):
+        client.app.state.repository.append_event(
+            TaskEventEnvelope(
+                event_id=f"event-activity-{sequence}",
+                event_type=event_type,
+                task_run_id="task_activity_ws",
+                step_run_id="step-activity",
+                producer="test",
+                occurred_at=f"2026-05-14T00:00:0{sequence}+00:00",
+                status="RUNNING" if event_type == "tool.started" else "COMPLETED",
+                summary_message="날씨 조회",
+                payload={
+                    "tool_call_id": "call-weather",
+                    "tool_name": "http_get",
+                    "title": "날씨 조회",
+                    "result": {"ok": True} if event_type == "tool.completed" else None,
+                },
+            )
+        )
+
+    with client.websocket_connect("/ai/api/v1/realtime/user/ws") as websocket:
+        websocket.send_json({"type": "auth.start", "accessToken": "token-secret"})
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "taskRun.snapshot.get",
+                "requestId": "req_activity_snapshot",
+                "payload": {"taskRunId": "task_activity_ws", "includeSteps": False},
+            }
+        )
+        snapshot = websocket.receive_json()
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "taskRun.events.replay",
+                "requestId": "req_activity_replay",
+                "payload": {"taskRunId": "task_activity_ws", "afterSequence": 0},
+            }
+        )
+        replay = websocket.receive_json()
+
+    assert snapshot["payload"]["activity_items"][0]["activity_id"] == "tool:task_activity_ws:call-weather"
+    assert snapshot["payload"]["activityItems"][0]["status"] == "COMPLETED"
+    assert replay["payload"]["activity_items"][0]["completed_event_id"] == "event-activity-2"
 
 
 def test_ws_task_runs_active_list_hides_orphaned_running_task(client):

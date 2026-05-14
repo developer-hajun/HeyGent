@@ -38,6 +38,7 @@ export function StepRunActivityPanelBody({
   const stepRunsById = useTaskRunStore((state) => state.stepRunsById)
   const approvalsById = useTaskRunStore((state) => state.approvalsById)
   const eventsByTaskRunId = useTaskRunStore((state) => state.eventsByTaskRunId)
+  const activityItemsByTaskRunId = useTaskRunStore((state) => state.activityItemsByTaskRunId)
   const replayNeededByTaskRunId = useTaskRunStore((state) => state.replayNeededByTaskRunId)
   const fetchSnapshot = useTaskRunStore((state) => state.fetchSnapshot)
   const replayEvents = useTaskRunStore((state) => state.replayEvents)
@@ -99,8 +100,12 @@ export function StepRunActivityPanelBody({
     [selectedEvents],
   )
   const selectedActivities = useMemo(
-    () => selectedVisibleEvents.map(toActivityItemView),
-    [selectedVisibleEvents],
+    () =>
+      resolvedSelectedTaskRunId === undefined
+        ? selectedVisibleEvents.map(toActivityItemView)
+        : (activityItemsByTaskRunId[resolvedSelectedTaskRunId] ??
+          selectedVisibleEvents.map(toActivityItemView)),
+    [activityItemsByTaskRunId, resolvedSelectedTaskRunId, selectedVisibleEvents],
   )
   const selectedStepRuns = useMemo(
     () =>

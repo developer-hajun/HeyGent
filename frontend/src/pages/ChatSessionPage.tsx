@@ -86,6 +86,7 @@ export function ChatSessionPage() {
   const taskRunsById = useTaskRunStore((state) => state.taskRunsById)
   const stepRunsById = useTaskRunStore((state) => state.stepRunsById)
   const eventsByTaskRunId = useTaskRunStore((state) => state.eventsByTaskRunId)
+  const activityItemsByTaskRunId = useTaskRunStore((state) => state.activityItemsByTaskRunId)
   const lastSequenceByTaskRunId = useTaskRunStore((state) => state.lastSequenceByTaskRunId)
   const taskRunError = useTaskRunStore((state) => state.lastError)
   const fetchActiveTaskRuns = useTaskRunStore((state) => state.fetchActiveTaskRuns)
@@ -128,12 +129,13 @@ export function ChatSessionPage() {
       Object.fromEntries(
         taskRunIds.map((taskRunId) => [
           taskRunId,
-          (eventsByTaskRunId[taskRunId] ?? [])
-            .filter((event) => !isInternalStepAnchorEvent(event))
-            .map(toActivityItemView),
+          activityItemsByTaskRunId[taskRunId] ??
+            (eventsByTaskRunId[taskRunId] ?? [])
+              .filter((event) => !isInternalStepAnchorEvent(event))
+              .map(toActivityItemView),
         ]),
       ),
-    [eventsByTaskRunId, taskRunIds],
+    [activityItemsByTaskRunId, eventsByTaskRunId, taskRunIds],
   )
   const stepRunsByTaskRunId = useMemo(
     () =>
