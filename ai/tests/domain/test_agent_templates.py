@@ -23,6 +23,20 @@ def test_main_agent_template_does_not_include_heartbeat_document():
     assert "HEARTBEAT.md" not in document_keys
 
 
+def test_main_agent_template_includes_mattermost_send_skill():
+    assert "mattermost-send" in MAIN_AGENT_TEMPLATE.skills
+
+
+def test_main_agent_template_uses_team_lead_display_copy():
+    assert MAIN_AGENT_TEMPLATE.display_name == "팀장"
+    assert MAIN_AGENT_TEMPLATE.name == "팀장"
+    assert MAIN_AGENT_TEMPLATE.title == "팀장"
+    assert MAIN_AGENT_TEMPLATE.role == "ceo"
+    joined_documents = "\n".join(document for _, _, document in MAIN_AGENT_TEMPLATE.documents)
+    assert "팀장 지침" in joined_documents
+    assert "CEO 지침" not in joined_documents
+
+
 def test_builtin_agent_template_skills_exist_in_builtin_catalog():
     catalog_skill_names = {skill["name"] for skill in SkillLoader().load_builtin()}
     template_skills = {

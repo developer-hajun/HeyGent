@@ -1,0 +1,25 @@
+# WebSocket command helper 분리
+
+- 날짜: 2026-05-14
+- 작성자: 전희수
+- 관련 브랜치 또는 PR: 현재 작업 브랜치
+- 작업 목적: 길어진 WebSocket command 모듈에서 공용 helper와 타입 정의를 먼저 분리해 이후 명령 handler 분리의 위험을 낮춘다.
+- 변경 요약:
+  - HTTP/WS에 중복되어 있던 에이전트 프로필 prompt payload, instruction bundle payload, profile model helper를 공용 모듈로 이동했다.
+  - 세션 에이전트 스킬 설명과 사용 예시 조립 경로를 HTTP/WS가 같은 구현으로 사용하게 했다.
+  - WebSocket command error/context/background context 타입을 별도 모듈로 분리하고 기존 `commands.py` import 경로는 유지했다.
+  - 공용 helper 단위 테스트를 추가했다.
+- 주요 파일:
+  - `ai/app/api/session_agent_profiles.py`
+  - `ai/app/api/ws/command_types.py`
+  - `ai/app/api/ws/commands.py`
+  - `ai/app/api/http/sessions.py`
+  - `ai/tests/api/test_session_agent_profiles.py`
+- 테스트 또는 확인 내용:
+  - `python -m pytest ai\tests\api\test_session_agent_profiles.py ai\tests\api\test_ws_commands.py::test_ws_unknown_command_returns_command_error_with_request_id ai\tests\api\test_ws_commands.py::test_ws_subscribe_task_preserves_request_id_when_provided ai\tests\api\test_gateway_ws_auth.py::test_realtime_websocket_accepts_documented_ping_and_subscribe_messages -q`
+  - `python -m pytest ai\tests\api\test_ws_commands.py::test_ws_new_session_message_augments_toolsets_for_enabled_skill ai\tests\domain\test_capability_resolver.py ai\tests\domain\test_agent_templates.py -q`
+- 결정, 이슈, 리스크:
+  - `commands.py`는 gateway와 테스트 import 호환을 위해 facade 역할을 계속 유지한다.
+  - `session.message.create`는 background 실행 순서와 idempotency 상태가 복잡해 이번 분리 대상에서 제외했다.
+- 다음 단계:
+  - payload builder와 session store operation을 별도 모듈로 분리하고, 각 단계마다 WebSocket command 회귀 테스트를 실행한다.

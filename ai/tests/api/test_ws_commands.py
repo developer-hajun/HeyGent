@@ -1225,7 +1225,7 @@ def test_ws_new_session_message_augments_toolsets_for_enabled_skill(client, monk
         owner_user_id=None,
         agent_type="main",
         config_snapshot={
-            "name": "CEO",
+            "name": "팀장",
             "skills": ["korea-weather"],
         },
         delegation_policy={"canDelegate": True},
@@ -1253,6 +1253,55 @@ def test_ws_new_session_message_augments_toolsets_for_enabled_skill(client, monk
         assert "korea-weather" in task.input_payload["enabledSkillNames"]
         assert task.input_payload["enabled_toolsets"] == ["skills", "web"]
         assert task.input_payload["toolsets"] == ["skills", "web"]
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_main_agent_skill_keeps_default_local_toolsets(client, monkeypatch):
+    _patch_respond(monkeypatch, text="MAIN_AGENT_DEFAULT_TOOLSETS_DONE")
+    store = client.app.state.session_store
+    store.create_session(
+        session_id="main_agent_default_toolsets_session",
+        session_key="main_agent_default_toolsets_session",
+        source="api.session",
+        user_id="main-agent-toolsets-owner",
+        metadata={"source": "api.session"},
+        settings={},
+    )
+    client.app.state.agent_repository.create_session_agent(
+        session_id="main_agent_default_toolsets_session",
+        owner_key="main-agent-toolsets-owner",
+        owner_user_id=None,
+        agent_type="main",
+        config_snapshot={
+            "name": "팀장",
+            "skills": ["mattermost-send"],
+        },
+        delegation_policy={"canDelegate": True},
+    )
+    context, websocket = _authenticated_socket(client, user_id="main-agent-toolsets-owner")
+    try:
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.create",
+                "requestId": "req_main_agent_default_toolsets_message",
+                "payload": {
+                    "sessionId": "main_agent_default_toolsets_session",
+                    "content": "내 로컬에 html 파일 하나 만들어줘",
+                    "clientMessageId": "client_main_agent_default_toolsets_message",
+                },
+            }
+        )
+
+        accepted = websocket.receive_json()
+        _receive_until(websocket, "session.message.completed")
+        task = client.app.state.repository.get_task(accepted["payload"]["task_run_id"])
+
+        assert task is not None
+        assert "mattermost-send" in task.input_payload["enabledSkillNames"]
+        enabled_toolsets = set(task.input_payload["enabled_toolsets"])
+        assert {"file", "terminal", "browser", "messaging"}.issubset(enabled_toolsets)
     finally:
         context.__exit__(None, None, None)
 
