@@ -3,6 +3,7 @@ package com.example.mob.data.remote
 import retrofit2.http.Body
 import retrofit2.http.Header
 import retrofit2.http.POST
+import retrofit2.http.Query
 
 data class KakaoLoginRequest(val accessToken: String)
 
@@ -26,5 +27,10 @@ interface AuthApiService {
     @POST("api/v1/auth/refresh")
     suspend fun refreshToken(
         @Header("Refresh-Token") refreshToken: String,
+    ): ServerResponse<AuthTokens>
+
+    @POST("api/v1/auth/dev-login")
+    suspend fun devLogin(
+        @Query("userKey") userKey: String? = null,
     ): ServerResponse<AuthTokens>
 }

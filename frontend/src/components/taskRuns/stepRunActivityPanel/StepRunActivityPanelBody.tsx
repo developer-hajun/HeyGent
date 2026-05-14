@@ -12,6 +12,7 @@ import {
 } from '@/utils/taskRunStatusView'
 import { findPromptForTaskRun, getTime } from './activityPanelText'
 import { SelectedTaskRunView } from './SelectedTaskRunView'
+import { TaskRunStatusHelpDialog, TaskRunStatusLegend } from './TaskRunStatusIcon'
 import { TaskRunSummaryList } from './TaskRunSummaryList'
 
 const EMPTY_MESSAGES: never[] = []
@@ -59,8 +60,10 @@ export function StepRunActivityPanelBody({
       }
     })
 
+    collectLinkedTaskRunIds(ids, eventsByTaskRunId)
+
     return [...ids]
-  }, [messages, sessionId, taskRunsById])
+  }, [eventsByTaskRunId, messages, sessionId, taskRunsById])
 
   const taskRunSummaries = useMemo(
     () =>
@@ -155,6 +158,26 @@ export function StepRunActivityPanelBody({
   ])
 
   useEffect(() => {
+    taskRunIds.forEach((taskRunId) => {
+      if (loadedTaskRunIdsRef.current.has(taskRunId)) return
+      const taskRun = taskRunsById[taskRunId]
+      const events = eventsByTaskRunId[taskRunId] ?? []
+      const latestEvent = events.at(-1)
+      const latestStatus = latestEvent?.status ?? latestEvent?.event_type ?? taskRun?.status
+      if (isLiveTaskRunStatus(latestStatus)) return
+      if (taskRun !== undefined && events.length > 0) return
+
+      loadedTaskRunIdsRef.current.add(taskRunId)
+      void (async () => {
+        const snapshot = await fetchSnapshot(taskRunId)
+        if (!Array.isArray(snapshot?.events) || snapshot.events.length === 0) {
+          await replayEvents(taskRunId)
+        }
+      })().catch(() => undefined)
+    })
+  }, [eventsByTaskRunId, fetchSnapshot, replayEvents, taskRunIds, taskRunsById])
+
+  useEffect(() => {
     if (resolvedSelectedTaskRunId === undefined) return
     if (selectedTaskRun?.status === undefined || isLiveTaskRunStatus(selectedTaskRun.status)) return
     if (hasMemoryObservation(selectedTaskRun)) return
@@ -177,7 +200,7 @@ export function StepRunActivityPanelBody({
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-border border-b p-4">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="text-muted-foreground truncate text-xs">이 세션의 답변 기록</p>
             <h2 className="text-foreground mt-1 flex items-center gap-2 text-sm font-semibold">
               <span>답변 활동</span>
@@ -186,7 +209,9 @@ export function StepRunActivityPanelBody({
                   {taskRunSummaries.length}개
                 </span>
               )}
+              <TaskRunStatusHelpDialog />
             </h2>
+            <TaskRunStatusLegend />
           </div>
           <button
             type="button"
@@ -253,3 +278,40 @@ const getVisibleStepOrder = (stepRun: RawStepRun) => {
   }
   return undefined
 }
+
+const collectLinkedTaskRunIds = (
+  ids: Set<string>,
+  eventsByTaskRunId: Record<string, { payload?: unknown }[] | undefined>,
+) => {
+  let changed = true
+  while (changed) {
+    changed = false
+    ;[...ids].forEach((taskRunId) => {
+      const events = eventsByTaskRunId[taskRunId] ?? []
+      events.forEach((event) => {
+        const linkedTaskRunId = getLinkedTaskRunId(event.payload)
+        if (linkedTaskRunId !== undefined && !ids.has(linkedTaskRunId)) {
+          ids.add(linkedTaskRunId)
+          changed = true
+        }
+      })
+    })
+  }
+}
+
+const getLinkedTaskRunId = (payload: unknown) => {
+  const payloadRecord = toRecord(payload)
+  if (payloadRecord === undefined) return undefined
+  const result = toRecord(payloadRecord.result) ?? toRecord(payloadRecord.output)
+  return stringValue(result?.taskRunId) ?? stringValue(result?.task_run_id)
+}
+
+const toRecord = (value: unknown): Record<string, unknown> | undefined => {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+  return value as Record<string, unknown>
+}
+
+const stringValue = (value: unknown) =>
+  typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined

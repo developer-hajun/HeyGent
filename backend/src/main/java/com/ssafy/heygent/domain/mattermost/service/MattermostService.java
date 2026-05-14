@@ -2,6 +2,7 @@ package com.ssafy.heygent.domain.mattermost.service;
 
 import java.net.URI;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.springframework.http.HttpEntity;
@@ -61,7 +62,7 @@ public class MattermostService {
         MattermostChannel channel = mattermostChannelRepository.save(MattermostChannel.builder()
                 .user(user)
                 .alias(alias)
-                .displayName(request.displayName().trim())
+                .displayName(displayNameOrAlias(request.displayName(), alias))
                 .webhookUrl(validateWebhookUrl(request.webhookUrl()).toString())
                 .defaultChannel(defaultChannel)
                 .build());
@@ -82,7 +83,7 @@ public class MattermostService {
         if (request.webhookUrl() != null && !request.webhookUrl().isBlank()) {
             webhookUrl = validateWebhookUrl(request.webhookUrl()).toString();
         }
-        channel.update(alias, request.displayName().trim(), webhookUrl);
+        channel.update(alias, displayNameOrAlias(request.displayName(), alias), webhookUrl);
         if (request.defaultChannel()) {
             unsetDefaultChannels(userId);
             channel.markDefault(true);
@@ -159,7 +160,14 @@ public class MattermostService {
     }
 
     private String normalizeAlias(String alias) {
-        return alias.trim().toLowerCase();
+        return alias.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String displayNameOrAlias(String displayName, String alias) {
+        if (displayName == null || displayName.isBlank()) {
+            return alias;
+        }
+        return displayName.trim();
     }
 
     private URI validateWebhookUrl(String webhookUrl) {

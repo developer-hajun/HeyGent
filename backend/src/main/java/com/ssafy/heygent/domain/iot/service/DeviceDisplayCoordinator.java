@@ -106,12 +106,18 @@ public class DeviceDisplayCoordinator {
             saveFocus(userId, incoming, "WAITING_OVERRIDE", WAITING_FOCUS_TTL);
             return incoming;
         }
-        if (incoming.type() != null && incoming.type().name().equals("STARTED")) {
-            saveFocus(userId, incoming, "START_SIGNAL", START_SIGNAL_TTL);
-            return incoming;
+
+        Optional<DisplayEventPayload> waitingPayload = activeWaitingFocusPayload(userId, incoming);
+        if (waitingPayload.isPresent()) {
+            return waitingPayload.get();
         }
+
         if (isTerminal(incoming)) {
             saveFocus(userId, incoming, "DONE_SIGNAL", DONE_SIGNAL_TTL);
+            return incoming;
+        }
+        if (incoming.type() != null && incoming.type().name().equals("STARTED")) {
+            saveFocus(userId, incoming, "START_SIGNAL", START_SIGNAL_TTL);
             return incoming;
         }
 
@@ -136,6 +142,18 @@ public class DeviceDisplayCoordinator {
         );
     }
 
+    private Optional<DisplayEventPayload> activeWaitingFocusPayload(Long userId, DisplayEventPayload incoming) {
+        long now = Instant.now().toEpochMilli();
+        return displayStateRepository.findFocus(userId)
+            .filter(focus -> "WAITING_OVERRIDE".equals(focus.reason()))
+            .filter(focus -> focus.expiresAtEpochMs() > now)
+            .map(DisplayFocusState::taskRunId)
+            .filter(StringUtils::hasText)
+            .filter(taskRunId -> !taskRunId.equals(incoming.taskRunId()))
+            .flatMap(displayStateRepository::findTaskPayload)
+            .filter(this::isWaiting);
+    }
+
     private Optional<DisplayEventPayload> activeManualFocusPayload(Long userId) {
         long now = Instant.now().toEpochMilli();
         return displayStateRepository.findFocus(userId)
@@ -158,6 +176,10 @@ public class DeviceDisplayCoordinator {
     }
 
     private DisplayPublishResult publishIfChanged(Long userId, DisplayEventPayload payload) {
+        if (StringUtils.hasText(payload.taskRunId())) {
+            return displayEventPublishService.publish(userId, payload);
+        }
+
         String hash = payloadHash(payload);
         Optional<String> previousHash = displayStateRepository.findLastSentHash(userId);
         if (previousHash.filter(hash::equals).isPresent()) {

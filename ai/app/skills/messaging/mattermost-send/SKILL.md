@@ -1,6 +1,6 @@
 ---
 name: mattermost-send
-description: 사용자가 요청한 요약, 알림, 작업 결과를 설정된 Mattermost 채널로 전송한다.
+description: 사용자가 명시한 메시지를 설정된 Mattermost 채널 별칭(alias)으로 전송하고, 채널 별칭이나 보낼 내용이 부족하면 먼저 확인한다.
 license: MIT
 metadata:
   category: messaging
@@ -14,6 +14,7 @@ metadata:
 
 사용자가 명시적으로 Mattermost 전송을 요청하면, 메시지를 짧고 읽기 좋게 정리한 뒤 등록된 Mattermost 채널 별칭으로 전송한다.
 실제 전송은 `mattermost.send` runtime tool을 사용한다.
+채널 대상은 표시 이름이 아니라 Heygent 채널 설정의 별칭(alias)을 기준으로 해석한다.
 
 ## When to use
 
@@ -32,9 +33,10 @@ metadata:
 ## Inputs
 
 - `message`: Mattermost에 보낼 최종 메시지
-- `target`: 선택 채널 별칭. 예: `backend`, `frontend`, `e105`, `default`
+- `target`: 선택 채널 별칭(alias). 예: `backend`, `frontend`, `free`, `자유채널`, `e105`
 
-사용자가 채널을 말하지 않으면 `target`을 생략한다. backend가 기본 채널로 전송한다.
+사용자가 채널을 말하지 않으면 기본 채널로 보낼지 먼저 확인한다.
+사용자가 보낼 내용을 말하지 않으면 "어떤 내용을 보낼까요?"라고 먼저 묻는다.
 
 ## Workflow
 
@@ -46,20 +48,29 @@ metadata:
 ### 2. Resolve target alias
 
 사용자 문장에서 채널 표현을 찾는다.
+`target`에는 Mattermost 표시 이름이 아니라 Heygent 채널 설정에 저장된 별칭(alias)을 넣는다.
 
 - "백엔드 채널" -> `backend`
 - "프론트엔드 채널" -> `frontend`
+- "free 채널" -> `free`
+- "자유채널" -> `자유채널`
 - "e105 채널" -> `e105`
-- "mm", "Mattermost", "매터모스트"만 있고 채널 언급 없음 -> target 생략
+- "mm", "Mattermost", "매터모스트"만 있고 채널 언급 없음 -> 기본 채널로 보낼지 확인
 
 확실하지 않은 별칭을 추측해서 만들지 않는다.
+표시 이름만 있고 별칭이 불명확하면 전송하지 말고 사용할 채널 별칭을 물어본다.
 
-### 3. Prepare message
+### 3. Confirm required message
+
+사용자가 보낼 본문을 함께 제공했는지 확인한다.
+본문이 없으면 Mattermost 전송 도구를 호출하지 말고 보낼 메시지를 물어본다.
+
+### 4. Prepare message
 
 Mattermost에서 읽기 쉽게 짧은 Markdown으로 정리한다.
 민감정보, webhook URL, API key, access token, refresh token, 비밀번호, 긴 로컬 경로는 제거한다.
 
-### 4. Send with runtime tool
+### 5. Send with runtime tool
 
 `mattermost.send` runtime tool을 호출한다.
 

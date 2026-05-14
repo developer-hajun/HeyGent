@@ -5,7 +5,7 @@ import { ActivityEventItem } from './ActivityEventItem'
 import { ApprovalCard } from './ApprovalCard'
 import { StepProgressItem } from './StepProgressItem'
 import { toStepProgressSentence, toUserFacingTaskTitle } from './activityPanelText'
-import { TaskRunStatusIcon } from './TaskRunStatusIcon'
+import { TaskRunStatusBadge, TaskRunStatusIcon } from './TaskRunStatusIcon'
 
 export function SelectedTaskRunView({
   taskRunId,
@@ -28,22 +28,26 @@ export function SelectedTaskRunView({
     activities.at(-1)?.raw.status ?? activities.at(-1)?.raw.event_type ?? taskRun?.status
   const taskRunFinished = status === 'COMPLETED' || status === 'task.completed'
   const reversedActivities = [...activities].reverse()
+  const agentNameMap = buildActivityAgentNameMap(activities)
   const currentStep = selectCurrentVisibleStep(taskRun, steps)
   const memoryDebug = buildMemoryDebugView(taskRun)
+  const currentStepTone = toTaskRunStatusTone(currentStep?.status ?? status)
 
   return (
     <div className="space-y-5">
       {!taskRunFinished && currentStep !== undefined && (
         <section className="border-border bg-muted/30 rounded-lg border px-3 py-2">
           <div className="flex items-start gap-2">
-            <TaskRunStatusIcon tone={toTaskRunStatusTone(currentStep?.status ?? status)} />
+            <TaskRunStatusIcon tone={currentStepTone} />
             <div className="min-w-0">
               <div className="text-foreground line-clamp-1 text-xs font-semibold [overflow-wrap:anywhere] break-words">
                 {toUserFacingTaskTitle(currentStep.title ?? currentStep.goal ?? '답변 진행')}
               </div>
-              <div className="text-muted-foreground mt-0.5 line-clamp-1 text-[11px] [overflow-wrap:anywhere] break-words">
-                {toStepProgressSentence(currentStep.status ?? status)}
-              </div>
+              <TaskRunStatusBadge
+                tone={currentStepTone}
+                label={toStepProgressSentence(currentStep.status ?? status)}
+                className="mt-1"
+              />
             </div>
           </div>
         </section>
@@ -75,6 +79,7 @@ export function SelectedTaskRunView({
                 activities={activities.filter(
                   (activity) => activity.stepRunId === step.step_run_id,
                 )}
+                allActivities={activities}
               />
             ))}
           </ol>
@@ -121,6 +126,7 @@ export function SelectedTaskRunView({
                   key={activity.id}
                   activity={activity}
                   taskRunFinished={taskRunFinished}
+                  agentNameMap={agentNameMap}
                 />
               ))}
             </ol>
@@ -233,6 +239,50 @@ function buildMemoryDebugView(taskRun: RawTaskRun | undefined) {
       memoryObservation: resultPayload?.memory_observation,
     },
   }
+}
+
+function buildActivityAgentNameMap(activities: ActivityItemView[]) {
+  const names = new Map<string, string>()
+  activities.forEach((activity) => {
+    addAgentRef(names, activity.displayContext?.actorAgent)
+    addAgentRef(names, activity.displayContext?.assigneeAgent)
+    activity.displayContext?.delegatedAgents?.forEach((agent) => addAgentRef(names, agent))
+
+    const payload = toRecord(activity.raw.payload)
+    const input = toRecord(payload?.input) ?? toRecord(payload?.args)
+    const result = toRecord(payload?.result) ?? toRecord(payload?.output)
+    const agent = toRecord(result?.agent)
+    addAgentName(
+      names,
+      stringValue(agent?.profileId) ??
+        stringValue(agent?.profile_id) ??
+        stringValue(agent?.agentId) ??
+        stringValue(agent?.id) ??
+        stringValue(input?.assigneeAgentId),
+      stringValue(agent?.name) ?? stringValue(agent?.displayName),
+    )
+  })
+  return names
+}
+
+function addAgentRef(
+  names: Map<string, string>,
+  agent?: { id?: string; profileId?: string | null; displayName?: string },
+) {
+  addAgentName(names, agent?.id, agent?.displayName)
+  addAgentName(names, agent?.profileId ?? undefined, agent?.displayName)
+}
+
+function addAgentName(names: Map<string, string>, id?: string, name?: string) {
+  if (id === undefined || name === undefined) return
+  const normalizedId = id.trim()
+  const normalizedName = name.trim()
+  if (!normalizedId || !normalizedName || isRawAgentId(normalizedName)) return
+  names.set(normalizedId, normalizedName)
+}
+
+function isRawAgentId(value: string) {
+  return /^agent_profile_[a-z0-9]+$/i.test(value.trim())
 }
 
 function summarizeMemoryDebug(
