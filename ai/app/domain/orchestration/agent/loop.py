@@ -637,9 +637,20 @@ class TaskEngine:
         step_status = outcome["step_status"]
         was_step_completed = step.status == StepStatus.COMPLETED
         ensure_task_transition(task.status, task_status)
-        ensure_step_transition(step.status, step_status)
+        step_already_terminal = step_is_terminal(step.status)
+        preserve_terminal_step = (
+            task_status == TaskStatus.COMPLETED
+            and step_status == StepStatus.COMPLETED
+            and step_already_terminal
+            and step.status != step_status
+        )
+        if not preserve_terminal_step:
+            ensure_step_transition(step.status, step_status)
 
-        step.status = step_status
+        # 완료 응답 직전에 중복 semantic step 중 하나가 이미 CANCELED 된 경우가 있다.
+        # TaskRun 성공은 유지하되 terminal StepRun 을 다시 열어 상태 전이 예외를 만들지 않는다.
+        if not preserve_terminal_step:
+            step.status = step_status
         task.current_step_run_id = step.step_run_id
         task.result_payload = outcome.get("result_payload", task.result_payload)
         task.todo_state = dict(outcome.get("todo_state") or task.todo_state)
@@ -672,14 +683,16 @@ class TaskEngine:
         )
         step.summary_message = outcome.get("summary_message")
         task.status = task_status
-        if task_is_terminal(task_status):
+        if task_is_terminal(task_status) and not preserve_terminal_step:
             step.ended_at = utc_now()
+            task.ended_at = utc_now()
+        elif task_is_terminal(task_status):
             task.ended_at = utc_now()
         self.repository.update_task(task)
         self.repository.update_step(step)
         await self._sync_todo_steps(task=task, handler=handler)
 
-        if task_status == TaskStatus.COMPLETED and not was_step_completed:
+        if task_status == TaskStatus.COMPLETED and not was_step_completed and not preserve_terminal_step:
             # 다음 plan step으로 넘어가더라도 현재 StepRun은 먼저 닫아야
             # realtime UI가 이전 단계를 계속 "진행 중"으로 보지 않는다.
             await self._emit("step.completed", task, step)

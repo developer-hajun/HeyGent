@@ -31,6 +31,7 @@
 - 위 상태 계산을 검증하는 Node 기반 단위 테스트를 추가했습니다.
 - 전역 `user-select: none` 때문에 채팅/답변 활동 텍스트 드래그와 복사가 막히던 문제를 `selectable-text` 영역으로 보정했습니다.
 - 답변 활동 패널 상단의 상태 기준 범례와 상태 설명 버튼을 제거했습니다.
+- K-에이전트 child TaskRun이 성공했는데 중복 StepRun 종료 처리 때문에 부모가 배정 실패로 오판하던 상태 전이 예외를 보정했습니다.
 
 ## 주요 파일
 
@@ -52,6 +53,7 @@
 - `ai/app/domain/orchestration/prompts/skill_prompt.py`
 - `ai/app/api/ws/commands.py`
 - `ai/app/storage/postgres/durable_repository.py`
+- `ai/app/domain/orchestration/agent/loop.py`
 
 ## 테스트 / 확인
 
@@ -68,6 +70,7 @@
 - K-에이전트 부산역 날씨 요청이 최종 답변 완료까지 진행되는 것을 확인했습니다.
 - Playwright로 채팅 본문과 실행 보기 패널의 `user-select: text` 적용 및 실제 selection 동작을 확인했습니다.
 - 실행 보기 패널에서 `상태 기준`/`상태 설명` UI가 제거된 것을 확인했습니다.
+- K-에이전트 부산역 현재 날씨 요청을 재실행해 배정 실패 문구 없이 `답변 완료`로 끝나는 것을 확인했습니다.
 
 ## 결정 / 이슈
 
