@@ -3,6 +3,8 @@ from types import SimpleNamespace
 from app.api.http.agents import (
     _bundle_response,
     _custom_agent_config_snapshot,
+    _profile_response,
+    _template_response,
     _sanitize_profile_skill_config,
 )
 from app.domain.orchestration.prompts.skill_prompt import SkillLoader
@@ -56,8 +58,52 @@ def test_k_service_template_includes_korean_life_skills():
 
     assert "k_services" in DEFAULT_SESSION_TEMPLATE_KEYS
     assert template.display_name == "K-에이전트"
+    assert template.profile_image == "/assets/agents/agent06/idle_front.png"
     assert set(K_SERVICE_SKILL_IDS).issubset(set(template.skills))
     assert "subway-lost-property" in template.skills
+
+
+def test_builtin_subagent_profile_images_point_to_frontend_assets():
+    for template in BUILTIN_AGENT_TEMPLATES:
+        assert not template.profile_image.startswith("/assets/agents/sub/")
+        assert template.profile_image.startswith("/assets/agents/agent")
+        assert template.profile_image.endswith("/idle_front.png")
+
+
+def test_agent_template_and_profile_responses_include_visual_key():
+    template = next(item for item in BUILTIN_AGENT_TEMPLATES if item.template_key == "k_services")
+    template_payload = _template_response(
+        {
+            "template_id": "template-k",
+            "template_key": template.template_key,
+            "template_version": 1,
+            "default_config_snapshot": {
+                "name": template.name,
+                "role": template.role,
+                "profileImage": template.profile_image,
+                "skills": list(template.skills),
+            },
+        }
+    )
+    profile_payload = _profile_response(
+        {
+            "profile_id": "agent-profile-k",
+            "session_id": "session-1",
+            "profile_key": "session.session-1.agent-profile-k",
+            "profile_version": 1,
+            "agent_type": "user_subagent",
+            "template_key": "k_services",
+            "config_snapshot": {
+                "name": template.name,
+                "role": template.role,
+                "profileImage": template.profile_image,
+                "skills": list(template.skills),
+            },
+        }
+    )
+
+    assert template_payload.visual_key == "agent06"
+    assert profile_payload.visual_key == "agent06"
 
 
 def test_visible_builtin_templates_are_routing_focused_agents():
