@@ -58,6 +58,7 @@ class ToolCallingLoopHandler:
         apply_task_capabilities(
             task_input,
             skill_registry=getattr(self.tool_runtime, "skill_registry", None),
+            default_toolsets=getattr(self.tool_catalog, "default_toolsets", None),
         )
         # 요청 payload의 workspace_root는 API 호출자가 선택한 이번 실행 root로 바인딩한다.
         request_tool_runtime = self._bind_request_tool_runtime(

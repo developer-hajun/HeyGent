@@ -168,7 +168,7 @@ def _agent_from_session_agent(agent: dict[str, Any]) -> AgentRef:
 
 
 def _main_agent_ref() -> AgentRef:
-    return _agent_ref(id="main", kind="main", display_name="기본 에이전트")
+    return _agent_ref(id="main", kind="main", display_name="팀장")
 
 
 def _agent_ref(
