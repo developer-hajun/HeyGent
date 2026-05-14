@@ -20,7 +20,7 @@ class BuiltinAgentTemplate:
 
 MAIN_AGENT_TEMPLATE_KEY = "ceo"
 DEFAULT_SESSION_TEMPLATE_KEYS = ("coder", "qa", "ux_designer", "k_services")
-LEGACY_AGENT_SKILL_IDS = frozenset(("notion", "code", "browser"))
+LEGACY_AGENT_SKILL_IDS = frozenset(("code", "browser"))
 K_SERVICE_SKILL_IDS = (
     "korea-weather",
     "fine-dust-location",
@@ -51,7 +51,7 @@ MAIN_AGENT_TEMPLATE = BuiltinAgentTemplate(
     adapter_type="openai",
     model="gpt-5.4",
     profile_image="/assets/agents/ceo/ceo_profile.png",
-    skills=("mattermost-send",),
+    skills=("mattermost-send", "notion"),
     documents=(
         (
             "AGENTS.md",

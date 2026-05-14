@@ -70,6 +70,7 @@ class LocalToolRuntime:
                 "session_agent_task": self._session_agent_task,
                 "work_disposition": self._work_disposition,
                 "mattermost.send": self._send_mattermost_message,
+                "notion.execute": self._execute_notion,
                 "terminal.run": self._run_terminal_command,
                 "web_search": self._run_web_search,
                 "web_extract": self._run_web_extract,
@@ -494,6 +495,13 @@ class LocalToolRuntime:
             args,
         )
 
+    def _execute_notion(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler(
+            "app.tools.notion.notion_tool",
+            "execute_notion_handler",
+            args,
+        )
+
     def _run_browser_navigate(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_navigate_handler", args)
 
@@ -719,10 +727,21 @@ class LocalToolRuntime:
         if missing_skill_names:
             config = dict(profile.get("config_snapshot") or {})
             profile_name = str(config.get("name") or profile.get("profile_key") or profile.get("profile_id") or "session agent")
+            profile_id = str(profile.get("profile_id") or "").strip()
             return self._tool_error(
                 code="session_agent_capability_mismatch",
                 message=f"{profile_name} does not have required skills: {', '.join(missing_skill_names)}",
                 tool_name="session_agent_task",
+                details={
+                    "recoverable": True,
+                    "requiredSkillNames": required_skill_names,
+                    "missingSkillNames": missing_skill_names,
+                    "agent": {
+                        "profileId": profile_id,
+                        "name": profile_name,
+                        "skills": self._profile_skill_names(profile),
+                    },
+                },
             )
 
         profile_id = str(profile.get("profile_id") or "").strip()
@@ -884,6 +903,11 @@ class LocalToolRuntime:
             trusted_args["workspace_root"] = str(self.workspace_root)
         if tool_name == "mattermost.send":
             # 사용자 식별자는 모델 인자가 아니라 서버가 바인딩한 owner_key만 신뢰한다.
+            trusted_args["_trusted_user_id"] = self.owner_key
+        if tool_name == "notion.execute":
+            # 사용자 식별자는 모델 인자가 아니라 서버가 바인딩한 owner_key만 신뢰한다.
+            trusted_args.pop("userId", None)
+            trusted_args.pop("user_id", None)
             trusted_args["_trusted_user_id"] = self.owner_key
         return trusted_args
 
@@ -1190,16 +1214,19 @@ class LocalToolRuntime:
     def _missing_profile_skills(self, profile: dict[str, Any], required_skill_names: list[str] | None) -> list[str]:
         if not required_skill_names:
             return []
-        config = dict(profile.get("config_snapshot") or {})
         profile_skill_names = {
             self._normalize_match_text(skill_name)
-            for skill_name in self._string_list(config.get("skills") or profile.get("skills"))
+            for skill_name in self._profile_skill_names(profile)
         }
         return [
             skill_name
             for skill_name in required_skill_names
             if self._normalize_match_text(skill_name) not in profile_skill_names
         ]
+
+    def _profile_skill_names(self, profile: dict[str, Any]) -> list[str]:
+        config = dict(profile.get("config_snapshot") or {})
+        return self._string_list(config.get("skills") or profile.get("skills"))
 
     @classmethod
     def _profile_matches_hint(cls, profile: dict[str, Any], normalized_hint: str) -> bool:
@@ -1281,13 +1308,16 @@ class LocalToolRuntime:
         }
 
     @staticmethod
-    def _tool_error(*, code: str, message: str, tool_name: str) -> dict[str, Any]:
+    def _tool_error(*, code: str, message: str, tool_name: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
+        error = {
+            "code": code,
+            "message": message,
+            "tool_name": tool_name,
+        }
+        if details:
+            error.update(details)
         payload = {
-            "error": {
-                "code": code,
-                "message": message,
-                "tool_name": tool_name,
-            }
+            "error": error
         }
         return {
             "ok": False,

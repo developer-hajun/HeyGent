@@ -72,6 +72,14 @@ export type SkillCatalogItem = {
 export type SkillCatalogDetail = SkillCatalogItem & {
   body: string
   files: string[]
+  documents: SkillCatalogDocument[]
+}
+
+export type SkillCatalogDocument = {
+  documentKey: string
+  title: string
+  content: string
+  contentFormat: string
 }
 
 type SessionAgentInput = {
