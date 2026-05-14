@@ -20,7 +20,7 @@ from app.api.memory_context import attach_persistent_memory_context
 from app.api.memory_mark_used import mark_used_recalled_memories
 from app.api.memory_observation import attach_memory_observation_to_task
 from app.api.memory_writeback import writeback_persistent_memory_candidates
-from app.api.http.device_tokens import get_fcm_token
+from app.api.http.device_tokens import get_fcm_tokens
 from app.domain.notifications.fcm_sender import send_chat_notification
 from app.contracts.session import (
     ArchiveSessionRequest,
@@ -611,8 +611,7 @@ async def _finish_created_session_message(
         )
         assistant_message_id = assistant_append["message_id"]
         # FCM 푸시 알림 (백그라운드 앱 동기화용)
-        fcm_token = get_fcm_token(owner_key)
-        if fcm_token:
+        for fcm_token in get_fcm_tokens(owner_key):
             send_chat_notification(fcm_token, session_id=session_id, content=assistant_content)
         writeback_observation = await writeback_persistent_memory_candidates(
             app_state=request.app.state,
