@@ -1049,23 +1049,8 @@ class TaskEngine:
                     "error": {"code": "child_work_not_found", "message": "child work was not found"},
                 }
 
-            await self._notify_step_updated(
-                self._step_update_notifier(progress_sink=progress_sink, task=task),
-                step=step,
-                event_type="step.updated",
-                payload={
-                    "reason": "session_agent_work.started",
-                    "workId": work.work_id,
-                    "identifier": work.identifier,
-                    "assigneeAgentId": work.assignee_agent_id,
-                    "status": "RUNNING",
-                },
-                summary_message=f"{work.identifier} 세션 에이전트 실행 중",
-            )
-
             task_run_id = new_id("task")
             service = WorkService(self.work_repository)
-            service.mark_run_started(work_id=work.work_id, task_run_id=task_run_id)
             try:
                 child_input = self._build_session_agent_work_input(parent_task=task, work=work)
                 child_task = self.planner.materialize_task(
@@ -1075,7 +1060,29 @@ class TaskEngine:
                     handler=handler,
                     task_run_id=task_run_id,
                 )
-                child_task = await self.run(task=child_task, handler=handler)
+                self.repository.create_task(child_task)
+                await self._emit("task.created", child_task)
+                service.mark_run_started(work_id=work.work_id, task_run_id=task_run_id)
+                await self._notify_step_updated(
+                    self._step_update_notifier(progress_sink=progress_sink, task=task),
+                    step=step,
+                    event_type="step.updated",
+                    payload={
+                        "reason": "session_agent_work.started",
+                        "workId": work.work_id,
+                        "childWorkId": work.work_id,
+                        "identifier": work.identifier,
+                        "assigneeAgentId": work.assignee_agent_id,
+                        "profileId": work.assignee_agent_id,
+                        "taskRunId": task_run_id,
+                        "childTaskRunId": task_run_id,
+                        "taskRunStatus": child_task.status,
+                        "workStatus": "in_progress",
+                        "status": child_task.status,
+                    },
+                    summary_message=f"{work.identifier} 세션 에이전트 실행 중",
+                )
+                child_task = await self.run_claimed(task=child_task, handler=handler)
                 updated_work = service.apply_task_result(work_id=work.work_id, task=child_task)
                 if updated_work is not None:
                     self._record_session_agent_parent_result_comment(work=updated_work, task=child_task)
@@ -1089,9 +1096,14 @@ class TaskEngine:
                     payload={
                         "reason": "session_agent_work.failed",
                         "workId": failed_work.work_id,
+                        "childWorkId": failed_work.work_id,
                         "identifier": failed_work.identifier,
                         "assigneeAgentId": failed_work.assignee_agent_id,
+                        "profileId": failed_work.assignee_agent_id,
                         "taskRunId": task_run_id,
+                        "childTaskRunId": task_run_id,
+                        "taskRunStatus": "FAILED",
+                        "workStatus": failed_work.status,
                         "status": "FAILED",
                     },
                     summary_message=f"{work.identifier} 세션 에이전트 실행 실패",
@@ -1101,6 +1113,7 @@ class TaskEngine:
                     "ok": False,
                     "content": f"{work.identifier} 세션 에이전트 실행 실패: {error}",
                     "taskRunId": task_run_id,
+                    "childTaskRunId": task_run_id,
                     "childStatus": "FAILED",
                     "error": {"message": str(error)},
                 }
@@ -1116,9 +1129,14 @@ class TaskEngine:
                 payload={
                     "reason": "session_agent_work.completed",
                     "workId": work.work_id,
+                    "childWorkId": work.work_id,
                     "identifier": work.identifier,
                     "assigneeAgentId": work.assignee_agent_id,
+                    "profileId": work.assignee_agent_id,
                     "taskRunId": child_task.task_run_id,
+                    "childTaskRunId": child_task.task_run_id,
+                    "taskRunStatus": child_status,
+                    "workStatus": final_work.status,
                     "status": child_status,
                 },
                 summary_message=f"{work.identifier} 세션 에이전트 실행 완료",
@@ -1128,6 +1146,7 @@ class TaskEngine:
                 "ok": ok,
                 "content": self._session_agent_work_tool_content(work=final_work, task=child_task),
                 "taskRunId": child_task.task_run_id,
+                "childTaskRunId": child_task.task_run_id,
                 "childStatus": child_status,
                 "childWorkStatus": final_work.status,
                 "parentWorkDisposition": parent_disposition,

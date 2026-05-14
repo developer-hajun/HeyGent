@@ -9,18 +9,21 @@ import {
   KeyRound,
   Activity,
   ChevronDown,
+  ChevronRight,
   Heart,
   Moon,
   Footprints,
   Sparkles,
-  Download,
+  Monitor,
   HelpCircle,
   Bell,
+  RefreshCw,
 } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useNavigate } from 'react-router'
 import { useUIStore } from '@/store/useUIStore'
 import { getIotDevices, deleteIotDevice, pairIotDevice, type IotDevice } from '@/apis/iot'
+import { listBridgeDevices } from '@/apis/bridge'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { HelpHint } from '@/components/ui/help-hint'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -221,19 +224,53 @@ function IotCard({ loading, device, onRegister, onDeregister }: IotCardProps) {
   )
 }
 
-function BridgeCard() {
-  const [bridgeDownloaded, setBridgeDownloaded] = useState(false)
+type BridgeStatus = 'loading' | 'installed' | 'not_installed' | 'error'
 
-  const handleBridgeDownloadToggle = () => {
-    setBridgeDownloaded((current) => !current)
-  }
+function BridgeCard() {
+  const navigate = useNavigate()
+  const [status, setStatus] = useState<BridgeStatus>('loading')
+
+  const [refreshNonce, setRefreshNonce] = useState(0)
+
+  const refresh = useCallback(() => {
+    setStatus('loading')
+    setRefreshNonce((n) => n + 1)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    listBridgeDevices()
+      .then((devices) => {
+        if (cancelled) return
+        const active = devices.filter((device) => device.revokedAt === null)
+        setStatus(active.length > 0 ? 'installed' : 'not_installed')
+      })
+      .catch(() => {
+        if (cancelled) return
+        setStatus('error')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [refreshNonce])
+
+  const dotColor: StatusDotProps['color'] =
+    status === 'installed' ? 'emerald' : status === 'loading' ? 'muted' : 'amber'
+  const statusLabel =
+    status === 'loading'
+      ? '확인 중...'
+      : status === 'installed'
+        ? '연결됨'
+        : status === 'error'
+          ? '확인 실패'
+          : '연결되지 않음'
 
   return (
     <div className="border-border bg-card flex flex-col justify-between gap-3 rounded-xl border p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <div className="text-muted-foreground bg-muted/60 flex h-8 w-8 items-center justify-center rounded-lg">
-            <Download className="h-4 w-4" />
+            <Monitor className="h-4 w-4" />
           </div>
           <div className="flex min-w-0 items-center gap-1.5">
             <p className="text-muted-foreground truncate text-xs">브릿지 프로그램</p>
@@ -260,25 +297,38 @@ function BridgeCard() {
             </Popover>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5 pt-2">
-          <StatusDot color={bridgeDownloaded ? 'emerald' : 'amber'} />
-          <span className="text-foreground text-xs font-medium">
-            {bridgeDownloaded ? '다운로드됨' : '확인 필요'}
-          </span>
+        <div className="flex shrink-0 items-center gap-1 pt-2">
+          <StatusDot color={dotColor} />
+          <span className="text-foreground text-xs font-medium">{statusLabel}</span>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            disabled={status === 'loading'}
+            aria-label="브릿지 연결 상태 새로고침"
+            title="새로고침"
+            className="text-muted-foreground hover:bg-accent/50 hover:text-foreground ml-0.5 flex h-5 w-5 items-center justify-center rounded transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3 w-3 ${status === 'loading' ? 'animate-spin' : ''}`} />
+          </button>
         </div>
       </div>
 
       <div className="space-y-3">
         <p className="text-muted-foreground text-xs leading-relaxed">
-          지금은 실제 파일을 내려받지 않고 다운로드 상태만 확인할 수 있습니다.
+          {status === 'installed'
+            ? '내 PC와 브릿지가 연결되어 있어요. 브릿지 설정에서 상세 관리를 할 수 있습니다.'
+            : status === 'error'
+              ? '연결 상태를 가져오지 못했어요. 새로고침을 눌러 다시 시도해 주세요.'
+              : '브릿지가 연결되지 않았어요. 브릿지 설정에서 설치 여부를 확인하고 페어링을 진행해 주세요.'}
         </p>
         <button
           type="button"
-          onClick={handleBridgeDownloadToggle}
-          className="border-border text-foreground hover:bg-accent/50 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition-colors"
+          onClick={() => navigate('/settings/bridge')}
+          className="border-border text-foreground hover:bg-accent/50 inline-flex h-6 w-auto items-center gap-1 self-start rounded-md border px-2 text-[11px] font-medium transition-colors"
         >
-          <Download className="h-3.5 w-3.5" />
-          {bridgeDownloaded ? '다운로드 상태 해제' : '다운로드 확인'}
+          <Monitor className="h-3 w-3" />
+          브릿지 설정
+          <ChevronRight className="text-muted-foreground h-3 w-3" />
         </button>
       </div>
     </div>

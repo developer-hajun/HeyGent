@@ -36,6 +36,7 @@ import { Button } from '@/components/ui/button'
 import { HelpHint } from '@/components/ui/help-hint'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { AgentRunItemData } from '@/components/sessionWorkspace/agentRuns/types'
+import { parseServerTimestamp } from '@/components/sessionWorkspace/agentUsageDisplay'
 
 export interface AgentSummaryItemData {
   label: string
@@ -321,21 +322,55 @@ function InstructionsHelp() {
         />
       </button>
       {open && (
-        <div className="border-border space-y-2.5 border-t px-4 py-3 text-sm leading-relaxed break-keep">
-          <p className="text-muted-foreground">
-            에이전트에게 주는 <span className="text-foreground">업무 안내서</span>예요.
-          </p>
-          <p className="text-muted-foreground">
-            역할·말투·해야 할 일을 적어두면, 매번 다시 설명하지 않아도 그대로 따라줍니다.
-          </p>
-          <p className="text-muted-foreground">
-            <span className="text-foreground font-mono">.md</span> 파일은 메모장처럼 글을 적는
-            파일이에요. 한국어 문장 그대로 편하게 적으시면 됩니다.
-          </p>
-          <p className="text-muted-foreground">
-            왼쪽 목록의 <span className="text-foreground">대표</span> 파일이 표지 안내서, 나머지는
-            주제별 부록입니다.
-          </p>
+        <div className="border-border space-y-4 border-t px-4 py-3 text-sm leading-relaxed break-keep">
+          <div className="space-y-2.5">
+            <p className="text-muted-foreground">
+              에이전트에게 주는 <span className="text-foreground">업무 안내서</span>예요.
+            </p>
+            <p className="text-muted-foreground">
+              역할·말투·해야 할 일을 적어두면, 매번 다시 설명하지 않아도 그대로 따라줍니다.
+            </p>
+            <p className="text-muted-foreground">
+              <span className="text-foreground font-mono">.md</span> 파일은 메모장처럼 글을 적는
+              파일이에요. 한국어 문장 그대로 편하게 적으시면 됩니다.
+            </p>
+            <p className="text-muted-foreground">
+              왼쪽 목록의 <span className="text-foreground">대표</span> 파일이 표지 안내서, 나머지는
+              주제별 부록입니다.
+            </p>
+          </div>
+
+          <div className="border-border/70 space-y-2.5 border-t pt-3">
+            <p className="text-foreground font-semibold">자주 쓰는 마크다운 문법</p>
+            <p className="text-muted-foreground">
+              <span className="text-foreground underline">한국어로만 적어도 충분합니다.</span> 글을
+              더 보기 좋게 정리하고 싶을 때만 아래 표기를 섞어 쓰세요.
+            </p>
+            <ul className="text-muted-foreground space-y-1.5">
+              <li>
+                <span className="text-foreground font-mono">#</span> 큰 제목 ·{' '}
+                <span className="text-foreground font-mono">##</span> 작은 제목 — 줄 맨 앞에
+                <span className="font-mono"> # </span>을 붙이고 한 칸 띄운 뒤 제목을 적어요.
+                <span className="font-mono"> # </span>이 많을수록 작은 제목이 됩니다.
+              </li>
+              <li>
+                <span className="text-foreground font-mono">-</span> 또는{' '}
+                <span className="text-foreground font-mono">*</span> 목록 — 줄 맨 앞에
+                <span className="font-mono"> - </span>를 적고 한 칸 띄운 뒤 항목을 쓰면 글머리표가
+                생깁니다.
+              </li>
+              <li>
+                <span className="text-foreground font-mono">&gt;</span> 인용문 — 줄 맨 앞에{' '}
+                <span className="font-mono">&gt; </span>를 붙이면 들여쓰기된 인용 영역이 됩니다.
+                중요한 규칙이나 예시 강조에 좋아요.
+              </li>
+            </ul>
+            <p className="text-muted-foreground">
+              예) <span className="text-foreground font-mono"># 우리 팀 안내</span> 줄을 만들고 그
+              아래에 <span className="text-foreground font-mono">- 정중한 말투 사용</span> 같은
+              식으로 항목을 적으시면 됩니다.
+            </p>
+          </div>
         </div>
       )}
     </div>
@@ -1363,8 +1398,8 @@ function buildLast14DayUsageData(records: AgentUsageMetricRecord[]) {
     days.map((day) => [day.key, { date: day.key, label: day.label, tokens: 0 }]),
   )
   for (const record of records) {
-    const time = record.createdAt ? new Date(record.createdAt).getTime() : Number.NaN
-    const key = getDayKey(time)
+    const time = record.createdAt ? parseServerTimestamp(record.createdAt) : null
+    const key = time !== null ? getDayKey(time) : null
     const entry = key !== null ? grouped.get(key) : undefined
     if (entry) {
       entry.tokens += Math.max(0, record.totalTokens ?? 0)
@@ -1374,22 +1409,51 @@ function buildLast14DayUsageData(records: AgentUsageMetricRecord[]) {
 }
 
 function buildLast14Days() {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
+  // 한국 시간(KST) 기준으로 오늘 자정을 구하고, 그 자정에서 14일을 거꾸로 나열
+  const todayKstMidnight = getKstMidnightTime(Date.now())
   return Array.from({ length: 14 }, (_, index) => {
-    const date = new Date(today.getTime() - (13 - index) * DAY_MS)
+    const time = todayKstMidnight - (13 - index) * DAY_MS
+    const { year, month, day } = getKstYearMonthDay(time)
     return {
-      key: getDayKey(date.getTime()) ?? '',
-      label: `${date.getMonth() + 1}/${date.getDate()}`,
+      key: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+      label: `${month}/${day}`,
     }
   })
 }
 
 function getDayKey(time: number | undefined) {
   if (time === undefined || !Number.isFinite(time) || time <= 0) return null
-  const date = new Date(time)
-  date.setHours(0, 0, 0, 0)
-  return date.toISOString().slice(0, 10)
+  const { year, month, day } = getKstYearMonthDay(time)
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+// 임의의 시각(time, ms epoch)을 한국 시간(KST, UTC+9)으로 해석해 연/월/일을 반환한다.
+const KST_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Seoul',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+function getKstYearMonthDay(time: number): { year: number; month: number; day: number } {
+  // en-CA는 YYYY-MM-DD 형식으로 출력 → 안전하게 parsing
+  const parts = KST_DATE_FORMATTER.formatToParts(new Date(time))
+  let year = 0
+  let month = 0
+  let day = 0
+  for (const part of parts) {
+    if (part.type === 'year') year = Number(part.value)
+    else if (part.type === 'month') month = Number(part.value)
+    else if (part.type === 'day') day = Number(part.value)
+  }
+  return { year, month, day }
+}
+
+// 임의의 시각이 속한 KST 날짜의 자정(KST 00:00)을 UTC ms epoch로 돌려준다.
+function getKstMidnightTime(time: number): number {
+  const { year, month, day } = getKstYearMonthDay(time)
+  // KST는 UTC+9 — 해당 날짜의 00:00 KST는 UTC 기준 전날 15:00
+  return Date.UTC(year, month - 1, day) - 9 * 60 * 60 * 1000
 }
 
 function isSuccessStatus(status?: string | null) {
