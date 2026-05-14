@@ -68,4 +68,8 @@ interface AiApiService {
         @Path("sessionId") sessionId: String,
         @Body request: SendChatMessageRequest,
     ): SendChatMessageResponse
+
+    /** FCM 디바이스 토큰 등록 */
+    @POST("ai/api/v1/fcm/token")
+    suspend fun registerFcmToken(@Body body: Map<String, String>)
 }

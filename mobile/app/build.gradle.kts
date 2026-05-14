@@ -8,6 +8,7 @@ val secrets = Properties().apply {
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.jetbrains.kotlin.compose)
+    alias(libs.plugins.google.services)
     id("kotlin-parcelize")
 }
 
@@ -84,6 +85,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.lifecycle.viewmodel.ktx)
     implementation(libs.kakao.user)
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.messaging)
     implementation("org.jetbrains.kotlin:kotlin-parcelize-runtime:2.2.10")
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
