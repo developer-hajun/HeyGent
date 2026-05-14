@@ -7,6 +7,7 @@ from typing import Any
 from app.contracts.event.task_events import TaskEventEnvelope
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
+from app.domain.orchestration.run_lifecycle import classify_task_run_liveness
 from app.domain.agents import BUILTIN_AGENT_TEMPLATES, DEFAULT_SESSION_TEMPLATE_KEYS, MAIN_AGENT_TEMPLATE
 from app.domain.tasks.models import StepRun, TaskRun
 
@@ -92,6 +93,36 @@ class InMemoryTaskRepository:
         if not retry:
             task.ended_at = task.ended_at or task.updated_at
         return deepcopy(task)
+
+    def recover_stale_task_run(self, task_run_id: str, *, reason: str) -> TaskRun | None:
+        task = self.tasks.get(task_run_id)
+        if task is None or task.status not in {"PENDING", "RUNNING"}:
+            return None
+        now = utc_now()
+        task.status = "FAILED"
+        task.queue_status = "terminal"
+        task.error_message = "실행 상태가 만료되어 자동 복구되었습니다."
+        task.last_claim_error = reason
+        task.claim_owner = None
+        task.lease_expires_at = None
+        task.heartbeat_at = None
+        task.next_attempt_at = None
+        task.updated_at = now
+        task.ended_at = task.ended_at or now
+        return deepcopy(task)
+
+    def recover_stale_task_runs(self, *, orphan_after_seconds: int = 300, limit: int = 100) -> list[TaskRun]:
+        recovered: list[TaskRun] = []
+        for task in list(self.tasks.values()):
+            if len(recovered) >= max(1, int(limit)):
+                break
+            liveness = classify_task_run_liveness(task, orphan_after_seconds=orphan_after_seconds)
+            if not liveness.should_recover:
+                continue
+            saved = self.recover_stale_task_run(task.task_run_id, reason=liveness.reason)
+            if saved is not None:
+                recovered.append(saved)
+        return recovered
 
     def update_task(self, task: TaskRun) -> TaskRun:
         saved = deepcopy(task)

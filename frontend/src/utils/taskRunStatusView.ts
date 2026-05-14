@@ -168,6 +168,7 @@ export type TaskRunDetailSummaryInput = {
   stepRuns?: RawStepRun[]
   approvals?: RawApproval[]
   events?: RawTaskEventPayload[]
+  activityItems?: ActivityItemView[]
   replayNeeded?: boolean
   recovering?: boolean
   recoveryAfterSequence?: number
@@ -178,6 +179,7 @@ export const toTaskRunDetailSummaryView = ({
   stepRuns = [],
   approvals = [],
   events = [],
+  activityItems,
   replayNeeded = false,
   recovering = false,
   recoveryAfterSequence,
@@ -195,7 +197,7 @@ export const toTaskRunDetailSummaryView = ({
     latestStepRun,
     latestEvent,
     pendingApproval,
-    activityItems: sortedEvents.map(toActivityItemView),
+    activityItems: activityItems ?? sortedEvents.map(toActivityItemView),
     replayNeeded,
     recovering,
     recoveryAfterSequence,

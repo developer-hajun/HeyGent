@@ -7,10 +7,9 @@ import jakarta.validation.constraints.Size;
 public record MattermostChannelCreateRequest(
         @NotBlank
         @Size(max = 40)
-        @Pattern(regexp = "^[A-Za-z0-9_-]+$")
+        @Pattern(regexp = "^[\\p{L}\\p{N}_-]+$")
         String alias,
 
-        @NotBlank
         @Size(max = 60)
         String displayName,
 

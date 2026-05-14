@@ -965,7 +965,7 @@ export function AgentStatusPage() {
   }, [agentPanels])
 
   const handleMove = (agentId: string, rawDestination: UIDestination) => {
-    // CEO 전용 목적지 매핑
+    // 팀장 전용 목적지 매핑
     //   작업 중(desk) → work 좌표에서 ceo_work 스프라이트
     //   완료(rest)   → desk 좌표에서 ceo_desk 스프라이트
     const destination: UIDestination =
@@ -981,7 +981,7 @@ export function AgentStatusPage() {
       addSpawnedKey(agentId)
 
       if (agentId === 'ceo' && rawDestination === 'desk') {
-        // CEO 첫 등장(작업 중): ceo_work에 직접 배치 + 세션 서브에이전트 휴게공간 동시 배치
+        // 팀장 첫 등장(작업 중): ceo_work에 직접 배치 + 세션 서브에이전트 휴게공간 동시 배치
         const unspawnedSubs = Object.entries(profileIdMap).filter(
           ([, spriteId]) =>
             !spawnedKeys.includes(spriteId) && AGENT_CONFIGS.some((c) => c.id === spriteId),
@@ -1025,7 +1025,7 @@ export function AgentStatusPage() {
           }
           return [...prev, ceoRuntime, ...subRuntimes]
         })
-        // CEO만 전구 표시 + 효과음
+        // 팀장만 전구 표시 + 효과음
         setSpawningIds((s) => new Set([...s, 'ceo']))
         setTimeout(() => {
           setSpawningIds((s) => {
@@ -1168,7 +1168,7 @@ export function AgentStatusPage() {
         )
       }
 
-      // CEO: sitting_work ↔ sitting_desk 즉시 전환 (걷기 없이)
+      // 팀장: sitting_work ↔ sitting_desk 즉시 전환 (걷기 없이)
       // — 두 좌표가 근접해 걸어가기 어색하며, idle(첫 등장) 상태는 통과시켜 정상 walk 처리
       // ── rest → 소파 빈 자리 우선 배정, 둘 다 차면 floorLean ──────────────
       let internalDest: Destination
@@ -1312,10 +1312,10 @@ export function AgentStatusPage() {
     handleMoveRef.current = handleMove
   })
 
-  // CEO가 스폰된 상태에서 profileIdMap이 갱신될 때 미스폰 서브에이전트를 휴게공간에 보완 배치
+  // 팀장이 스폰된 상태에서 profileIdMap이 갱신될 때 미스폰 서브에이전트를 휴게공간에 보완 배치
   // — profileIdMap이 늦게 로드되거나(listSessionAgents 지연) '+' 버튼으로 패널이 추가될 때 처리
   // — ceoInSpawnedKeys를 의존성에 두지 않음: addSpawnedKey('ceo')가 동기 리렌더를 유발해
-  //   setAgents(CEO) 실행 전에 이 이펙트가 먼저 실행되어 서브에이전트가 CEO보다 먼저 등장하는 문제 방지
+  //   setAgents(팀장) 실행 전에 이 이펙트가 먼저 실행되어 서브에이전트가 팀장보다 먼저 등장하는 문제 방지
   useEffect(() => {
     const store = useAgentVisualizationStore.getState()
     if (!store.spawnedKeys.includes('ceo')) return
@@ -1369,7 +1369,7 @@ export function AgentStatusPage() {
     }
   }, [profileIdMap, setAgents, addSpawnedKey])
 
-  // CEO가 sitting_work 상태이고 서브에이전트가 있으면 주기적으로 explain(화이트보드) 좌표로 이동
+  // 팀장이 sitting_work 상태이고 서브에이전트가 있으면 주기적으로 explain(화이트보드) 좌표로 이동
   const ceoState = useAgentVisualizationStore(
     (s) => s.agentRuntimes.find((a) => a.config.id === 'ceo')?.state,
   )
@@ -1395,7 +1395,7 @@ export function AgentStatusPage() {
     return () => clearTimeout(timer)
   }, [ceoState, hasSubAgents])
 
-  // CEO가 explain(sitting_meeting) 도착 후 15~25초 뒤 work로 복귀
+  // 팀장이 explain(sitting_meeting) 도착 후 15~25초 뒤 work로 복귀
   useEffect(() => {
     if (ceoState !== 'sitting_meeting') return
     const delay = 15_000 + Math.random() * 10_000
@@ -1404,7 +1404,7 @@ export function AgentStatusPage() {
         .getState()
         .agentRuntimes.find((a) => a.config.id === 'ceo')
       if (ceo?.state === 'sitting_meeting') {
-        handleMoveRef.current('ceo', 'desk') // CEO 매핑: 'desk' → work 좌표
+        handleMoveRef.current('ceo', 'desk') // 팀장 매핑: 'desk' → work 좌표
       }
     }, delay)
     return () => clearTimeout(timer)

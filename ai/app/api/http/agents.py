@@ -104,11 +104,11 @@ async def list_session_agents(
 @router.get(
     "/sessions/{sessionId}/agents/main",
     response_model=AgentProfileResponse,
-    summary="세션 CEO 에이전트 조회",
+    summary="세션 팀장 에이전트 조회",
 )
 async def get_session_main_agent(
     request: Request,
-    sessionId: str = Path(..., description="CEO 에이전트를 조회할 AI 세션 ID입니다."),
+    sessionId: str = Path(..., description="팀장 에이전트를 조회할 AI 세션 ID입니다."),
 ) -> AgentProfileResponse:
     user = await authenticate_http_user(request)
     session = _session_or_404(request, sessionId)

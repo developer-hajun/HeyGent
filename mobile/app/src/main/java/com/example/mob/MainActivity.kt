@@ -1,11 +1,16 @@
 package com.example.mob
 
-import android.app.Activity
+import android.Manifest
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
-import android.util.Log
+import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.animateFloatAsState
@@ -55,16 +60,24 @@ import com.example.mob.common.AppDrawer
 import com.example.mob.data.remote.RetrofitClient
 import com.example.mob.feature.auth.LoginScreen
 import com.example.mob.feature.chat.ChatScreen
+import com.example.mob.feature.chat.ChatViewModel
 import com.example.mob.feature.health.HealthViewModel
 import com.example.mob.feature.home.HomeScreen
 import com.example.mob.feature.profile.ProfileScreen
 import com.example.mob.ui.theme.MOBTheme
 import com.example.mob.ui.theme.NavyPrimary
 import com.example.mob.ui.theme.TextSecondary
-import com.kakao.sdk.common.KakaoSdk
-import com.kakao.sdk.common.util.Utility
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.ui.platform.LocalContext
+import android.app.Activity
+import androidx.compose.runtime.LaunchedEffect
+import android.util.Log
+import android.os.Build
+import androidx.core.content.ContextCompat
+import com.kakao.sdk.common.KakaoSdk
+import com.kakao.sdk.common.util.Utility
+import com.example.mob.voice.WakeWordForegroundService
 
 private sealed class Screen(
     val route: String,
@@ -91,6 +104,7 @@ class MainActivity : ComponentActivity() {
             MOBTheme {
                 var splashDone by remember { mutableStateOf(false) }
                 var isLoggedIn by remember { mutableStateOf(false) }
+                WakeWordServicePermissionEffect()
 
                 LaunchedEffect(Unit) {
                     delay(1800)
@@ -103,6 +117,48 @@ class MainActivity : ComponentActivity() {
                     else -> MainApp(onLogout = { isLoggedIn = false })
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun WakeWordServicePermissionEffect() {
+    val context = LocalContext.current
+    val permissions = remember {
+        buildList {
+            add(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }.toTypedArray()
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        if (grants[Manifest.permission.RECORD_AUDIO] == true) {
+            WakeWordForegroundService.start(context)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val hasAudioPermission = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        if (hasAudioPermission) {
+            WakeWordForegroundService.start(context)
+        } else {
+            permissionLauncher.launch(permissions)
+        }
+
+        if (!Settings.canDrawOverlays(context)) {
+            context.startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}")
+                )
+            )
         }
     }
 }
@@ -131,6 +187,7 @@ private fun MainApp(onLogout: () -> Unit) {
     val context = LocalContext.current
     val healthViewModel = remember { HealthViewModel(context) }
 
+    val chatViewModel = remember { ChatViewModel() }
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -150,7 +207,7 @@ private fun MainApp(onLogout: () -> Unit) {
     }
 
     // 앱 세션 동안 유지 (앱 재실행 시 초기화됨)
-    var activeChatSessionId by remember { mutableStateOf<Int?>(null) }
+    var activeChatSessionId by remember { mutableStateOf<String?>(null) }
     var agentName by remember { mutableStateOf("Jarvis") }
 
     ModalNavigationDrawer(
@@ -159,8 +216,9 @@ private fun MainApp(onLogout: () -> Unit) {
             AppDrawer(
                 onClose = { scope.launch { drawerState.close() } },
                 agentName = agentName,
+                sessions = chatViewModel.sessions.collectAsState().value,
                 onNewChat = {
-                    activeChatSessionId = 0
+                    activeChatSessionId = ""
                     navController.navigate(Screen.Chat.route) { launchSingleTop = true }
                     scope.launch { drawerState.close() }
                 },
@@ -191,6 +249,7 @@ private fun MainApp(onLogout: () -> Unit) {
                         onMenuClick = onMenuClick,
                         activeChatSessionId = activeChatSessionId,
                         onActiveChatSessionChange = { activeChatSessionId = it },
+                        viewModel = chatViewModel,
                         agentName = agentName,
                         bottomPadding = bottomPadding,
                     )

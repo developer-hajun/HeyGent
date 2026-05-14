@@ -33,7 +33,7 @@ metadata:
 ## Inputs
 
 - `message`: Mattermost에 보낼 최종 메시지
-- `target`: 선택 채널 별칭(alias). 예: `backend`, `frontend`, `free`, `e105`
+- `target`: 선택 채널 별칭(alias). 예: `backend`, `frontend`, `free`, `자유채널`, `e105`
 
 사용자가 채널을 말하지 않으면 기본 채널로 보낼지 먼저 확인한다.
 사용자가 보낼 내용을 말하지 않으면 "어떤 내용을 보낼까요?"라고 먼저 묻는다.
@@ -53,6 +53,7 @@ metadata:
 - "백엔드 채널" -> `backend`
 - "프론트엔드 채널" -> `frontend`
 - "free 채널" -> `free`
+- "자유채널" -> `자유채널`
 - "e105 채널" -> `e105`
 - "mm", "Mattermost", "매터모스트"만 있고 채널 언급 없음 -> 기본 채널로 보낼지 확인
 
