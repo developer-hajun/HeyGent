@@ -242,7 +242,8 @@ function BridgeCard() {
     listBridgeDevices()
       .then((devices) => {
         if (cancelled) return
-        const active = devices.filter((device) => device.revokedAt === null)
+        // revokedAt이 truthy(실제 해제 ISO 문자열)일 때만 제외 — null/undefined/"" 등은 정상으로 본다
+        const active = devices.filter((device) => !device.revokedAt)
         setStatus(active.length > 0 ? 'installed' : 'not_installed')
       })
       .catch(() => {

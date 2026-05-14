@@ -75,6 +75,9 @@ function OnboardingOverlays() {
   // 브릿지
   const [bridgeDismissedSession, setBridgeDismissedSession] = useState(false)
   const [bridgeNotConnected, setBridgeNotConnected] = useState(false)
+  // 'idle': 조회 시작 전, 'loading': 조회 중, 'loaded': 조회 완료(성공 또는 실패)
+  // — loaded일 때만 카드 표시 결정. 조회 끝나기 전엔 카드를 절대 안 띄움.
+  const [bridgeStatusPhase, setBridgeStatusPhase] = useState<'idle' | 'loading' | 'loaded'>('idle')
   const [bridgeDismissedDaily, setBridgeDismissedDaily] = useState(() =>
     isDismissedUntilTomorrow(BRIDGE_DISMISS_KEY),
   )
@@ -101,12 +104,16 @@ function OnboardingOverlays() {
     listBridgeDevices()
       .then((devices) => {
         if (cancelled) return
-        const active = devices.filter((device) => device.revokedAt === null)
+        // revokedAt이 truthy(실제 해제 ISO 문자열)일 때만 제외 — null/undefined/"" 등은 정상으로 본다
+        const active = devices.filter((device) => !device.revokedAt)
         setBridgeNotConnected(active.length === 0)
+        setBridgeStatusPhase('loaded')
       })
       .catch(() => {
         if (cancelled) return
+        // 실패 시에는 카드를 띄우지 않는다(잘못된 가정 방지).
         setBridgeNotConnected(false)
+        setBridgeStatusPhase('loaded')
       })
     return () => {
       cancelled = true
@@ -119,6 +126,7 @@ function OnboardingOverlays() {
     isAuthenticated && !apiDismissedSession && !apiDismissedDaily && apiKeyMissing && !settingsOpen
   const showBridgeCard =
     isAuthenticated &&
+    bridgeStatusPhase === 'loaded' &&
     !bridgeDismissedSession &&
     !bridgeDismissedDaily &&
     bridgeNotConnected &&
