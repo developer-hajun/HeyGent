@@ -158,6 +158,13 @@ function pickTaskHistory(taskRun: RawTaskRun, stepRuns: RawStepRun[]): Visualiza
   ]
 }
 
+type CachedSubAgentProfile = {
+  name: string
+  role: string
+  skills: string[]
+  profileImage?: string
+}
+
 export function useAgentInfoSync(sessionId?: string, profileIdMap?: Record<string, string>) {
   const taskRunsById = useTaskRunStore((s) => s.taskRunsById)
   const stepRunsById = useTaskRunStore((s) => s.stepRunsById)
@@ -167,6 +174,13 @@ export function useAgentInfoSync(sessionId?: string, profileIdMap?: Record<strin
   const selectedAgentId = useAgentVisualizationStore((s) => s.selectedAgentId)
   const fetchedTaskRunIds = useRef<Set<string>>(new Set())
   const fetchedSessionIds = useRef<Set<string>>(new Set())
+  // profileId → profile data 캐시 — profileIdMap이 늦게 도착해도 spriteId 매핑에 재사용한다.
+  const cachedProfilesRef = useRef<Map<string, CachedSubAgentProfile>>(new Map())
+  // async 콜백에서 항상 최신 profileIdMap을 읽기 위한 ref
+  const profileIdMapRef = useRef(profileIdMap)
+  useEffect(() => {
+    profileIdMapRef.current = profileIdMap
+  }, [profileIdMap])
 
   useEffect(() => {
     const sessionIds = new Set<string>()
@@ -187,16 +201,18 @@ export function useAgentInfoSync(sessionId?: string, profileIdMap?: Record<strin
       void listSessionAgents(currentSessionId)
         .then((profiles) => {
           for (const profile of profiles) {
-            // profileImage URL에서 spriteId(agentXX)를 추출해 키로 사용한다.
-            // profileImage가 없으면 profileKey를 fallback으로 쓴다.
-            const key = deriveSpriteId(profile.profileImage) ?? profile.profileKey
-            if (!key) continue
-            updateAgentInfo(key, {
+            const profileData: CachedSubAgentProfile = {
               name: profile.name,
               role: profile.role,
               skills: profile.skills,
               ...(profile.profileImage ? { profileImage: profile.profileImage } : {}),
-            })
+            }
+            // profileId 기준으로 캐시 — profileIdMap이 나중에 도착해도 재매핑 가능
+            cachedProfilesRef.current.set(profile.profileId, profileData)
+            // profileIdMap에서 즉시 spriteId를 찾거나 deriveSpriteId 폴백을 사용한다.
+            const spriteId =
+              profileIdMapRef.current?.[profile.profileId] ?? deriveSpriteId(profile.profileImage)
+            if (spriteId) updateAgentInfo(spriteId, profileData)
           }
         })
         .catch(() => {})
@@ -204,8 +220,11 @@ export function useAgentInfoSync(sessionId?: string, profileIdMap?: Record<strin
       void getSessionMainAgent(currentSessionId)
         .then((profile) => {
           const profileData = {
-            name: profile.name,
-            role: profile.role,
+            name: '팀장',
+            role:
+              profile.role && profile.role !== 'ceo' && profile.role !== 'main'
+                ? profile.role
+                : '팀장 에이전트',
             skills: profile.skills,
             ...(profile.profileImage ? { profileImage: profile.profileImage } : {}),
           }
@@ -217,6 +236,15 @@ export function useAgentInfoSync(sessionId?: string, profileIdMap?: Record<strin
       void fetchSessionTaskRuns(currentSessionId).catch(() => {})
     }
   }, [fetchSessionTaskRuns, sessionId, taskRunsById, updateAgentInfo])
+
+  // profileIdMap이 늦게 채워지면 캐시된 프로필 데이터를 올바른 spriteId로 재매핑한다.
+  useEffect(() => {
+    if (!profileIdMap) return
+    for (const [profileId, spriteId] of Object.entries(profileIdMap)) {
+      const profileData = cachedProfilesRef.current.get(profileId)
+      if (profileData) updateAgentInfo(spriteId, profileData)
+    }
+  }, [profileIdMap, updateAgentInfo])
 
   useEffect(() => {
     const updatesBySpriteId = new Map<
