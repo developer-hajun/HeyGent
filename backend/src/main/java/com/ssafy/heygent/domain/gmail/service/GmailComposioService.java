@@ -1,4 +1,4 @@
-package com.ssafy.heygent.domain.notion.service;
+package com.ssafy.heygent.domain.gmail.service;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -19,24 +19,23 @@ import com.ssafy.heygent.global.exception.CustomException;
 import com.ssafy.heygent.global.exception.ErrorCode;
 
 @Service
-public class ComposioService {
+public class GmailComposioService {
 
-    private static final Logger log = LoggerFactory.getLogger(ComposioService.class);
+    private static final Logger log = LoggerFactory.getLogger(GmailComposioService.class);
     private static final String BASE_URL = "https://backend.composio.dev/api/v3";
 
     @Value("${composio.api-key}")
     private String apiKey;
 
-    @Value("${composio.notion.redirect-uri}")
+    @Value("${composio.gmail.redirect-uri}")
     private String redirectUri;
 
-    @Value("${composio.notion.integration-id}")
+    @Value("${composio.gmail.integration-id}")
     private String integrationId;
 
-    private final RestTemplate restTemplate = Utf8RestTemplateFactory.create();
+    private final RestTemplate restTemplate = GmailUtf8RestTemplateFactory.create();
 
-    // Notion 연결 URL 생성
-    public String getNotionConnectUrl(Long userId) {
+    public String getGmailConnectUrl(Long userId) {
         HttpHeaders headers = buildHeaders();
         // Composio 정책 변경: /connected_accounts/link 로 호출. auth_config_id + user_id 평면 구조.
         Map<String, Object> body = Map.of(
@@ -46,37 +45,35 @@ public class ComposioService {
         );
 
         try {
-            log.info("[Composio] 연결 URL 요청 - userId: {}, body: {}", userId, body);
+            log.info("[Composio Gmail] 연결 URL 요청 - userId: {}, body: {}", userId, body);
             Map response = restTemplate.postForObject(
                 BASE_URL + "/connected_accounts/link",
                 new HttpEntity<>(body, headers),
                 Map.class
             );
-            log.info("[Composio] 응답: {}", response);
-            // v3: redirect_url 또는 redirectUrl 둘 다 시도
+            log.info("[Composio Gmail] 응답: {}", response);
             String redirectUrl = response.get("redirect_url") != null
                 ? response.get("redirect_url").toString()
                 : response.get("redirectUrl") != null
                     ? response.get("redirectUrl").toString()
                     : null;
             if (redirectUrl == null) {
-                log.error("[Composio] redirect_url 없음. 전체 응답: {}", response);
+                log.error("[Composio Gmail] redirect_url 없음. 전체 응답: {}", response);
                 throw new CustomException(ErrorCode.EXTERNAL_AUTH_FAILED);
             }
             return redirectUrl;
         } catch (HttpClientErrorException e) {
-            log.error("[Composio] HTTP 에러 - status: {}, body: {}", e.getStatusCode(), e.getResponseBodyAsString());
+            log.error("[Composio Gmail] HTTP 에러 - status: {}, body: {}", e.getStatusCode(), e.getResponseBodyAsString());
             throw new CustomException(ErrorCode.EXTERNAL_AUTH_FAILED);
         } catch (CustomException e) {
             throw e;
         } catch (Exception e) {
-            log.error("[Composio] 예외 발생: {}", e.getMessage(), e);
+            log.error("[Composio Gmail] 예외 발생: {}", e.getMessage(), e);
             throw new CustomException(ErrorCode.EXTERNAL_AUTH_FAILED);
         }
     }
 
-    // Notion 연결 상태 확인
-    public boolean isNotionConnected(Long userId) {
+    public boolean isGmailConnected(Long userId) {
         HttpHeaders headers = buildHeaders();
         try {
             Map response = restTemplate.exchange(
@@ -86,18 +83,17 @@ public class ComposioService {
                 Map.class
             ).getBody();
 
-            log.info("[Composio] 연결 상태 응답: {}", response);
+            log.info("[Composio Gmail] 연결 상태 응답: {}", response);
             if (response == null) return false;
             List<Map> items = (List<Map>) response.get("items");
             return items != null && !items.isEmpty();
         } catch (Exception e) {
-            log.error("[Composio] 연결 상태 확인 실패: {}", e.getMessage());
+            log.error("[Composio Gmail] 연결 상태 확인 실패: {}", e.getMessage());
             return false;
         }
     }
 
-    // Notion 연결 해제
-    public void disconnectNotion(Long userId) {
+    public void disconnectGmail(Long userId) {
         HttpHeaders headers = buildHeaders();
         try {
             Map response = restTemplate.exchange(
@@ -123,7 +119,6 @@ public class ComposioService {
         }
     }
 
-    // Notion connected account ID 조회 (Composio proxy 호출 시 사용)
     public String getConnectedAccountId(Long userId) {
         HttpHeaders headers = buildHeaders();
         try {
@@ -144,7 +139,7 @@ public class ComposioService {
         } catch (CustomException e) {
             throw e;
         } catch (Exception e) {
-            log.error("[Composio] connected_account_id 조회 실패: {}", e.getMessage());
+            log.error("[Composio Gmail] connected_account_id 조회 실패: {}", e.getMessage());
             throw new CustomException(ErrorCode.EXTERNAL_AUTH_FAILED);
         }
     }

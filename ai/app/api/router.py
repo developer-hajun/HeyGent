@@ -11,6 +11,7 @@ from app.api.http.providers import router as providers_router
 from app.api.http.sessions import router as sessions_router
 from app.api.http.tasks import router as tasks_router
 from app.api.http.work import router as work_router
+from app.api.http.workflow_templates import router as workflow_templates_router
 from app.api.ws.bridge_gateway import router as bridge_ws_router
 from app.api.ws.gateway import router as ws_router
 from app.core.config import Settings
@@ -28,6 +29,7 @@ def build_api_router(settings: Settings) -> APIRouter:
     api_router.include_router(sessions_router)
     api_router.include_router(device_tokens_router)
     api_router.include_router(work_router)
+    api_router.include_router(workflow_templates_router)
     api_router.include_router(agents_router)
     api_router.include_router(tasks_router)
     api_router.include_router(agent_sessions_router)
