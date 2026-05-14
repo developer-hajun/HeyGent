@@ -821,7 +821,7 @@ function ProfileMenu({
   if (view === 'profile') {
     return (
       <div className="p-2">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex items-center justify-between pl-1">
           <h3 className="text-foreground text-sm font-semibold">프로필</h3>
           <button
             onClick={() => setView('menu')}
@@ -834,7 +834,9 @@ function ProfileMenu({
         <div className="space-y-3">
           {/* Nickname Input */}
           <div>
-            <label className="text-muted-foreground mb-1.5 block text-xs font-medium">이름</label>
+            <label className="text-muted-foreground mb-1.5 block pl-1 text-xs font-medium">
+              이름
+            </label>
             <div className="relative">
               <input
                 type="text"

@@ -132,18 +132,31 @@ function formatUsageCost(value: number) {
 }
 
 function getRecordTime(record: CommandUsageRecord) {
-  const time = record.createdAt ? new Date(record.createdAt).getTime() : 0
-  return Number.isFinite(time) ? time : 0
+  if (!record.createdAt) return 0
+  return parseServerTimestamp(record.createdAt) ?? 0
 }
 
 function formatUsageDate(value?: string) {
   if (!value) return '-'
-  const time = new Date(value).getTime()
-  if (!Number.isFinite(time)) return '-'
+  const time = parseServerTimestamp(value)
+  if (time === null) return '-'
   return new Intl.DateTimeFormat('ko-KR', {
+    timeZone: 'Asia/Seoul',
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(time))
+}
+
+/**
+ * 서버에서 내려온 시각 문자열을 안정적으로 파싱한다.
+ * timezone 정보(`Z`, `+09:00` 등)가 없으면 UTC로 가정 — 백엔드가 LocalDateTime을
+ * 그대로 직렬화하는 경우 브라우저가 로컬 타임으로 오해석하지 않도록 보정.
+ */
+export function parseServerTimestamp(value: string): number | null {
+  const hasTimezone = /(Z|[+-]\d{2}:?\d{2})$/.test(value)
+  const normalized = hasTimezone ? value : `${value}Z`
+  const time = new Date(normalized).getTime()
+  return Number.isFinite(time) ? time : null
 }
