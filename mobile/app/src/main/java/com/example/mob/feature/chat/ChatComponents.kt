@@ -2,9 +2,9 @@ package com.example.mob.feature.chat
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.media.AudioFormat
-import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Build
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,11 +45,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.example.mob.BuildConfig
 import com.example.mob.ui.theme.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
-import kotlin.math.sqrt
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
+import org.json.JSONObject
+import java.io.File
+import java.util.concurrent.TimeUnit
 
 private val BotBubbleColor = Color(0xFF1C1C1E)
 
@@ -206,54 +217,106 @@ fun ChatInputBar(
     placeholder: String = "젠틀맨 어시스턴트에게 질문하세요..."
 ) {
     var isRecording by remember { mutableStateOf(false) }
+    var isTranscribing by remember { mutableStateOf(false) }
     var amplitude by remember { mutableStateOf(0f) }
     val context = LocalContext.current
+
+    val recorderRef = remember { mutableStateOf<MediaRecorder?>(null) }
+    val audioFileRef = remember { mutableStateOf<File?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) isRecording = true }
 
+    // 화면 이탈 시 정리
+    DisposableEffect(Unit) {
+        onDispose {
+            recorderRef.value?.let {
+                try { it.stop(); it.release() } catch (_: Exception) {}
+            }
+            recorderRef.value = null
+        }
+    }
+
+    // 녹음 시작/종료 + Whisper 전사
     LaunchedEffect(isRecording) {
-        if (!isRecording) {
-            amplitude = 0f
-            return@LaunchedEffect
-        }
-        val sampleRate = 44100
-        val minBuf = AudioRecord.getMinBufferSize(
-            sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
-        )
-        val bufSize = minBuf.coerceAtLeast(2048)
-        val record = try {
-            AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                sampleRate, AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT, bufSize
-            ).also {
-                if (it.state != AudioRecord.STATE_INITIALIZED) {
-                    isRecording = false
-                    return@LaunchedEffect
-                }
+        if (isRecording) {
+            // --- 녹음 시작 ---
+            Log.d("WhisperSTT", "녹음 시작")
+            val file = File(context.cacheDir, "whisper_input.m4a")
+            if (file.exists()) file.delete()
+            audioFileRef.value = file
+
+            @Suppress("DEPRECATION")
+            val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(context)
+            } else {
+                MediaRecorder()
             }
-        } catch (e: SecurityException) {
-            isRecording = false
-            return@LaunchedEffect
-        }
-        record.startRecording()
-        val buffer = ShortArray(bufSize / 2)
-        try {
-            while (isActive) {
-                val read = withContext(Dispatchers.IO) { record.read(buffer, 0, buffer.size) }
-                if (read > 0) {
-                    var sumSq = 0.0
-                    for (j in 0 until read) sumSq += buffer[j].toLong() * buffer[j]
-                    val rms = sqrt(sumSq / read).toFloat()
-                    amplitude = (rms / (Short.MAX_VALUE * 0.1f)).coerceIn(0f, 1f)
+            try {
+                recorder.apply {
+                    setAudioSource(MediaRecorder.AudioSource.MIC)
+                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                    setAudioSamplingRate(16000)
+                    setAudioChannels(1)
+                    setOutputFile(file.absolutePath)
+                    prepare()
+                    start()
                 }
+                recorderRef.value = recorder
+                Log.d("WhisperSTT", "MediaRecorder 시작 성공")
+                // 진폭 폴링 (파형 애니메이션용)
+                while (isActive) {
+                    delay(80)
+                    val amp = recorderRef.value?.maxAmplitude ?: 0
+                    amplitude = (amp.toFloat() / 8000f).coerceIn(0f, 1f)
+                }
+            } catch (e: CancellationException) {
+                // 유저가 중지 버튼 탭 → Compose가 코루틴 취소
+                // recorderRef는 그대로 유지 — isRecording=false LaunchedEffect에서 cleanup
+                Log.d("WhisperSTT", "녹음 코루틴 취소됨 (정상)")
+                throw e  // 반드시 re-throw
+            } catch (e: Exception) {
+                Log.e("WhisperSTT", "MediaRecorder 시작 실패: ${e.javaClass.simpleName} ${e.message}", e)
+                try { recorder.release() } catch (_: Exception) {}
+                recorderRef.value = null
+                isRecording = false
             }
-        } finally {
-            record.stop()
-            record.release()
+        } else {
+            // --- 녹음 종료 → Whisper API 전사 ---
             amplitude = 0f
+            val recorder = recorderRef.value
+            val file = audioFileRef.value
+            recorderRef.value = null
+
+            Log.d("WhisperSTT", "녹음 종료 — recorder=$recorder, file=$file, fileSize=${file?.length()}")
+
+            if (recorder != null) {
+                try { recorder.stop(); recorder.release() } catch (e: Exception) {
+                    Log.w("WhisperSTT", "recorder.stop 예외 (무시): ${e.message}")
+                }
+
+                val fileSize = file?.length() ?: 0L
+                Log.d("WhisperSTT", "파일 크기: $fileSize bytes")
+
+                if (file != null && file.exists() && fileSize > 0L) {
+                    isTranscribing = true
+                    Log.d("WhisperSTT", "Whisper API 호출 시작, apiKey=${BuildConfig.OPENAI_API_KEY.take(8)}...")
+                    withContext(Dispatchers.IO) {
+                        val result = callWhisperApi(file)
+                        Log.d("WhisperSTT", "Whisper 결과: '$result'")
+                        withContext(Dispatchers.Main) {
+                            if (result.isNotBlank()) onInputChange(result)
+                            isTranscribing = false
+                        }
+                    }
+                } else {
+                    Log.w("WhisperSTT", "파일 없음 또는 크기 0 — 전사 스킵")
+                }
+            } else {
+                Log.w("WhisperSTT", "recorder null — MediaRecorder가 시작되지 않았음")
+            }
         }
     }
 
@@ -264,7 +327,7 @@ fun ChatInputBar(
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (!isRecording) {
+            if (!isRecording && !isTranscribing) {
                 IconButton(onClick = onPlusClick, modifier = Modifier.size(36.dp)) {
                     Icon(Icons.Default.Add, contentDescription = null, tint = TextSecondary)
                 }
@@ -280,7 +343,16 @@ fun ChatInputBar(
                 contentAlignment = Alignment.CenterStart
             ) {
                 when {
-                    isRecording -> RecordingWaveform(amplitude)
+                    isRecording && inputText.isEmpty() -> RecordingWaveform(amplitude)
+                    isTranscribing -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = NavyPrimary
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("변환 중...", color = TextSecondary, fontSize = 14.sp)
+                    }
                     isProcessing -> Text("응답을 기다리는 중...", color = TextSecondary, fontSize = 14.sp)
                     else -> BasicTextField(
                         value = inputText,
@@ -303,17 +375,23 @@ fun ChatInputBar(
 
             Spacer(modifier = Modifier.width(6.dp))
 
+            // 마이크 버튼 (전사 중에는 비활성)
             if (!isProcessing) {
                 IconButton(
                     onClick = {
+                        if (isTranscribing) return@IconButton
                         if (isRecording) {
                             isRecording = false
                         } else {
                             val granted = ContextCompat.checkSelfPermission(
                                 context, Manifest.permission.RECORD_AUDIO
                             ) == PackageManager.PERMISSION_GRANTED
-                            if (granted) isRecording = true
-                            else permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            if (granted) {
+                                onInputChange("")
+                                isRecording = true
+                            } else {
+                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
                         }
                     },
                     modifier = Modifier.size(36.dp)
@@ -321,12 +399,17 @@ fun ChatInputBar(
                     Icon(
                         Icons.Default.Mic,
                         contentDescription = null,
-                        tint = if (isRecording) HealthRed else TextSecondary
+                        tint = when {
+                            isTranscribing -> TextHint
+                            isRecording -> HealthRed
+                            else -> TextSecondary
+                        }
                     )
                 }
                 Spacer(modifier = Modifier.width(4.dp))
             }
 
+            // 우측 액션 버튼
             when {
                 isProcessing -> Box(
                     modifier = Modifier
@@ -347,6 +430,19 @@ fun ChatInputBar(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "전송", tint = Color.White, modifier = Modifier.size(18.dp))
+                }
+                isTranscribing -> Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(NavyPrimary.copy(alpha = 0.4f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = Color.White
+                    )
                 }
                 inputText.isNotBlank() -> Box(
                     modifier = Modifier
@@ -373,9 +469,44 @@ fun ChatInputBar(
     }
 }
 
+/** OpenAI Whisper API 호출 — IO 스레드에서 호출할 것 */
+private fun callWhisperApi(file: File): String {
+    return try {
+        val client = OkHttpClient.Builder()
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
+
+        val body = MultipartBody.Builder()
+            .setType(MultipartBody.FORM)
+            .addFormDataPart(
+                "file", file.name,
+                file.asRequestBody("audio/m4a".toMediaType())
+            )
+            .addFormDataPart("model", "whisper-1")
+            .addFormDataPart("language", "ko")
+            .build()
+
+        val request = Request.Builder()
+            .url("https://api.openai.com/v1/audio/transcriptions")
+            .header("Authorization", "Bearer ${BuildConfig.OPENAI_API_KEY}")
+            .post(body)
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            val raw = response.body?.string() ?: ""
+            Log.d("WhisperSTT", "HTTP ${response.code}: $raw")
+            if (!response.isSuccessful) return ""
+            JSONObject(raw).optString("text", "")
+        }
+    } catch (e: Exception) {
+        Log.e("WhisperSTT", "callWhisperApi 예외: ${e.message}", e)
+        ""
+    }
+}
+
 @Composable
 private fun RecordingWaveform(amplitude: Float) {
-    // 산 모양 배율: 중앙 바가 가장 높고 양 끝이 낮음
     val multipliers = remember { listOf(0.4f, 0.62f, 0.82f, 1.0f, 0.82f, 0.62f, 0.4f) }
 
     val animatedHeights = multipliers.map { mult ->
@@ -393,7 +524,9 @@ private fun RecordingWaveform(amplitude: Float) {
     ) {
         Text("녹음 중", fontSize = 13.sp, color = HealthRed)
         Spacer(Modifier.width(10.dp))
-        Canvas(modifier = Modifier.width(64.dp).height(24.dp)) {
+        Canvas(modifier = Modifier
+            .width(64.dp)
+            .height(24.dp)) {
             val barW = 4.dp.toPx()
             val gap = 4.dp.toPx()
             val total = 7 * barW + 6 * gap
@@ -475,7 +608,6 @@ fun VoiceModeOverlay(onStop: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(40.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 마이크 켜기/끄기
             Box(
                 modifier = Modifier
                     .size(64.dp)
@@ -492,7 +624,6 @@ fun VoiceModeOverlay(onStop: () -> Unit) {
                 )
             }
 
-            // 음성 모드 종료
             Box(
                 modifier = Modifier
                     .size(64.dp)

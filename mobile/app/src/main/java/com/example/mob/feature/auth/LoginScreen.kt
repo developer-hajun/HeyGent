@@ -30,11 +30,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.mob.BuildConfig
 import com.example.mob.data.remote.KakaoLoginRequest
 import com.example.mob.data.remote.RetrofitClient
 import com.example.mob.ui.theme.TextSecondary
 import com.kakao.sdk.common.model.ClientError
 import com.kakao.sdk.common.model.ClientErrorCause
+import com.kakao.sdk.common.util.Utility
 import com.kakao.sdk.user.UserApiClient
 import kotlinx.coroutines.launch
 
@@ -42,6 +44,7 @@ import kotlinx.coroutines.launch
 fun LoginScreen(onLoginSuccess: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val kakaoKeyHash = remember { Utility.getKeyHash(context) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
@@ -86,9 +89,34 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
         }
     }
 
+    val handleDevLogin: () -> Unit = {
+        if (!isLoading) {
+            scope.launch {
+                isLoading = true
+                errorMessage = null
+                try {
+                    val response = RetrofitClient.authApiService.devLogin()
+                    if (response.status == 200 && response.data != null) {
+                        RetrofitClient.setToken(response.data.accessToken)
+                        RetrofitClient.setRefreshToken(response.data.refreshToken)
+                        onLoginSuccess()
+                    } else {
+                        errorMessage = response.message ?: "개발자 로그인 실패"
+                    }
+                } catch (e: Exception) {
+                    Log.e("DEV_LOGIN", "개발자 로그인 오류: ${e.javaClass.simpleName}", e)
+                    errorMessage = "개발자 로그인 중 오류가 발생했습니다."
+                } finally {
+                    isLoading = false
+                }
+            }
+        }
+    }
+
     val loginWithKakaoAccount: () -> Unit = {
         UserApiClient.instance.loginWithKakaoAccount(context) { token, error ->
             if (error != null) {
+                Log.e("KAKAO_LOGIN", "Register this Android key hash in Kakao Developers: $kakaoKeyHash")
                 Log.e("KAKAO_LOGIN", "카카오계정 로그인 실패: ${error.javaClass.simpleName} - ${error.message}", error)
             } else if (token != null) {
                 Log.d("KAKAO_LOGIN", "카카오 accessToken 발급 성공: ${token.accessToken.take(20)}...")
@@ -103,6 +131,7 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 Log.d("KAKAO_LOGIN", "카카오톡 앱으로 로그인 시도")
                 UserApiClient.instance.loginWithKakaoTalk(context) { token, error ->
                     if (error != null) {
+                        Log.e("KAKAO_LOGIN", "Current Android key hash: $kakaoKeyHash")
                         Log.e("KAKAO_LOGIN", "카카오톡 로그인 실패, 카카오계정으로 fallback", error)
                         if (error is ClientError && error.reason == ClientErrorCause.Cancelled) return@loginWithKakaoTalk
                         loginWithKakaoAccount()
@@ -151,6 +180,10 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 CircularProgressIndicator(color = Color(0xFFFEE500))
             } else {
                 KakaoLoginButton(onClick = onKakaoLoginClick)
+                if (BuildConfig.DEBUG) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    DevLoginButton(onClick = handleDevLogin)
+                }
             }
 
             if (errorMessage != null) {
@@ -171,6 +204,30 @@ fun LoginScreen(onLoginSuccess: () -> Unit) {
                 Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 32.dp),
+        )
+    }
+}
+
+@Composable
+private fun DevLoginButton(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .width(280.dp)
+            .height(52.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF222222))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "🛠 개발자 테스트 로그인",
+            color = Color.White,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
         )
     }
 }
