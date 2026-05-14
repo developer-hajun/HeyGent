@@ -1130,6 +1130,73 @@ def test_ws_new_session_message_can_seed_safe_session_settings(client, monkeypat
         context.__exit__(None, None, None)
 
 
+def test_ws_new_session_message_augments_toolsets_for_enabled_skill(client, monkeypatch):
+    _patch_respond(monkeypatch, text="SKILL_SETTINGS_DONE")
+    client.app.state.skill_registry.register_many(
+        [
+            {
+                "name": "korea-weather",
+                "description": "날씨 조회",
+                "body": "`http_get` runtime tool 로 조회한다.",
+            }
+        ]
+    )
+    client.app.state.skill_repository.sync_builtin_catalog(
+        [
+            {
+                "name": "korea-weather",
+                "description": "날씨 조회",
+                "body": "`http_get` runtime tool 로 조회한다.",
+            }
+        ]
+    )
+    store = client.app.state.session_store
+    store.create_session(
+        session_id="skill_settings_session",
+        session_key="skill_settings_session",
+        source="api.session",
+        user_id="skill-settings-owner",
+        metadata={"source": "api.session"},
+        settings={"toolsets": ["skills"]},
+    )
+    client.app.state.agent_repository.create_session_agent(
+        session_id="skill_settings_session",
+        owner_key="skill-settings-owner",
+        owner_user_id=None,
+        agent_type="main",
+        config_snapshot={
+            "name": "CEO",
+            "skills": ["korea-weather"],
+        },
+        delegation_policy={"canDelegate": True},
+    )
+    context, websocket = _authenticated_socket(client, user_id="skill-settings-owner")
+    try:
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.create",
+                "requestId": "req_skill_settings_message",
+                "payload": {
+                    "sessionId": "skill_settings_session",
+                    "content": "부산역 날씨 조회해줘",
+                    "clientMessageId": "client_skill_settings_message",
+                },
+            }
+        )
+
+        accepted = websocket.receive_json()
+        _receive_until(websocket, "session.message.completed")
+        task = client.app.state.repository.get_task(accepted["payload"]["task_run_id"])
+
+        assert task is not None
+        assert "korea-weather" in task.input_payload["enabledSkillNames"]
+        assert task.input_payload["enabled_toolsets"] == ["skills", "web"]
+        assert task.input_payload["toolsets"] == ["skills", "web"]
+    finally:
+        context.__exit__(None, None, None)
+
+
 def test_ws_subscribe_task_preserves_request_id_when_provided(client):
     client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="subscribe-owner")
     client.app.state.repository.create_task(

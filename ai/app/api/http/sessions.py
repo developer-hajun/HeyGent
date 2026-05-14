@@ -31,6 +31,7 @@ from app.contracts.task.task_status import TaskStatus
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
 from app.domain.orchestration.contracts import OrchestrationRequest
+from app.domain.orchestration.capabilities import apply_task_capabilities
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
@@ -406,6 +407,10 @@ async def _create_message_in_session(
             "work_title": work.title,
             "work_assignee_agent_id": work.assignee_agent_id,
         }
+    apply_task_capabilities(
+        task_input,
+        skill_registry=getattr(request.app.state, "skill_registry", None),
+    )
     user_append = session_store.append_user_message_and_start_task(
         owner_key=owner_key,
         session_id=sessionId,

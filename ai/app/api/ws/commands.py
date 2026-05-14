@@ -16,6 +16,7 @@ from app.api.memory_writeback import writeback_persistent_memory_candidates
 from app.contracts.task.task_status import TaskStatus
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
+from app.domain.orchestration.capabilities import apply_task_capabilities
 from app.domain.orchestration.contracts import OrchestrationRequest
 from app.domain.orchestration.run_lifecycle import classify_task_run_liveness
 from app.domain.session.conversation_history import build_conversation_history
@@ -414,6 +415,10 @@ class WebSocketCommandRouter:
                 "work_title": work.title,
                 "work_assignee_agent_id": work.assignee_agent_id,
             }
+        apply_task_capabilities(
+            task_input,
+            skill_registry=getattr(context.websocket.app.state, "skill_registry", None),
+        )
         # token memory context는 durable payload에 넣지 않는다. backend 호출이 필요해지면
         # context.auth.access_token에서만 꺼내 쓰도록 경계를 고정한다.
         await attach_persistent_memory_context(
