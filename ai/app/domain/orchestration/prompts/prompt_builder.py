@@ -73,10 +73,10 @@ class PromptBuilder:
         parts = compress_prompt_sections(
             [
                 self.skill_prompt_builder.build(input_payload=input_payload),
-                self.skill_prompt_builder.build_catalog(input_payload=input_payload),
                 build_project_context_prompt(input_payload=input_payload),
                 build_gateway_context_prompt(input_payload=input_payload),
                 build_work_context_prompt(input_payload=input_payload),
+                self.skill_prompt_builder.build_catalog(input_payload=input_payload),
                 base_prompt,
                 str(input_payload.get("persistent_memory_context", "")).strip(),
             ]

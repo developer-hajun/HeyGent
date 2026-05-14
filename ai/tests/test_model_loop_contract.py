@@ -413,13 +413,65 @@ def test_prompt_builder_includes_skill_description_catalog_without_reader_tool_p
     )
 
     assert "사용 가능한 skill 설명" in prompt
-    assert "사용자 입력을 수행할 수 있는 skill이 있으면 가능한 한 해당 skill을 활용하는 방향으로 진행하세요." in prompt
+    assert "현재 실행 에이전트가 직접 사용할 수 있는 skill의 이름과 설명입니다." in prompt
+    assert "세션 에이전트 후보가 더 직접적으로 맞으면 이 목록에 억지로 맞추지 말고 세션 에이전트 배정을 검토하세요." in prompt
+    assert "사용자 입력을 직접 수행할 수 있는 skill이 있으면 해당 skill을 활용하는 방향으로 진행하세요." in prompt
     assert "전혀 관련 있는 skill이 없을 때만 skill 없이 진행하고, skill 본문에 제한이나 우선 절차가 있으면 그 절차를 우선하세요." in prompt
     assert "skills.read" in prompt
     assert "skills.read_file" not in prompt
     assert "k-skills`를 우선" not in prompt
     assert "`korea-weather`" in prompt
     assert "한국 날씨를 기상청 단기예보 조회서비스" in prompt
+
+
+def test_session_agent_context_precedes_direct_skill_catalog_for_routing():
+    registry = SkillRegistry()
+    registry.register_many(
+        [
+            {
+                "name": "mattermost-send",
+                "description": "사용자가 명시한 메시지를 Mattermost 채널로 전송한다.",
+            },
+            {
+                "name": "subway-lost-property",
+                "description": "지하철 유실물 접수와 보관 장소 조회를 돕는다.",
+            },
+        ]
+    )
+    prompt_builder = PromptBuilder(SkillPromptBuilder(registry))
+
+    prompt = prompt_builder.build_model_prompt(
+        input_payload={
+            "prompt": "어제 강남역 지하철에서 지갑 잃어버렸어.",
+            "enabledSkillNames": ["mattermost-send"],
+            "targetAgentProfile": {
+                "configSnapshot": {
+                    "name": "CEO",
+                    "skills": ["mattermost-send"],
+                }
+            },
+            "sessionAgentProfiles": [
+                {
+                    "profileId": "agent-k",
+                    "configSnapshot": {
+                        "name": "K-에이전트",
+                        "description": "한국 지하철 유실물 안내를 맡습니다.",
+                        "skills": ["subway-lost-property"],
+                    },
+                    "skillDescriptions": [
+                        {
+                            "name": "subway-lost-property",
+                            "description": "지하철 유실물 접수와 보관 장소 조회를 돕는다.",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert prompt.index("세션 에이전트 후보:") < prompt.index("사용 가능한 skill 설명:")
+    assert "스킬: mattermost-send" in prompt
+    assert "subway-lost-property: 지하철 유실물 접수와 보관 장소 조회를 돕는다." in prompt
 
 
 def test_prompt_builder_filters_skill_catalog_by_enabled_skill_names():
