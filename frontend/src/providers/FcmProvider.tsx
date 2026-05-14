@@ -17,13 +17,26 @@ export function FcmProvider({ children }: FcmProviderProps) {
   const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY as string | undefined
 
   useEffect(() => {
-    if (!isAuthenticated || !isFirebaseConfigured() || !vapidKey) return
-    if (!('Notification' in window)) return
+    if (!isAuthenticated) return
+    if (!isFirebaseConfigured()) {
+      console.warn('[FCM] Firebase 환경변수가 설정되지 않았습니다.')
+      return
+    }
+    if (!vapidKey) {
+      console.warn('[FCM] VITE_FIREBASE_VAPID_KEY가 설정되지 않았습니다.')
+      return
+    }
+    if (!('Notification' in window)) {
+      console.warn('[FCM] 이 브라우저는 알림을 지원하지 않습니다.')
+      return
+    }
 
     let unsubscribeForeground: (() => void) | null = null
 
     const init = async () => {
+      console.info('[FCM] 알림 권한 요청 중...')
       const permission = await Notification.requestPermission()
+      console.info('[FCM] 알림 권한:', permission)
       if (permission !== 'granted') return
 
       const registration = await registerFcmServiceWorker()
@@ -37,15 +50,18 @@ export function FcmProvider({ children }: FcmProviderProps) {
           vapidKey,
           serviceWorkerRegistration: registration,
         })
+        console.info('[FCM] 토큰 발급:', token ? '성공' : '실패')
         if (token) {
           await registerFcmToken(token)
+          console.info('[FCM] 백엔드 토큰 등록 완료')
         }
-      } catch {
-        // 토큰 등록 실패는 조용히 무시 (알림 기능 미지원 환경)
+      } catch (e) {
+        console.warn('[FCM] 토큰 등록 실패:', e)
         return
       }
 
       unsubscribeForeground = onMessage(messaging, (payload) => {
+        console.info('[FCM] 포그라운드 메시지 수신:', payload)
         const title = payload.notification?.title ?? '새 알림'
         const body = payload.notification?.body
         toast(title, { description: body })
