@@ -119,8 +119,8 @@ class PromptBuilder:
                     "다른 세션 에이전트만 가진 능력이 필요하거나 사용자가 명시적으로 맡기라고 한 경우에만 session_agent_task 로 하위 작업을 만들고 실행하세요.",
                     "session_agent_task 는 작업 보드에 보이는 하위 작업과 실제 세션 에이전트 실행을 묶는 도구입니다.",
                     "후보가 요청의 핵심 부분을 수행할 수 있고, 독립 산출물이나 책임 분리가 자연스러울 때 세션 에이전트 작업으로 분리하세요.",
-                    "단순 응답, 맥락 정리, 최종 종합, 또는 분리할 실익이 낮은 작업은 CEO가 직접 처리해도 됩니다.",
-                    "수행할 수 있는 세션 에이전트가 없으면 임의로 배정하지 말고 CEO가 직접 진행하거나 필요한 정보와 사용자 결정 지점을 남기세요.",
+                    "단순 응답, 맥락 정리, 최종 종합, 또는 분리할 실익이 낮은 작업은 팀장이 직접 처리해도 됩니다.",
+                    "수행할 수 있는 세션 에이전트가 없으면 임의로 배정하지 말고 팀장이 직접 진행하거나 필요한 정보와 사용자 결정 지점을 남기세요.",
                     "특정 skill 절차가 필요한 하위 작업이면 session_agent_task 입력의 requiredSkillNames에 필요한 skill 이름을 담으세요.",
                     "session_agent_task 입력에는 담당자가 다시 묻지 않아도 실행할 수 있도록 제목, 지시, 기대 산출물, 완료 기준, 제약을 구체적으로 담으세요.",
                 ]
@@ -228,7 +228,7 @@ def build_work_context_prompt(*, input_payload: dict) -> str:
     if assignee_agent_id:
         lines.append(f"- 담당 에이전트: {assignee_agent_id}")
         if assignee_agent_id != "CEO":
-            lines.append("- 담당자가 CEO가 아니면 현재 실행은 해당 세션 에이전트가 맡은 작업 실행입니다.")
+            lines.append("- 담당자가 팀장이 아니면 현재 실행은 해당 세션 에이전트가 맡은 작업 실행입니다.")
             lines.append("- 담당 작업 실행 자체를 worker delegate로 다시 위임하지 마세요.")
     if isinstance(target_agent_profile, dict):
         profile_lines = _build_target_agent_profile_lines(target_agent_profile)

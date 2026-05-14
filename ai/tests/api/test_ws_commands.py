@@ -1225,7 +1225,7 @@ def test_ws_new_session_message_augments_toolsets_for_enabled_skill(client, monk
         owner_user_id=None,
         agent_type="main",
         config_snapshot={
-            "name": "CEO",
+            "name": "팀장",
             "skills": ["korea-weather"],
         },
         delegation_policy={"canDelegate": True},

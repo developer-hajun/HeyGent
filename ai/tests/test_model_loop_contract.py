@@ -36,7 +36,7 @@ def test_prompt_builder_includes_native_tool_call_and_termination_guidance():
     assert "후보의 이름, 호칭, 할 수 있는 일, 연결된 스킬 이름과 공용 스킬 설명이 사용자 요청과 맞아야 합니다." in prompt
     assert "후보가 요청의 핵심 부분을 수행할 수 있고, 독립 산출물이나 책임 분리가 자연스러울 때" in prompt
     assert "독립 산출물이나 책임 분리가 자연스러울 때 세션 에이전트 작업으로 분리하세요." in prompt
-    assert "분리할 실익이 낮은 작업은 CEO가 직접 처리해도 됩니다." in prompt
+    assert "분리할 실익이 낮은 작업은 팀장이 직접 처리해도 됩니다." in prompt
     assert "수행할 수 있는 세션 에이전트가 없으면 임의로 배정하지 말고" in prompt
     assert "requiredSkillNames에 필요한 skill 이름을 담으세요." in prompt
     assert "폴더 경로 자체를 파일명으로 바꾸지 말고 폴더 안에 의미 있는 파일명을 만들어 저장하세요." in prompt
@@ -236,6 +236,7 @@ def test_prompt_builder_promotes_session_agent_task_from_candidate_profiles():
     assert "다른 세션 에이전트 후보의 skill 이름이나 설명과 직접 맞고" in prompt
     assert "첫 tool-call 턴에서 step 도구로 현재 단계를 in_progress 로 선언한 뒤 session_agent_task" in prompt
     assert "단순 응답, 맥락 정리, 최종 종합" in prompt
+    assert "CEO가 직접" not in prompt
     assert "관점/영역별로 독립된 delegate_task" not in prompt
 
 
@@ -446,7 +447,7 @@ def test_session_agent_context_precedes_direct_skill_catalog_for_routing():
             "enabledSkillNames": ["mattermost-send"],
             "targetAgentProfile": {
                 "configSnapshot": {
-                    "name": "CEO",
+                    "name": "팀장",
                     "skills": ["mattermost-send"],
                 }
             },

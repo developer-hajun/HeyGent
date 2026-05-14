@@ -1214,7 +1214,7 @@ class PostgresWorkRepository:
             f"작업: {work.identifier} {work.title}",
             f"상태: {work.status}",
             f"설명: {work.description or ''}",
-            f"담당자: {work.assignee_agent_id or 'CEO'}",
+            f"담당자: {'팀장' if not work.assignee_agent_id or work.assignee_agent_id == 'CEO' else work.assignee_agent_id}",
             f"부모 작업: {work.parent_id or '-'}",
             f"관계 수: {len(relations)}",
             f"댓글 수: {len(comments)}",

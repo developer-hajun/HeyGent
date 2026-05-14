@@ -661,7 +661,7 @@ class LocalToolRuntime:
                 if parent is None:
                     return self._tool_error(
                         code="work_context_required",
-                        message="session_agent_task requires a connected CEO work item",
+                        message="session_agent_task requires a connected team lead work item",
                         tool_name="session_agent_task",
                     )
                 self.runtime_context["workId"] = parent.work_id
@@ -671,7 +671,7 @@ class LocalToolRuntime:
             else:
                 return self._tool_error(
                     code="work_context_required",
-                    message="session_agent_task requires a connected CEO work item",
+                    message="session_agent_task requires a connected team lead work item",
                     tool_name="session_agent_task",
                 )
         else:
@@ -685,7 +685,7 @@ class LocalToolRuntime:
         if str(parent.assignee_agent_id or "CEO") != "CEO":
             return self._tool_error(
                 code="ceo_work_required",
-                message="only CEO-owned work can create child work for session agents",
+                message="only team-lead-owned work can create child work for session agents",
                 tool_name="session_agent_task",
             )
 
