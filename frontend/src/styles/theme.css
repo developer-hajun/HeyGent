@@ -204,6 +204,12 @@
     user-select: text;
   }
 
+  .selectable-text,
+  .selectable-text * {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-body);

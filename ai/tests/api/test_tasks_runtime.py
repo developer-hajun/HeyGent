@@ -139,7 +139,8 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert [item["name"] for item in body["result_payload"]["tool_results"]] == ["step", "todo", "terminal.run"]
     assert body["todo_state"]["currentKey"] is None
     exposed_tool_names = [tool["function"]["name"] for tool in provider_calls[0]["tools"]]
-    assert "skills_list" not in exposed_tool_names
+    assert "skills_list" in exposed_tool_names
+    assert "skills_read" in exposed_tool_names
     assert "web_search" in exposed_tool_names
     assert "terminal_run" in exposed_tool_names
     assert all("." not in name for name in exposed_tool_names)

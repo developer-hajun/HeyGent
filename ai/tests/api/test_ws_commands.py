@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from app.clients.backend_auth import BackendAuthVerifyResult
 from app.clients.backend_memory import BackendMemoryItem
+from app.contracts.event.task_events import TaskEventEnvelope
+from app.core.time import utc_now
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse
 from app.domain.tasks.models import TaskRun
 
@@ -403,6 +407,130 @@ def test_ws_task_runs_active_list_filters_authenticated_owner(client):
     assert [item["task_run_id"] for item in response["payload"]["task_runs"]] == ["task_active_ws_owner"]
 
 
+def test_ws_task_run_snapshot_and_replay_include_activity_transcript(client):
+    client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="activity-owner")
+    client.app.state.repository.create_task(
+        TaskRun(
+            task_run_id="task_activity_ws",
+            task_type="agent.loop",
+            owner_key="activity-owner",
+            session_key="session_activity_ws",
+            status="COMPLETED",
+            title="activity command",
+        )
+    )
+    for sequence, event_type in ((1, "tool.started"), (2, "tool.completed")):
+        client.app.state.repository.append_event(
+            TaskEventEnvelope(
+                event_id=f"event-activity-{sequence}",
+                event_type=event_type,
+                task_run_id="task_activity_ws",
+                step_run_id="step-activity",
+                producer="test",
+                occurred_at=f"2026-05-14T00:00:0{sequence}+00:00",
+                status="RUNNING" if event_type == "tool.started" else "COMPLETED",
+                summary_message="날씨 조회",
+                payload={
+                    "tool_call_id": "call-weather",
+                    "tool_name": "http_get",
+                    "title": "날씨 조회",
+                    "result": {"ok": True} if event_type == "tool.completed" else None,
+                },
+            )
+        )
+
+    with client.websocket_connect("/ai/api/v1/realtime/user/ws") as websocket:
+        websocket.send_json({"type": "auth.start", "accessToken": "token-secret"})
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "taskRun.snapshot.get",
+                "requestId": "req_activity_snapshot",
+                "payload": {"taskRunId": "task_activity_ws", "includeSteps": False},
+            }
+        )
+        snapshot = websocket.receive_json()
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "taskRun.events.replay",
+                "requestId": "req_activity_replay",
+                "payload": {"taskRunId": "task_activity_ws", "afterSequence": 0},
+            }
+        )
+        replay = websocket.receive_json()
+
+    assert snapshot["payload"]["activity_items"][0]["activity_id"] == "tool:task_activity_ws:call-weather"
+    assert snapshot["payload"]["activityItems"][0]["status"] == "COMPLETED"
+    assert replay["payload"]["activity_items"][0]["completed_event_id"] == "event-activity-2"
+
+
+def test_ws_task_runs_active_list_hides_orphaned_running_task(client):
+    client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="active-orphan-owner")
+    client.app.state.repository.create_task(
+        TaskRun(
+            task_run_id="task_active_orphan_ws",
+            task_type="agent.loop",
+            owner_key="active-orphan-owner",
+            session_key="session_active_orphan_ws",
+            status="RUNNING",
+            title="orphan command",
+            queue_status="running",
+        )
+    )
+    client.app.state.repository.tasks["task_active_orphan_ws"].updated_at = utc_now() - timedelta(minutes=20)
+
+    with client.websocket_connect("/ai/api/v1/realtime/user/ws") as websocket:
+        websocket.send_json({"type": "auth.start", "accessToken": "token-secret"})
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "taskRuns.active.list",
+                "requestId": "req_active_orphan",
+                "payload": {"sessionId": "session_active_orphan_ws"},
+            }
+        )
+
+        response = websocket.receive_json()
+
+    assert response["type"] == "taskRuns.active.list.result"
+    assert response["payload"]["items"] == []
+    assert response["payload"]["task_runs"] == []
+
+
+def test_ws_task_runs_active_list_hides_projection_only_task(client):
+    client.app.state.backend_auth_client = FakeBackendAuthClient(user_id="active-projection-owner")
+    client.app.state.task_projection_store.save_task_snapshot(
+        TaskRun(
+            task_run_id="task_projection_only_ws",
+            task_type="agent.loop",
+            owner_key="active-projection-owner",
+            session_key="session_projection_only_ws",
+            status="RUNNING",
+            title="projection only",
+        )
+    )
+
+    with client.websocket_connect("/ai/api/v1/realtime/user/ws") as websocket:
+        websocket.send_json({"type": "auth.start", "accessToken": "token-secret"})
+        websocket.receive_json()
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "taskRuns.active.list",
+                "requestId": "req_projection_only",
+                "payload": {"sessionId": "session_projection_only_ws"},
+            }
+        )
+
+        response = websocket.receive_json()
+
+    assert response["type"] == "taskRuns.active.list.result"
+    assert response["payload"]["items"] == []
+
+
 def test_ws_session_undo_rejects_when_session_is_running(client):
     context, websocket = _authenticated_socket(client, user_id="undo-owner")
     try:
@@ -719,6 +847,63 @@ def test_ws_session_update_rejects_running_session(client):
         context.__exit__(None, None, None)
 
 
+def test_ws_session_update_clears_orphaned_running_guard(client):
+    context, websocket = _authenticated_socket(client, user_id="orphaned-update-owner")
+    try:
+        store = client.app.state.session_store
+        store.create_session(
+            session_id="orphaned_update_session",
+            session_key="orphaned_update_session",
+            source="api.session",
+            user_id="orphaned-update-owner",
+            title="멈춘 실행",
+            metadata={"source": "api.session"},
+        )
+        store.append_user_message_and_start_task(
+            owner_key="orphaned-update-owner",
+            session_id="orphaned_update_session",
+            content="멈춘 작업",
+            client_message_id="client_orphaned_update",
+            task_run_id="task_orphaned_update",
+            base_history_version=0,
+        )
+        task = TaskRun(
+            task_run_id="task_orphaned_update",
+            task_type="agent.loop",
+            owner_key="orphaned-update-owner",
+            session_key="orphaned_update_session",
+            status="RUNNING",
+            title="멈춘 실행",
+            queue_status="running",
+        )
+        client.app.state.repository.create_task(task)
+        client.app.state.repository.tasks["task_orphaned_update"].updated_at = utc_now() - timedelta(minutes=20)
+
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.update",
+                "requestId": "req_orphaned_update",
+                "payload": {
+                    "sessionId": "orphaned_update_session",
+                    "clientCommandId": "cmd_orphaned_update",
+                    "title": "다시 수정 가능",
+                },
+            }
+        )
+
+        response = websocket.receive_json()
+
+        assert response["type"] == "session.updated"
+        assert store.get_session("orphaned_update_session")["running_task_run_id"] is None
+        recovered = client.app.state.repository.get_task("task_orphaned_update")
+        assert recovered is not None
+        assert recovered.status == "FAILED"
+        assert recovered.queue_status == "terminal"
+    finally:
+        context.__exit__(None, None, None)
+
+
 def test_ws_session_archive_and_delete_exclude_from_default_list(client):
     context, websocket = _authenticated_socket(client, user_id="lifecycle-owner")
     try:
@@ -1001,6 +1186,73 @@ def test_ws_new_session_message_can_seed_safe_session_settings(client, monkeypat
         assert task is not None
         assert task.input_payload["system_prompt_snapshot"] == "새 세션에서만 적용할 프롬프트"
         assert task.input_payload["enabled_toolsets"] == ["session", "planning"]
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_ws_new_session_message_augments_toolsets_for_enabled_skill(client, monkeypatch):
+    _patch_respond(monkeypatch, text="SKILL_SETTINGS_DONE")
+    client.app.state.skill_registry.register_many(
+        [
+            {
+                "name": "korea-weather",
+                "description": "날씨 조회",
+                "body": "`http_get` runtime tool 로 조회한다.",
+            }
+        ]
+    )
+    client.app.state.skill_repository.sync_builtin_catalog(
+        [
+            {
+                "name": "korea-weather",
+                "description": "날씨 조회",
+                "body": "`http_get` runtime tool 로 조회한다.",
+            }
+        ]
+    )
+    store = client.app.state.session_store
+    store.create_session(
+        session_id="skill_settings_session",
+        session_key="skill_settings_session",
+        source="api.session",
+        user_id="skill-settings-owner",
+        metadata={"source": "api.session"},
+        settings={"toolsets": ["skills"]},
+    )
+    client.app.state.agent_repository.create_session_agent(
+        session_id="skill_settings_session",
+        owner_key="skill-settings-owner",
+        owner_user_id=None,
+        agent_type="main",
+        config_snapshot={
+            "name": "CEO",
+            "skills": ["korea-weather"],
+        },
+        delegation_policy={"canDelegate": True},
+    )
+    context, websocket = _authenticated_socket(client, user_id="skill-settings-owner")
+    try:
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.create",
+                "requestId": "req_skill_settings_message",
+                "payload": {
+                    "sessionId": "skill_settings_session",
+                    "content": "부산역 날씨 조회해줘",
+                    "clientMessageId": "client_skill_settings_message",
+                },
+            }
+        )
+
+        accepted = websocket.receive_json()
+        _receive_until(websocket, "session.message.completed")
+        task = client.app.state.repository.get_task(accepted["payload"]["task_run_id"])
+
+        assert task is not None
+        assert "korea-weather" in task.input_payload["enabledSkillNames"]
+        assert task.input_payload["enabled_toolsets"] == ["skills", "web"]
+        assert task.input_payload["toolsets"] == ["skills", "web"]
     finally:
         context.__exit__(None, None, None)
 
