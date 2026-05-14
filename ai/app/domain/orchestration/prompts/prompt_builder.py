@@ -114,6 +114,8 @@ class PromptBuilder:
                     "세션 에이전트 라우팅 기준:",
                     "현재 실행 에이전트가 가진 skill이나 로컬 도구로 요청의 핵심을 처리할 수 있으면 먼저 직접 실행 가능성을 검토하세요.",
                     "세션 에이전트 후보를 볼 때는 후보의 이름, 호칭, 할 수 있는 일, 연결된 스킬 설명이 사용자 요청과 맞아야 합니다.",
+                    "사용자 요청의 핵심이 다른 세션 에이전트 후보의 skill 이름이나 설명과 직접 맞고, 현재 실행 에이전트에게 같은 skill이 없으면 일반 조언만으로 끝내지 말고 session_agent_task 로 먼저 후보에게 맡기세요.",
+                    "위 조건을 만족하면 첫 tool-call 턴에서 step 도구로 현재 단계를 in_progress 로 선언한 뒤 session_agent_task 를 호출하고, 후보 실행 결과를 받은 다음 최종 답변을 작성하세요.",
                     "다른 세션 에이전트만 가진 능력이 필요하거나 사용자가 명시적으로 맡기라고 한 경우에만 session_agent_task 로 하위 작업을 만들고 실행하세요.",
                     "session_agent_task 는 작업 보드에 보이는 하위 작업과 실제 세션 에이전트 실행을 묶는 도구입니다.",
                     "후보가 요청의 핵심 부분을 수행할 수 있고, 독립 산출물이나 책임 분리가 자연스러울 때 세션 에이전트 작업으로 분리하세요.",
@@ -271,6 +273,7 @@ def _build_session_agent_profile_lines(profiles: list) -> list[str]:
         description = str(config.get("description") or "").strip()
         role = str(config.get("role") or profile.get("agentType") or profile.get("agent_type") or "").strip()
         skills = _text_list(config.get("skills") or profile.get("skills"))
+        skill_descriptions = _skill_description_lines(profile.get("skillDescriptions") or config.get("skillDescriptions"))
         parts = []
         if name:
             parts.append(f"이름={name}")
@@ -280,6 +283,8 @@ def _build_session_agent_profile_lines(profiles: list) -> list[str]:
             parts.append(f"할 수 있는 일={description}")
         if skills:
             parts.append("스킬=" + ", ".join(skills))
+        if skill_descriptions:
+            parts.append("스킬 설명=" + " ; ".join(skill_descriptions))
         if role:
             parts.append(f"참고 분류={role}")
         if profile_id and parts:
@@ -318,6 +323,27 @@ def _text_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _skill_description_lines(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    lines: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("skillId") or item.get("skill_id") or "").strip()
+        description = str(item.get("description") or "").strip()
+        usage = str(item.get("usage") or "").strip()
+        if not name:
+            continue
+        if len(description) > 120:
+            description = description[:117].rstrip() + "..."
+        if len(usage) > 160:
+            usage = usage[:157].rstrip() + "..."
+        detail_parts = [part for part in [description, f"사용 예시={usage}" if usage else ""] if part]
+        lines.append(f"{name}: " + " / ".join(detail_parts) if detail_parts else name)
+    return lines
 
 
 def _build_target_agent_instruction_lines(bundle: dict) -> list[str]:

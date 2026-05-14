@@ -233,6 +233,8 @@ def test_prompt_builder_promotes_session_agent_task_from_candidate_profiles():
     assert "현재 실행 에이전트가 가진 skill이나 로컬 도구로 요청의 핵심을 처리할 수 있으면 먼저 직접 실행 가능성을 검토하세요." in prompt
     assert "다른 세션 에이전트만 가진 능력이 필요하거나 사용자가 명시적으로 맡기라고 한 경우에만 session_agent_task" in prompt
     assert "후보의 이름, 호칭, 할 수 있는 일, 연결된 스킬 설명이 사용자 요청과 맞아야 합니다." in prompt
+    assert "다른 세션 에이전트 후보의 skill 이름이나 설명과 직접 맞고" in prompt
+    assert "첫 tool-call 턴에서 step 도구로 현재 단계를 in_progress 로 선언한 뒤 session_agent_task" in prompt
     assert "단순 응답, 맥락 정리, 최종 종합" in prompt
     assert "관점/영역별로 독립된 delegate_task" not in prompt
 
@@ -266,6 +268,34 @@ def test_work_context_prompt_can_show_explicit_session_agent_candidates_without_
 
     assert "세션 에이전트 후보:" in prompt
     assert "agent-travel: 이름=교통 예약 에이전트 / 할 수 있는 일=열차 시간표와 예매 조건을 확인한다. / 참고 분류=travel" in prompt
+
+
+def test_work_context_prompt_shows_session_agent_skill_descriptions():
+    prompt = build_work_context_prompt(
+        input_payload={
+            "prompt": "지하철에서 지갑 잃어버렸어.",
+            "sessionAgentProfiles": [
+                {
+                    "profileId": "agent-k",
+                    "configSnapshot": {
+                        "name": "K-에이전트",
+                        "skills": ["subway-lost-property"],
+                    },
+                    "skillDescriptions": [
+                        {
+                            "name": "subway-lost-property",
+                            "description": "서울 지하철 유실물 접수와 보관 장소 조회를 돕는다.",
+                            "usage": "\"강남역에서 지갑 잃어버렸는데 어디서 찾아?\"",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert "스킬=subway-lost-property" in prompt
+    assert "스킬 설명=subway-lost-property: 서울 지하철 유실물 접수와 보관 장소 조회를 돕는다." in prompt
+    assert "사용 예시=\"강남역에서 지갑 잃어버렸는데 어디서 찾아?\"" in prompt
 
 
 def test_persistent_memory_prompt_sanitizes_metadata():

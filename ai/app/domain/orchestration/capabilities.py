@@ -81,7 +81,7 @@ def apply_task_capabilities(
 
 
 def _normalized_toolsets(value: Any) -> tuple[str, ...] | None:
-    if not isinstance(value, list):
+    if not isinstance(value, (list, tuple)):
         return None
     normalized: list[str] = []
     for item in value:

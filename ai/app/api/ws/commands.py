@@ -1498,7 +1498,10 @@ def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work
         profile = agent_repository.get_session_agent(profile_id=assignee_agent_id, owner_key=str(work.owner_key))
     if profile is None:
         return
-    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
+    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(
+        profile,
+        skill_registry=getattr(state, "skill_registry", None),
+    )
     profile_id = str(profile.get("profile_id") or assignee_agent_id)
     _attach_effective_skill_names(
         state,
@@ -1535,7 +1538,10 @@ def _attach_main_agent_context(
     )
     if profile is None:
         return None
-    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
+    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(
+        profile,
+        skill_registry=getattr(state, "skill_registry", None),
+    )
     profile_id = str(profile.get("profile_id") or "").strip()
     _attach_effective_skill_names(
         state,
@@ -2294,7 +2300,10 @@ def _attach_session_agent_candidates(
     if agent_repository is None:
         return []
     profiles = [
-        _agent_profile_prompt_payload(item)
+        _agent_profile_prompt_payload(
+            item,
+            skill_registry=getattr(state, "skill_registry", None),
+        )
         for item in agent_repository.list_session_agents(session_id=session_id, owner_key=str(owner_key))
     ]
     if profiles:
@@ -2322,14 +2331,55 @@ def _attach_effective_skill_names(
     )
 
 
-def _agent_profile_prompt_payload(profile: dict[str, Any]) -> dict[str, Any]:
-    return {
+def _agent_profile_prompt_payload(profile: dict[str, Any], *, skill_registry: Any | None = None) -> dict[str, Any]:
+    payload = {
         "profileId": profile.get("profile_id"),
         "profileKey": profile.get("profile_key"),
         "agentType": profile.get("agent_type"),
         "templateKey": profile.get("template_key"),
         "configSnapshot": profile.get("config_snapshot") or {},
     }
+    skill_descriptions = _profile_skill_descriptions(payload, skill_registry=skill_registry)
+    if skill_descriptions:
+        payload["skillDescriptions"] = skill_descriptions
+    return payload
+
+
+def _profile_skill_descriptions(profile_payload: dict[str, Any], *, skill_registry: Any | None) -> list[dict[str, str]]:
+    skills = getattr(skill_registry, "_skills", {}) if skill_registry is not None else {}
+    if not isinstance(skills, dict):
+        return []
+    config = profile_payload.get("configSnapshot")
+    if not isinstance(config, dict):
+        return []
+    descriptions: list[dict[str, str]] = []
+    for skill_name in [str(skill).strip() for skill in list(config.get("skills") or []) if str(skill).strip()]:
+        skill = skills.get(skill_name)
+        if not isinstance(skill, dict):
+            continue
+        descriptions.append(
+            {
+                "name": skill_name,
+                "description": str(skill.get("description") or "").strip(),
+                "usage": _skill_usage_excerpt(str(skill.get("body") or "")),
+            }
+        )
+    return descriptions
+
+
+def _skill_usage_excerpt(body: str) -> str:
+    if not body:
+        return ""
+    marker = "## When to use"
+    start = body.find(marker)
+    if start < 0:
+        return ""
+    section = body[start + len(marker) :]
+    next_heading = section.find("\n## ")
+    if next_heading >= 0:
+        section = section[:next_heading]
+    lines = [line.strip(" -\t") for line in section.splitlines()]
+    return " / ".join(line for line in lines if line)[:400].strip()
 
 
 def _instruction_bundle_prompt_payload(bundle: dict[str, Any]) -> dict[str, Any]:

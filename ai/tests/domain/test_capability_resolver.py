@@ -57,6 +57,20 @@ def test_capability_resolver_opens_skill_toolsets_without_requested_toolsets():
     assert "mattermost.send" in capabilities.enabled_tool_names
 
 
+def test_capability_resolver_keeps_tuple_default_toolsets_with_enabled_skills():
+    capabilities = resolve_task_capabilities(
+        {
+            "enabledSkillNames": ["mattermost-send"],
+        },
+        skill_registry=DummySkillRegistry(),
+        default_toolsets=("skills", "session", "planning", "work"),
+    )
+
+    assert capabilities.enabled_toolsets == ("skills", "session", "planning", "work", "messaging")
+    assert "session_agent_task" in capabilities.enabled_tool_names
+    assert "mattermost.send" in capabilities.enabled_tool_names
+
+
 def test_capability_resolver_respects_explicit_toolsets_without_skills():
     capabilities = resolve_task_capabilities(
         {
