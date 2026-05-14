@@ -1176,6 +1176,7 @@ function buildRunTimelineItems(events: RawTaskEventPayload[]) {
 function formatRunTimestamp(time: number) {
   if (time <= 0) return undefined
   return new Intl.DateTimeFormat('ko-KR', {
+    timeZone: 'Asia/Seoul',
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
