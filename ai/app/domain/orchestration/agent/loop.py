@@ -22,7 +22,7 @@ from app.domain.orchestration.policies import (
 from app.domain.orchestration.runtime_planning import (
     Planner,
 )
-from app.api.http.device_tokens import get_fcm_token
+from app.api.http.device_tokens import get_fcm_tokens
 from app.domain.notifications.fcm_sender import send_chat_notification
 from app.domain.orchestration.runtime_planning.todo_state import (
     build_task_todo_payload,
@@ -618,9 +618,9 @@ class TaskEngine:
             await self._emit("task.completed", task, payload=task.result_payload)
             # FCM 푸시: 웹/다른 기기에서 보낸 메시지도 모바일에 동기화
             try:
-                fcm_token = get_fcm_token(str(task.owner_key))
-                if fcm_token and task.session_key:
-                    send_chat_notification(fcm_token, session_id=task.session_key, content="")
+                if task.session_key:
+                    for fcm_token in get_fcm_tokens(str(task.owner_key)):
+                        send_chat_notification(fcm_token, session_id=task.session_key, content="")
                     logger.info(f"FCM 발송 완료: owner={task.owner_key} session={task.session_key}")
                 else:
                     logger.debug(f"FCM 스킵: token={bool(fcm_token)} session={task.session_key}")
@@ -721,9 +721,9 @@ class TaskEngine:
             await self._emit("task.completed", task, step, payload=task.result_payload)
             # FCM 푸시: 웹/다른 기기에서 보낸 메시지도 모바일에 동기화
             try:
-                fcm_token = get_fcm_token(str(task.owner_key))
-                if fcm_token and task.session_key:
-                    send_chat_notification(fcm_token, session_id=task.session_key, content="")
+                if task.session_key:
+                    for fcm_token in get_fcm_tokens(str(task.owner_key)):
+                        send_chat_notification(fcm_token, session_id=task.session_key, content="")
             except Exception:
                 pass
             return task
