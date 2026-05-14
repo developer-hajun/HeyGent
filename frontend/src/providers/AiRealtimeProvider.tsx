@@ -33,6 +33,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
   const socketRef = useRef<TaskRunSocketClient | null>(null)
   const commandClientRef = useRef<AiCommandClient | null>(null)
   const pingIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null)
+  const activeTaskPollIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null)
   const reconnectTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
   const reconnectAttemptRef = useRef(0)
   const clientGenerationRef = useRef(0)
@@ -47,6 +48,13 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
       if (pingIntervalRef.current !== null) {
         window.clearInterval(pingIntervalRef.current)
         pingIntervalRef.current = null
+      }
+    }
+
+    const clearActiveTaskPollInterval = () => {
+      if (activeTaskPollIntervalRef.current !== null) {
+        window.clearInterval(activeTaskPollIntervalRef.current)
+        activeTaskPollIntervalRef.current = null
       }
     }
 
@@ -77,6 +85,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
       const generation = clientGenerationRef.current
 
       clearPingInterval()
+      clearActiveTaskPollInterval()
       commandClient?.destroy()
 
       if (commandClientRef.current === commandClient) {
@@ -154,6 +163,29 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
               )
             })
           void recoverAndResubscribeTasks(socketClient)
+          clearActiveTaskPollInterval()
+          activeTaskPollIntervalRef.current = window.setInterval(() => {
+            if (socketRef.current !== socketClient || !socketClient.isAuthenticated()) {
+              return
+            }
+            void useTaskRunStore
+              .getState()
+              .fetchActiveTaskRuns()
+              .then((taskRuns) => {
+                const subscriptions = useAiRealtimeStore.getState().subscriptionsByTaskRunId
+                for (const taskRun of taskRuns) {
+                  if (!subscriptions[taskRun.task_run_id]) {
+                    useAiRealtimeStore
+                      .getState()
+                      .subscribeTask(
+                        taskRun.task_run_id,
+                        getRecoveryLastSequence(taskRun.task_run_id),
+                      )
+                  }
+                }
+              })
+              .catch(() => {})
+          }, 10_000)
           return
         }
 
