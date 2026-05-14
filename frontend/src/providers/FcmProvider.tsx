@@ -9,6 +9,7 @@ import {
   registerFcmServiceWorker,
 } from '@/lib/firebase'
 import { useAuthStore } from '@/store/useAuthStore'
+import { useChatStore } from '@/store/useChatStore'
 
 type FcmProviderProps = { children: ReactNode }
 
@@ -64,6 +65,10 @@ export function FcmProvider({ children }: FcmProviderProps) {
         console.info('[FCM] 포그라운드 메시지 수신:', payload)
         const title = payload.notification?.title ?? '새 알림'
         const body = payload.notification?.body
+
+        // 세션 목록 새로고침 (앱에서 보낸 메시지 반영)
+        void useChatStore.getState().fetchSessions()
+
         toast(title, { description: body })
       })
     }
