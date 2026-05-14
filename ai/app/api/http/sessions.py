@@ -465,6 +465,13 @@ async def _create_message_in_session(
         workspace_key=user.workspace_key or session.get("workspace_key"),
     )
 
+    ws_manager = getattr(request.app.state, "ws_manager", None)
+    if ws_manager is not None:
+        await ws_manager.broadcast(
+            {"type": "task.new", "taskRunId": task_run_id, "sessionId": sessionId},
+            f"work:{owner_key}",
+        )
+
     if run_in_background:
         task_execution_supervisor = getattr(request.app.state, "task_execution_supervisor", None)
         if task_execution_supervisor is not None:
