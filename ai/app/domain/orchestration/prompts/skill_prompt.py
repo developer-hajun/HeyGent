@@ -75,8 +75,9 @@ class SkillPromptBuilder:
             "사용 가능한 skill 설명:",
             "- 아래 목록은 사용자가 켠 skill의 이름과 설명입니다.",
             "- 답변하기 전에 skill 설명을 먼저 훑고, 사용자 입력을 수행할 수 있는 skill이 있으면 가능한 한 해당 skill을 활용하는 방향으로 진행하세요.",
+            "- 직접 관련된 skill이 보이면 `skills.read` 또는 `skill.execute`로 본문을 확인한 뒤, 본문에 적힌 runtime tool 순서를 따르세요.",
             "- 여러 skill이 수행할 수 있으면 요청을 가장 직접적으로 처리할 skill을 중심으로 삼고 필요한 경우 다른 skill도 함께 참고하세요.",
-            "- 전혀 관련 있는 skill이 없을 때만 skill 없이 진행하세요.",
+            "- 전혀 관련 있는 skill이 없을 때만 skill 없이 진행하고, skill 본문에 제한이나 우선 절차가 있으면 그 절차를 우선하세요.",
             "- skill은 별도 실행 도구가 아니며, 실제 행동은 현재 제공된 runtime tool만 사용하세요.",
         ]
         for skill in items:

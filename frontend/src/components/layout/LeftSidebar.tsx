@@ -27,11 +27,15 @@ import { useSessionStore } from '@/store/useSessionStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useChatStore } from '@/store/useChatStore'
+import { useTaskRunStore } from '@/store/useTaskRunStore'
 import { logout } from '@/apis/auth'
 import { agentProfilesToPanelItems, createDefaultSessionAgents } from '@/apis/agents'
 import { createSession as createAiSession } from '@/apis/sessions'
 import { updateMyInfo } from '@/apis/users'
-import type { RawAiSession } from '@/types/aiChat'
+import type { ChatMessageView, RawAiSession } from '@/types/aiChat'
+import type { RawTaskRun } from '@/types/taskRuns'
+import { shouldClearSessionRunFromPersistedMessages } from '@/utils/chatLiveState'
+import { isTerminalTaskRunStatus } from '@/utils/taskRunDisplayStatus'
 
 type SidebarSession = {
   id: string
@@ -63,6 +67,8 @@ export function LeftSidebar() {
   const commandClient = useAiRealtimeStore((state) => state.commandClient)
   const realtimeStatus = useAiRealtimeStore((state) => state.connectionStatus)
   const sessionsById = useChatStore((state) => state.sessionsById)
+  const messagesBySessionId = useChatStore((state) => state.messagesBySessionId)
+  const taskRunsById = useTaskRunStore((state) => state.taskRunsById)
   const sessionListLoading = useChatStore((state) => state.sessionListLoading)
   const chatError = useChatStore((state) => state.sessionListError ?? state.lastError)
   const fetchSessions = useChatStore((state) => state.fetchSessions)
@@ -71,13 +77,15 @@ export function LeftSidebar() {
   const currentWorkspaceSessionId = getCurrentWorkspaceSessionId(location.pathname)
   const sidebarSessions = useMemo(() => {
     const all = Object.values(sessionsById)
-      .map(toSidebarSession)
+      .map((session) =>
+        toSidebarSession(session, messagesBySessionId[session.session_id] ?? [], taskRunsById),
+      )
       .filter((s) => !isRemovedSidebarSession(s.raw))
       .sort((first, second) => getSessionTime(second.raw) - getSessionTime(first.raw))
     const pinned = all.filter((s) => pinnedSessionIds.has(s.id))
     const unpinned = all.filter((s) => !pinnedSessionIds.has(s.id))
     return [...pinned, ...unpinned]
-  }, [sessionsById, pinnedSessionIds])
+  }, [messagesBySessionId, pinnedSessionIds, sessionsById, taskRunsById])
 
   useEffect(() => {
     if (commandClient === null) {
@@ -538,7 +546,11 @@ function EmptySessionNotice({
   )
 }
 
-function toSidebarSession(session: RawAiSession): SidebarSession {
+function toSidebarSession(
+  session: RawAiSession,
+  messages: ChatMessageView[],
+  taskRunsById: Record<string, RawTaskRun>,
+): SidebarSession {
   const title =
     getStringValue(session.title) ??
     getStringValue(session.session_key) ??
@@ -558,11 +570,37 @@ function toSidebarSession(session: RawAiSession): SidebarSession {
     title,
     preview,
     time: formatSessionTime(session),
-    isRunning:
-      isRunningTaskRunStatus(taskRunStatus) ||
-      (activeTaskRunId !== undefined && taskRunStatus === undefined),
+    isRunning: isSidebarSessionRunning(
+      session,
+      messages,
+      taskRunsById,
+      activeTaskRunId,
+      taskRunStatus,
+    ),
     raw: session,
   }
+}
+
+function isSidebarSessionRunning(
+  session: RawAiSession,
+  messages: ChatMessageView[],
+  taskRunsById: Record<string, RawTaskRun>,
+  activeTaskRunId: string | undefined,
+  taskRunStatus: string | undefined,
+) {
+  if (
+    activeTaskRunId !== undefined &&
+    isTerminalTaskRunStatus(taskRunsById[activeTaskRunId]?.status)
+  ) {
+    return false
+  }
+  if (shouldClearSessionRunFromPersistedMessages(session, messages)) {
+    return false
+  }
+  if (activeTaskRunId !== undefined && taskRunStatus === undefined) {
+    return taskRunsById[activeTaskRunId] !== undefined
+  }
+  return isRunningTaskRunStatus(taskRunStatus)
 }
 
 function getStringValue(value: unknown) {
@@ -608,7 +646,23 @@ function isRunningTaskRunStatus(status: string | undefined) {
 }
 
 function isRemovedSidebarSession(session: RawAiSession) {
-  return session.deleted_at != null || session.status === 'DELETED'
+  return (
+    session.deleted_at != null || session.status === 'DELETED' || isInternalAgentSession(session)
+  )
+}
+
+function isInternalAgentSession(session: RawAiSession) {
+  const sessionRole = getStringValue(session.session_role) ?? getStringValue(session.sessionRole)
+  if (sessionRole !== undefined && sessionRole !== 'main') {
+    return true
+  }
+  if (getStringValue(session.parent_session_id) ?? getStringValue(session.parentSessionId)) {
+    return true
+  }
+  if (getStringValue(session.task_run_id) ?? getStringValue(session.taskRunId)) {
+    return true
+  }
+  return session.session_id.startsWith('agent_session_')
 }
 
 // ────────────────────────────────────────────────────────────────────────────
