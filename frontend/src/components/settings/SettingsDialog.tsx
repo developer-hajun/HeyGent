@@ -12,16 +12,11 @@ import {
 } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
 import {
-  Zap,
-  Database,
-  Palette,
   Key,
-  MessageSquare,
   Pencil,
   Plus,
   ChevronDown,
   Check,
-  SlidersHorizontal,
   Eye,
   EyeOff,
   Search,
@@ -81,23 +76,21 @@ interface SettingsDialogProps {
   initialTab?: SettingsTab
 }
 
-type SettingsTab =
-  | 'general'
-  | 'skills'
-  | 'models'
-  | 'personalization'
-  | 'apiKeys'
-  | 'channels'
-  | 'external'
+type SettingsTab = 'general' | 'skills' | 'models' | 'personalization' | 'apiKeys' | 'external'
+
+const isVisibleSettingsTab = (tab?: SettingsTab): tab is 'apiKeys' | 'external' =>
+  tab === 'apiKeys' || tab === 'external'
 
 export function SettingsDialog({ open, onOpenChange, sessionId, initialTab }: SettingsDialogProps) {
   const [prevOpen, setPrevOpen] = useState(open)
-  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'general')
+  const [activeTab, setActiveTab] = useState<SettingsTab>(
+    isVisibleSettingsTab(initialTab) ? initialTab : 'apiKeys',
+  )
 
   if (prevOpen !== open) {
     setPrevOpen(open)
     if (open && initialTab) {
-      setActiveTab(initialTab)
+      setActiveTab(isVisibleSettingsTab(initialTab) ? initialTab : 'apiKeys')
     }
   }
 
@@ -106,12 +99,7 @@ export function SettingsDialog({ open, onOpenChange, sessionId, initialTab }: Se
   }
 
   const tabs = [
-    { id: 'general' as const, label: '일반', icon: SlidersHorizontal },
-    { id: 'skills' as const, label: '스킬 목록', icon: Zap },
-    { id: 'models' as const, label: '모델', icon: Database },
-    { id: 'personalization' as const, label: '개인 맞춤 설정', icon: Palette },
     { id: 'apiKeys' as const, label: 'API 키', icon: Key },
-    { id: 'channels' as const, label: '채널 연결', icon: MessageSquare },
     { id: 'external' as const, label: '외부 서비스', icon: Globe },
   ]
 
@@ -165,7 +153,6 @@ export function SettingsDialog({ open, onOpenChange, sessionId, initialTab }: Se
                 {activeTab === 'models' && <ModelsContent sessionId={sessionId} />}
                 {activeTab === 'personalization' && <PersonalizationContent />}
                 {activeTab === 'apiKeys' && <ApiKeysContent />}
-                {activeTab === 'channels' && <ChannelsContent />}
                 {activeTab === 'external' && <ExternalServicesContent />}
               </motion.div>
             </AnimatePresence>
@@ -1294,7 +1281,13 @@ function ApiKeysContent() {
 // ────────────────────────────────────────────────────────────────────────────
 // Channels Content
 // ────────────────────────────────────────────────────────────────────────────
-function ChannelsContent() {
+function ChannelsContent({
+  embedded = false,
+  onChannelsChange,
+}: {
+  embedded?: boolean
+  onChannelsChange?: (channels: MattermostChannel[]) => void
+} = {}) {
   const [channels, setChannels] = useState<MattermostChannel[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -1329,12 +1322,13 @@ function ChannelsContent() {
     try {
       const nextChannels = await getMattermostChannels()
       setChannels(nextChannels)
+      onChannelsChange?.(nextChannels)
     } catch {
       setErrorText('Mattermost 채널 설정을 불러오지 못했습니다.')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [onChannelsChange])
 
   useEffect(() => {
     let cancelled = false
@@ -1435,7 +1429,11 @@ function ChannelsContent() {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-foreground mb-2 text-xl font-semibold">채널 연결</h3>
+        {embedded ? (
+          <h4 className="text-foreground mb-2 text-sm font-semibold">Mattermost 채널 설정</h4>
+        ) : (
+          <h3 className="text-foreground mb-2 text-xl font-semibold">채널 연결</h3>
+        )}
         <p className="text-muted-foreground text-sm">
           Mattermost 채널 별칭과 Incoming Webhook URL을 등록합니다.
         </p>
@@ -1617,8 +1615,13 @@ function ChannelsContent() {
 // ────────────────────────────────────────────────────────────────────────────
 function ExternalServicesContent() {
   const [notionConnected, setNotionConnected] = useState(false)
+  const [mattermostChannels, setMattermostChannels] = useState<MattermostChannel[]>([])
+  const [mattermostLoading, setMattermostLoading] = useState(true)
+  const [mattermostSettingsOpen, setMattermostSettingsOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const mattermostConnected = mattermostChannels.length > 0
+  const defaultMattermostChannel = mattermostChannels.find((channel) => channel.defaultChannel)
 
   // 마운트 시 연결 상태 조회
   useEffect(() => {
@@ -1628,6 +1631,26 @@ function ExternalServicesContent() {
         .catch(() => {})
     })
   }, [])
+
+  const loadMattermostChannels = useCallback(async () => {
+    setMattermostLoading(true)
+    try {
+      const channels = await getMattermostChannels()
+      setMattermostChannels(channels)
+    } catch {
+      setMattermostChannels([])
+    } finally {
+      setMattermostLoading(false)
+    }
+  }, [])
+
+  const handleMattermostChannelsChange = useCallback((channels: MattermostChannel[]) => {
+    setMattermostChannels(channels)
+  }, [])
+
+  useEffect(() => {
+    void Promise.resolve().then(() => loadMattermostChannels())
+  }, [loadMattermostChannels])
 
   const stopPolling = () => {
     if (pollRef.current) {
@@ -1739,6 +1762,62 @@ function ExternalServicesContent() {
             </button>
           </div>
         </div>
+
+        <div
+          className={`rounded-xl border p-4 transition-colors ${
+            mattermostConnected ? 'bg-muted/40 border-border' : 'bg-background border-border'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg">
+                <img
+                  src="/assets/integrations/mattermost.jpg"
+                  alt="Mattermost"
+                  className="h-10 w-10 scale-[1.55] object-cover"
+                />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-foreground text-sm font-medium">Mattermost</h4>
+                <span
+                  className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${
+                    mattermostConnected ? 'text-switch-on' : 'text-muted-foreground'
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      mattermostConnected ? 'bg-switch-on' : 'bg-muted-foreground/60'
+                    }`}
+                  />
+                  {mattermostLoading
+                    ? '확인 중'
+                    : mattermostConnected
+                      ? `${mattermostChannels.length}개 채널 연결됨`
+                      : '미연결'}
+                </span>
+                {defaultMattermostChannel && (
+                  <p className="text-muted-foreground mt-1 truncate text-xs">
+                    기본 채널: {defaultMattermostChannel.alias}
+                  </p>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => setMattermostSettingsOpen((open) => !open)}
+              className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                mattermostSettingsOpen
+                  ? 'border-border bg-background text-foreground hover:bg-muted'
+                  : 'border-foreground bg-foreground text-background hover:bg-foreground/90'
+              }`}
+            >
+              {mattermostSettingsOpen ? '닫기' : mattermostConnected ? '관리하기' : '연결하기'}
+            </button>
+          </div>
+        </div>
+
+        {mattermostSettingsOpen && (
+          <ChannelsContent embedded onChannelsChange={handleMattermostChannelsChange} />
+        )}
       </div>
     </div>
   )
