@@ -48,6 +48,7 @@ from app.storage.postgres import (
     PostgresSkillRepository,
     PostgresTaskRepository,
     PostgresWorkRepository,
+    PostgresWorkflowTemplateRepository,
     apply_configured_postgres_migrations,
     connect_postgres,
 )
@@ -131,6 +132,7 @@ async def lifespan(app: FastAPI):
     memory_usage_attribution_verifier = LlmMemoryUsageAttributionVerifier(provider=memory_usage_attribution_provider)
     session_store = PostgresSessionStore(postgres_connection_factory)
     work_repository = PostgresWorkRepository(postgres_connection_factory)
+    workflow_template_repository = PostgresWorkflowTemplateRepository(postgres_connection_factory)
     agent_repository = PostgresAgentRepository(postgres_connection_factory)
     agent_repository.ensure_builtin_templates()
     # recall_service = RecallService(session_store)
@@ -230,6 +232,7 @@ async def lifespan(app: FastAPI):
     app.state.provider_registry = provider_registry
     app.state.session_store = session_store
     app.state.work_repository = work_repository
+    app.state.workflow_template_repository = workflow_template_repository
     app.state.agent_repository = agent_repository
     app.state.skill_repository = skill_repository
     # app.state.recall_service = recall_service
