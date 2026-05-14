@@ -59,6 +59,10 @@ class ChatViewModel : ViewModel() {
                 try {
                     val resp = RetrofitClient.aiApiService.getChatSessionMessages(target)
                     _messages.value = resp.items.mapNotNull { it.toChatMessage() }
+                    // FCM = AI 처리 완료 신호이므로 pending 상태 초기화
+                    pendingTaskRunId = null
+                    pendingSessionId = null
+                    _isProcessing.value = false
                     loadSessions()
                 } catch (e: Exception) {
                     Log.e("ChatViewModel", "FCM 갱신 실패: ${e.message}", e)
