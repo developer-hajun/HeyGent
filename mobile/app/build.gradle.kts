@@ -8,6 +8,7 @@ val secrets = Properties().apply {
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.jetbrains.kotlin.compose)
+    id("com.google.gms.google-services")
     id("kotlin-parcelize")
 }
 
@@ -32,6 +33,10 @@ android {
         val rawBaseUrl = secrets.getProperty("BASE_URL", "")
         val baseUrl = if (rawBaseUrl.endsWith("/")) rawBaseUrl else "$rawBaseUrl/"
         buildConfigField("String", "BASE_URL", "\"$baseUrl\"")
+
+        // OpenAI API 키
+        val openAiKey = secrets.getProperty("OPENAI_API_KEY", "")
+        buildConfigField("String", "OPENAI_API_KEY", "\"$openAiKey\"")
 
         // 카카오 키: secrets.properties → string 리소스로 주입
         val kakaoKey = secrets.getProperty("KAKAO_NATIVE_APP_KEY", "")
@@ -80,6 +85,8 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.lifecycle.viewmodel.ktx)
     implementation(libs.kakao.user)
+    implementation(platform("com.google.firebase:firebase-bom:34.13.0"))
+    implementation("com.google.firebase:firebase-messaging")
     implementation("org.jetbrains.kotlin:kotlin-parcelize-runtime:2.2.10")
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
