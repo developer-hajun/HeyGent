@@ -152,7 +152,20 @@ async def lifespan(app: FastAPI):
         work_repository=work_repository,
         agent_repository=agent_repository,
     )
-    tool_catalog = ToolCatalog(tool_runtime, default_toolsets=("skills", "session", "planning", "terminal", "file", "web", "browser", "work"))
+    tool_catalog = ToolCatalog(
+        tool_runtime,
+        default_toolsets=(
+            "skills",
+            "session",
+            "planning",
+            "terminal",
+            "file",
+            "web",
+            "browser",
+            "work",
+            "messaging",
+        ),
+    )
     child_session_launcher = ChildSessionLauncher()
     planner = Planner()
     tool_registry = ToolRegistry(
