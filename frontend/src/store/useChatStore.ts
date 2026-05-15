@@ -186,21 +186,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
         .sendCommand<AiRealtimeRawFrame>('session.messages.list', { sessionId })
       const payload = getFramePayload(frame) as SessionMessagesListResultPayload
       const messages = getRawMessageList(payload).map(toChatMessageView)
+      let mergedMessages = messages
 
-      set((state) => ({
-        messagesBySessionId: {
-          ...state.messagesBySessionId,
-          [sessionId]: mergeLiveMessagesIntoPersistedList(
-            messages,
-            state.messagesBySessionId[sessionId] ?? [],
-            sessionId,
-          ),
-        },
-        loadingSessionIds: { ...state.loadingSessionIds, [sessionId]: false },
-        lastError: null,
-      }))
+      set((state) => {
+        mergedMessages = mergeLiveMessagesIntoPersistedList(
+          messages,
+          state.messagesBySessionId[sessionId] ?? [],
+          sessionId,
+        )
+        return {
+          messagesBySessionId: { ...state.messagesBySessionId, [sessionId]: mergedMessages },
+          loadingSessionIds: { ...state.loadingSessionIds, [sessionId]: false },
+          lastError: null,
+        }
+      })
 
-      return messages
+      return mergedMessages
     } catch (error) {
       set((state) => ({
         loadingSessionIds: { ...state.loadingSessionIds, [sessionId]: false },
@@ -417,8 +418,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
   addExternalTaskPlaceholder: (sessionId, taskRunId) => {
     set((state) => {
       const existingMessages = state.messagesBySessionId[sessionId] ?? []
-      const hasTask = existingMessages.some((m) => m.taskRunId === taskRunId)
-      if (hasTask) return {}
+      const hasAssistantTask = existingMessages.some(
+        (message) => message.role === 'assistant' && message.taskRunId === taskRunId,
+      )
+      if (hasAssistantTask) return {}
 
       return {
         messagesBySessionId: {

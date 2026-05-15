@@ -1165,6 +1165,8 @@ class TaskEngine:
             "conversation_history": [],
             "system_prompt_snapshot": parent_input.get("system_prompt_snapshot") or "",
             "model": parent_input.get("model"),
+            "sessionId": parent_input.get("sessionId") or parent_task.session_key or work.session_id,
+            "promptMessageId": parent_input.get("promptMessageId") or parent_input.get("prompt_message_id"),
             "enabled_toolsets": ["skills", "session", "planning", "terminal", "file", "web", "browser", "work"],
             "toolsets": ["skills", "session", "planning", "terminal", "file", "web", "browser", "work"],
             "max_iterations": self._work_execution_max_iterations(),

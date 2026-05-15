@@ -1684,6 +1684,24 @@ def test_public_session_message_creates_taskrun_and_stores_public_transcript(cli
     assert task["session_key"] == session_id
 
 
+def test_public_session_message_enables_team_lead_awesome_design_skill(client, monkeypatch):
+    _patch_respond(monkeypatch, [_response(text="DESIGN_SKILL_READY")])
+
+    message_response = client.post(
+        "/ai/api/v1/sessions/messages",
+        json={"content": "AI 고객지원 SaaS 대시보드 만들어줘", "model": "gpt-test"},
+    )
+
+    assert message_response.status_code == 200
+    task_run_id = message_response.json()["taskRunId"]
+    task = client.app.state.repository.get_task(task_run_id)
+
+    assert task is not None
+    assert "awesome-design" in task.input_payload["enabledSkillNames"]
+    assert "design" in task.input_payload["enabled_toolsets"]
+    assert "design" in task.input_payload["capability_resolution"]["skillRequiredToolsets"]
+
+
 def test_http_followup_message_uses_previous_public_messages_without_current_user(client, monkeypatch):
     provider_calls = _patch_respond(monkeypatch, [_response(text="HTTP_FOLLOWUP_DONE")])
     session_store = client.app.state.session_store
