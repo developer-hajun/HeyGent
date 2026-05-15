@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router'
 import {
-  Activity,
+  Building2,
   ChevronRight,
   Loader2,
   LayoutDashboard,
@@ -318,7 +318,7 @@ export function LeftSidebar() {
                 }`}
                 aria-label="에이전트 상태로 이동"
               >
-                <Activity className="h-5 w-5" />
+                <Building2 className="h-5 w-5" />
               </button>
             </CollapsedTooltip>
 
@@ -461,7 +461,7 @@ export function LeftSidebar() {
                       : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
                   }`}
                 >
-                  <Activity className="h-5 w-5 shrink-0" />
+                  <Building2 className="h-5 w-5 shrink-0" />
                   <span>에이전트 상태</span>
                 </button>
                 <button

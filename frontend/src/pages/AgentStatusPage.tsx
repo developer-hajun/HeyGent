@@ -48,6 +48,8 @@ const TASK_STATUS_CLASS: Record<TaskStatus, string> = {
   failed: 'text-red-400',
 }
 
+const EMPTY_AGENT_PANELS: ReturnType<typeof agentProfilesToPanelItems> = []
+
 function AgentInfoPanel({ info, onClose }: { info: AgentVisualizationInfo; onClose: () => void }) {
   return (
     <div className="absolute top-4 right-4 z-30 flex w-72 flex-col rounded-2xl border border-white/15 bg-black/80 shadow-2xl backdrop-blur-md">
@@ -139,6 +141,103 @@ function AgentInfoPanel({ info, onClose }: { info: AgentVisualizationInfo; onClo
             ))}
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+const TOKEN_DETAIL_BARS: {
+  key: keyof Pick<
+    CommandUsageSummary,
+    'inputTokens' | 'outputTokens' | 'cachedInputTokens' | 'reasoningTokens'
+  >
+  label: string
+  color: string
+}[] = [
+  { key: 'inputTokens', label: 'Input', color: '#3b82f6' },
+  { key: 'outputTokens', label: 'Output', color: '#22c55e' },
+  { key: 'cachedInputTokens', label: 'Cache', color: '#f59e0b' },
+  { key: 'reasoningTokens', label: 'Reasoning', color: '#a855f7' },
+]
+
+function TokenUsageModal({
+  summary,
+  onClose,
+}: {
+  summary: CommandUsageSummary
+  onClose: () => void
+}) {
+  const maxVal = Math.max(
+    summary.inputTokens,
+    summary.outputTokens,
+    summary.cachedInputTokens,
+    summary.reasoningTokens,
+    1,
+  )
+
+  return (
+    <div
+      className="absolute inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-110 rounded-2xl border border-white/15 bg-black/85 p-6 shadow-2xl backdrop-blur-md"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* 헤더 */}
+        <div className="mb-5 flex items-center justify-between">
+          <h2 className="text-base font-bold text-white">토큰 사용량 상세</h2>
+          <button
+            onClick={onClose}
+            className="text-xl leading-none text-white/30 transition-colors hover:text-white"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* 막대 그래프 */}
+        <div className="mb-5 flex flex-col gap-4">
+          {TOKEN_DETAIL_BARS.map(({ key, label, color }) => {
+            const value = summary[key]
+            const pct = (value / maxVal) * 100
+            return (
+              <div key={key}>
+                <div className="mb-1.5 flex justify-between">
+                  <span className="text-xs font-semibold text-white/70">{label}</span>
+                  <span className="font-mono text-xs text-white">{value.toLocaleString()}</span>
+                </div>
+                <div className="h-2.5 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full rounded-full"
+                    style={{ width: `${pct}%`, background: color, transition: 'width 0.6s ease' }}
+                  />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* 요약 */}
+        <div className="grid grid-cols-3 gap-3 border-t border-white/10 pt-4">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs text-white/40">총 토큰</span>
+            <span className="font-mono text-sm font-semibold text-white">
+              {summary.totalTokens.toLocaleString()}
+            </span>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs text-white/40">예상 비용</span>
+            <span className="font-mono text-sm font-semibold text-white">
+              ${summary.estimatedCostUsd.toFixed(4)}
+            </span>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs text-white/40">API 호출</span>
+            <span className="font-mono text-sm font-semibold text-white">
+              {summary.recordCount.toLocaleString()}
+            </span>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -810,6 +909,7 @@ export function AgentStatusPage() {
   const [navmeshGrid, setNavmeshGrid] = useState<boolean[][] | null>(null)
   const [spawningIds, setSpawningIds] = useState<ReadonlySet<string>>(new Set())
   const [tokenUsageSummary, setTokenUsageSummary] = useState<CommandUsageSummary | null>(null)
+  const [tokenModalOpen, setTokenModalOpen] = useState(false)
 
   useEffect(() => {
     void getCommandUsage({})
@@ -932,7 +1032,7 @@ export function AgentStatusPage() {
 
   // 세션의 서브에이전트 패널 목록 — 추가·삭제 시 자동으로 스폰/연동 트리거
   const agentPanels = useSessionStore((s) =>
-    sessionId ? (s.agentPanelsBySessionId[sessionId] ?? []) : [],
+    sessionId ? (s.agentPanelsBySessionId[sessionId] ?? EMPTY_AGENT_PANELS) : EMPTY_AGENT_PANELS,
   )
 
   useEffect(() => {
@@ -1462,8 +1562,12 @@ export function AgentStatusPage() {
         selectedAgentId={selectedAgentId}
         spawningIds={spawningIds}
         tokenUsageSummary={tokenUsageSummary}
+        onTokenChartClick={() => setTokenModalOpen(true)}
       />
       {selectedInfo && <AgentInfoPanel info={selectedInfo} onClose={() => selectAgent(null)} />}
+      {tokenModalOpen && tokenUsageSummary && (
+        <TokenUsageModal summary={tokenUsageSummary} onClose={() => setTokenModalOpen(false)} />
+      )}
     </div>
   )
 }
