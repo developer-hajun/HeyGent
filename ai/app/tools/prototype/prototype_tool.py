@@ -47,7 +47,11 @@ _PROTOTYPE_CREATE_ARTIFACT_DEFINITION = register_runtime_tool_definition(
                 },
                 "files": {
                     "type": "object",
-                    "description": "Map of absolute project file paths to source code or { code } objects.",
+                    "description": (
+                        "Map of absolute project file paths to source code or { code } objects. "
+                        "Use React/CSS files that render in Sandpack. Built-in dependencies include "
+                        "lucide-react, motion, framer-motion, recharts, clsx, and date-fns."
+                    ),
                     "additionalProperties": {
                         "anyOf": [
                             {"type": "string"},
@@ -69,6 +73,24 @@ _PROTOTYPE_CREATE_ARTIFACT_DEFINITION = register_runtime_tool_definition(
     },
 )
 
+_PROTOTYPE_GET_ACTIVE_ARTIFACT_DEFINITION = register_runtime_tool_definition(
+    name="prototype.get_active_artifact",
+    toolset="prototype",
+    module="app.tools.prototype.prototype_tool",
+    summary="Read the active session React prototype artifact files.",
+    schema={
+        "description": (
+            "Read the active session prototype artifact and its source files. "
+            "Use this before modifying an existing DESIGN.md prototype."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+)
+
 
 def prototype_create_artifact_tool_definition() -> dict[str, str]:
     return {
@@ -76,6 +98,15 @@ def prototype_create_artifact_tool_definition() -> dict[str, str]:
         "toolset": _PROTOTYPE_CREATE_ARTIFACT_DEFINITION.toolset,
         "module": _PROTOTYPE_CREATE_ARTIFACT_DEFINITION.module,
         "summary": _PROTOTYPE_CREATE_ARTIFACT_DEFINITION.summary,
+    }
+
+
+def prototype_get_active_artifact_tool_definition() -> dict[str, str]:
+    return {
+        "name": _PROTOTYPE_GET_ACTIVE_ARTIFACT_DEFINITION.name,
+        "toolset": _PROTOTYPE_GET_ACTIVE_ARTIFACT_DEFINITION.toolset,
+        "module": _PROTOTYPE_GET_ACTIVE_ARTIFACT_DEFINITION.module,
+        "summary": _PROTOTYPE_GET_ACTIVE_ARTIFACT_DEFINITION.summary,
     }
 
 

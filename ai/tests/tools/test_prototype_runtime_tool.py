@@ -9,10 +9,11 @@ class DummySessionStore:
 class FakePrototypeRepository:
     def __init__(self) -> None:
         self.calls = []
+        self.active_artifact = None
 
     def create_artifact_version(self, **kwargs):
         self.calls.append(kwargs)
-        return {
+        self.active_artifact = {
             "artifact_id": "artifact_1",
             "version_id": "version_1",
             "session_id": kwargs["session_id"],
@@ -26,6 +27,16 @@ class FakePrototypeRepository:
             "version_number": 1,
             "summary": kwargs["summary"],
         }
+        return self.active_artifact
+
+    def get_active_artifact(self, **kwargs):
+        if self.active_artifact is None:
+            return None
+        if self.active_artifact["session_id"] != kwargs["session_id"]:
+            return None
+        if self.active_artifact["owner_key"] != kwargs["owner_key"]:
+            return None
+        return self.active_artifact
 
 
 def test_prototype_toolset_exposes_artifact_creation():
@@ -37,8 +48,12 @@ def test_prototype_toolset_exposes_artifact_creation():
 
     definitions = runtime.list_tool_definitions(enabled_toolsets=("prototype",))
 
-    assert [definition["name"] for definition in definitions] == ["prototype.create_artifact"]
+    assert [definition["name"] for definition in definitions] == [
+        "prototype.create_artifact",
+        "prototype.get_active_artifact",
+    ]
     assert "prototype.create_artifact" in resolve_runtime_tool_names(("prototype",))
+    assert "prototype.get_active_artifact" in resolve_runtime_tool_names(("prototype",))
 
 
 def test_prototype_create_artifact_stores_react_files_without_bridge():
@@ -118,3 +133,36 @@ def test_prototype_create_artifact_requires_bound_session_and_owner():
 
     assert result["ok"] is False
     assert result["error"]["code"] == "prototype_context_required"
+
+
+def test_prototype_get_active_artifact_returns_session_files_for_followup_edits():
+    repository = FakePrototypeRepository()
+    runtime = LocalToolRuntime(
+        skill_registry=object(),
+        session_store=DummySessionStore(),
+        prototype_repository=repository,
+    ).bind_request_context(
+        owner_key="42",
+        runtime_context={"sessionId": "session_1"},
+    )
+    runtime.run_call(
+        name="prototype.create_artifact",
+        args={
+            "title": "대시보드",
+            "files": {
+                "/src/App.tsx": "export default function App() { return <main>v1</main> }",
+                "/src/styles.css": "body { margin: 0; }",
+            },
+        },
+        enabled_toolsets=("prototype",),
+    )
+
+    result = runtime.run_call(
+        name="prototype.get_active_artifact",
+        args={},
+        enabled_toolsets=("prototype",),
+    )
+
+    assert result["ok"] is True
+    assert result["artifact"]["artifactId"] == "artifact_1"
+    assert result["artifact"]["files"]["/src/App.tsx"]["code"].endswith("<main>v1</main> }")

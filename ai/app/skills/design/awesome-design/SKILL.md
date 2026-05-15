@@ -30,6 +30,7 @@ metadata:
 6. `write_file`, `terminal.run`, 로컬 브릿지용 파일 도구를 사용하지 않는다. 생성 결과는 반드시 `prototype.create_artifact`로 세션 Artifact에 저장한다.
 7. 사용자 입력이 모호하면 가장 가까운 제품 유형과 화면 목적을 먼저 추론하고, 필요한 경우 화면 가정을 코드에 반영한다.
 8. 디자인 디테일 보존이 최우선이다. 단순 placeholder보다 실제 레이아웃, 밀도, 시각 계층, 상태, 샘플 데이터를 포함한다.
+9. 기존 프로토타입의 문구, 레이아웃, 색상, 컴포넌트 수정 요청이면 먼저 `prototype.get_active_artifact`로 현재 세션의 활성 파일을 읽고, 그 파일을 수정한 전체 파일 세트를 `prototype.create_artifact`로 새 버전 저장한다.
 
 ## Output rule
 
@@ -38,5 +39,8 @@ metadata:
 - 화면이 복잡하면 `/src/components/...`로 컴포넌트를 분리한다.
 - `prototype.create_artifact`의 `files`에는 파일 경로별 코드를 모두 넣고, `framework`는 `react`, `styling`은 `css` 또는 `mixed`, `entryFile`은 `/src/App.tsx`로 둔다.
 - 코드 탭이나 프리뷰에서 다시 사용할 수 있도록 한 세션 안의 생성 코드는 같은 흐름으로 이어간다.
+- 런타임은 React, CSS, `lucide-react`, `motion`, `recharts`를 기본 지원한다. 다른 외부 패키지가 꼭 필요하면 사용자에게 보이는 화면이 깨지지 않도록 순수 React/CSS fallback을 포함한다.
+- Tailwind 빌드 파이프라인에 의존하지 않는다. Tailwind식 className만 나열하지 말고, DESIGN.md 토큰은 `src/styles.css`의 실제 CSS로 구현한다.
+- 폰트는 `font-family` fallback을 반드시 포함하고, 외부 폰트가 늦게 로드되거나 실패해도 레이아웃이 유지되게 한다.
 - 결과를 보고할 때는 실제 `prototype.create_artifact` 결과의 `artifactId`, `versionId`, `designPresetId`를 기준으로 말한다. 도구 호출 여부를 추측하거나, 이미 Artifact가 생성된 뒤에 스킬을 쓰지 않았다고 단정하지 않는다.
 - 사용자가 스킬 사용 여부를 물으면 "맥락상 사용했다"처럼 의도나 분류를 근거로 답하지 않는다. 실제 실행한 `skills.read`, `design.list_presets`, `design.read_preset`, `prototype.create_artifact` 결과를 기준으로 답한다.

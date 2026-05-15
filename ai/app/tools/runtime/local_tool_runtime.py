@@ -75,6 +75,7 @@ class LocalToolRuntime:
                 "notion.execute": self._execute_notion,
                 "design.list_presets": self._list_design_presets,
                 "design.read_preset": self._read_design_preset,
+                "prototype.get_active_artifact": self._get_active_prototype_artifact,
                 "prototype.create_artifact": self._create_prototype_artifact,
                 "terminal.run": self._run_terminal_command,
                 "web_search": self._run_web_search,
@@ -585,6 +586,59 @@ class LocalToolRuntime:
             "previewMode": "sandpack" if saved["framework"] == "react" else "iframe",
             "fileCount": len(saved["files"]),
             "summary": saved.get("summary") or "",
+        }
+
+    def _get_active_prototype_artifact(self, args: dict[str, Any]) -> dict[str, Any]:
+        from app.tools.prototype.prototype_tool import prototype_tool_error
+
+        _ = args
+        if self.prototype_repository is None:
+            return prototype_tool_error("prototype_repository_unavailable", "prototype artifact storage is not configured.")
+
+        session_id = self._optional_text(
+            self.runtime_context.get("sessionId") or self.runtime_context.get("session_id")
+        )
+        owner_key = self._optional_text(self.owner_key)
+        if not session_id or not owner_key:
+            return prototype_tool_error(
+                "prototype_context_required",
+                "prototype artifact lookup requires a bound session and owner.",
+            )
+
+        record = self.prototype_repository.get_active_artifact(session_id=session_id, owner_key=owner_key)
+        if record is None:
+            return {
+                "ok": True,
+                "artifact": None,
+                "content": json.dumps({"ok": True, "artifact": None}, ensure_ascii=False),
+            }
+
+        artifact = {
+            "artifactId": str(record["artifact_id"]),
+            "versionId": str(record["version_id"]),
+            "sessionId": str(record["session_id"]),
+            "title": str(record.get("title") or "프로토타입"),
+            "framework": str(record.get("framework") or "react"),
+            "styling": str(record.get("styling") or "css"),
+            "designPresetId": record.get("design_preset_id"),
+            "entryFile": str(record.get("entry_file") or "/src/App.tsx"),
+            "versionNumber": int(record.get("version_number") or 1),
+            "summary": str(record.get("summary") or ""),
+            "files": record.get("files") if isinstance(record.get("files"), dict) else {},
+        }
+        return {
+            "ok": True,
+            "artifact": artifact,
+            "content": json.dumps(
+                {
+                    "ok": True,
+                    "artifactId": artifact["artifactId"],
+                    "versionId": artifact["versionId"],
+                    "title": artifact["title"],
+                    "fileCount": len(artifact["files"]),
+                },
+                ensure_ascii=False,
+            ),
         }
 
     def _run_browser_navigate(self, args: dict[str, Any]) -> dict[str, Any]:

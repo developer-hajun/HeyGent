@@ -202,7 +202,27 @@ function PrototypeSandpack({
   const files = useMemo(() => buildSandpackFiles(artifact), [artifact])
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-[#0b1020] [&_.cm-content]:!text-slate-100 [&_.cm-editor]:!h-full [&_.cm-editor]:!bg-[#0b1020] [&_.cm-gutters]:!border-slate-800 [&_.cm-gutters]:!bg-[#0b1020] [&_.cm-gutters]:!text-slate-500 [&_.cm-line]:!text-slate-100 [&_.cm-scroller]:!h-full [&_.sp-code-editor]:!h-full [&_.sp-code-editor]:!bg-[#0b1020] [&_.sp-file-explorer]:!h-full [&_.sp-file-explorer]:!bg-[#0f172a] [&_.sp-file-explorer]:!text-slate-200 [&_.sp-layout]:!h-full [&_.sp-layout]:!bg-[#0b1020] [&_.sp-preview]:!h-full [&_.sp-preview-container]:!h-full [&_.sp-stack]:!h-full [&_.sp-wrapper]:!h-full [&_iframe]:!h-full">
+    <div className="prototype-sandpack flex min-h-0 w-full min-w-0 flex-1 flex-col bg-[#0b1020] [&_.cm-content]:!text-slate-100 [&_.cm-editor]:!h-full [&_.cm-editor]:!w-full [&_.cm-editor]:!bg-[#0b1020] [&_.cm-gutters]:!border-slate-800 [&_.cm-gutters]:!bg-[#0b1020] [&_.cm-gutters]:!text-slate-500 [&_.cm-line]:!text-slate-100 [&_.cm-scroller]:!h-full [&_.cm-scroller]:!w-full [&_.sp-code-editor]:!h-full [&_.sp-code-editor]:!w-full [&_.sp-code-editor]:!bg-[#0b1020] [&_.sp-file-explorer]:!h-full [&_.sp-file-explorer]:!bg-[#0f172a] [&_.sp-file-explorer]:!text-slate-200 [&_.sp-layout]:!h-full [&_.sp-layout]:!w-full [&_.sp-layout]:!max-w-none [&_.sp-layout]:!flex-1 [&_.sp-layout]:!bg-[#0b1020] [&_.sp-preview]:!h-full [&_.sp-preview]:!w-full [&_.sp-preview]:!max-w-none [&_.sp-preview-container]:!h-full [&_.sp-preview-container]:!w-full [&_.sp-preview-container]:!max-w-none [&_.sp-stack]:!h-full [&_.sp-stack]:!w-full [&_.sp-wrapper]:!h-full [&_.sp-wrapper]:!w-full [&_.sp-wrapper]:!max-w-none [&_iframe]:!h-full [&_iframe]:!w-full">
+      <style>{`
+        .prototype-sandpack .sp-wrapper,
+        .prototype-sandpack .sp-layout,
+        .prototype-sandpack .sp-stack,
+        .prototype-sandpack .sp-preview,
+        .prototype-sandpack .sp-preview-container,
+        .prototype-sandpack .sp-code-editor,
+        .prototype-sandpack .cm-editor,
+        .prototype-sandpack iframe {
+          width: 100% !important;
+          max-width: none !important;
+          min-width: 0 !important;
+        }
+
+        .prototype-sandpack .sp-layout,
+        .prototype-sandpack .sp-preview,
+        .prototype-sandpack .sp-code-editor {
+          flex: 1 1 0% !important;
+        }
+      `}</style>
       <SandpackProvider
         files={files}
         template="react"
@@ -210,6 +230,9 @@ function PrototypeSandpack({
         customSetup={{
           dependencies: {
             '@vitejs/plugin-react': '4.3.4',
+            clsx: '2.1.1',
+            'date-fns': '4.1.0',
+            'framer-motion': '12.23.24',
             'lucide-react': '0.468.0',
             motion: '12.23.24',
             recharts: '2.12.7',
@@ -227,7 +250,7 @@ function PrototypeSandpack({
         <Tabs
           value={activeTab}
           onValueChange={(value) => onTabChange(value as PrototypeTab)}
-          className="flex h-full min-h-0 flex-1 flex-col"
+          className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col"
         >
           <div className="border-border bg-background flex h-10 shrink-0 items-center justify-between border-b px-3">
             <TabsList className="dark:bg-muted dark:text-muted-foreground h-8 bg-slate-200 text-slate-700">
@@ -251,13 +274,17 @@ function PrototypeSandpack({
           <TabsContent
             forceMount
             value="preview"
-            className={`m-0 min-h-0 flex-1 overflow-hidden ${
+            className={`m-0 min-h-0 w-full min-w-0 flex-1 overflow-hidden ${
               activeTab === 'preview' ? 'flex' : 'hidden'
             }`}
           >
-            <SandpackLayout className="h-full min-h-0 !rounded-none !border-0">
+            <SandpackLayout
+              className="h-full min-h-0 w-full min-w-0 flex-1 !rounded-none !border-0"
+              style={{ flex: '1 1 0%', maxWidth: 'none', minWidth: 0, width: '100%' }}
+            >
               <SandpackPreview
-                className="h-full min-h-0"
+                className="h-full min-h-0 w-full min-w-0 flex-1"
+                style={{ flex: '1 1 0%', maxWidth: 'none', minWidth: 0, width: '100%' }}
                 showNavigator
                 showOpenInCodeSandbox={false}
                 showRefreshButton
@@ -267,14 +294,17 @@ function PrototypeSandpack({
           <TabsContent
             forceMount
             value="code"
-            className={`m-0 min-h-0 flex-1 overflow-hidden ${
+            className={`m-0 min-h-0 w-full min-w-0 flex-1 overflow-hidden ${
               activeTab === 'code' ? 'flex' : 'hidden'
             }`}
           >
-            <SandpackLayout className="h-full min-h-0 !rounded-none !border-0">
+            <SandpackLayout
+              className="h-full min-h-0 w-full min-w-0 flex-1 !rounded-none !border-0"
+              style={{ flex: '1 1 0%', maxWidth: 'none', minWidth: 0, width: '100%' }}
+            >
               <SandpackFileExplorer className="h-full min-w-48 shrink-0" />
               <SandpackCodeEditor
-                className="h-full min-h-0 flex-1"
+                className="h-full min-h-0 min-w-0 flex-1"
                 showLineNumbers
                 showTabs
                 closableTabs
@@ -336,6 +366,9 @@ function buildSandpackFiles(artifact: PrototypeArtifact): SandpackFiles {
             typescript: '5.6.3',
             react: '18.2.0',
             'react-dom': '18.2.0',
+            clsx: '2.1.1',
+            'date-fns': '4.1.0',
+            'framer-motion': '12.23.24',
             'lucide-react': '0.468.0',
             motion: '12.23.24',
             recharts: '2.12.7',
@@ -347,7 +380,7 @@ function buildSandpackFiles(artifact: PrototypeArtifact): SandpackFiles {
       ),
     },
     '/index.html': {
-      code: '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0" /></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
+      code: '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0" /><style>html,body,#root{margin:0;width:100%;min-height:100%;}body{overflow-x:hidden;}</style></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
     },
     '/src/main.tsx': {
       code: "import React from 'react';\nimport { createRoot } from 'react-dom/client';\nimport './styles.css';\nimport App from './App';\n\ncreateRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);\n",

@@ -50,7 +50,7 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "prototype": RuntimeToolsetDefinition(
         description="Session-scoped React prototype artifact tools.",
-        tools=("prototype.create_artifact",),
+        tools=("prototype.create_artifact", "prototype.get_active_artifact"),
     ),
     "browser": RuntimeToolsetDefinition(
         description="Browser automation tools.",
