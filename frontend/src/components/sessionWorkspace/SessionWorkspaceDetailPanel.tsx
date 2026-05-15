@@ -695,7 +695,6 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                 detail: skill.enabled
                   ? undefined
                   : '사용자 설정에서 꺼져 있어 이 에이전트에 적용할 수 없습니다.',
-                locationLabel: skill.sourcePath ?? undefined,
               }))}
               missingSkills={missingSkillIds}
               selectedCount={selectedKnownSkillIds.length}

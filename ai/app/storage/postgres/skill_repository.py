@@ -142,6 +142,7 @@ class PostgresSkillRepository:
             return None
         item["body"] = _read_skill_body(item.get("source_path"))
         item["files"] = _list_skill_files(item.get("source_path"))
+        item["documents"] = _read_skill_documents(item.get("source_path"))
         return item
 
     def set_agent_skill_settings(self, *, profile_id: str, skill_ids: list[str]) -> None:
@@ -301,6 +302,101 @@ def _list_skill_files(source_path: Any) -> list[str]:
         return files
     except OSError:
         return []
+
+
+def _read_skill_documents(source_path: Any) -> list[dict[str, str]]:
+    text = str(source_path or "").strip()
+    if not text:
+        return []
+    skill_file = Path(text)
+    skill_dir = skill_file.parent
+    try:
+        if not skill_dir.exists() or not skill_dir.is_dir():
+            return []
+        documents: list[dict[str, str]] = []
+        paths = sorted(
+            (item for item in skill_dir.rglob("*.md") if item.is_file()),
+            key=lambda path: _skill_document_sort_key(path.relative_to(skill_dir)),
+        )
+        for path in paths:
+            relative_path = path.relative_to(skill_dir)
+            if _is_hidden_or_secret_skill_file(relative_path):
+                continue
+            content = path.read_text(encoding="utf-8")
+            documents.append(
+                {
+                    "document_key": relative_path.as_posix(),
+                    "title": _skill_document_title(relative_path, content),
+                    "content": _strip_markdown_frontmatter(content),
+                    "content_format": "markdown",
+                }
+            )
+            if len(documents) >= 200:
+                break
+        return documents
+    except OSError:
+        return []
+
+
+def _skill_document_title(relative_path: Path, content: str) -> str:
+    if relative_path.as_posix() == "SKILL.md":
+        return "기본 지침"
+    frontmatter = _markdown_frontmatter(content)
+    title = str(frontmatter.get("title") or "").strip()
+    if title:
+        return title
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            return stripped[2:].strip() or _humanize_skill_document_name(relative_path)
+    return _humanize_skill_document_name(relative_path)
+
+
+def _skill_document_sort_key(relative_path: Path) -> tuple[int, str]:
+    normalized = relative_path.as_posix()
+    preferred_order = {
+        "SKILL.md": 0,
+        "references/notion-api-basics.md": 10,
+        "references/block-types.md": 20,
+        "references/report-page-patterns.md": 30,
+        "references/database-patterns.md": 40,
+        "references/notion-style-guide.md": 50,
+        "references/managed-document-patterns.md": 60,
+        "references/notion-proxy-api.md": 70,
+        "references/execution-policy.md": 80,
+        "references/excluded-endpoints.md": 90,
+    }
+    return (preferred_order.get(normalized, 1_000), normalized)
+
+
+def _humanize_skill_document_name(relative_path: Path) -> str:
+    stem = relative_path.stem.replace("-", " ").replace("_", " ").strip()
+    return stem.title() if stem else relative_path.name
+
+
+def _strip_markdown_frontmatter(content: str) -> str:
+    if not content.startswith("---"):
+        return content
+    lines = content.splitlines()
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() == "---":
+            return "\n".join(lines[index + 1 :]).lstrip("\n")
+    return content
+
+
+def _markdown_frontmatter(content: str) -> dict[str, str]:
+    if not content.startswith("---"):
+        return {}
+    lines = content.splitlines()
+    metadata: dict[str, str] = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        if not line or line.startswith((" ", "\t")) or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        metadata[key.strip()] = value.strip().strip("'\"")
+    return metadata
 
 
 def _is_hidden_or_secret_skill_file(relative_path: Path) -> bool:
