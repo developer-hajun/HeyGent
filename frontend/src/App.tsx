@@ -14,6 +14,7 @@ import { ChatSessionPage } from '@/pages/ChatSessionPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { KakaoCallbackPage } from '@/pages/KakaoCallbackPage'
 import { NotionCallbackPage } from '@/pages/NotionCallbackPage'
+import { GmailCallbackPage } from '@/pages/GmailCallbackPage'
 import { AiRealtimeProvider } from '@/providers/AiRealtimeProvider'
 import { FcmProvider } from '@/providers/FcmProvider'
 import { Toaster } from '@/components/ui/sonner'
@@ -312,6 +313,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/auth/kakao/callback" element={<KakaoCallbackPage />} />
         <Route path="/auth/notion/callback" element={<NotionCallbackPage />} />
+        <Route path="/auth/gmail/callback" element={<GmailCallbackPage />} />
         <Route
           path="*"
           element={

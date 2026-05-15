@@ -40,6 +40,10 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
         description="Outbound messaging tools.",
         tools=("mattermost.send",),
     ),
+    "notion": RuntimeToolsetDefinition(
+        description="Notion workspace proxy execution tools.",
+        tools=("notion.execute",),
+    ),
     "browser": RuntimeToolsetDefinition(
         description="Browser automation tools.",
         tools=(

@@ -32,7 +32,7 @@ export const SUB_AGENT_TEMPLATES = [
     description: '세션 맥락을 바탕으로 조사, 정리, 실행 보조 작업을 맡습니다.',
     adapterType: 'openai',
     spriteId: 'agent01',
-    skills: ['notion'],
+    skills: [],
     icon: Bot,
   },
   {
@@ -43,7 +43,7 @@ export const SUB_AGENT_TEMPLATES = [
     description: '시장, 문서, 웹 자료를 조사하고 근거 중심으로 요약합니다.',
     adapterType: 'openai',
     spriteId: 'agent02',
-    skills: ['notion'],
+    skills: [],
     icon: Search,
   },
   {
@@ -65,7 +65,7 @@ export const SUB_AGENT_TEMPLATES = [
     description: '완료 조건, 예외 상황, 화면 동작을 점검하고 피드백을 남깁니다.',
     adapterType: 'openai',
     spriteId: 'agent04',
-    skills: ['notion'],
+    skills: [],
     icon: ShieldCheck,
   },
   {
@@ -76,7 +76,7 @@ export const SUB_AGENT_TEMPLATES = [
     description: '데이터와 비교 관점을 정리해 의사결정에 필요한 요약을 만듭니다.',
     adapterType: 'openai',
     spriteId: 'agent05',
-    skills: ['notion'],
+    skills: [],
     icon: FlaskConical,
   },
 ] as const satisfies readonly SubAgentTemplate[]

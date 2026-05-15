@@ -712,6 +712,27 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """,
         ),
     ),
+    PostgresMigration(
+        migration_id="0017_workflow_templates",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS workflow_templates (
+                template_id TEXT PRIMARY KEY,
+                owner_key TEXT NOT NULL,
+                owner_user_id BIGINT REFERENCES users(id),
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                graph JSONB NOT NULL DEFAULT '{"nodes":[],"edges":[]}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_workflow_templates_owner
+            ON workflow_templates(owner_key, updated_at DESC);
+            """,
+        ),
+    ),
 )
 
 
