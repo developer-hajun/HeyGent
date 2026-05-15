@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -35,7 +36,7 @@ fun ChatScreen(
     activeChatSessionId: String?,
     onActiveChatSessionChange: (String?) -> Unit,
     viewModel: ChatViewModel,
-    agentName: String = "Jarvis",
+    agentName: String = "HeyGent",
     bottomPadding: Dp = 0.dp
 ) {
     val sessions by viewModel.sessions.collectAsState()
@@ -62,12 +63,12 @@ fun ChatScreen(
             bottomPadding = bottomPadding
         )
     } else {
-        val activeId by viewModel.activeSessionId.collectAsState()
+        val sessionTitle by viewModel.currentSessionTitle.collectAsState()
         SingleChatView(
             agentName = agentName,
+            sessionTitle = sessionTitle,
             messages = messages,
             isProcessing = isProcessing,
-            onMenuClick = onMenuClick,
             onBack = { onActiveChatSessionChange(null) },
             onSend = { viewModel.sendMessage(it) },
             onStop = { viewModel.stopProcessing() },
@@ -88,8 +89,18 @@ private fun ChatListView(
     bottomPadding: Dp
 ) {
     Scaffold(
-        topBar = { AppTopBar(title = agentName, onMenuClick = onMenuClick) },
-        containerColor = Color.White,
+        topBar = {
+            AppTopBar(
+                title = "HEYGENT",
+                onMenuClick = onMenuClick,
+                actions = {
+                    IconButton(onClick = {}) {
+                        Icon(Icons.Default.Notifications, contentDescription = "알림", tint = Color.White)
+                    }
+                }
+            )
+        },
+        containerColor = AppBackground,
         contentWindowInsets = WindowInsets(0)
     ) { innerPadding ->
         when {
@@ -118,7 +129,7 @@ private fun ChatListView(
             ) {
                 items(sessions, key = { it.sessionId }) { session ->
                     ChatSessionRow(session = session, onClick = { onChatSelected(session.sessionId) })
-                    HorizontalDivider(color = Color(0xFFF0F0F0))
+                    HorizontalDivider(color = DividerColor)
                 }
             }
         }
@@ -171,9 +182,9 @@ private fun ChatSessionRow(session: ChatSessionResponse, onClick: () -> Unit) {
 @Composable
 private fun SingleChatView(
     agentName: String,
+    sessionTitle: String,
     messages: List<ChatMessage>,
     isProcessing: Boolean,
-    onMenuClick: () -> Unit,
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onStop: () -> Unit,
@@ -189,8 +200,6 @@ private fun SingleChatView(
         messages + ChatMessage(isBot = true, text = "", timestamp = "", isTyping = true)
     } else messages
 
-    val lastUserMessage = messages.lastOrNull { !it.isBot }?.text ?: ""
-
     LaunchedEffect(displayMessages.size) {
         if (displayMessages.isNotEmpty()) listState.animateScrollToItem(displayMessages.size - 1)
     }
@@ -198,23 +207,18 @@ private fun SingleChatView(
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             topBar = {
-                AppTopBar(
-                    title = agentName,
-                    onMenuClick = onMenuClick,
+                ChatRoomHeader(
+                    title = sessionTitle,
                     onBack = onBack,
-                    actions = {
-                        Box {
-                            IconButton(onClick = { showModelPanel = !showModelPanel }) {
-                                Icon(Icons.Default.MoreVert, contentDescription = "더 보기", tint = Color.White)
-                            }
-                            DropdownMenu(
-                                expanded = showModelPanel,
-                                onDismissRequest = { showModelPanel = false },
-                                modifier = Modifier.width(288.dp),
-                                containerColor = Color.White
-                            ) {
-                                ModelPanelContent()
-                            }
+                    onMoreClick = { showModelPanel = !showModelPanel },
+                    moreMenu = {
+                        DropdownMenu(
+                            expanded = showModelPanel,
+                            onDismissRequest = { showModelPanel = false },
+                            modifier = Modifier.width(288.dp),
+                            containerColor = Color.White
+                        ) {
+                            ModelPanelContent()
                         }
                     }
                 )
@@ -227,12 +231,6 @@ private fun SingleChatView(
                     .fillMaxSize()
                     .padding(top = innerPadding.calculateTopPadding())
             ) {
-                if (isProcessing && lastUserMessage.isNotEmpty()) {
-                    TaskStatusBanner(
-                        taskName = lastUserMessage.take(40) + if (lastUserMessage.length > 40) "..." else ""
-                    )
-                }
-
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.weight(1f),
@@ -312,6 +310,62 @@ private fun SingleChatView(
         if (isVoiceMode) {
             VoiceModeOverlay(onStop = { isVoiceMode = false })
         }
+    }
+}
+
+// ─── 채팅방 헤더 ───────────────────────────────────────────────────────────
+
+@Composable
+private fun ChatRoomHeader(
+    title: String,
+    onBack: () -> Unit,
+    onMoreClick: () -> Unit,
+    moreMenu: @Composable () -> Unit
+) {
+    val headerColor = SurfaceWarm
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(headerColor)
+            .windowInsetsPadding(WindowInsets.statusBars)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "뒤로가기",
+                    tint = TextPrimary
+                )
+            }
+            Text(
+                text = title,
+                color = TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 16.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 4.dp)
+            )
+            Box {
+                IconButton(onClick = onMoreClick) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "더 보기",
+                        tint = TextPrimary
+                    )
+                }
+                moreMenu()
+            }
+        }
+        HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
     }
 }
 
