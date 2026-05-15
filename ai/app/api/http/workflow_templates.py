@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field
 
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
@@ -57,15 +57,10 @@ class WorkflowTemplateUpdateRequest(BaseModel):
     graph: WorkflowTemplateGraphIn | None = None
 
 
-class WorkflowTemplateInstantiateRequest(BaseModel):
-    session_id: str = Field(alias="sessionId")
-
-    model_config = {"populate_by_name": True}
-
-
 class WorkflowTemplateResponse(BaseModel):
     template_id: str = Field(alias="templateId")
     owner_key: str = Field(alias="ownerKey")
+    session_id: str | None = Field(default=None, alias="sessionId")
     name: str
     description: str
     graph: dict[str, Any]
@@ -96,6 +91,7 @@ def _to_response(template: WorkflowTemplate) -> WorkflowTemplateResponse:
         {
             "templateId": template.template_id,
             "ownerKey": template.owner_key,
+            "sessionId": template.session_id,
             "name": template.name,
             "description": template.description,
             "graph": template.graph.to_jsonable(),
@@ -113,33 +109,39 @@ def _graph_from_input(payload: WorkflowTemplateGraphIn) -> WorkflowTemplateGraph
 # CRUD
 # ──────────────────────────────────────────────────────────────────────────────
 @router.get(
-    "/workflow-templates",
+    "/sessions/{sessionId}/workflow-templates",
     response_model=WorkflowTemplateListResponse,
-    summary="내 워크플로우 템플릿 목록",
+    summary="세션의 워크플로우 템플릿 목록",
 )
 async def list_workflow_templates(
     request: Request,
+    sessionId: str = Path(...),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> WorkflowTemplateListResponse:
     user = await authenticate_http_user(request)
+    session = _session_or_404(request, sessionId)
+    ensure_owner(user, session.get("user_id"))
     repo = request.app.state.workflow_template_repository
-    items = repo.list_for_owner(str(user.user_id), limit=limit, offset=offset)
+    items = repo.list_for_session(str(user.user_id), sessionId, limit=limit, offset=offset)
     return WorkflowTemplateListResponse(
         items=[_to_response(item) for item in items], totalCount=len(items)
     )
 
 
 @router.post(
-    "/workflow-templates",
+    "/sessions/{sessionId}/workflow-templates",
     response_model=WorkflowTemplateResponse,
-    summary="워크플로우 템플릿 생성",
+    summary="워크플로우 템플릿 생성 (세션 종속)",
 )
 async def create_workflow_template(
     request: Request,
     payload: WorkflowTemplateCreateRequest,
+    sessionId: str = Path(...),
 ) -> WorkflowTemplateResponse:
     user = await authenticate_http_user(request)
+    session = _session_or_404(request, sessionId)
+    ensure_owner(user, session.get("user_id"))
     repo = request.app.state.workflow_template_repository
     name = payload.name.strip()
     if not name:
@@ -147,6 +149,7 @@ async def create_workflow_template(
     template = repo.create(
         owner_key=str(user.user_id),
         owner_user_id=_int_or_none(user.user_id),
+        session_id=sessionId,
         name=name,
         description=payload.description.strip(),
         graph=_graph_from_input(payload.graph),
@@ -155,35 +158,42 @@ async def create_workflow_template(
 
 
 @router.get(
-    "/workflow-templates/{templateId}",
+    "/sessions/{sessionId}/workflow-templates/{templateId}",
     response_model=WorkflowTemplateResponse,
     summary="워크플로우 템플릿 조회",
 )
 async def get_workflow_template(
-    request: Request, templateId: str = Path(...)
+    request: Request,
+    sessionId: str = Path(...),
+    templateId: str = Path(...),
 ) -> WorkflowTemplateResponse:
     user = await authenticate_http_user(request)
+    session = _session_or_404(request, sessionId)
+    ensure_owner(user, session.get("user_id"))
     repo = request.app.state.workflow_template_repository
     template = repo.get(templateId, owner_key=str(user.user_id))
-    if template is None:
+    if template is None or template.session_id != sessionId:
         raise HTTPException(status_code=404, detail="workflow template not found")
     return _to_response(template)
 
 
 @router.put(
-    "/workflow-templates/{templateId}",
+    "/sessions/{sessionId}/workflow-templates/{templateId}",
     response_model=WorkflowTemplateResponse,
     summary="워크플로우 템플릿 수정",
 )
 async def update_workflow_template(
     request: Request,
     payload: WorkflowTemplateUpdateRequest,
+    sessionId: str = Path(...),
     templateId: str = Path(...),
 ) -> WorkflowTemplateResponse:
     user = await authenticate_http_user(request)
+    session = _session_or_404(request, sessionId)
+    ensure_owner(user, session.get("user_id"))
     repo = request.app.state.workflow_template_repository
     template = repo.get(templateId, owner_key=str(user.user_id))
-    if template is None:
+    if template is None or template.session_id != sessionId:
         raise HTTPException(status_code=404, detail="workflow template not found")
     updated = repo.update(
         templateId,
@@ -198,15 +208,22 @@ async def update_workflow_template(
 
 
 @router.delete(
-    "/workflow-templates/{templateId}",
+    "/sessions/{sessionId}/workflow-templates/{templateId}",
     response_model=dict,
     summary="워크플로우 템플릿 삭제",
 )
 async def delete_workflow_template(
-    request: Request, templateId: str = Path(...)
+    request: Request,
+    sessionId: str = Path(...),
+    templateId: str = Path(...),
 ) -> dict[str, bool]:
     user = await authenticate_http_user(request)
+    session = _session_or_404(request, sessionId)
+    ensure_owner(user, session.get("user_id"))
     repo = request.app.state.workflow_template_repository
+    template = repo.get(templateId, owner_key=str(user.user_id))
+    if template is None or template.session_id != sessionId:
+        return {"deleted": False}
     deleted = repo.delete(templateId, owner_key=str(user.user_id))
     return {"deleted": deleted}
 
@@ -215,23 +232,22 @@ async def delete_workflow_template(
 # Instantiate — 그림 → 실제 작업 + 화살표 (자동 실행은 X)
 # ──────────────────────────────────────────────────────────────────────────────
 @router.post(
-    "/workflow-templates/{templateId}/instantiate",
+    "/sessions/{sessionId}/workflow-templates/{templateId}/instantiate",
     response_model=WorkflowTemplateInstantiateResponse,
     summary="템플릿으로 실제 작업 생성 (실행은 별도)",
 )
 async def instantiate_workflow_template(
     request: Request,
-    payload: WorkflowTemplateInstantiateRequest = Body(...),
+    sessionId: str = Path(...),
     templateId: str = Path(...),
 ) -> WorkflowTemplateInstantiateResponse:
     user = await authenticate_http_user(request)
+    session = _session_or_404(request, sessionId)
+    ensure_owner(user, session.get("user_id"))
     repo = request.app.state.workflow_template_repository
     template = repo.get(templateId, owner_key=str(user.user_id))
-    if template is None:
+    if template is None or template.session_id != sessionId:
         raise HTTPException(status_code=404, detail="workflow template not found")
-
-    session = _session_or_404(request, payload.session_id)
-    ensure_owner(user, session.get("user_id"))
 
     work_repo = request.app.state.work_repository
     service = WorkService(work_repo)
@@ -242,7 +258,7 @@ async def instantiate_workflow_template(
 
     # 1) 루트 작업 (템플릿의 컨테이너) — 템플릿 이름을 제목으로
     root = service.create_from_payload(
-        session_id=payload.session_id,
+        session_id=sessionId,
         owner_key=str(user.user_id),
         owner_user_id=_int_or_none(user.user_id),
         payload={
@@ -274,7 +290,7 @@ async def instantiate_workflow_template(
             },
         }
         child = service.create_from_payload(
-            session_id=payload.session_id,
+            session_id=sessionId,
             owner_key=str(user.user_id),
             owner_user_id=_int_or_none(user.user_id),
             payload=child_payload,

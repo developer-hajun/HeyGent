@@ -780,6 +780,19 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """,
         ),
     ),
+    PostgresMigration(
+        migration_id="0018_workflow_templates_session_scope",
+        statements=(
+            """
+            ALTER TABLE workflow_templates
+            ADD COLUMN IF NOT EXISTS session_id TEXT REFERENCES agent_sessions(session_id) ON DELETE CASCADE;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_workflow_templates_session
+            ON workflow_templates(session_id, updated_at DESC);
+            """,
+        ),
+    ),
 )
 
 

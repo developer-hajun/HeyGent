@@ -446,6 +446,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }),
       }
     })
+    const sessionPanels = useSessionStore.getState().agentPanelsBySessionId[sessionId] ?? []
+    startVisualizationForSession(sessionId, taskRunId, sessionPanels)
+    refreshVisualizationSessionAgents(sessionId, taskRunId)
   },
   clearChatState: () =>
     set({
