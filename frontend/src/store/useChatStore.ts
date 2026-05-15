@@ -188,7 +188,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const messages = getRawMessageList(payload).map(toChatMessageView)
 
       set((state) => ({
-        messagesBySessionId: { ...state.messagesBySessionId, [sessionId]: messages },
+        messagesBySessionId: {
+          ...state.messagesBySessionId,
+          [sessionId]: mergeLiveMessagesIntoPersistedList(
+            messages,
+            state.messagesBySessionId[sessionId] ?? [],
+            sessionId,
+          ),
+        },
         loadingSessionIds: { ...state.loadingSessionIds, [sessionId]: false },
         lastError: null,
       }))

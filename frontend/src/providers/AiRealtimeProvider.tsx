@@ -151,6 +151,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
           if (sessionId && taskRunId) {
             externalTaskSessionMapRef.current.set(taskRunId, sessionId)
             useChatStore.getState().addExternalTaskPlaceholder(sessionId, taskRunId)
+            void useChatStore.getState().fetchMessages(sessionId)
             void useTaskRunStore.getState().fetchSnapshot(taskRunId)
           }
         }
