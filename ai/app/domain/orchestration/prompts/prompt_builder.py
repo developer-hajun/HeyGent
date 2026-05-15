@@ -73,10 +73,10 @@ class PromptBuilder:
         parts = compress_prompt_sections(
             [
                 self.skill_prompt_builder.build(input_payload=input_payload),
-                self.skill_prompt_builder.build_catalog(input_payload=input_payload),
                 build_project_context_prompt(input_payload=input_payload),
                 build_gateway_context_prompt(input_payload=input_payload),
                 build_work_context_prompt(input_payload=input_payload),
+                self.skill_prompt_builder.build_catalog(input_payload=input_payload),
                 base_prompt,
                 str(input_payload.get("persistent_memory_context", "")).strip(),
             ]
@@ -112,13 +112,15 @@ class PromptBuilder:
             "\n".join(
                 [
                     "세션 에이전트 라우팅 기준:",
-                    "도구를 직접 사용하기 전에, 현재 세션에 등록된 에이전트 중 사용자의 요청을 맡아 처리할 수 있는 후보가 있는지 먼저 살펴봅니다.",
-                    "후보의 이름, 호칭, 할 수 있는 일, 연결된 스킬 설명이 사용자 요청과 맞으면 CEO가 전부 직접 처리하지 말고 해당 에이전트에게 맡길 수 있는 부분을 분리합니다.",
-                    "요청을 수행할 수 있다고 판단되는 세션 에이전트가 있으면 session_agent_task 로 하위 작업을 만들고 실행하세요.",
+                    "세션 에이전트 후보를 볼 때는 후보의 이름, 호칭, 할 수 있는 일, 연결된 스킬 이름과 공용 스킬 설명이 사용자 요청과 맞아야 합니다.",
+                    "사용자 요청 전체 또는 요청 안의 의미 있는 하위 작업이 다른 세션 에이전트의 skill 이름이나 설명과 맞고, 그 에이전트가 해당 skill을 바탕으로 현재 실행 에이전트보다 더 적합하게 처리할 가능성이 있으면 session_agent_task 로 맡기세요.",
+                    "현재 실행 에이전트가 직접 답할 수 있더라도 위 조건을 만족하면 호출을 우선하세요.",
+                    "위 조건을 만족하면 첫 tool-call 턴에서 step 도구로 현재 단계를 in_progress 로 선언한 뒤 session_agent_task 를 호출하고, 후보 실행 결과를 받은 다음 최종 답변을 작성하세요.",
                     "session_agent_task 는 작업 보드에 보이는 하위 작업과 실제 세션 에이전트 실행을 묶는 도구입니다.",
-                    "후보가 요청의 핵심 부분을 수행할 수 있고, 독립 산출물이나 책임 분리가 자연스러우면 세션 에이전트 작업으로 분리하세요.",
-                    "단순 응답, 맥락 정리, 최종 종합, 또는 분리할 실익이 낮은 작업은 CEO가 직접 처리해도 됩니다.",
-                    "수행할 수 있는 세션 에이전트가 없으면 임의로 배정하지 말고 CEO가 직접 진행하거나 필요한 정보와 사용자 결정 지점을 남기세요.",
+                    "후보가 요청의 핵심 부분을 수행할 수 있고, 독립 산출물이나 책임 분리가 자연스러울 때 세션 에이전트 작업으로 분리하세요.",
+                    "단순 응답, 맥락 정리, 최종 종합, 또는 분리할 실익이 낮은 작업은 팀장이 직접 처리해도 됩니다.",
+                    "수행할 수 있는 세션 에이전트가 없으면 임의로 배정하지 말고 팀장이 직접 진행하거나 필요한 정보와 사용자 결정 지점을 남기세요.",
+                    "특정 skill 절차가 필요한 하위 작업이면 session_agent_task 입력의 requiredSkillNames에 필요한 skill 이름을 담으세요.",
                     "session_agent_task 입력에는 담당자가 다시 묻지 않아도 실행할 수 있도록 제목, 지시, 기대 산출물, 완료 기준, 제약을 구체적으로 담으세요.",
                 ]
             )
@@ -225,7 +227,7 @@ def build_work_context_prompt(*, input_payload: dict) -> str:
     if assignee_agent_id:
         lines.append(f"- 담당 에이전트: {assignee_agent_id}")
         if assignee_agent_id != "CEO":
-            lines.append("- 담당자가 CEO가 아니면 현재 실행은 해당 세션 에이전트가 맡은 작업 실행입니다.")
+            lines.append("- 담당자가 팀장이 아니면 현재 실행은 해당 세션 에이전트가 맡은 작업 실행입니다.")
             lines.append("- 담당 작업 실행 자체를 worker delegate로 다시 위임하지 마세요.")
     if isinstance(target_agent_profile, dict):
         profile_lines = _build_target_agent_profile_lines(target_agent_profile)
@@ -242,6 +244,10 @@ def build_work_context_prompt(*, input_payload: dict) -> str:
         if profile_lines:
             lines.append("- 세션 에이전트 후보:")
             lines.extend(f"  - {line}" for line in profile_lines)
+        skill_description_lines = _build_session_agent_skill_description_lines(session_agent_profiles)
+        if skill_description_lines:
+            lines.append("- 세션 에이전트 공용 스킬 설명:")
+            lines.extend(f"  - {line}" for line in skill_description_lines)
     if isinstance(work_context, dict):
         title = str(work_context.get("title") or "").strip()
         if title:
@@ -288,6 +294,25 @@ def _build_session_agent_profile_lines(profiles: list) -> list[str]:
     return lines
 
 
+def _build_session_agent_skill_description_lines(profiles: list) -> list[str]:
+    seen: set[str] = set()
+    lines: list[str] = []
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        config = profile.get("configSnapshot") or profile.get("config_snapshot") or {}
+        if not isinstance(config, dict):
+            config = {}
+        for line in _skill_description_lines(profile.get("skillDescriptions") or config.get("skillDescriptions")):
+            name = line.split(":", 1)[0].strip()
+            key = name or line
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(line)
+    return lines
+
+
 def _build_target_agent_profile_lines(profile: dict) -> list[str]:
     config = profile.get("configSnapshot") or profile.get("config_snapshot") or {}
     if not isinstance(config, dict):
@@ -317,6 +342,24 @@ def _text_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _skill_description_lines(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    lines: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("skillId") or item.get("skill_id") or "").strip()
+        description = str(item.get("description") or "").strip()
+        if not name:
+            continue
+        if len(description) > 120:
+            description = description[:117].rstrip() + "..."
+        detail_parts = [part for part in [description] if part]
+        lines.append(f"{name}: " + " / ".join(detail_parts) if detail_parts else name)
+    return lines
 
 
 def _build_target_agent_instruction_lines(bundle: dict) -> list[str]:

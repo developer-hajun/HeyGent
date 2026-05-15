@@ -22,6 +22,8 @@ from app.domain.orchestration.policies import (
 from app.domain.orchestration.runtime_planning import (
     Planner,
 )
+from app.api.http.device_tokens import get_fcm_tokens
+from app.domain.notifications.fcm_sender import send_chat_notification
 from app.domain.orchestration.runtime_planning.todo_state import (
     build_task_todo_payload,
     cancel_incomplete_task_todo_items,
@@ -614,6 +616,16 @@ class TaskEngine:
 
         if task_status == TaskStatus.COMPLETED:
             await self._emit("task.completed", task, payload=task.result_payload)
+            # FCM 푸시: 웹/다른 기기에서 보낸 메시지도 모바일에 동기화
+            try:
+                if task.session_key:
+                    for fcm_token in get_fcm_tokens(str(task.owner_key)):
+                        send_chat_notification(fcm_token, session_id=task.session_key, content="")
+                    logger.info(f"FCM 발송 완료: owner={task.owner_key} session={task.session_key}")
+                else:
+                    logger.debug(f"FCM 스킵: token={bool(fcm_token)} session={task.session_key}")
+            except Exception as e:
+                logger.warning(f"FCM 발송 실패 (무시): {e}")
             return task
 
         if task_status == TaskStatus.FAILED:
@@ -637,9 +649,20 @@ class TaskEngine:
         step_status = outcome["step_status"]
         was_step_completed = step.status == StepStatus.COMPLETED
         ensure_task_transition(task.status, task_status)
-        ensure_step_transition(step.status, step_status)
+        step_already_terminal = step_is_terminal(step.status)
+        preserve_terminal_step = (
+            task_status == TaskStatus.COMPLETED
+            and step_status == StepStatus.COMPLETED
+            and step_already_terminal
+            and step.status != step_status
+        )
+        if not preserve_terminal_step:
+            ensure_step_transition(step.status, step_status)
 
-        step.status = step_status
+        # 완료 응답 직전에 중복 semantic step 중 하나가 이미 CANCELED 된 경우가 있다.
+        # TaskRun 성공은 유지하되 terminal StepRun 을 다시 열어 상태 전이 예외를 만들지 않는다.
+        if not preserve_terminal_step:
+            step.status = step_status
         task.current_step_run_id = step.step_run_id
         task.result_payload = outcome.get("result_payload", task.result_payload)
         task.todo_state = dict(outcome.get("todo_state") or task.todo_state)
@@ -672,14 +695,16 @@ class TaskEngine:
         )
         step.summary_message = outcome.get("summary_message")
         task.status = task_status
-        if task_is_terminal(task_status):
+        if task_is_terminal(task_status) and not preserve_terminal_step:
             step.ended_at = utc_now()
+            task.ended_at = utc_now()
+        elif task_is_terminal(task_status):
             task.ended_at = utc_now()
         self.repository.update_task(task)
         self.repository.update_step(step)
         await self._sync_todo_steps(task=task, handler=handler)
 
-        if task_status == TaskStatus.COMPLETED and not was_step_completed:
+        if task_status == TaskStatus.COMPLETED and not was_step_completed and not preserve_terminal_step:
             # 다음 plan step으로 넘어가더라도 현재 StepRun은 먼저 닫아야
             # realtime UI가 이전 단계를 계속 "진행 중"으로 보지 않는다.
             await self._emit("step.completed", task, step)
@@ -707,6 +732,13 @@ class TaskEngine:
 
         if task_status == TaskStatus.COMPLETED:
             await self._emit("task.completed", task, step, payload=task.result_payload)
+            # FCM 푸시: 웹/다른 기기에서 보낸 메시지도 모바일에 동기화
+            try:
+                if task.session_key:
+                    for fcm_token in get_fcm_tokens(str(task.owner_key)):
+                        send_chat_notification(fcm_token, session_id=task.session_key, content="")
+            except Exception:
+                pass
             return task
 
         if task_status == TaskStatus.FAILED:
@@ -1017,23 +1049,8 @@ class TaskEngine:
                     "error": {"code": "child_work_not_found", "message": "child work was not found"},
                 }
 
-            await self._notify_step_updated(
-                self._step_update_notifier(progress_sink=progress_sink, task=task),
-                step=step,
-                event_type="step.updated",
-                payload={
-                    "reason": "session_agent_work.started",
-                    "workId": work.work_id,
-                    "identifier": work.identifier,
-                    "assigneeAgentId": work.assignee_agent_id,
-                    "status": "RUNNING",
-                },
-                summary_message=f"{work.identifier} 세션 에이전트 실행 중",
-            )
-
             task_run_id = new_id("task")
             service = WorkService(self.work_repository)
-            service.mark_run_started(work_id=work.work_id, task_run_id=task_run_id)
             try:
                 child_input = self._build_session_agent_work_input(parent_task=task, work=work)
                 child_task = self.planner.materialize_task(
@@ -1043,7 +1060,29 @@ class TaskEngine:
                     handler=handler,
                     task_run_id=task_run_id,
                 )
-                child_task = await self.run(task=child_task, handler=handler)
+                self.repository.create_task(child_task)
+                await self._emit("task.created", child_task)
+                service.mark_run_started(work_id=work.work_id, task_run_id=task_run_id)
+                await self._notify_step_updated(
+                    self._step_update_notifier(progress_sink=progress_sink, task=task),
+                    step=step,
+                    event_type="step.updated",
+                    payload={
+                        "reason": "session_agent_work.started",
+                        "workId": work.work_id,
+                        "childWorkId": work.work_id,
+                        "identifier": work.identifier,
+                        "assigneeAgentId": work.assignee_agent_id,
+                        "profileId": work.assignee_agent_id,
+                        "taskRunId": task_run_id,
+                        "childTaskRunId": task_run_id,
+                        "taskRunStatus": child_task.status,
+                        "workStatus": "in_progress",
+                        "status": child_task.status,
+                    },
+                    summary_message=f"{work.identifier} 세션 에이전트 실행 중",
+                )
+                child_task = await self.run_claimed(task=child_task, handler=handler)
                 updated_work = service.apply_task_result(work_id=work.work_id, task=child_task)
                 if updated_work is not None:
                     self._record_session_agent_parent_result_comment(work=updated_work, task=child_task)
@@ -1057,9 +1096,14 @@ class TaskEngine:
                     payload={
                         "reason": "session_agent_work.failed",
                         "workId": failed_work.work_id,
+                        "childWorkId": failed_work.work_id,
                         "identifier": failed_work.identifier,
                         "assigneeAgentId": failed_work.assignee_agent_id,
+                        "profileId": failed_work.assignee_agent_id,
                         "taskRunId": task_run_id,
+                        "childTaskRunId": task_run_id,
+                        "taskRunStatus": "FAILED",
+                        "workStatus": failed_work.status,
                         "status": "FAILED",
                     },
                     summary_message=f"{work.identifier} 세션 에이전트 실행 실패",
@@ -1069,6 +1113,7 @@ class TaskEngine:
                     "ok": False,
                     "content": f"{work.identifier} 세션 에이전트 실행 실패: {error}",
                     "taskRunId": task_run_id,
+                    "childTaskRunId": task_run_id,
                     "childStatus": "FAILED",
                     "error": {"message": str(error)},
                 }
@@ -1084,9 +1129,14 @@ class TaskEngine:
                 payload={
                     "reason": "session_agent_work.completed",
                     "workId": work.work_id,
+                    "childWorkId": work.work_id,
                     "identifier": work.identifier,
                     "assigneeAgentId": work.assignee_agent_id,
+                    "profileId": work.assignee_agent_id,
                     "taskRunId": child_task.task_run_id,
+                    "childTaskRunId": child_task.task_run_id,
+                    "taskRunStatus": child_status,
+                    "workStatus": final_work.status,
                     "status": child_status,
                 },
                 summary_message=f"{work.identifier} 세션 에이전트 실행 완료",
@@ -1096,6 +1146,7 @@ class TaskEngine:
                 "ok": ok,
                 "content": self._session_agent_work_tool_content(work=final_work, task=child_task),
                 "taskRunId": child_task.task_run_id,
+                "childTaskRunId": child_task.task_run_id,
                 "childStatus": child_status,
                 "childWorkStatus": final_work.status,
                 "parentWorkDisposition": parent_disposition,

@@ -57,13 +57,16 @@ class FcmMessagingService : FirebaseMessagingService() {
     }
 
     private fun showNotification(title: String, body: String, sessionId: String?) {
-        val channelId = "ai_chat"
+        val channelId = "ai_chat_v2"
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
 
         // 채널 생성 (Android 8+)
         val channel = NotificationChannel(
             channelId, "AI 채팅 알림", NotificationManager.IMPORTANCE_HIGH
-        ).apply { description = "AI 응답 완료 알림" }
+        ).apply {
+            description = "AI 응답 완료 알림"
+            setShowBadge(false)
+        }
         nm.createNotificationChannel(channel)
 
         // 탭 시 해당 세션으로 이동

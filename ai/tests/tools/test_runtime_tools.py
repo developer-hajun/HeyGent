@@ -192,6 +192,49 @@ def test_runtime_exposes_heygent_web_tool_definitions():
     assert schema_by_name["web_crawl"]["parameters"]["properties"]["url"]["type"] == "string"
 
 
+def test_runtime_exposes_notion_execute_only_for_notion_toolset():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    definitions = runtime.list_tool_definitions(enabled_toolsets=("notion",))
+
+    assert [definition["name"] for definition in definitions] == ["notion.execute"]
+    schema = definitions[0]["schema"]
+    assert "commands" in schema["parameters"]["properties"]
+    assert "notion.execute" not in resolve_runtime_tool_names(("local-core",))
+
+
+def test_notion_runtime_binds_owner_user_id_and_ignores_model_user_id(monkeypatch):
+    captured = {}
+
+    def fake_execute_notion_handler(args):
+        captured.update(args)
+        return {"ok": True, "results": []}
+
+    from app.tools.notion import notion_tool
+
+    monkeypatch.setattr(notion_tool, "execute_notion_handler", fake_execute_notion_handler)
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore()).bind_request_context(owner_key="7")
+
+    result = runtime.run_call(
+        name="notion.execute",
+        args={
+            "userId": 999,
+            "commands": [
+                {
+                    "method": "POST",
+                    "endpoint": "/v1/search",
+                    "params": {"query": "테스트용입니다"},
+                }
+            ],
+        },
+        enabled_toolsets=("notion",),
+    )
+
+    assert result["ok"] is True
+    assert captured["_trusted_user_id"] == "7"
+    assert "userId" not in captured
+
+
 def test_skill_catalog_descriptions_remain_available_to_prompt_builder():
     registry = SkillRegistry()
     registry.register_many(SkillLoader().load_builtin())
@@ -202,12 +245,13 @@ def test_skill_catalog_descriptions_remain_available_to_prompt_builder():
     assert "한국 날씨를 기상청 단기예보 조회서비스" in descriptions["korea-weather"]
 
 
-def test_skills_toolset_is_not_exposed_to_runtime_tools():
+def test_skills_toolset_exposes_runtime_skill_readers():
     runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
 
     definitions = runtime.list_tool_definitions(enabled_toolsets=("skills",))
 
-    assert definitions == []
+    names = {definition["name"] for definition in definitions}
+    assert {"skills.list", "skills.read", "skills.read_file", "skill.execute"}.issubset(names)
 
 
 def test_disabled_skill_readers_are_unavailable_even_with_enabled_skill_context():
@@ -236,12 +280,12 @@ def test_disabled_skill_readers_are_unavailable_even_with_enabled_skill_context(
         enabled_toolsets=("skills",),
     )
 
-    assert listed["ok"] is False
-    assert read_result["ok"] is False
+    assert listed["count"] == 1
+    assert listed["items"] == ["korea-weather"]
+    assert read_result["name"] == "korea-weather"
+    assert read_result["body"] == "# Weather"
     assert file_result["ok"] is False
-    assert listed["error"]["code"] == "tool_unavailable"
-    assert read_result["error"]["code"] == "tool_unavailable"
-    assert file_result["error"]["code"] == "tool_unavailable"
+    assert file_result["error"]["code"] == "skill_disabled"
 
 
 def test_runtime_exposes_heygent_browser_tool_definitions():
@@ -433,6 +477,64 @@ def test_session_agent_task_leaves_parent_waiting_by_default():
     assert work_repository.items[parent.work_id].status == "in_progress"
     assert work_repository.items[child_id].assignee_agent_id == "agent-research"
     assert work_repository.relations == []
+
+
+def test_session_agent_task_rejects_agent_without_explicit_required_skill():
+    work_repository = FakeRuntimeWorkRepository()
+    parent = WorkItem(
+        work_id="work-parent",
+        identifier="TASK-1",
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        title="부모 작업",
+        description="부모",
+        status="in_progress",
+        assignee_agent_id="CEO",
+    )
+    work_repository.items[parent.work_id] = parent
+    agent_repository = FakeRuntimeAgentRepository(
+        {
+            "profile_id": "agent-dev",
+            "session_id": "session-1",
+            "agent_type": "user_subagent",
+            "profile_key": "session.dev",
+            "config_snapshot": {
+                "name": "개발 에이전트",
+                "role": "engineer",
+                "skills": ["writing-plans"],
+            },
+        }
+    )
+    runtime = LocalToolRuntime(
+        skill_registry=object(),
+        session_store=DummySessionStore(),
+        work_repository=work_repository,
+        agent_repository=agent_repository,
+        runtime_context={"workId": parent.work_id, "enabledSkillNames": ["mattermost-send"]},
+    )
+
+    result = runtime.run_call(
+        name="session_agent_task",
+        args={
+            "title": "Mattermost 전송",
+            "instruction": "mattermost-send 스킬 문서 절차를 따라 기본 채널로 실제 전송하라.",
+            "assigneeAgentId": "agent-dev",
+        },
+        enabled_toolsets=("work",),
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "session_agent_capability_mismatch"
+    assert result["error"]["recoverable"] is True
+    assert result["error"]["requiredSkillNames"] == ["mattermost-send"]
+    assert result["error"]["missingSkillNames"] == ["mattermost-send"]
+    assert result["error"]["agent"] == {
+        "profileId": "agent-dev",
+        "name": "개발 에이전트",
+        "skills": ["writing-plans"],
+    }
+    assert len(work_repository.items) == 1
 
 
 def test_session_agent_task_can_create_root_work_when_default_agent_session_allows_it():

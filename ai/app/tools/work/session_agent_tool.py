@@ -7,7 +7,7 @@ SESSION_AGENT_TASK_SCHEMA = {
     "name": "session_agent_task",
     "description": (
         "Create a child work item assigned to one configured session agent and run it. "
-        "For CEO-owned work, use this when a configured session agent can naturally own "
+        "For team-lead-owned work, use this when a configured session agent can naturally own "
         "an independent deliverable, focused specialty work, or a clearly separated part "
         "of the request. Do not invent an assignee when no configured session agent fits."
     ),
@@ -47,6 +47,11 @@ SESSION_AGENT_TASK_SCHEMA = {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "Scope, format, deadline, or other constraints.",
+            },
+            "requiredSkillNames": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional skill names the assigned session agent must actually have.",
             },
             "labelNames": {
                 "type": "array",

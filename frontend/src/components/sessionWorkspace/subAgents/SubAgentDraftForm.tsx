@@ -90,7 +90,7 @@ export function SubAgentDraftForm({
     0,
     SUB_AGENT_PROFILE_IMAGE_OPTIONS.findIndex((option) => option.id === spriteId),
   )
-  const selectedSkillIds = normalizeSubAgentSkillIds(initialAgent?.skills ?? ['notion'])
+  const selectedSkillIds = normalizeSubAgentSkillIds(initialAgent?.skills ?? [])
   const trimmedName = nameDraft.trim()
   const duplicateName = reservedNames.some(
     (name) => name.trim().toLowerCase() === trimmedName.toLowerCase(),

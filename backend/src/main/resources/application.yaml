@@ -48,6 +48,9 @@ composio:
   notion:
     redirect-uri: ${COMPOSIO_NOTION_REDIRECT_URI:http://localhost:5173/auth/notion/callback}
     integration-id: ${COMPOSIO_NOTION_INTEGRATION_ID}
+  gmail:
+    redirect-uri: ${COMPOSIO_GMAIL_REDIRECT_URI:http://localhost:5173/auth/gmail/callback}
+    integration-id: ${COMPOSIO_GMAIL_INTEGRATION_ID}
 
 jwt:
   secret: ${JWT_SECRET}

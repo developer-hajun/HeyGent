@@ -29,10 +29,10 @@ def test_skill_runtime_toolset_exposes_skill_execute():
     assert schema["parameters"]["properties"]["action"]["enum"] == ["inspect"]
 
 
-def test_skill_execute_and_skill_readers_are_not_exposed_by_skills_toolset_only():
-    assert "skill.execute" not in resolve_runtime_tool_names(("skills",))
-    assert "skills.read" not in resolve_runtime_tool_names(("skills",))
-    assert "skills.read_file" not in resolve_runtime_tool_names(("skills",))
+def test_skills_toolset_exposes_skill_execute_and_skill_readers():
+    assert "skill.execute" in resolve_runtime_tool_names(("skills",))
+    assert "skills.read" in resolve_runtime_tool_names(("skills",))
+    assert "skills.read_file" in resolve_runtime_tool_names(("skills",))
 
     runtime = LocalToolRuntime(skill_registry=DummySkillRegistry(), session_store=DummySessionStore())
 
@@ -42,8 +42,8 @@ def test_skill_execute_and_skill_readers_are_not_exposed_by_skills_toolset_only(
         enabled_toolsets=("skills",),
     )
 
-    assert result["ok"] is False
-    assert result["error"]["code"] == "tool_unavailable"
+    assert result["ok"] is True
+    assert result["skill_name"] == "kskill-sample"
 
 
 def test_skill_execute_inspect_returns_registered_skill_document(tmp_path, monkeypatch):
@@ -73,7 +73,7 @@ def test_skill_execute_inspect_returns_registered_skill_document(tmp_path, monke
     assert set(result["files"]) == {"SKILL.md", "helper.py"}
 
 
-def test_skill_read_file_runtime_tool_is_unavailable(tmp_path, monkeypatch):
+def test_skill_read_file_runtime_tool_reads_allowed_skill_file(tmp_path, monkeypatch):
     skills_root = tmp_path / "skills"
     skill_dir = skills_root / "k-skill" / "kskill-sample"
     skill_dir.mkdir(parents=True)
@@ -93,11 +93,11 @@ def test_skill_read_file_runtime_tool_is_unavailable(tmp_path, monkeypatch):
         enabled_toolsets=("skills",),
     )
 
-    assert result["ok"] is False
-    assert result["error"]["code"] == "tool_unavailable"
+    assert result["ok"] is True
+    assert result["content"] == "print('ok')"
 
 
-def test_skill_read_file_rejects_all_model_calls_before_path_handling(tmp_path, monkeypatch):
+def test_skill_read_file_rejects_unsafe_paths(tmp_path, monkeypatch):
     skills_root = tmp_path / "skills"
     skill_dir = skills_root / "k-skill" / "kskill-sample"
     skill_dir.mkdir(parents=True)
@@ -124,9 +124,9 @@ def test_skill_read_file_rejects_all_model_calls_before_path_handling(tmp_path, 
     )
 
     assert escaped["ok"] is False
-    assert escaped["error"]["code"] == "tool_unavailable"
+    assert escaped["error"]["code"] == "skill_file_not_allowed"
     assert secret["ok"] is False
-    assert secret["error"]["code"] == "tool_unavailable"
+    assert secret["error"]["code"] == "skill_file_not_allowed"
 
 
 def test_skill_execute_rejects_unknown_skill():

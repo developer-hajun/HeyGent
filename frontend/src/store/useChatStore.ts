@@ -34,6 +34,12 @@ import type {
   SessionMessagesListResultPayload,
 } from '@/types/aiChat'
 import { createClientCommandId, createClientMessageId } from '@/utils/requestId'
+import {
+  mergeLiveMessagesIntoPersistedList,
+  reconcileSessionRunState,
+  resolveCompletedSessionTaskStatus,
+  shouldClearSessionRunFromPersistedMessages,
+} from '@/utils/chatLiveState'
 
 type ChatState = {
   sessionsById: Record<string, RawAiSession>
@@ -67,6 +73,7 @@ type ChatState = {
   }) => Promise<RawAiSession | null>
   fetchModelOptions: (sessionId?: string) => Promise<ModelOptionsResultPayload>
   handleRealtimeFrame: (frame: AiRealtimeRawFrame) => void
+  addExternalTaskPlaceholder: (sessionId: string, taskRunId: string) => void
   clearChatState: () => void
 }
 
@@ -181,7 +188,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const messages = getRawMessageList(payload).map(toChatMessageView)
 
       set((state) => ({
-        messagesBySessionId: { ...state.messagesBySessionId, [sessionId]: messages },
+        messagesBySessionId: {
+          ...state.messagesBySessionId,
+          [sessionId]: mergeLiveMessagesIntoPersistedList(
+            messages,
+            state.messagesBySessionId[sessionId] ?? [],
+            sessionId,
+          ),
+        },
         loadingSessionIds: { ...state.loadingSessionIds, [sessionId]: false },
         lastError: null,
       }))
@@ -400,6 +414,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return
     }
   },
+  addExternalTaskPlaceholder: (sessionId, taskRunId) => {
+    set((state) => {
+      const existingMessages = state.messagesBySessionId[sessionId] ?? []
+      const hasTask = existingMessages.some((m) => m.taskRunId === taskRunId)
+      if (hasTask) return {}
+
+      return {
+        messagesBySessionId: {
+          ...state.messagesBySessionId,
+          [sessionId]: [
+            ...existingMessages,
+            {
+              id: `assistant_${taskRunId}`,
+              sessionId,
+              role: 'assistant' as const,
+              content: '',
+              status: 'streaming' as const,
+              taskRunId,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+        sessionsById: upsertSessionPreview(state, {
+          sessionId,
+          activeTaskRunId: taskRunId,
+          lastTaskRunStatus: 'RUNNING',
+        }),
+      }
+    })
+    const sessionPanels = useSessionStore.getState().agentPanelsBySessionId[sessionId] ?? []
+    startVisualizationForSession(sessionId, taskRunId, sessionPanels)
+    refreshVisualizationSessionAgents(sessionId, taskRunId)
+  },
   clearChatState: () =>
     set({
       sessionsById: {},
@@ -442,7 +489,10 @@ const reconcileVisibleSessions = (
   })
 
   visibleSessions.forEach((session) => {
-    nextSessionsById[session.session_id] = session
+    nextSessionsById[session.session_id] = reconcileSessionRunState(
+      previousSessionsById[session.session_id],
+      session,
+    )
   })
 
   return nextSessionsById
@@ -551,9 +601,31 @@ const mergeMessageList = (
     return
   }
 
-  set((state) => ({
-    messagesBySessionId: { ...state.messagesBySessionId, [sessionId]: messages },
-  }))
+  set((state) => {
+    const mergedMessages = mergeLiveMessagesIntoPersistedList(
+      messages,
+      state.messagesBySessionId[sessionId] ?? [],
+      sessionId,
+    )
+    const shouldClearSessionRun = shouldClearSessionRunFromPersistedMessages(
+      state.sessionsById[sessionId],
+      messages,
+    )
+
+    return {
+      messagesBySessionId: {
+        ...state.messagesBySessionId,
+        [sessionId]: mergedMessages,
+      },
+      sessionsById: shouldClearSessionRun
+        ? upsertSessionPreview(state, {
+            sessionId,
+            activeTaskRunId: null,
+            lastTaskRunStatus: 'COMPLETED',
+          })
+        : state.sessionsById,
+    }
+  })
 }
 
 const mergeAcceptedMessage = (
@@ -734,7 +806,9 @@ const mergeAssistantCompleted = (
         sessionId,
         lastMessage: content,
         activeTaskRunId: shouldClearRunningState ? null : taskRunId,
-        lastTaskRunStatus: status,
+        lastTaskRunStatus: shouldClearRunningState
+          ? resolveCompletedSessionTaskStatus(status)
+          : status,
       }),
     }
   })

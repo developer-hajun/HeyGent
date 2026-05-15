@@ -12,7 +12,6 @@ import {
   Filter,
   FileText,
   FolderKanban,
-  GitBranch,
   List,
   ListTree,
   Loader2,
@@ -41,18 +40,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  agentProfilesToPanelItems,
-  createDefaultSessionAgents,
-  listSessionAgents,
-} from '@/apis/agents'
-import {
-  addWorkRelation,
-  createChildWork,
-  removeWorkRelation,
-  updateWorkFlowOrder,
-  updateWorkParent,
-} from '@/apis/work'
+import { addWorkRelation, createChildWork, removeWorkRelation, updateWorkParent } from '@/apis/work'
 import { cn } from '@/components/ui/utils'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useWorkStore } from '@/store/useWorkStore'
@@ -76,7 +64,6 @@ import {
   WorkProductsPanel,
   WorkRecoveryPanel,
 } from './WorkCollaborationPanels'
-import { WorkFlowDiagram } from './WorkFlowDiagram'
 import {
   arraysEqual,
   assigneeLabel,
@@ -98,7 +85,12 @@ import {
   toggleValue,
 } from './issueBoardPanelUtils'
 
-const MAIN_AGENT_ASSIGNEE = { id: 'CEO', name: '팀장 에이전트', icon: UserRound } as const
+const MAIN_AGENT_ASSIGNEE = {
+  id: 'CEO',
+  name: '팀장 에이전트',
+  icon: UserRound,
+  imageUrl: '/assets/agents/ceo/ceo_profile.png' as string | null,
+} as const
 const EMPTY_WORK_ITEMS: WorkItem[] = []
 const EMPTY_WORK_LABELS: WorkLabel[] = []
 const EMPTY_AGENT_PANELS: ReturnType<
@@ -176,7 +168,6 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const setWorkItemLabels = useWorkStore((state) => state.setLabels)
   const deleteWorkItem = useWorkStore((state) => state.deleteWorkItem)
   const agentPanelsBySessionId = useSessionStore((state) => state.agentPanelsBySessionId)
-  const setAgentPanelsForSession = useSessionStore((state) => state.setAgentPanelsForSession)
   const assignees = useMemo<BoardAssignee[]>(() => {
     const agentPanels = agentPanelsBySessionId[sessionId] ?? EMPTY_AGENT_PANELS
     return [
@@ -186,6 +177,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         name: panel.agent.name,
         icon: Bot,
         templateKey: panel.agent.templateKey,
+        imageUrl: panel.agent.profileImage ?? null,
       })),
     ]
   }, [agentPanelsBySessionId, sessionId])
@@ -580,98 +572,6 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
     ])
   }
 
-  const createRootFlowWork = (input: {
-    assigneeAgentId: string | null
-    description: string
-    title: string
-  }) => {
-    const rootCount = boardIssues.filter((issue) => issue.parentId === null).length
-    if (!isPendingSession) {
-      void createWorkItem(sessionId, {
-        clientRequestId: `flow:${sessionId}:${Date.now()}`,
-        title: input.title,
-        description: input.description,
-        assigneeAgentId: input.assigneeAgentId,
-        rawUserInput: input.description,
-        executionInstruction: input.description,
-        startExecution: false,
-        acceptanceCriteria: [],
-        constraints: [],
-        labelNames: [],
-        initialComment: null,
-        metadata: { createdFrom: 'work_flow' },
-        flowOrder: rootCount,
-      })
-        .then(() => fetchSessionWork(sessionId))
-        .catch((error) => {
-          console.error(error)
-        })
-      return
-    }
-    const now = new Date().toISOString()
-    const sequence = issues.length + 1
-    const todoId = `${sessionId}:todo:${String(sequence).padStart(3, '0')}`
-    setIssues((current) => [
-      {
-        id: todoId,
-        identifier: createIssueBoardIdentifier(sequence),
-        title: input.title,
-        description: input.description,
-        status: 'todo',
-        assigneeAgentId: input.assigneeAgentId,
-        parentId: null,
-        flowOrder: rootCount,
-        labels: [],
-        comments: [],
-        runs: [],
-        documents: [],
-        childItems: [],
-        relatedItems: [],
-        blockedBy: [],
-        createdAt: now,
-        updatedAt: now,
-        startedAt: null,
-        completedAt: null,
-        live: false,
-      },
-      ...current,
-    ])
-  }
-
-  const ensureDefaultFlowAgents = async (): Promise<BoardAssignee[]> => {
-    if (isPendingSession) return []
-    await createDefaultSessionAgents(sessionId)
-    const profiles = await listSessionAgents(sessionId)
-    const panels = agentProfilesToPanelItems(profiles)
-    setAgentPanelsForSession(sessionId, panels)
-    return [
-      MAIN_AGENT_ASSIGNEE,
-      ...panels.map((panel) => ({
-        id: panel.id,
-        name: panel.agent.name,
-        icon: Bot,
-        templateKey: panel.agent.templateKey,
-      })),
-    ]
-  }
-
-  const reorderChildFlowWork = (parentId: string, workIds: string[]) => {
-    if (!isPendingSession) {
-      void updateWorkFlowOrder(parentId, workIds)
-        .then(() => fetchSessionWork(sessionId))
-        .catch((error) => {
-          console.error(error)
-        })
-      return
-    }
-    const orderById = new Map(workIds.map((workId, index) => [workId, index]))
-    setIssues((current) =>
-      current.map((issue) =>
-        orderById.has(issue.id) ? { ...issue, flowOrder: orderById.get(issue.id) ?? null } : issue,
-      ),
-    )
-  }
-
   return (
     <section className="bg-background flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden">
       <header className="border-border/70 flex shrink-0 flex-col gap-3 border-b px-6 py-3">
@@ -753,16 +653,6 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
               >
                 <Columns3 className="h-4 w-4" />
               </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className={cn(viewMode === 'flow' && 'bg-accent text-foreground')}
-                title="Flow"
-                onClick={() => setViewMode('flow')}
-              >
-                <GitBranch className="h-4 w-4" />
-              </Button>
             </div>
             <FilterPopover
               activeFilterCount={activeFilterCount}
@@ -793,38 +683,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         </div>
       </header>
 
-      {viewMode === 'flow' ? (
-        <WorkFlowDiagram
-          assignees={assignees}
-          issues={boardIssues}
-          onAddRelation={(sourceId, targetId) => {
-            void addWorkRelation(sourceId, targetId, 'blocks')
-              .then(() => fetchSessionWork(sessionId))
-              .catch((error) => {
-                console.error(error)
-              })
-          }}
-          onCreateChildWork={(parentId, input) => {
-            const childCount = boardIssues.filter((issue) => issue.parentId === parentId).length
-            void createChildWork(parentId, {
-              clientRequestId: `flow-child:${parentId}:${Date.now()}`,
-              title: input.title,
-              description: input.description,
-              assigneeAgentId: input.assigneeAgentId,
-              blockParentUntilDone: false,
-              flowOrder: childCount,
-            })
-              .then(() => fetchSessionWork(sessionId))
-              .catch((error) => {
-                console.error(error)
-              })
-          }}
-          onCreateRootWork={createRootFlowWork}
-          onEnsureDefaultAgents={ensureDefaultFlowAgents}
-          onOpenIssue={setSelectedIssueId}
-          onReorderChildWork={reorderChildFlowWork}
-        />
-      ) : viewMode === 'board' ? (
+      {viewMode === 'board' ? (
         <TodoKanbanBoard
           draggedIssueId={draggedIssueId}
           dragOverStatus={dragOverStatus}

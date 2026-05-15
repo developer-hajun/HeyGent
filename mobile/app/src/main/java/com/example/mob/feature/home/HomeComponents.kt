@@ -35,16 +35,6 @@ data class ScheduleItem(val title: String, val time: String, val color: Color)
 data class TodoItem(val title: String, val time: String, val color: Color)
 data class CalEvent(val title: String, val color: Color)
 
-val sampleSchedules = listOf(
-    ScheduleItem("팀 회의", "오늘 · 오후 3:00", ScheduleBlue),
-    ScheduleItem("병원 예약", "오늘 · 오후 5:30", SchedulePurple)
-)
-
-val sampleTodos = listOf(
-    TodoItem("프로젝트 마감", "내일 · 오전 10:00", TodoOrange),
-    TodoItem("운동하기", "매일 · 오전 7:00", TodoGreen)
-)
-
 @Composable
 fun ScheduleCard(items: List<ScheduleItem>) {
     Card(
@@ -139,13 +129,7 @@ private data class CalendarMonth(val year: Int, val month: Int) {
 fun CalendarSection() {
     var currentMonth by remember { mutableStateOf(CalendarMonth(2026, 4)) }
     val todayYear = 2026; val todayMonth = 4; val todayDay = 27
-    val scheduleDays = remember {
-        mapOf(
-            22 to listOf(CalEvent("팀 회의", ScheduleBlue), CalEvent("병원 예약", SchedulePurple)),
-            23 to listOf(CalEvent("프로젝트", TodoOrange)),
-            24 to listOf(CalEvent("운동", TodoGreen))
-        )
-    }
+    val scheduleDays = remember { emptyMap<Int, List<CalEvent>>() }
     var showRegisterSheet by remember { mutableStateOf(false) }
 
     if (showRegisterSheet) {

@@ -44,7 +44,7 @@ import {
   formatAgentRunCostUsage,
   formatAgentRunTokenUsage,
 } from '@/components/sessionWorkspace/agentUsageDisplay'
-import { WorkBoardPanel } from '@/components/sessionWorkspace/work/board'
+import { WorkBoardPanel, WorkflowPanel } from '@/components/sessionWorkspace/work/board'
 import { SubAgentsPanel } from '@/components/sessionWorkspace/subAgents'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
@@ -115,8 +115,12 @@ export function SessionWorkspaceDetailPanel({
     return <WorkBoardPanel sessionId={sessionId} />
   }
 
+  if (activePanel === 'workflow') {
+    return <WorkflowPanel sessionId={sessionId} />
+  }
+
   if (session === null) {
-    const title = activePanel === 'ceo' ? '메인 에이전트' : '세션'
+    const title = activePanel === 'ceo' ? '팀장 에이전트' : '세션'
     return (
       <WorkspacePageShell title={title} eyebrow="작업면">
         <p className="text-muted-foreground text-sm">세션 정보를 불러오는 중입니다.</p>
@@ -695,7 +699,6 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                 detail: skill.enabled
                   ? undefined
                   : '사용자 설정에서 꺼져 있어 이 에이전트에 적용할 수 없습니다.',
-                locationLabel: skill.sourcePath ?? undefined,
               }))}
               missingSkills={missingSkillIds}
               selectedCount={selectedKnownSkillIds.length}
@@ -1176,6 +1179,7 @@ function buildRunTimelineItems(events: RawTaskEventPayload[]) {
 function formatRunTimestamp(time: number) {
   if (time <= 0) return undefined
   return new Intl.DateTimeFormat('ko-KR', {
+    timeZone: 'Asia/Seoul',
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',

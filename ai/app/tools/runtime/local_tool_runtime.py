@@ -58,6 +58,9 @@ class LocalToolRuntime:
         self._todo_items: list[dict[str, str]] = []
         self._tool_entries = build_runtime_tool_entries(
             {
+                "skills.list": self._list_skills,
+                "skills.read": self._read_skill,
+                "skills.read_file": self._read_skill_file,
                 "skill.execute": self._execute_skill,
                 "session.record": self._record_session_message,
                 "session.search": self._search_sessions,
@@ -67,6 +70,7 @@ class LocalToolRuntime:
                 "session_agent_task": self._session_agent_task,
                 "work_disposition": self._work_disposition,
                 "mattermost.send": self._send_mattermost_message,
+                "notion.execute": self._execute_notion,
                 "terminal.run": self._run_terminal_command,
                 "web_search": self._run_web_search,
                 "web_extract": self._run_web_extract,
@@ -491,6 +495,13 @@ class LocalToolRuntime:
             args,
         )
 
+    def _execute_notion(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler(
+            "app.tools.notion.notion_tool",
+            "execute_notion_handler",
+            args,
+        )
+
     def _run_browser_navigate(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_navigate_handler", args)
 
@@ -658,7 +669,7 @@ class LocalToolRuntime:
                 if parent is None:
                     return self._tool_error(
                         code="work_context_required",
-                        message="session_agent_task requires a connected CEO work item",
+                        message="session_agent_task requires a connected team lead work item",
                         tool_name="session_agent_task",
                     )
                 self.runtime_context["workId"] = parent.work_id
@@ -668,7 +679,7 @@ class LocalToolRuntime:
             else:
                 return self._tool_error(
                     code="work_context_required",
-                    message="session_agent_task requires a connected CEO work item",
+                    message="session_agent_task requires a connected team lead work item",
                     tool_name="session_agent_task",
                 )
         else:
@@ -682,15 +693,29 @@ class LocalToolRuntime:
         if str(parent.assignee_agent_id or "CEO") != "CEO":
             return self._tool_error(
                 code="ceo_work_required",
-                message="only CEO-owned work can create child work for session agents",
+                message="only team-lead-owned work can create child work for session agents",
                 tool_name="session_agent_task",
             )
 
+        title = str(args.get("title") or "").strip()
+        instruction = str(args.get("instruction") or "").strip()
+        description = str(args.get("description") or instruction or title).strip()
+        required_skill_names = self._required_session_agent_skill_names(
+            args=args,
+            context=context,
+            text_parts=[
+                title,
+                instruction,
+                description,
+                self._optional_text(args.get("expectedDeliverable") or args.get("expected_deliverable")) or "",
+            ],
+        )
         profile = self._resolve_session_agent_profile(
             session_id=parent.session_id,
             owner_key=parent.owner_key,
             assignee_agent_id=self._optional_text(args.get("assigneeAgentId") or args.get("assignee_agent_id")),
             assignee_hint=self._optional_text(args.get("assigneeHint") or args.get("assignee_hint")),
+            required_skill_names=required_skill_names,
         )
         if profile is None:
             return self._tool_error(
@@ -698,10 +723,27 @@ class LocalToolRuntime:
                 message="no available session agent was found for this work",
                 tool_name="session_agent_task",
             )
+        missing_skill_names = self._missing_profile_skills(profile, required_skill_names)
+        if missing_skill_names:
+            config = dict(profile.get("config_snapshot") or {})
+            profile_name = str(config.get("name") or profile.get("profile_key") or profile.get("profile_id") or "session agent")
+            profile_id = str(profile.get("profile_id") or "").strip()
+            return self._tool_error(
+                code="session_agent_capability_mismatch",
+                message=f"{profile_name} does not have required skills: {', '.join(missing_skill_names)}",
+                tool_name="session_agent_task",
+                details={
+                    "recoverable": True,
+                    "requiredSkillNames": required_skill_names,
+                    "missingSkillNames": missing_skill_names,
+                    "agent": {
+                        "profileId": profile_id,
+                        "name": profile_name,
+                        "skills": self._profile_skill_names(profile),
+                    },
+                },
+            )
 
-        title = str(args.get("title") or "").strip()
-        instruction = str(args.get("instruction") or "").strip()
-        description = str(args.get("description") or instruction or title).strip()
         profile_id = str(profile.get("profile_id") or "").strip()
         child = WorkService(self.work_repository).create_from_payload(
             session_id=parent.session_id,
@@ -861,6 +903,11 @@ class LocalToolRuntime:
             trusted_args["workspace_root"] = str(self.workspace_root)
         if tool_name == "mattermost.send":
             # 사용자 식별자는 모델 인자가 아니라 서버가 바인딩한 owner_key만 신뢰한다.
+            trusted_args["_trusted_user_id"] = self.owner_key
+        if tool_name == "notion.execute":
+            # 사용자 식별자는 모델 인자가 아니라 서버가 바인딩한 owner_key만 신뢰한다.
+            trusted_args.pop("userId", None)
+            trusted_args.pop("user_id", None)
             trusted_args["_trusted_user_id"] = self.owner_key
         return trusted_args
 
@@ -1107,6 +1154,7 @@ class LocalToolRuntime:
         owner_key: str,
         assignee_agent_id: str | None,
         assignee_hint: str | None,
+        required_skill_names: list[str] | None = None,
     ) -> dict[str, Any] | None:
         if self.agent_repository is None:
             return None
@@ -1125,7 +1173,60 @@ class LocalToolRuntime:
             for profile in profiles:
                 if self._profile_matches_hint(profile, normalized_hint):
                     return profile
+        if required_skill_names:
+            for profile in profiles:
+                if not self._missing_profile_skills(profile, required_skill_names):
+                    return profile
         return profiles[0]
+
+    def _required_session_agent_skill_names(
+        self,
+        *,
+        args: dict[str, Any],
+        context: dict[str, Any],
+        text_parts: list[str],
+    ) -> list[str]:
+        explicit = self._string_list(args.get("requiredSkillNames") or args.get("required_skill_names"))
+        if explicit:
+            return explicit
+
+        parent_skill_names = self._string_list(
+            context.get("enabledSkillNames")
+            or context.get("enabled_skill_names")
+            or context.get("skillNames")
+            or context.get("skill_names")
+        )
+        if not parent_skill_names:
+            target_profile = context.get("targetAgentProfile") or context.get("target_agent_profile")
+            config = target_profile.get("configSnapshot") if isinstance(target_profile, dict) else {}
+            if isinstance(config, dict):
+                parent_skill_names = self._string_list(config.get("skills"))
+        if not parent_skill_names:
+            return []
+
+        haystack = self._normalize_match_text(" ".join(text_parts))
+        required: list[str] = []
+        for skill_name in parent_skill_names:
+            if self._normalize_match_text(skill_name) in haystack:
+                self._append_unique(required, skill_name)
+        return required
+
+    def _missing_profile_skills(self, profile: dict[str, Any], required_skill_names: list[str] | None) -> list[str]:
+        if not required_skill_names:
+            return []
+        profile_skill_names = {
+            self._normalize_match_text(skill_name)
+            for skill_name in self._profile_skill_names(profile)
+        }
+        return [
+            skill_name
+            for skill_name in required_skill_names
+            if self._normalize_match_text(skill_name) not in profile_skill_names
+        ]
+
+    def _profile_skill_names(self, profile: dict[str, Any]) -> list[str]:
+        config = dict(profile.get("config_snapshot") or {})
+        return self._string_list(config.get("skills") or profile.get("skills"))
 
     @classmethod
     def _profile_matches_hint(cls, profile: dict[str, Any], normalized_hint: str) -> bool:
@@ -1148,6 +1249,11 @@ class LocalToolRuntime:
     @staticmethod
     def _normalize_match_text(value: Any) -> str:
         return re.sub(r"\s+", "", str(value or "").strip().lower())
+
+    @staticmethod
+    def _append_unique(values: list[str], item: str) -> None:
+        if item not in values:
+            values.append(item)
 
     @staticmethod
     def _work_tool_payload(work) -> dict[str, Any]:
@@ -1202,13 +1308,16 @@ class LocalToolRuntime:
         }
 
     @staticmethod
-    def _tool_error(*, code: str, message: str, tool_name: str) -> dict[str, Any]:
+    def _tool_error(*, code: str, message: str, tool_name: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
+        error = {
+            "code": code,
+            "message": message,
+            "tool_name": tool_name,
+        }
+        if details:
+            error.update(details)
         payload = {
-            "error": {
-                "code": code,
-                "message": message,
-                "tool_name": tool_name,
-            }
+            "error": error
         }
         return {
             "ok": False,
