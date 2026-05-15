@@ -1624,11 +1624,14 @@ function ChannelsContent({
 // ────────────────────────────────────────────────────────────────────────────
 function ExternalServicesContent() {
   const [notionConnected, setNotionConnected] = useState(false)
+  const [gmailConnected, setGmailConnected] = useState(false)
   const [mattermostChannels, setMattermostChannels] = useState<MattermostChannel[]>([])
   const [mattermostLoading, setMattermostLoading] = useState(true)
   const [mattermostSettingsOpen, setMattermostSettingsOpen] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [gmailLoading, setGmailLoading] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const gmailPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const mattermostConnected = mattermostChannels.length > 0
   const defaultMattermostChannel = mattermostChannels.find((channel) => channel.defaultChannel)
 
@@ -1637,6 +1640,11 @@ function ExternalServicesContent() {
     import('@/apis/notion').then(({ getNotionStatus }) => {
       getNotionStatus()
         .then((res) => setNotionConnected(res.data.connected))
+        .catch(() => {})
+    })
+    import('@/apis/gmail').then(({ getGmailStatus }) => {
+      getGmailStatus()
+        .then((res) => setGmailConnected(res.data.connected))
         .catch(() => {})
     })
   }, [])
@@ -1716,7 +1724,65 @@ function ExternalServicesContent() {
     }
   }
 
-  useEffect(() => () => stopPolling(), [])
+  const stopGmailPolling = () => {
+    if (gmailPollRef.current) {
+      clearInterval(gmailPollRef.current)
+      gmailPollRef.current = null
+    }
+  }
+
+  const handleGmailConnect = async () => {
+    try {
+      setGmailLoading(true)
+      const popup = window.open('about:blank', '_blank')
+      const { getGmailConnectUrl, getGmailStatus } = await import('@/apis/gmail')
+      const res = await getGmailConnectUrl()
+      if (popup) {
+        popup.location.href = res.data.url
+      } else {
+        window.open(res.data.url, '_blank')
+      }
+
+      gmailPollRef.current = setInterval(async () => {
+        try {
+          const statusRes = await getGmailStatus()
+          if (statusRes.data.connected) {
+            setGmailConnected(true)
+            stopGmailPolling()
+            setGmailLoading(false)
+          }
+        } catch {
+          stopGmailPolling()
+          setGmailLoading(false)
+        }
+      }, 2000)
+
+      setTimeout(() => {
+        stopGmailPolling()
+        setGmailLoading(false)
+      }, 120000)
+    } catch {
+      setGmailLoading(false)
+    }
+  }
+
+  const handleGmailDisconnect = async () => {
+    try {
+      const { disconnectGmail } = await import('@/apis/gmail')
+      await disconnectGmail()
+      setGmailConnected(false)
+    } catch {
+      // 에러 무시
+    }
+  }
+
+  useEffect(
+    () => () => {
+      stopPolling()
+      stopGmailPolling()
+    },
+    [],
+  )
 
   return (
     <div className="space-y-6">
@@ -1768,6 +1834,51 @@ function ExternalServicesContent() {
               }`}
             >
               {loading ? '연결 중...' : notionConnected ? '연결 해제' : '연결하기'}
+            </button>
+          </div>
+        </div>
+
+        <div
+          className={`rounded-xl border p-4 transition-colors ${
+            gmailConnected ? 'bg-muted/40 border-border' : 'bg-background border-border'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" xmlns="http://www.w3.org/2000/svg">
+                  <path
+                    fill="#4285F4"
+                    d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.91 1.528-1.145C21.69 2.28 24 3.434 24 5.457z"
+                  />
+                </svg>
+              </div>
+              <div>
+                <h4 className="text-foreground text-sm font-medium">Gmail</h4>
+                <span
+                  className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${
+                    gmailConnected ? 'text-switch-on' : 'text-muted-foreground'
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      gmailConnected ? 'bg-switch-on' : 'bg-muted-foreground/60'
+                    }`}
+                  />
+                  {gmailConnected ? '연결됨' : '미연결'}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={gmailConnected ? handleGmailDisconnect : handleGmailConnect}
+              disabled={gmailLoading}
+              className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 ${
+                gmailConnected
+                  ? 'border-border bg-background text-foreground hover:bg-muted'
+                  : 'border-foreground bg-foreground text-background hover:bg-foreground/90'
+              }`}
+            >
+              {gmailLoading ? '연결 중...' : gmailConnected ? '연결 해제' : '연결하기'}
             </button>
           </div>
         </div>

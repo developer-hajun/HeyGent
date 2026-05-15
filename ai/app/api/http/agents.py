@@ -551,6 +551,15 @@ def _skill_detail_response(item: dict[str, Any]) -> SkillCatalogDetailResponse:
         **base,
         body=str(item.get("body") or ""),
         files=[str(file) for file in list(item.get("files") or [])],
+        documents=[
+            {
+                "documentKey": str(document.get("document_key") or document.get("documentKey") or ""),
+                "title": str(document.get("title") or ""),
+                "content": str(document.get("content") or ""),
+                "contentFormat": str(document.get("content_format") or document.get("contentFormat") or "markdown"),
+            }
+            for document in list(item.get("documents") or [])
+        ],
     )
 
 
