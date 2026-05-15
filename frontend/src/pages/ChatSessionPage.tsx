@@ -370,13 +370,6 @@ export function ChatSessionPage() {
   const handleSend = async (content: string) => {
     if (!sessionId || isSending) return
     setComposerDraft(null)
-    if (hasPrototypeIntent(content)) {
-      requestPrototypePanel(sessionId)
-      if (!prototypeAutoCollapsedSessionIdsRef.current.has(sessionId)) {
-        prototypeAutoCollapsedSessionIdsRef.current.add(sessionId)
-        setSessionWorkspaceCollapsed(true)
-      }
-    }
 
     if (!authenticatedReady || commandClient === null) {
       setLoadState(
@@ -512,14 +505,15 @@ export function ChatSessionPage() {
         message.status === 'streaming' ||
         message.status === 'waiting',
     )
-  const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')
-  const prototypeRequestActive =
-    hasActiveChatTurn && hasPrototypeIntent(latestUserMessage?.content ?? '')
   const prototypePanelRequested = prototypePanelSessionId === sessionId
 
   const handlePrototypeArtifactVisible = useCallback(() => {
     requestPrototypePanel(sessionId)
-  }, [requestPrototypePanel, sessionId])
+    if (!prototypeAutoCollapsedSessionIdsRef.current.has(sessionId)) {
+      prototypeAutoCollapsedSessionIdsRef.current.add(sessionId)
+      setSessionWorkspaceCollapsed(true)
+    }
+  }, [requestPrototypePanel, sessionId, setSessionWorkspaceCollapsed])
 
   const isStreaming = messages.some(
     (message) => message.role === 'assistant' && message.status === 'streaming',
@@ -633,7 +627,8 @@ export function ChatSessionPage() {
       {!isPendingSession && (
         <PrototypePanel
           sessionId={sessionId}
-          openHint={prototypeRequestActive || prototypePanelRequested}
+          openHint={prototypePanelRequested}
+          pollForArtifact={hasActiveChatTurn || prototypePanelRequested}
           reopenSignal={prototypePanelOpenRequest}
           onArtifactVisible={handlePrototypeArtifactVisible}
         />
@@ -891,29 +886,6 @@ function extractWorkIdentifier(content: string) {
 function normalizeWorkIdentifier(identifier: string) {
   const match = identifier.match(/\btask\s*[-#]?\s*(\d+)\b/i)
   return match ? `TASK-${match[1]}` : identifier.trim().toUpperCase()
-}
-
-function hasPrototypeIntent(content: string) {
-  const normalized = content.toLowerCase()
-  return [
-    'design.md',
-    '디자인',
-    '화면',
-    '프로토타입',
-    'prototype',
-    'preview',
-    '프리뷰',
-    'ui',
-    '웹사이트',
-    '웹페이지',
-    '웹 페이지',
-    '사이트',
-    '페이지',
-    '대시보드',
-    '랜딩',
-    '관리콘솔',
-    '앱',
-  ].some((keyword) => normalized.includes(keyword))
 }
 
 function toChatConnectionState(

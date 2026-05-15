@@ -17,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 type PrototypePanelProps = {
   sessionId: string
   openHint: boolean
+  pollForArtifact?: boolean
   reopenSignal?: number
   onArtifactVisible?: () => void
 }
@@ -30,6 +31,7 @@ const MAX_PROTOTYPE_PANEL_WIDTH = 1040
 export function PrototypePanel({
   sessionId,
   openHint,
+  pollForArtifact = false,
   reopenSignal,
   onArtifactVisible,
 }: PrototypePanelProps) {
@@ -44,7 +46,7 @@ export function PrototypePanel({
   const [activeTab, setActiveTab] = useState<PrototypeTab>('preview')
   const [panelWidth, setPanelWidth] = useState(() => getInitialPanelWidth())
   const notifiedVersionIdRef = useRef<string | null>(null)
-  const shouldPoll = openHint && artifact === null
+  const shouldPoll = pollForArtifact && artifact === null
 
   useEffect(() => {
     let cancelled = false
