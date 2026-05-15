@@ -4,6 +4,7 @@
     <!-- 스플래시 테마 (앱 시작 직후) -->
     <style name="Theme.MOB.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@android:color/black</item>
+        <!-- 시스템이 런처 아이콘으로 폴백하지 않도록 투명 아이콘 명시 -->
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
         <item name="postSplashScreenTheme">@style/Theme.MOB</item>
     </style>

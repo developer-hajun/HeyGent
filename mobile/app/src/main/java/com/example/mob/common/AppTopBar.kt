@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.mob.ui.theme.NavyPrimary
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,7 +50,7 @@ fun AppTopBar(
                 }
             },
             actions = actions,
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Black)
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = NavyPrimary)
         )
         Canvas(
             modifier = Modifier
