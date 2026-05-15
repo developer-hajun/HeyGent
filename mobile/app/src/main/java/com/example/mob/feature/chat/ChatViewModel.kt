@@ -10,8 +10,11 @@ import com.example.mob.data.remote.RetrofitClient
 import com.example.mob.data.remote.SendChatMessageRequest
 import com.example.mob.data.remote.WsTaskEvent
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -36,6 +39,11 @@ class ChatViewModel : ViewModel() {
 
     private val _activeSessionId = MutableStateFlow<String?>(null)
     val activeSessionId: StateFlow<String?> = _activeSessionId.asStateFlow()
+
+    val currentSessionTitle: StateFlow<String> = combine(_activeSessionId, _sessions) { id, list ->
+        if (id.isNullOrEmpty()) "새 세션"
+        else list.firstOrNull { it.sessionId == id }?.title?.takeIf { it.isNotBlank() } ?: "새 세션"
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, "새 세션")
 
     // ─── WebSocket ────────────────────────────────────────────────────────────
 

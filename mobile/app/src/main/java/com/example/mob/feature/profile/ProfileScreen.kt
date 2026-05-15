@@ -39,7 +39,7 @@ fun ProfileScreen(
     onMenuClick: () -> Unit,
     bottomPadding: Dp = 0.dp,
     onLogout: () -> Unit = {},
-    agentName: String = "Jarvis",
+    agentName: String = "HeyGent",
     onAgentNameChange: (String) -> Unit = {},
     healthViewModel: HealthViewModel? = null
 ) {
@@ -136,7 +136,7 @@ fun ProfileScreen(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .background(NavyPrimary)
+                        .background(Color(0xFFDDD7C2))
                         .padding(vertical = 32.dp),
                 contentAlignment = Alignment.Center,
             ) {
@@ -146,27 +146,27 @@ fun ProfileScreen(
                             Modifier
                                 .size(88.dp)
                                 .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.15f)),
+                                .background(NavyPrimary.copy(alpha = 0.08f)),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             Icons.Default.Person,
                             contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.7f),
+                            tint = TextSecondary,
                             modifier = Modifier.size(52.dp),
                         )
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     if (isLoadingProfile) {
                         CircularProgressIndicator(
-                            color = Color.White.copy(alpha = 0.7f),
+                            color = NavyPrimary,
                             modifier = Modifier.size(24.dp),
                             strokeWidth = 2.dp,
                         )
                     } else {
                         Text(
                             agentCallName.ifBlank { "사용자" },
-                            color = Color.White,
+                            color = TextPrimary,
                             fontSize = 22.sp,
                             fontWeight = FontWeight.Bold,
                         )
