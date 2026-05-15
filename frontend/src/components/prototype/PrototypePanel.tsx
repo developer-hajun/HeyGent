@@ -248,7 +248,11 @@ function PrototypeSandpack({
             </TabsList>
             <span className="text-muted-foreground text-[11px]">v{artifact.versionNumber}</span>
           </div>
-          <TabsContent forceMount value="preview" className="m-0 min-h-0 flex-1 overflow-hidden">
+          <TabsContent
+            forceMount
+            value="preview"
+            className="m-0 min-h-0 flex-1 overflow-hidden data-[state=inactive]:hidden"
+          >
             <SandpackLayout className="h-full min-h-0 !rounded-none !border-0">
               <SandpackPreview
                 className="h-full min-h-0"
@@ -258,7 +262,11 @@ function PrototypeSandpack({
               />
             </SandpackLayout>
           </TabsContent>
-          <TabsContent forceMount value="code" className="m-0 min-h-0 flex-1 overflow-hidden">
+          <TabsContent
+            forceMount
+            value="code"
+            className="m-0 min-h-0 flex-1 overflow-hidden data-[state=inactive]:hidden"
+          >
             <SandpackLayout className="h-full min-h-0 !rounded-none !border-0">
               <SandpackFileExplorer className="h-full min-w-48 shrink-0" />
               <SandpackCodeEditor
