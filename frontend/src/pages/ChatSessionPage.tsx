@@ -650,7 +650,7 @@ export function ChatSessionPage() {
         <PrototypePanel
           sessionId={sessionId}
           openHint={prototypePanelRequested}
-          pollForArtifact={hasActiveChatTurn || prototypePanelRequested}
+          pollForArtifact={hasActiveChatTurn}
           reopenSignal={prototypePanelOpenRequest}
           onArtifactVisible={handlePrototypeArtifactVisible}
         />

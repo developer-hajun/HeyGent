@@ -5,6 +5,7 @@ import {
   SandpackPreview,
   SandpackProvider,
   type SandpackFiles,
+  useSandpack,
 } from '@codesandbox/sandpack-react'
 import { Code2, Eye, Loader2, RefreshCw, X } from 'lucide-react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
@@ -46,7 +47,7 @@ export function PrototypePanel({
   const [activeTab, setActiveTab] = useState<PrototypeTab>('preview')
   const [panelWidth, setPanelWidth] = useState(() => getInitialPanelWidth())
   const notifiedVersionIdRef = useRef<string | null>(null)
-  const shouldPoll = pollForArtifact && artifact === null
+  const shouldPoll = pollForArtifact
 
   useEffect(() => {
     let cancelled = false
@@ -225,7 +226,7 @@ function PrototypeSandpack({
       `}</style>
       <SandpackProvider
         files={files}
-        template="react"
+        template="react-ts"
         theme="dark"
         customSetup={{
           dependencies: {
@@ -235,6 +236,8 @@ function PrototypeSandpack({
             'framer-motion': '12.23.24',
             'lucide-react': '0.468.0',
             motion: '12.23.24',
+            react: '18.2.0',
+            'react-dom': '18.2.0',
             recharts: '2.12.7',
           },
           devDependencies: {
@@ -244,6 +247,9 @@ function PrototypeSandpack({
         }}
         options={{
           activeFile: artifact.entryFile || '/src/App.tsx',
+          autorun: true,
+          autoReload: true,
+          initMode: 'immediate',
           visibleFiles: Object.keys(files).filter((path) => path.startsWith('/src/')),
         }}
       >
@@ -312,9 +318,30 @@ function PrototypeSandpack({
             </SandpackLayout>
           </TabsContent>
         </Tabs>
+        <SandpackAutoRun versionId={artifact.versionId} />
       </SandpackProvider>
     </div>
   )
+}
+
+function SandpackAutoRun({ versionId }: { versionId: string }) {
+  const { sandpack } = useSandpack()
+  const { runSandpack } = sandpack
+  const runSandpackRef = useRef(runSandpack)
+
+  useEffect(() => {
+    runSandpackRef.current = runSandpack
+  }, [runSandpack])
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      runSandpackRef.current()
+    }, 50)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [versionId])
+
+  return null
 }
 
 function PrototypeLoading({
@@ -385,6 +412,9 @@ function buildSandpackFiles(artifact: PrototypeArtifact): SandpackFiles {
     '/src/main.tsx': {
       code: "import React from 'react';\nimport { createRoot } from 'react-dom/client';\nimport './styles.css';\nimport App from './App';\n\ncreateRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);\n",
     },
+    '/src/index.tsx': {
+      code: "import React from 'react';\nimport { createRoot } from 'react-dom/client';\nimport './styles.css';\nimport App from './App';\n\ncreateRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);\n",
+    },
     '/src/App.tsx': {
       code: 'export default function App() {\n  return <main className="prototype-empty">프로토타입 코드가 아직 없습니다.</main>;\n}\n',
     },
@@ -398,10 +428,18 @@ function buildSandpackFiles(artifact: PrototypeArtifact): SandpackFiles {
     ...Object.fromEntries(
       Object.entries(artifact.files).map(([path, file]) => [
         normalizeSandpackPath(path),
-        { code: file.code },
+        { code: sanitizePrototypeCode(file.code) },
       ]),
     ),
   }
+}
+
+function sanitizePrototypeCode(code: string) {
+  return code
+    .replace(/\p{Extended_Pictographic}\uFE0F?/gu, '')
+    .replace(/[\uFE0E\uFE0F]/g, '')
+    .replace(/[°º]/g, '도')
+    .replace(/[·•]/g, '-')
 }
 
 function normalizeSandpackPath(path: string) {
