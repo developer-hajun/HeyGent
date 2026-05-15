@@ -32,9 +32,9 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
   const setLastError = useAiRealtimeStore((state) => state.setLastError)
   const socketRef = useRef<TaskRunSocketClient | null>(null)
   const commandClientRef = useRef<AiCommandClient | null>(null)
-  const pingIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null)
-  const activeTaskPollIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null)
-  const reconnectTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
+  const pingIntervalRef = useRef<number | null>(null)
+  const activeTaskPollIntervalRef = useRef<number | null>(null)
+  const reconnectTimeoutRef = useRef<number | null>(null)
   const reconnectAttemptRef = useRef(0)
   const clientGenerationRef = useRef(0)
   const suppressedCloseGenerationsRef = useRef<Set<number>>(new Set())
@@ -43,6 +43,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
   const pendingRecoveryClientRef = useRef<TaskRunSocketClient | null>(null)
   const snapshotFetchedTaskRunsRef = useRef<Set<string>>(new Set())
   const autoSubscribedChildTaskRunsRef = useRef<Set<string>>(new Set())
+  const externalTaskSessionMapRef = useRef<Map<string, string>>(new Map())
 
   useEffect(() => {
     const clearPingInterval = () => {
@@ -142,9 +143,36 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         recoverTaskRunAfterGap(frame)
         subscribeChildTaskRunFromParentEvent(socketClient, frame)
         if (frame.type === 'task.new') {
-          const taskRunId = (frame as { type: string; taskRunId?: string }).taskRunId
+          const typedFrame = frame as { type: string; taskRunId?: string; sessionId?: string }
+          const taskRunId = typedFrame.taskRunId
+          const sessionId = typedFrame.sessionId
           if (taskRunId && !useAiRealtimeStore.getState().subscriptionsByTaskRunId[taskRunId]) {
             useAiRealtimeStore.getState().subscribeTask(taskRunId, undefined)
+          }
+          if (sessionId && taskRunId) {
+            externalTaskSessionMapRef.current.set(taskRunId, sessionId)
+            useChatStore.getState().addExternalTaskPlaceholder(sessionId, taskRunId)
+            void useChatStore.getState().fetchMessages(sessionId)
+            void useTaskRunStore.getState().fetchSnapshot(taskRunId)
+          }
+        }
+        if (frame.type === 'task.event') {
+          const payload = getFramePayload(frame)
+          if (isJsonObject(payload)) {
+            const eventType = getStringField(payload, 'event_type', 'eventType')
+            const taskRunId = getStringField(payload, 'task_run_id', 'taskRunId')
+            if (
+              taskRunId &&
+              (eventType === 'task.completed' ||
+                eventType === 'task.failed' ||
+                eventType === 'task.canceled')
+            ) {
+              const sessionId = externalTaskSessionMapRef.current.get(taskRunId)
+              if (sessionId) {
+                externalTaskSessionMapRef.current.delete(taskRunId)
+                void useChatStore.getState().fetchMessages(sessionId)
+              }
+            }
           }
         }
       })

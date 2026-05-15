@@ -28,6 +28,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/compone
 import { HelpHint } from '@/components/ui/help-hint'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { NewSessionModal, type CustomAgentConfig } from '@/components/session/NewSessionModal'
+import { getLatestHealthData, type HealthSummaryData } from '@/apis/health'
 
 // ── Mock 상태 (서버·에이전트) ─────────────────────────────────────────────────
 type ServerStatus = 'ok' | 'error'
@@ -35,43 +36,6 @@ type AgentStatus = 'idle' | 'working'
 
 const MOCK_SERVER: ServerStatus = 'ok'
 const MOCK_AGENT: AgentStatus = 'idle'
-type SamsungHealthData = {
-  stepCount: number
-  activeMinutes: number
-  totalCalories: number
-  activeCalories: number
-  heightCm: number
-  weightKg: number
-  bodyFatPct: number
-  muscleMassKg: number
-  heartRateBpm: number
-  systolicBp: number
-  diastolicBp: number
-  durationMinutes: number
-  sleepScore: number
-}
-
-const MOCK_SAMSUNG_HEALTH: SamsungHealthData = {
-  stepCount: 7842,
-  activeMinutes: 42,
-  totalCalories: 2180,
-  activeCalories: 412,
-  heightCm: 172,
-  weightKg: 68.4,
-  bodyFatPct: 23.4,
-  muscleMassKg: 28.1,
-  heartRateBpm: 72,
-  systolicBp: 118,
-  diastolicBp: 76,
-  durationMinutes: 384,
-  sleepScore: 78,
-}
-
-const HEALTH_RECOMMENDATIONS = [
-  '활동 시간이 하루 목표보다 18분 부족합니다. 점심 이후 10분, 저녁 이후 8분으로 나누어 걷는 것을 권장합니다.',
-  '수면 시간이 권장량보다 1시간 36분 짧습니다. 오늘은 취침 시간을 30분 앞당겨 회복 시간을 확보해 주세요.',
-  '심박과 혈압은 안정 범위입니다. 체성분 변화는 주간 추이를 함께 확인하면 더 정확한 피드백이 가능합니다.',
-]
 
 // ── StatusDot ────────────────────────────────────────────────────────────────
 interface StatusDotProps {
@@ -336,6 +300,7 @@ function BridgeCard() {
   )
 }
 
+// ── LlmTaskNotice ────────────────────────────────────────────────────────────
 function LlmTaskNotice() {
   const taskEvents: Array<{
     label: string
@@ -702,7 +667,7 @@ function HealthMetricCard({
 }
 
 interface HealthFieldItem {
-  field: keyof SamsungHealthData
+  field: string
   label: string
   value: string
   note: string
@@ -751,6 +716,8 @@ export function DashboardPage() {
   const [pendingDeviceId, setPendingDeviceId] = useState<string | null>(null)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
   const [expandedHealthGroups, setExpandedHealthGroups] = useState<string[]>([])
+  const [healthData, setHealthData] = useState<HealthSummaryData | null>(null)
+  const [healthLoading, setHealthLoading] = useState(true)
 
   const fetchDevices = useCallback(
     () =>
@@ -764,6 +731,13 @@ export function DashboardPage() {
   useEffect(() => {
     void fetchDevices()
   }, [fetchDevices])
+
+  useEffect(() => {
+    getLatestHealthData()
+      .then(setHealthData)
+      .catch(() => setHealthData(null))
+      .finally(() => setHealthLoading(false))
+  }, [])
 
   const handleDeregisterRequest = (deviceId: string) => {
     setPendingDeviceId(deviceId)
@@ -786,163 +760,175 @@ export function DashboardPage() {
   const server = serverStatusConfig(MOCK_SERVER)
   const agent = agentStatusConfig(MOCK_AGENT)
   const device = iotDevices[0] ?? null
-  const health = MOCK_SAMSUNG_HEALTH
+  const health = healthData
   const toggleHealthGroup = (title: string) => {
     setExpandedHealthGroups((current) =>
       current.includes(title) ? current.filter((item) => item !== title) : [...current, title],
     )
   }
-  const healthGroups: HealthDetailGroup[] = [
-    {
-      title: '활동',
-      icon: <Activity className="h-4 w-4" />,
-      summary: `${formatNumber(health.stepCount)}걸음, 활동 ${health.activeMinutes}분을 기록했습니다.`,
-      status: health.activeMinutes >= 60 ? '충분' : '보완 필요',
-      items: [
+  const healthGroups: HealthDetailGroup[] = health
+    ? [
         {
-          field: 'stepCount',
-          label: '걸음 수',
-          value: `${formatNumber(health.stepCount)} 걸음`,
-          note: '목표 10,000',
+          title: '활동',
+          icon: <Activity className="h-4 w-4" />,
+          summary: `${formatNumber(health.stepCount ?? 0)}걸음, 활동 ${health.activeMinutes ?? '--'}분을 기록했습니다.`,
+          status: (health.activeMinutes ?? 0) >= 60 ? '충분' : '보완 필요',
+          items: [
+            {
+              field: 'stepCount',
+              label: '걸음 수',
+              value: `${formatNumber(health.stepCount ?? 0)} 걸음`,
+              note: '목표 10,000',
+            },
+            {
+              field: 'activeMinutes',
+              label: '활동 시간',
+              value: health.activeMinutes != null ? `${health.activeMinutes}분` : '--',
+              note: '목표 60분',
+            },
+            {
+              field: 'totalCalories',
+              label: '총 칼로리',
+              value:
+                health.totalCalories != null ? `${formatNumber(health.totalCalories)} kcal` : '--',
+              note: '일일 소비량',
+            },
+            {
+              field: 'activeCalories',
+              label: '활동 칼로리',
+              value:
+                health.activeCalories != null
+                  ? `${formatNumber(health.activeCalories)} kcal`
+                  : '--',
+              note: '운동 기여',
+            },
+          ],
         },
         {
-          field: 'activeMinutes',
-          label: '활동 시간',
-          value: `${health.activeMinutes}분`,
-          note: '목표 60분',
+          title: '체성분',
+          icon: <Activity className="h-4 w-4" />,
+          summary: `몸무게 ${health.weightKg ?? '--'}kg, 체지방률 ${health.bodyFatPct ?? '--'}% 기준으로 추이를 확인합니다.`,
+          status: '추이 관찰',
+          items: [
+            {
+              field: 'heightCm',
+              label: '키',
+              value: health.heightCm != null ? `${health.heightCm} cm` : '--',
+              note: '기준값',
+            },
+            {
+              field: 'weightKg',
+              label: '몸무게',
+              value: health.weightKg != null ? `${health.weightKg} kg` : '--',
+              note: '최근 측정',
+            },
+            {
+              field: 'bodyFatPct',
+              label: '체지방률',
+              value: health.bodyFatPct != null ? `${health.bodyFatPct}%` : '--',
+              note: '추이 확인',
+            },
+            {
+              field: 'muscleMassKg',
+              label: '근육량',
+              value: health.muscleMassKg != null ? `${health.muscleMassKg} kg` : '--',
+              note: '추이 확인',
+            },
+          ],
         },
         {
-          field: 'totalCalories',
-          label: '총 칼로리',
-          value: `${formatNumber(health.totalCalories)} kcal`,
-          note: '일일 소비량',
+          title: '활력',
+          icon: <Heart className="h-4 w-4" />,
+          summary: `심박 ${health.heartRateBpm ?? '--'}bpm, 혈압 ${health.systolicBp ?? '--'}/${health.diastolicBp ?? '--'}mmHg입니다.`,
+          status: '안정',
+          items: [
+            {
+              field: 'heartRateBpm',
+              label: '심박수',
+              value: health.heartRateBpm != null ? `${health.heartRateBpm} bpm` : '--',
+              note: '안정 범위',
+            },
+            {
+              field: 'systolicBp',
+              label: '수축기 혈압',
+              value: health.systolicBp != null ? `${health.systolicBp} mmHg` : '--',
+              note: '정상',
+            },
+            {
+              field: 'diastolicBp',
+              label: '이완기 혈압',
+              value: health.diastolicBp != null ? `${health.diastolicBp} mmHg` : '--',
+              note: '정상',
+            },
+          ],
         },
         {
-          field: 'activeCalories',
-          label: '활동 칼로리',
-          value: `${formatNumber(health.activeCalories)} kcal`,
-          note: '운동 기여',
+          title: '수면',
+          icon: <Moon className="h-4 w-4" />,
+          summary: `${formatSleepDuration(health.durationMinutes ?? 0)} 수면, 수면 점수 ${health.sleepScore ?? '--'}점입니다.`,
+          status: (health.durationMinutes ?? 0) >= 420 ? '양호' : '부족',
+          items: [
+            {
+              field: 'durationMinutes',
+              label: '수면 시간',
+              value:
+                health.durationMinutes != null ? formatSleepDuration(health.durationMinutes) : '--',
+              note: '목표 8h',
+            },
+            {
+              field: 'sleepScore',
+              label: '수면 점수',
+              value: health.sleepScore != null ? `${health.sleepScore}점` : '--',
+              note: '보통',
+            },
+          ],
         },
-      ],
-    },
-    {
-      title: '체성분',
-      icon: <Activity className="h-4 w-4" />,
-      summary: `몸무게 ${health.weightKg}kg, 체지방률 ${health.bodyFatPct}% 기준으로 추이를 확인합니다.`,
-      status: '추이 관찰',
-      items: [
-        {
-          field: 'heightCm',
-          label: '키',
-          value: `${health.heightCm} cm`,
-          note: '기준값',
-        },
-        {
-          field: 'weightKg',
-          label: '몸무게',
-          value: `${health.weightKg} kg`,
-          note: '최근 측정',
-        },
-        {
-          field: 'bodyFatPct',
-          label: '체지방률',
-          value: `${health.bodyFatPct}%`,
-          note: '추이 확인',
-        },
-        {
-          field: 'muscleMassKg',
-          label: '근육량',
-          value: `${health.muscleMassKg} kg`,
-          note: '추이 확인',
-        },
-      ],
-    },
-    {
-      title: '활력',
-      icon: <Heart className="h-4 w-4" />,
-      summary: `심박 ${health.heartRateBpm}bpm, 혈압 ${health.systolicBp}/${health.diastolicBp}mmHg입니다.`,
-      status: '안정',
-      items: [
-        {
-          field: 'heartRateBpm',
-          label: '심박수',
-          value: `${health.heartRateBpm} bpm`,
-          note: '안정 범위',
-        },
-        {
-          field: 'systolicBp',
-          label: '수축기 혈압',
-          value: `${health.systolicBp} mmHg`,
-          note: '정상',
-        },
-        {
-          field: 'diastolicBp',
-          label: '이완기 혈압',
-          value: `${health.diastolicBp} mmHg`,
-          note: '정상',
-        },
-      ],
-    },
-    {
-      title: '수면',
-      icon: <Moon className="h-4 w-4" />,
-      summary: `${formatSleepDuration(health.durationMinutes)} 수면, 수면 점수 ${health.sleepScore}점입니다.`,
-      status: health.durationMinutes >= 420 ? '양호' : '부족',
-      items: [
-        {
-          field: 'durationMinutes',
-          label: '수면 시간',
-          value: formatSleepDuration(health.durationMinutes),
-          note: '목표 8h',
-        },
-        {
-          field: 'sleepScore',
-          label: '수면 점수',
-          value: `${health.sleepScore}점`,
-          note: '보통',
-        },
-      ],
-    },
-  ]
+      ]
+    : []
+
   const [activityHealth, bodyCompositionHealth, vitalityHealth, sleepHealth] = healthGroups
-  const healthMetricCards = [
-    {
-      detail: activityHealth,
-      icon: <Footprints className="h-4 w-4" />,
-      label: activityHealth.title,
-      value: formatNumber(health.stepCount),
-      unit: '걸음',
-      progress: health.stepCount / 10000,
-      hint: `활동 ${health.activeMinutes}분`,
-    },
-    {
-      detail: bodyCompositionHealth,
-      icon: bodyCompositionHealth.icon,
-      label: bodyCompositionHealth.title,
-      value: String(health.weightKg),
-      unit: 'kg',
-      progress: health.bodyFatPct / 35,
-      hint: `체지방률 ${health.bodyFatPct}%`,
-    },
-    {
-      detail: vitalityHealth,
-      icon: vitalityHealth.icon,
-      label: vitalityHealth.title,
-      value: String(health.heartRateBpm),
-      unit: 'bpm',
-      progress: health.heartRateBpm / 130,
-      hint: `혈압 ${health.systolicBp}/${health.diastolicBp}`,
-    },
-    {
-      detail: sleepHealth,
-      icon: sleepHealth.icon,
-      label: sleepHealth.title,
-      value: formatSleepDuration(health.durationMinutes),
-      unit: '',
-      progress: health.durationMinutes / 480,
-      hint: `수면 점수 ${health.sleepScore}점`,
-    },
-  ]
+  const healthMetricCards =
+    health && activityHealth && bodyCompositionHealth && vitalityHealth && sleepHealth
+      ? [
+          {
+            detail: activityHealth,
+            icon: <Footprints className="h-4 w-4" />,
+            label: activityHealth.title,
+            value: health.stepCount != null ? formatNumber(health.stepCount) : '--',
+            unit: '걸음',
+            progress: (health.stepCount ?? 0) / 10000,
+            hint: `활동 ${health.activeMinutes ?? '--'}분`,
+          },
+          {
+            detail: bodyCompositionHealth,
+            icon: bodyCompositionHealth.icon,
+            label: bodyCompositionHealth.title,
+            value: health.weightKg != null ? String(health.weightKg) : '--',
+            unit: 'kg',
+            progress: (health.bodyFatPct ?? 0) / 35,
+            hint: `체지방률 ${health.bodyFatPct ?? '--'}%`,
+          },
+          {
+            detail: vitalityHealth,
+            icon: vitalityHealth.icon,
+            label: vitalityHealth.title,
+            value: health.heartRateBpm != null ? String(health.heartRateBpm) : '--',
+            unit: 'bpm',
+            progress: (health.heartRateBpm ?? 0) / 130,
+            hint: `혈압 ${health.systolicBp ?? '--'}/${health.diastolicBp ?? '--'}`,
+          },
+          {
+            detail: sleepHealth,
+            icon: sleepHealth.icon,
+            label: sleepHealth.title,
+            value:
+              health.durationMinutes != null ? formatSleepDuration(health.durationMinutes) : '--',
+            unit: '',
+            progress: (health.durationMinutes ?? 0) / 480,
+            hint: `수면 점수 ${health.sleepScore ?? '--'}점`,
+          },
+        ]
+      : []
 
   return (
     <div className="bg-background flex-1 overflow-y-auto [scrollbar-gutter:stable]">
@@ -1015,7 +1001,7 @@ export function DashboardPage() {
           {/* 구분선 */}
           <div className="border-border border-t" />
 
-          {/* 섹션: 건강 정보 — 삼성 Health 데이터 기반 요약 / 피드백 / 권장 사항 */}
+          {/* 섹션: 건강 정보 */}
           <motion.section
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -1031,22 +1017,41 @@ export function DashboardPage() {
               </span>
             </div>
 
-            <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {healthMetricCards.map((card) => (
-                <HealthMetricCard
-                  key={card.detail.title}
-                  icon={card.icon}
-                  label={card.label}
-                  value={card.value}
-                  unit={card.unit}
-                  progress={card.progress}
-                  hint={card.hint}
-                  detail={card.detail}
-                  expanded={expandedHealthGroups.includes(card.detail.title)}
-                  onToggle={() => toggleHealthGroup(card.detail.title)}
-                />
-              ))}
-            </div>
+            {healthLoading ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {[...Array(4)].map((_, i) => (
+                  <div
+                    key={i}
+                    className="border-border bg-card h-24 animate-pulse rounded-xl border"
+                  />
+                ))}
+              </div>
+            ) : healthMetricCards.length === 0 ? (
+              <div className="border-border bg-card flex flex-col items-center justify-center gap-2 rounded-xl border px-4 py-10">
+                <Activity className="text-muted-foreground h-8 w-8" />
+                <p className="text-muted-foreground text-sm">건강 데이터가 없습니다.</p>
+                <p className="text-muted-foreground text-xs">
+                  Samsung Health 앱에서 데이터를 연동해 주세요.
+                </p>
+              </div>
+            ) : (
+              <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {healthMetricCards.map((card) => (
+                  <HealthMetricCard
+                    key={card.detail.title}
+                    icon={card.icon}
+                    label={card.label}
+                    value={card.value}
+                    unit={card.unit}
+                    progress={card.progress}
+                    hint={card.hint}
+                    detail={card.detail}
+                    expanded={expandedHealthGroups.includes(card.detail.title)}
+                    onToggle={() => toggleHealthGroup(card.detail.title)}
+                  />
+                ))}
+              </div>
+            )}
 
             <div className="border-border bg-card rounded-xl border p-4">
               <div className="mb-3 flex items-center gap-3">
@@ -1060,26 +1065,12 @@ export function DashboardPage() {
                   </p>
                 </div>
               </div>
-
-              <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1.3fr]">
-                <div className="bg-muted/35 rounded-lg p-3">
-                  <p className="text-muted-foreground mb-1 text-xs">오늘의 요약</p>
-                  <p className="text-foreground text-sm leading-relaxed">
-                    심박과 혈압은 안정적이며 활동량은 중간 수준입니다. 수면 시간이 짧아 회복 지표가
-                    우선 관리 대상입니다.
-                  </p>
-                </div>
-                <ul className="space-y-2">
-                  {HEALTH_RECOMMENDATIONS.map((tip) => (
-                    <li
-                      key={tip}
-                      className="text-foreground/85 flex items-start gap-2 text-xs leading-relaxed"
-                    >
-                      <span className="bg-switch-on/80 mt-1.5 h-1 w-1 shrink-0 rounded-full" />
-                      <span>{tip}</span>
-                    </li>
-                  ))}
-                </ul>
+              <div className="bg-muted/35 rounded-lg p-3">
+                <p className="text-muted-foreground mb-1 text-xs">오늘의 요약</p>
+                <p className="text-foreground text-sm leading-relaxed">
+                  심박과 혈압은 안정적이며 활동량은 중간 수준입니다. 수면 시간이 짧아 회복 지표가
+                  우선 관리 대상입니다.
+                </p>
               </div>
             </div>
           </motion.section>

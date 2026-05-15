@@ -5,6 +5,7 @@ import { ChatComposer } from '@/components/chat/ChatComposer'
 import { ChatEmptyState } from '@/components/chat/ChatEmptyState'
 import { ChatMessageList } from '@/components/chat/ChatMessageList'
 import type { ChatConnectionState } from '@/components/chat/chatTypes'
+import { PrototypePanel } from '@/components/prototype/PrototypePanel'
 import { StepRunActivityPanel } from '@/components/taskRuns/StepRunActivityPanel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -62,6 +63,11 @@ export function ChatSessionPage() {
   const accessToken = useAuthStore((state) => state.accessToken)
   const activityOpen = useUIStore((state) => state.taskActivityPanelOpen)
   const setActivityOpen = useUIStore((state) => state.setTaskActivityPanelOpen)
+  const setSessionWorkspaceCollapsed = useUIStore((state) => state.setSessionWorkspaceCollapsed)
+  const prototypePanelSessionId = useUIStore((state) => state.prototypePanelSessionId)
+  const prototypePanelOpenRequest = useUIStore((state) => state.prototypePanelOpenRequest)
+  const requestPrototypePanel = useUIStore((state) => state.requestPrototypePanel)
+  const prototypeAutoCollapsedSessionIdsRef = useRef<Set<string>>(new Set())
 
   const storeMessages = useChatStore((state) =>
     sessionId === '' ? EMPTY_MESSAGES : (state.messagesBySessionId[sessionId] ?? EMPTY_MESSAGES),
@@ -74,6 +80,7 @@ export function ChatSessionPage() {
     sessionId === '' ? undefined : state.sessionsById[sessionId],
   )
   const fetchMessages = useChatStore((state) => state.fetchMessages)
+  const addExternalTaskPlaceholder = useChatStore((state) => state.addExternalTaskPlaceholder)
   const sendMessage = useChatStore((state) => state.sendMessage)
   const fetchSessionWork = useWorkStore((state) => state.fetchSessionWork)
   const workItems = useWorkStore((state) =>
@@ -491,14 +498,45 @@ export function ChatSessionPage() {
     selectedWork ?? findWorkByTaskRunId(workItems, visibleTaskRunId) ?? latestLinkedWorkEvent?.work
   const visibleTaskRunSummary =
     visibleTaskRunId === undefined ? undefined : taskRunSummariesById[visibleTaskRunId]
+  const visibleTaskRunStatus =
+    visibleTaskRunId === undefined ? undefined : taskRunsById[visibleTaskRunId]?.status
   const hasActiveChatTurn =
     activeSessionTaskRunId !== undefined ||
+    (visibleTaskRunStatus !== undefined && isLiveTaskRunStatus(visibleTaskRunStatus)) ||
     messages.some(
       (message) =>
         message.status === 'optimistic' ||
         message.status === 'streaming' ||
         message.status === 'waiting',
     )
+  const prototypePanelRequested = prototypePanelSessionId === sessionId
+
+  const handlePrototypeArtifactVisible = useCallback(() => {
+    requestPrototypePanel(sessionId)
+    if (!prototypeAutoCollapsedSessionIdsRef.current.has(sessionId)) {
+      prototypeAutoCollapsedSessionIdsRef.current.add(sessionId)
+      setSessionWorkspaceCollapsed(true)
+    }
+  }, [requestPrototypePanel, sessionId, setSessionWorkspaceCollapsed])
+
+  useEffect(() => {
+    if (
+      !sessionId ||
+      visibleTaskRunId === undefined ||
+      visibleTaskRunStatus === undefined ||
+      !isLiveTaskRunStatus(visibleTaskRunStatus)
+    ) {
+      return
+    }
+    const hasAssistantForTask = messages.some(
+      (message) => message.role === 'assistant' && message.taskRunId === visibleTaskRunId,
+    )
+    if (hasAssistantForTask) {
+      return
+    }
+    addExternalTaskPlaceholder(sessionId, visibleTaskRunId)
+  }, [addExternalTaskPlaceholder, messages, sessionId, visibleTaskRunId, visibleTaskRunStatus])
+
   const isStreaming = messages.some(
     (message) => message.role === 'assistant' && message.status === 'streaming',
   )
@@ -608,6 +646,15 @@ export function ChatSessionPage() {
         onSelectTaskRun={setSelectedTaskRunId}
         onFocusTaskRunMessage={handleFocusTaskRunMessage}
       />
+      {!isPendingSession && (
+        <PrototypePanel
+          sessionId={sessionId}
+          openHint={prototypePanelRequested}
+          pollForArtifact={hasActiveChatTurn}
+          reopenSignal={prototypePanelOpenRequest}
+          onArtifactVisible={handlePrototypeArtifactVisible}
+        />
+      )}
     </main>
   )
 }

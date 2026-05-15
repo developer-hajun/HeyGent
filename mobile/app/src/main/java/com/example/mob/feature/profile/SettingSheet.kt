@@ -27,13 +27,13 @@ import com.example.mob.ui.theme.NavyPrimary
 import com.example.mob.ui.theme.TextPrimary
 import com.example.mob.ui.theme.TextSecondary
 
-private enum class SettingPage { GENERAL, SKILL, MODEL, PERSONALIZE, API_KEY }
+private enum class SettingPage { MODEL, API_KEY }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingSheet(
     onDismiss: () -> Unit,
-    agentName: String = "Jarvis",
+    agentName: String = "HeyGent",
     onAgentNameChange: (String) -> Unit = {}
 ) {
     var currentPage by remember { mutableStateOf<SettingPage?>(null) }
@@ -55,9 +55,7 @@ fun SettingSheet(
                 SettingSubPage(
                     page = currentPage!!,
                     onBack = { currentPage = null },
-                    onDismiss = onDismiss,
-                    agentName = agentName,
-                    onAgentNameChange = onAgentNameChange
+                    onDismiss = onDismiss
                 )
             }
         }
@@ -72,10 +70,7 @@ private fun SettingMainPage(
     Column(modifier = Modifier.padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
         SheetHeader(title = "설정", onClose = onDismiss)
         Spacer(modifier = Modifier.height(8.dp))
-        SettingRow(Icons.AutoMirrored.Filled.KeyboardArrowRight, "일반") { onNavigate(SettingPage.GENERAL) }
-        SettingRow(Icons.Default.Bolt, "스킬 목록") { onNavigate(SettingPage.SKILL) }
         SettingRow(Icons.Default.Storage, "모델") { onNavigate(SettingPage.MODEL) }
-        SettingRow(Icons.Default.Palette, "개인 맞춤 설정") { onNavigate(SettingPage.PERSONALIZE) }
         SettingRow(Icons.Default.Key, "API 키") { onNavigate(SettingPage.API_KEY) }
     }
 }
@@ -84,15 +79,10 @@ private fun SettingMainPage(
 private fun SettingSubPage(
     page: SettingPage,
     onBack: () -> Unit,
-    onDismiss: () -> Unit,
-    agentName: String,
-    onAgentNameChange: (String) -> Unit
+    onDismiss: () -> Unit
 ) {
     val title = when (page) {
-        SettingPage.GENERAL -> "일반"
-        SettingPage.SKILL -> "스킬 목록"
         SettingPage.MODEL -> "모델"
-        SettingPage.PERSONALIZE -> "개인 맞춤 설정"
         SettingPage.API_KEY -> "API 키"
     }
     Column(
@@ -104,58 +94,8 @@ private fun SettingSubPage(
         SheetHeader(title = title, onClose = onDismiss, onBack = onBack)
         Spacer(modifier = Modifier.height(8.dp))
         when (page) {
-            SettingPage.GENERAL -> GeneralContent()
-            SettingPage.SKILL -> SkillContent()
             SettingPage.MODEL -> ModelContent()
-            SettingPage.PERSONALIZE -> PersonalizeContent(agentName = agentName, onAgentNameChange = onAgentNameChange)
             SettingPage.API_KEY -> ApiKeyContent()
-        }
-    }
-}
-
-// ────────────────────────────── 일반 ──────────────────────────────
-
-@Composable
-private fun GeneralContent() {}
-
-// ────────────────────────────── 스킬 목록 ──────────────────────────────
-
-@Composable
-private fun SkillContent() {
-    data class Skill(val name: String, val desc: String, var enabled: Boolean)
-    val skills = remember {
-        mutableStateListOf(
-            Skill("깃허브 PR 리뷰", "Pull Request를 자동으로 분석하고 리뷰합니다", true),
-            Skill("리마인드 생성", "일정과 알림을 자동으로 생성하고 관리합니다", true),
-            Skill("식단 추천", "개인 맞춤 식단을 추천합니다", true),
-            Skill("헬스 커넥트 조회", "건강 데이터를 조회하고 분석합니다", false),
-            Skill("IoT 알림 전송", "IoT 기기로 알림을 전송합니다", true)
-        )
-    }
-
-    Text("Heygent가 사용할 수 있는 스킬을 관리합니다", fontSize = 13.sp, color = TextSecondary)
-    Spacer(modifier = Modifier.height(16.dp))
-
-    skills.forEachIndexed { i, skill ->
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            colors = CardDefaults.cardColors(containerColor = Color(0xFFF8F8F8)),
-            elevation = CardDefaults.cardElevation(0.dp)
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(skill.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
-                    Text(skill.desc, fontSize = 12.sp, color = TextSecondary)
-                }
-                Switch(
-                    checked = skill.enabled,
-                    onCheckedChange = { skills[i] = skill.copy(enabled = it) },
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = NavyPrimary)
-                )
-            }
         }
     }
 }
@@ -341,31 +281,6 @@ private fun ModelContent() {
             Text(text = errorMsg!!, fontSize = 13.sp, color = Color(0xFFE53935))
         }
     }
-}
-
-// ────────────────────────────── 개인 맞춤 설정 ──────────────────────────────
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun PersonalizeContent(agentName: String, onAgentNameChange: (String) -> Unit) {
-    var voiceName by remember { mutableStateOf(agentName) }
-
-    Text("에이전트 이름을 설정합니다", fontSize = 13.sp, color = TextSecondary)
-    Spacer(modifier = Modifier.height(20.dp))
-
-    Text("에이전트 이름", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = TextPrimary)
-    Text("에이전트를 호출할 이름을 설정합니다.", fontSize = 12.sp, color = TextSecondary)
-    Spacer(modifier = Modifier.height(8.dp))
-    OutlinedTextField(
-        value = voiceName,
-        onValueChange = {
-            voiceName = it
-            onAgentNameChange(it)
-        },
-        modifier = Modifier.fillMaxWidth(),
-        singleLine = true,
-        shape = RoundedCornerShape(8.dp)
-    )
 }
 
 // ────────────────────────────── API 키 ──────────────────────────────

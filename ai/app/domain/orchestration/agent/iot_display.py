@@ -9,7 +9,7 @@ from app.domain.tasks.models import StepRun, TaskRun
 logger = logging.getLogger(__name__)
 
 
-DEVICE_TEXT_MAX_CHARS = 12
+DEVICE_TEXT_MAX_CHARS = 8
 
 
 class IotDisplayEventAdapter:
@@ -111,7 +111,7 @@ class IotDisplayEventAdapter:
                 True,
             )
         if event_type in {"task.completed"}:
-            return self._mapping("DONE", "SUCCESS", "답변 완료", "DONE_SUCCESS", 3000, 70, "SUCCESS", True, "SUCCESS")
+            return self._mapping("DONE", "SUCCESS", "성공!", "DONE_SUCCESS", 3000, 70, "SUCCESS", True, "SUCCESS")
         if event_type in {"task.failed"}:
             return self._mapping("FAILED", "ERROR", "답변 실패", "FAILED", 5000, 70, "FAILED", True, "FAILURE")
         if event_type in {"task.canceled", "task.cancelled"}:
@@ -132,38 +132,50 @@ class IotDisplayEventAdapter:
         return None
 
     def _step_mapping(self, *, step: StepRun | None, payload: dict[str, Any]):
+        operation_mapping = self._operation_mapping(step=step, payload=payload)
+        if operation_mapping is not None:
+            return operation_mapping
+
+        agent_detail = self._record(payload.get("agentDetail")) or self._detail_record(step, "agentDetail")
+        display_context = self._record(payload.get("displayContext"))
+        if self._has_worker_context(agent_detail=agent_detail, display_context=display_context):
+            return self._mapping("STEP", "DELEGATE", "위임중", "DELEGATING", 2500, 45, "RUNNING", False)
+
         semantic_key = self._semantic_key(step=step, payload=payload)
         if self._is_research_semantic(semantic_key):
-            return self._mapping("STEP", "SEARCH", "자료 찾는 중", "SEARCHING", 2500, 40, "RUNNING", False)
+            return self._mapping("STEP", "SEARCH", "자료 검색", "SEARCHING", 2500, 40, "RUNNING", False)
         if self._is_write_semantic(semantic_key):
-            return self._mapping("STEP", "WRITE", "답변 작성중", "WRITING_REPLY", 2500, 40, "RUNNING", False)
+            return self._mapping("STEP", "WRITE", "답변 작성", "WRITING_REPLY", 2500, 40, "RUNNING", False)
         if self._is_code_semantic(semantic_key):
-            return self._mapping("STEP", "CODE", "코드 수정중", "CODING", 2500, 40, "RUNNING", False)
+            return self._mapping("STEP", "CODE", "코드 수정", "CODING", 2500, 40, "RUNNING", False)
         if self._is_review_semantic(semantic_key):
-            return self._mapping("STEP", "REVIEW", "결과 검토중", "REVIEWING", 2500, 40, "RUNNING", False)
+            return self._mapping("STEP", "REVIEW", "결과 검토", "REVIEWING", 2500, 40, "RUNNING", False)
         semantic_step = self._semantic_step(step=step, payload=payload)
         return self._mapping("STEP", "THINKING", self._device_text(semantic_step) or "작업중", "WORKING", 2500, 30, "RUNNING", False)
 
     def _tool_mapping(self, payload: dict[str, Any]):
-        tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").lower()
+        tool_name = self._tool_name(payload)
+        context_text, context_key = self._contextual_tool_text(tool_name=tool_name, payload=payload)
+        if context_text is not None:
+            return self._mapping("STEP", "SEARCH", context_text, context_key, 2500, 45, "RUNNING", False)
         if self._is_message_tool(tool_name):
-            return self._mapping("STEP", "SEND", "메시지 전송중", "SENDING_MESSAGE", 3000, 50, "RUNNING", False)
+            return self._mapping("STEP", "SEND", "전송중", "SENDING_MESSAGE", 3000, 50, "RUNNING", False)
         if "search" in tool_name:
-            return self._mapping("STEP", "SEARCH", "자료 찾는 중", "SEARCHING", 2500, 45, "RUNNING", False)
+            return self._mapping("STEP", "SEARCH", "자료 검색", "SEARCHING", 2500, 45, "RUNNING", False)
         if "http" in tool_name or "api" in tool_name or "web" in tool_name:
-            return self._mapping("STEP", "TOOL", "HTTP 호출중", "HTTP_CALL", 2500, 45, "RUNNING", False)
+            return self._mapping("STEP", "TOOL", "HTTP 호출", "HTTP_CALL", 2500, 45, "RUNNING", False)
         if "delegate" in tool_name or "session_agent" in tool_name:
-            return self._mapping("STEP", "DELEGATE", "에이전트 작업중", "DELEGATING", 2500, 45, "RUNNING", False)
+            return self._mapping("STEP", "DELEGATE", "위임중", "DELEGATING", 2500, 45, "RUNNING", False)
         if "write_file" in tool_name or tool_name.endswith(".write"):
-            return self._mapping("STEP", "WRITE", "파일 작성중", "TOOL_RUNNING", 2500, 40, "RUNNING", False)
+            return self._mapping("STEP", "WRITE", "파일 작성", "TOOL_RUNNING", 2500, 40, "RUNNING", False)
         if "read_file" in tool_name or tool_name.endswith(".read"):
-            return self._mapping("STEP", "TOOL", "파일 읽는 중", "TOOL_RUNNING", 2500, 40, "RUNNING", False)
+            return self._mapping("STEP", "TOOL", "파일 읽기", "TOOL_RUNNING", 2500, 40, "RUNNING", False)
         if "terminal" in tool_name:
-            return self._mapping("STEP", "TOOL", "터미널 실행중", "TOOL_RUNNING", 2500, 40, "RUNNING", False)
-        return self._mapping("STEP", "TOOL", "도구 실행중", "TOOL_RUNNING", 2500, 40, "RUNNING", False)
+            return self._mapping("STEP", "TOOL", "터미널 실행", "TOOL_RUNNING", 2500, 40, "RUNNING", False)
+        return self._mapping("STEP", "TOOL", "도구 실행", "TOOL_RUNNING", 2500, 40, "RUNNING", False)
 
     def _tool_completed_mapping(self, payload: dict[str, Any]):
-        tool_name = str(payload.get("tool_name") or payload.get("toolName") or "").lower()
+        tool_name = self._tool_name(payload)
         if self._is_message_tool(tool_name):
             return self._mapping("STEP", "SUCCESS", "전송 완료", "STEP_DONE", 1500, 45, "RUNNING", False)
         return self._mapping("STEP", "SUCCESS", "단계 완료", "STEP_DONE", 1500, 35, "RUNNING", False)
@@ -175,8 +187,10 @@ class IotDisplayEventAdapter:
     def _checking_text(self, *, task: TaskRun, payload: dict[str, Any]) -> str:
         topic = self._topic_hint(task=task, payload=payload)
         if topic:
-            return self._device_text(f"{topic} 확인중") or "요청 확인중"
-        return "요청 확인중"
+            if topic == "자료":
+                return "자료 검색"
+            return self._device_text(f"{topic} 확인") or "요청 확인"
+        return "요청 확인"
 
     def _waiting_text_and_key(
         self,
@@ -213,10 +227,10 @@ class IotDisplayEventAdapter:
         model_action = str((model_decision_detail or {}).get("action") or "").strip().lower()
 
         if approval_requested:
-            return "승인 기다리는 중", "WAITING_APPROVAL"
+            return "승인 대기", "WAITING_APPROVAL"
         if model_action in {"ask_user", "request_input", "wait_user"}:
-            return "입력 기다리는 중", "NEED_INPUT"
-        return "입력 기다리는 중", "WAITING_INPUT"
+            return "입력 대기", "NEED_INPUT"
+        return "입력 대기", "WAITING_INPUT"
 
     def _topic_hint(self, *, task: TaskRun, payload: dict[str, Any]) -> str | None:
         candidates = [
@@ -244,7 +258,110 @@ class IotDisplayEventAdapter:
                 return "파일"
             if "검색" in normalized or "search" in lowered:
                 return "자료"
+            if "노션" in normalized or "notion" in lowered:
+                return "노션"
+            if "메일" in normalized or "gmail" in lowered or "email" in lowered:
+                return "메일"
             return self._device_text(self._strip_request_suffix(normalized))
+        return None
+
+    def _operation_mapping(self, *, step: StepRun | None, payload: dict[str, Any]):
+        operation_detail = self._record(payload.get("operationDetail")) or self._detail_record(step, "operationDetail")
+        operation = self._current_operation(operation_detail)
+        if operation is None:
+            return None
+
+        kind = str(operation.get("kind") or operation.get("rawKind") or "").strip().lower()
+        operation_text = " ".join(
+            str(operation.get(key) or "").strip()
+            for key in ("key", "title", "summary")
+            if operation.get(key)
+        ).lower()
+        delegation_tokens = ("delegate", "worker", "agent", "위임", "에이전트")
+        if kind in {"handoff", "delegate"} or any(token in operation_text for token in delegation_tokens):
+            return self._mapping("STEP", "DELEGATE", "위임중", "DELEGATING", 2500, 45, "RUNNING", False)
+        if kind == "summarize" or any(token in operation_text for token in ("summary", "summarize", "요약")):
+            return self._mapping("STEP", "REVIEW", "요약중", "REVIEWING", 2500, 40, "RUNNING", False)
+        if kind == "finalize" or any(token in operation_text for token in ("final", "finish", "마무리")):
+            return self._mapping("STEP", "REVIEW", "마무리중", "REVIEWING", 2500, 40, "RUNNING", False)
+        if kind == "prepare" or any(token in operation_text for token in ("prepare", "plan", "준비", "계획")):
+            return self._mapping("STEP", "START", "요청 확인", "CHECKING_REQUEST", 2500, 35, "RUNNING", False)
+        if kind == "execute":
+            context_text, context_key = self._contextual_tool_text(tool_name=operation_text, payload=payload)
+            if context_text is not None:
+                return self._mapping("STEP", "SEARCH", context_text, context_key, 2500, 45, "RUNNING", False)
+            if "http" in operation_text or "api" in operation_text:
+                return self._mapping("STEP", "TOOL", "HTTP 호출", "HTTP_CALL", 2500, 45, "RUNNING", False)
+        return None
+
+    def _current_operation(self, operation_detail: dict[str, Any] | None) -> dict[str, Any] | None:
+        operations = (operation_detail or {}).get("operations")
+        if not isinstance(operations, list):
+            return None
+        candidates = [operation for operation in operations if isinstance(operation, dict)]
+        if not candidates:
+            return None
+        for status in ("running", "waiting", "pending"):
+            for operation in reversed(candidates):
+                if str(operation.get("status") or "").strip().lower() == status:
+                    return operation
+        return candidates[-1]
+
+    def _has_worker_context(
+        self,
+        *,
+        agent_detail: dict[str, Any] | None,
+        display_context: dict[str, Any] | None,
+    ) -> bool:
+        if (agent_detail or {}).get("workerSessionId"):
+            return True
+        actor_agent = (display_context or {}).get("actorAgent")
+        if isinstance(actor_agent, dict) and str(actor_agent.get("kind") or "").lower() == "worker":
+            return True
+        delegated_agents = (display_context or {}).get("delegatedAgents")
+        return isinstance(delegated_agents, list) and any(isinstance(agent, dict) for agent in delegated_agents)
+
+    def _tool_name(self, payload: dict[str, Any]) -> str:
+        direct = self._plain_text(payload.get("tool_name") or payload.get("toolName") or payload.get("name"))
+        if direct:
+            return direct.lower()
+        operation_detail = self._record(payload.get("operationDetail"))
+        operation = self._current_operation(operation_detail)
+        if operation is None:
+            return ""
+        return " ".join(
+            str(operation.get(key) or "").strip()
+            for key in ("key", "title", "summary")
+            if operation.get(key)
+        ).lower()
+
+    def _contextual_tool_text(self, *, tool_name: str, payload: dict[str, Any]) -> tuple[str | None, str | None]:
+        topic = self._topic_hint_from_payload(payload)
+        source = " ".join(value for value in (tool_name, topic or "") if value)
+        lowered = source.lower()
+        if "날씨" in source or "weather" in lowered:
+            return "날씨 확인", "SEARCHING"
+        if "노션" in source or "notion" in lowered:
+            return "노션 확인", "TOOL_RUNNING"
+        if "메일" in source or "gmail" in lowered or "email" in lowered:
+            return "메일 확인", "TOOL_RUNNING"
+        return None, None
+
+    def _topic_hint_from_payload(self, payload: dict[str, Any]) -> str | None:
+        for key in ("query", "title", "summary", "prompt", "userMessage", "message"):
+            value = self._plain_text(payload.get(key))
+            if value:
+                lowered = value.lower()
+                if "날씨" in value or "weather" in lowered:
+                    return "날씨"
+                if "노션" in value or "notion" in lowered:
+                    return "노션"
+                if "메일" in value or "gmail" in lowered or "email" in lowered:
+                    return "메일"
+                if "메타모스트" in value or "mattermost" in lowered:
+                    return "메시지"
+                if "검색" in value or "search" in lowered:
+                    return "자료"
         return None
 
     def _strip_request_suffix(self, value: str) -> str:
@@ -344,4 +461,4 @@ class IotDisplayEventAdapter:
         normalized = self._plain_text(value)
         if not normalized:
             return None
-        return normalized[:DEVICE_TEXT_MAX_CHARS]
+        return normalized[:DEVICE_TEXT_MAX_CHARS].strip()

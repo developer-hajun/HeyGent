@@ -73,6 +73,7 @@ type ChatState = {
   }) => Promise<RawAiSession | null>
   fetchModelOptions: (sessionId?: string) => Promise<ModelOptionsResultPayload>
   handleRealtimeFrame: (frame: AiRealtimeRawFrame) => void
+  addExternalTaskPlaceholder: (sessionId: string, taskRunId: string) => void
   clearChatState: () => void
 }
 
@@ -185,14 +186,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
         .sendCommand<AiRealtimeRawFrame>('session.messages.list', { sessionId })
       const payload = getFramePayload(frame) as SessionMessagesListResultPayload
       const messages = getRawMessageList(payload).map(toChatMessageView)
+      let mergedMessages = messages
 
-      set((state) => ({
-        messagesBySessionId: { ...state.messagesBySessionId, [sessionId]: messages },
-        loadingSessionIds: { ...state.loadingSessionIds, [sessionId]: false },
-        lastError: null,
-      }))
+      set((state) => {
+        mergedMessages = mergeLiveMessagesIntoPersistedList(
+          messages,
+          state.messagesBySessionId[sessionId] ?? [],
+          sessionId,
+        )
+        return {
+          messagesBySessionId: { ...state.messagesBySessionId, [sessionId]: mergedMessages },
+          loadingSessionIds: { ...state.loadingSessionIds, [sessionId]: false },
+          lastError: null,
+        }
+      })
 
-      return messages
+      return mergedMessages
     } catch (error) {
       set((state) => ({
         loadingSessionIds: { ...state.loadingSessionIds, [sessionId]: false },
@@ -405,6 +414,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
       default:
         return
     }
+  },
+  addExternalTaskPlaceholder: (sessionId, taskRunId) => {
+    set((state) => {
+      const existingMessages = state.messagesBySessionId[sessionId] ?? []
+      const hasAssistantTask = existingMessages.some(
+        (message) => message.role === 'assistant' && message.taskRunId === taskRunId,
+      )
+      if (hasAssistantTask) return {}
+
+      return {
+        messagesBySessionId: {
+          ...state.messagesBySessionId,
+          [sessionId]: [
+            ...existingMessages,
+            {
+              id: `assistant_${taskRunId}`,
+              sessionId,
+              role: 'assistant' as const,
+              content: '',
+              status: 'streaming' as const,
+              taskRunId,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+        sessionsById: upsertSessionPreview(state, {
+          sessionId,
+          activeTaskRunId: taskRunId,
+          lastTaskRunStatus: 'RUNNING',
+        }),
+      }
+    })
+    const sessionPanels = useSessionStore.getState().agentPanelsBySessionId[sessionId] ?? []
+    startVisualizationForSession(sessionId, taskRunId, sessionPanels)
+    refreshVisualizationSessionAgents(sessionId, taskRunId)
   },
   clearChatState: () =>
     set({

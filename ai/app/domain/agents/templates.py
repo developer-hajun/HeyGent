@@ -51,7 +51,7 @@ MAIN_AGENT_TEMPLATE = BuiltinAgentTemplate(
     adapter_type="openai",
     model="gpt-5.4",
     profile_image="/assets/agents/ceo/ceo_profile.png",
-    skills=("mattermost-send", "notion"),
+    skills=("mattermost-send", "notion", "awesome-design"),
     documents=(
         (
             "AGENTS.md",
@@ -118,6 +118,7 @@ MAIN_AGENT_TEMPLATE = BuiltinAgentTemplate(
 - 웹 정보가 필요한 최신 이슈는 검색 결과의 날짜와 출처를 확인합니다.
 - 작업 보드 변경은 작업 상태, 담당자, 댓글, 실행 결과가 서로 맞도록 남깁니다.
 - 세션 에이전트에게 맡길 작업은 담당자와 기대 산출물을 구체적으로 적습니다.
+- 제품 아이디어, 프로토타입, 화면 생성, UI 코드 생성 요청은 `awesome-design` skill을 먼저 확인하고 DESIGN.md 프리셋을 적용합니다.
 """,
         ),
     ),
@@ -200,7 +201,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         adapter_type="openai",
         model="gpt-5.4",
         profile_image="/assets/agents/agent03/idle_front.png",
-        skills=("subagent-driven-development", "writing-plans"),
+        skills=("subagent-driven-development", "writing-plans", "awesome-design"),
         documents=(
             (
                 "AGENTS.md",
@@ -278,7 +279,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         adapter_type="openai",
         model="gpt-5.4",
         profile_image="/assets/agents/agent05/idle_front.png",
-        skills=("ux-flow-review",),
+        skills=("ux-flow-review", "awesome-design"),
         documents=(
             (
                 "AGENTS.md",

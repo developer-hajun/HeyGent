@@ -356,7 +356,7 @@ class WakeWordForegroundService : Service(), RecognitionListener {
             CHANNEL_ID,
             "Wake word listener",
             NotificationManager.IMPORTANCE_LOW
-        )
+        ).apply { setShowBadge(false) }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
@@ -405,7 +405,7 @@ class WakeWordForegroundService : Service(), RecognitionListener {
 
     companion object {
         const val ACTION_WAKE_WORD_DETECTED = "com.example.mob.action.WAKE_WORD_DETECTED"
-        private const val CHANNEL_ID = "wake_word_listener"
+        private const val CHANNEL_ID = "wake_word_listener_v2"
         private const val NOTIFICATION_ID = 1001
         private const val WAKE_DETECTED_NOTIFICATION_ID = 1002
         private const val NOTIFICATION_REQUEST_CODE = 2001
