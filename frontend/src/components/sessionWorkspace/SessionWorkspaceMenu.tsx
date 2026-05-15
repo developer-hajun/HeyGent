@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Edit3,
   FolderKanban,
+  GitBranch,
   Loader2,
   Map,
   MessageSquare,
@@ -57,6 +58,7 @@ const MENU_ITEMS: Array<{
 }> = [
   { id: 'chat', label: '채팅', icon: MessageSquare },
   { id: 'visualization', label: '시각화', icon: Map },
+  { id: 'workflow', label: '워크플로우', icon: GitBranch },
   { id: 'issueBoard', label: '작업', icon: FolderKanban },
 ]
 
