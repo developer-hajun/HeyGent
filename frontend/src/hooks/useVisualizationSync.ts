@@ -17,20 +17,16 @@ const DEST_PRIORITY: Record<UIDestination, number> = {
 // step.started 계열 — 에이전트가 실제로 무언가 시작했음을 나타내는 event_type
 const RUNNING_EVENT_TYPES = new Set(['step.started', 'tool.started', 'search.started'])
 
-// actorAgent.profileKey가 없을 때 kind/id로 AGENT_CONFIGS id를 유추한다.
-// 백엔드가 팀장 에이전트의 profileKey를 내려주지 않아 kind 기반 매핑이 필요하다.
-// profileIdMap: 세션 에이전트 패널의 profileId → spriteId(agentXX) 매핑 — 서브에이전트 연동용
+// MD 명세: profileKey는 백엔드 profile key이며 sprite key로 추론하지 않는다.
+// spriteId는 profileIdMap[agent.profileId] → visualKey 경로로만 결정한다.
+// profileIdMap: 세션 에이전트 패널의 profileId → visualKey(agentXX) 매핑 — 서브에이전트 연동용
 function resolveProfileKey(
   agent?: TaskRunAgentRef | null,
   profileIdMap?: Record<string, string>,
 ): string | undefined {
   if (!agent) return undefined
   if (agent.kind === 'main') return 'ceo'
-  const mappedKey = agent.profileId ?? agent.id
-  const fromMap = mappedKey != null ? profileIdMap?.[mappedKey] : undefined
-  if (fromMap) return fromMap
-  if (agent.profileKey) return agent.profileKey
-  if (agent.id) return agent.id
+  if (agent.profileId != null) return profileIdMap?.[agent.profileId]
   return undefined
 }
 

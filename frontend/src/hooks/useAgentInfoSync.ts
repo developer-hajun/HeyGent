@@ -65,10 +65,8 @@ function resolveTaskRunSpriteId(
   const actorAgent = taskRun.displayContext?.actorAgent
   if (!actorAgent) return null
   if (actorAgent.kind === 'main') return 'ceo'
-  const mappedKey = actorAgent.profileId ?? actorAgent.id
-  const fromMap = mappedKey != null ? profileIdMap?.[mappedKey] : undefined
-  if (fromMap) return fromMap
-  return actorAgent.profileKey ?? null
+  if (actorAgent.profileId != null) return profileIdMap?.[actorAgent.profileId] ?? null
+  return null
 }
 
 function resolveSessionTaskRunSpriteId(
@@ -209,9 +207,11 @@ export function useAgentInfoSync(sessionId?: string, profileIdMap?: Record<strin
             }
             // profileId 기준으로 캐시 — profileIdMap이 나중에 도착해도 재매핑 가능
             cachedProfilesRef.current.set(profile.profileId, profileData)
-            // profileIdMap에서 즉시 spriteId를 찾거나 deriveSpriteId 폴백을 사용한다.
+            // visualKey → profileIdMap → deriveSpriteId 순서로 spriteId를 결정한다.
             const spriteId =
-              profileIdMapRef.current?.[profile.profileId] ?? deriveSpriteId(profile.profileImage)
+              profile.visualKey ??
+              profileIdMapRef.current?.[profile.profileId] ??
+              deriveSpriteId(profile.profileImage)
             if (spriteId) updateAgentInfo(spriteId, profileData)
           }
         })
