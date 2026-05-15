@@ -1,7 +1,10 @@
 from __future__ import annotations
+
 import asyncio
 import inspect
-from typing import Any
+import json
+import time
+from typing import Any, Callable, Awaitable
 
 import httpx
 
@@ -17,6 +20,11 @@ from app.domain.providers.model.base import (
     messages_to_responses_input,
     tools_to_responses_tools,
 )
+
+# credential은 짧은 TTL로 캐싱해 LLM 턴마다 발생하는 auth HTTP 왕복을 제거한다.
+_CREDENTIAL_CACHE_TTL = 170.0  # 초 (토큰 유효 시간보다 안전 마진 확보)
+_credential_cache: dict[str, tuple[Any, float]] = {}
+_credential_cache_lock = asyncio.Lock()
 
 
 class OpenAIAPIProvider(BaseProvider):
@@ -152,13 +160,6 @@ class OpenAIAPIProvider(BaseProvider):
                 "tool_choice": tool_choice,
             },
         )
-        if credential_context is not None:
-            self._record_backend_usage(
-                credential_context=credential_context,
-                model=agent_response.model,
-                provider_name=call_provider_name,
-                response=agent_response,
-            )
         return agent_response
 
     async def respond_async(
@@ -168,7 +169,13 @@ class OpenAIAPIProvider(BaseProvider):
         model: str,
         tool_choice: dict[str, Any] | str | None = None,
         runtime_context: dict[str, Any] | None = None,
+        on_text_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> AgentModelResponse:
+        """LLM 응답을 비동기로 요청한다.
+
+        on_text_delta 콜백이 있으면 SSE 스트리밍으로 토큰을 실시간 전달하고,
+        없으면 기존 단일 요청 방식으로 동작한다.
+        """
         if type(self).respond is not OpenAIAPIProvider.respond:
             kwargs: dict[str, Any] = {
                 "messages": messages,
@@ -179,9 +186,10 @@ class OpenAIAPIProvider(BaseProvider):
             if "runtime_context" in inspect.signature(self.respond).parameters:
                 kwargs["runtime_context"] = runtime_context
             return await asyncio.to_thread(self.respond, **kwargs)
+
         requested_model = str(model or self.settings.openai_response_model).strip() or self.settings.openai_response_model
         credential_context = self._credential_context(runtime_context, requested_model)
-        credential = await self._issue_backend_credential(credential_context) if credential_context is not None else None
+        credential = await self._issue_backend_credential_cached(credential_context) if credential_context is not None else None
         api_key = credential.credential if credential is not None else self.settings.openai_api_key
         if not api_key:
             return self._stub_agent_response(messages=messages, model=requested_model)
@@ -194,27 +202,39 @@ class OpenAIAPIProvider(BaseProvider):
             model=call_model,
             tool_choice=tool_choice,
         )
-        response = await self._http_client.post(
-            f"{self.settings.openai_rest_api_base_url.rstrip('/')}/responses",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=request_body,
-            timeout=self.settings.agent_model_request_timeout_seconds,
-        )
-        response.raise_for_status()
-        agent_response = build_agent_model_response(
-            provider_name=call_provider_name,
-            requested_model=call_model,
-            response_json=response.json(),
-            metadata={
-                "mode": "live",
-                "auth_type": self.auth_type,
-                "connected": True,
-                "tool_choice": tool_choice,
-            },
-        )
+
+        if on_text_delta is not None:
+            agent_response = await self._respond_streaming(
+                api_key=api_key,
+                call_model=call_model,
+                call_provider_name=call_provider_name,
+                request_body=request_body,
+                tool_choice=tool_choice,
+                on_text_delta=on_text_delta,
+            )
+        else:
+            response = await self._http_client.post(
+                f"{self.settings.openai_rest_api_base_url.rstrip('/')}/responses",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=request_body,
+                timeout=self.settings.agent_model_request_timeout_seconds,
+            )
+            response.raise_for_status()
+            agent_response = build_agent_model_response(
+                provider_name=call_provider_name,
+                requested_model=call_model,
+                response_json=response.json(),
+                metadata={
+                    "mode": "live",
+                    "auth_type": self.auth_type,
+                    "connected": True,
+                    "tool_choice": tool_choice,
+                },
+            )
+
         if credential_context is not None:
             await self._record_backend_usage(
                 credential_context=credential_context,
@@ -223,6 +243,78 @@ class OpenAIAPIProvider(BaseProvider):
                 response=agent_response,
             )
         return agent_response
+
+    async def _respond_streaming(
+        self,
+        *,
+        api_key: str,
+        call_model: str,
+        call_provider_name: str,
+        request_body: dict[str, Any],
+        tool_choice: dict[str, Any] | str | None,
+        on_text_delta: Callable[[str], Awaitable[None]],
+    ) -> AgentModelResponse:
+        """SSE 스트리밍으로 LLM 응답을 받고, 텍스트 델타를 즉시 콜백으로 전달한다.
+
+        response.completed 이벤트에 완전한 응답 객체가 포함되므로
+        이를 build_agent_model_response에 넘겨 기존 파싱 로직을 재사용한다.
+        """
+        stream_body = {**request_body, "stream": True}
+        completed_response_json: dict[str, Any] | None = None
+
+        async with self._http_client.stream(
+            "POST",
+            f"{self.settings.openai_rest_api_base_url.rstrip('/')}/responses",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=stream_body,
+            timeout=self.settings.agent_model_stream_timeout_seconds,
+        ) as response:
+            response.raise_for_status()
+            async for raw_line in response.aiter_lines():
+                line = raw_line.strip()
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    event_data = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+
+                event_type = event_data.get("type", "")
+
+                if event_type == "response.output_text.delta":
+                    delta = str(event_data.get("delta") or "")
+                    if delta:
+                        try:
+                            await on_text_delta(delta)
+                        except Exception:
+                            pass
+
+                elif event_type == "response.completed":
+                    inner = event_data.get("response")
+                    if isinstance(inner, dict):
+                        completed_response_json = inner
+
+        if completed_response_json is None:
+            # 스트림이 response.completed 없이 끊긴 경우 빈 응답으로 처리한다.
+            completed_response_json = {"id": "", "output": [], "usage": {}}
+
+        return build_agent_model_response(
+            provider_name=call_provider_name,
+            requested_model=call_model,
+            response_json=completed_response_json,
+            metadata={
+                "mode": "live_stream",
+                "auth_type": self.auth_type,
+                "connected": True,
+                "tool_choice": tool_choice,
+            },
+        )
 
     async def aclose(self) -> None:
         if self._owns_http_client:
@@ -274,6 +366,32 @@ class OpenAIAPIProvider(BaseProvider):
             "model": model,
         }
 
+    async def _issue_backend_credential_cached(self, context: dict[str, str]):
+        """backend credential을 TTL 캐시에서 반환해 LLM 턴마다 발생하는 HTTP 왕복을 제거한다."""
+        cache_key = f"{context['user_id']}:{context['provider_name']}:{context['model']}"
+        now = time.monotonic()
+
+        async with _credential_cache_lock:
+            cached = _credential_cache.get(cache_key)
+            if cached is not None:
+                credential, expires_at = cached
+                if now < expires_at:
+                    return credential
+
+        try:
+            credential = await self.backend_ai_client.issue_credential(
+                user_id=context["user_id"],
+                provider_name=context["provider_name"],
+                model=context["model"],
+            )
+        except BackendAiClientError:
+            raise
+
+        async with _credential_cache_lock:
+            _credential_cache[cache_key] = (credential, now + _CREDENTIAL_CACHE_TTL)
+
+        return credential
+
     async def _issue_backend_credential(self, context: dict[str, str]):
         try:
             return await self.backend_ai_client.issue_credential(
@@ -309,7 +427,6 @@ class OpenAIAPIProvider(BaseProvider):
                 },
             )
         except BackendAiClientError:
-            # 사용량 기록 실패가 사용자 응답 생성을 실패시키지 않도록 모델 응답 경계에서 best-effort로 둔다.
             return
 
     @staticmethod
