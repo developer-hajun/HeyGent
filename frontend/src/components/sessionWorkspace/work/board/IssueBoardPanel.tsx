@@ -12,7 +12,6 @@ import {
   Filter,
   FileText,
   FolderKanban,
-  GitBranch,
   List,
   ListTree,
   Loader2,
@@ -41,11 +40,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  agentProfilesToPanelItems,
-  createDefaultSessionAgents,
-  listSessionAgents,
-} from '@/apis/agents'
 import { addWorkRelation, createChildWork, removeWorkRelation, updateWorkParent } from '@/apis/work'
 import { cn } from '@/components/ui/utils'
 import { useSessionStore } from '@/store/useSessionStore'
@@ -70,7 +64,6 @@ import {
   WorkProductsPanel,
   WorkRecoveryPanel,
 } from './WorkCollaborationPanels'
-import { WorkflowTemplateEditor } from './WorkflowTemplateEditor'
 import {
   arraysEqual,
   assigneeLabel,
@@ -175,7 +168,6 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
   const setWorkItemLabels = useWorkStore((state) => state.setLabels)
   const deleteWorkItem = useWorkStore((state) => state.deleteWorkItem)
   const agentPanelsBySessionId = useSessionStore((state) => state.agentPanelsBySessionId)
-  const setAgentPanelsForSession = useSessionStore((state) => state.setAgentPanelsForSession)
   const assignees = useMemo<BoardAssignee[]>(() => {
     const agentPanels = agentPanelsBySessionId[sessionId] ?? EMPTY_AGENT_PANELS
     return [
@@ -580,23 +572,6 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
     ])
   }
 
-  const ensureDefaultFlowAgents = async (): Promise<BoardAssignee[]> => {
-    if (isPendingSession) return []
-    await createDefaultSessionAgents(sessionId)
-    const profiles = await listSessionAgents(sessionId)
-    const panels = agentProfilesToPanelItems(profiles)
-    setAgentPanelsForSession(sessionId, panels)
-    return [
-      MAIN_AGENT_ASSIGNEE,
-      ...panels.map((panel) => ({
-        id: panel.id,
-        name: panel.agent.name,
-        icon: Bot,
-        templateKey: panel.agent.templateKey,
-      })),
-    ]
-  }
-
   return (
     <section className="bg-background flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden">
       <header className="border-border/70 flex shrink-0 flex-col gap-3 border-b px-6 py-3">
@@ -678,16 +653,6 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
               >
                 <Columns3 className="h-4 w-4" />
               </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                className={cn(viewMode === 'flow' && 'bg-accent text-foreground')}
-                title="Flow"
-                onClick={() => setViewMode('flow')}
-              >
-                <GitBranch className="h-4 w-4" />
-              </Button>
             </div>
             <FilterPopover
               activeFilterCount={activeFilterCount}
@@ -718,13 +683,7 @@ export function IssueBoardPanel({ sessionId }: { sessionId: string }) {
         </div>
       </header>
 
-      {viewMode === 'flow' ? (
-        <WorkflowTemplateEditor
-          assignees={assignees}
-          sessionId={sessionId}
-          onEnsureDefaultAgents={ensureDefaultFlowAgents}
-        />
-      ) : viewMode === 'board' ? (
+      {viewMode === 'board' ? (
         <TodoKanbanBoard
           draggedIssueId={draggedIssueId}
           dragOverStatus={dragOverStatus}

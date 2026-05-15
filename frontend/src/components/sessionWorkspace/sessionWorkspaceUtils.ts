@@ -44,6 +44,9 @@ export function getWorkspacePanelFromPath(pathname: string): WorkspacePanelId | 
   if (panelSlug === 'issue-board') {
     return 'issueBoard'
   }
+  if (panelSlug === 'workflow') {
+    return 'workflow'
+  }
   return null
 }
 
@@ -56,6 +59,9 @@ export function getWorkspacePanelPath(sessionId: string, panelId: WorkspacePanel
   }
   if (panelId === 'issueBoard') {
     return `/session/${sessionId}/workspace/issue-board`
+  }
+  if (panelId === 'workflow') {
+    return `/session/${sessionId}/workspace/workflow`
   }
   return `/session/${sessionId}/workspace/visualization`
 }

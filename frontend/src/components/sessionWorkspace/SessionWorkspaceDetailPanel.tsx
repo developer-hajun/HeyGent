@@ -44,7 +44,7 @@ import {
   formatAgentRunCostUsage,
   formatAgentRunTokenUsage,
 } from '@/components/sessionWorkspace/agentUsageDisplay'
-import { WorkBoardPanel } from '@/components/sessionWorkspace/work/board'
+import { WorkBoardPanel, WorkflowPanel } from '@/components/sessionWorkspace/work/board'
 import { SubAgentsPanel } from '@/components/sessionWorkspace/subAgents'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
@@ -113,6 +113,10 @@ export function SessionWorkspaceDetailPanel({
 
   if (activePanel === 'issueBoard') {
     return <WorkBoardPanel sessionId={sessionId} />
+  }
+
+  if (activePanel === 'workflow') {
+    return <WorkflowPanel sessionId={sessionId} />
   }
 
   if (session === null) {

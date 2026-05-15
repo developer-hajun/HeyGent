@@ -7,9 +7,11 @@ import {
   ChevronRight,
   Edit3,
   FolderKanban,
+  GitBranch,
   Loader2,
   Map,
   MessageSquare,
+  Palette,
   Plus,
   Target,
   Trash2,
@@ -57,6 +59,7 @@ const MENU_ITEMS: Array<{
 }> = [
   { id: 'chat', label: '채팅', icon: MessageSquare },
   { id: 'visualization', label: '시각화', icon: Map },
+  { id: 'workflow', label: '워크플로우', icon: GitBranch },
   { id: 'issueBoard', label: '작업', icon: FolderKanban },
 ]
 
@@ -78,6 +81,8 @@ export function SessionWorkspaceMenu({
   const updateAgentInfo = useAgentVisualizationStore((state) => state.updateAgentInfo)
   const sidebarWidth = useUIStore((state) => state.sidebarWidth)
   const setSidebarWidth = useUIStore((state) => state.setSidebarWidth)
+  const prototypePanelSessionId = useUIStore((state) => state.prototypePanelSessionId)
+  const requestPrototypePanel = useUIStore((state) => state.requestPrototypePanel)
   const { agentPanelsBySessionId } = useSessionStore()
   const sessionDraftName = useSessionStore(
     (state) => state.mainAgentNameDraftBySessionId[sessionId],
@@ -100,6 +105,7 @@ export function SessionWorkspaceMenu({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const showPrototypeButton = prototypePanelSessionId === sessionId
 
   const handleSaveTitle = async () => {
     const trimmed = titleDraft.trim()
@@ -201,6 +207,18 @@ export function SessionWorkspaceMenu({
             <ChevronRight className="h-5 w-5" />
           </button>
         </div>
+        {showPrototypeButton && (
+          <div className="flex h-12 items-center justify-center">
+            <button
+              type="button"
+              onClick={() => requestPrototypePanel(sessionId)}
+              className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-12 w-12 items-center justify-center rounded-xl transition-colors"
+              aria-label="프로토타입 패널 열기"
+            >
+              <Palette className="h-5 w-5" />
+            </button>
+          </div>
+        )}
         <div className="mt-auto flex h-12 items-center justify-center">
           <button
             type="button"
