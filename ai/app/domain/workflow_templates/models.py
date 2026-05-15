@@ -103,6 +103,7 @@ class WorkflowTemplate:
     template_id: str
     owner_key: str
     owner_user_id: int | None
+    session_id: str | None
     name: str
     description: str
     graph: WorkflowTemplateGraph
