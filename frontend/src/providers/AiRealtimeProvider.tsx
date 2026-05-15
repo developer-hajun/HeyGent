@@ -140,9 +140,15 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         useWorkStore.getState().handleRealtimeFrame(frame)
         recoverTaskRunAfterGap(frame)
         if (frame.type === 'task.new') {
-          const taskRunId = (frame as { type: string; taskRunId?: string }).taskRunId
+          const typedFrame = frame as { type: string; taskRunId?: string; sessionId?: string }
+          const taskRunId = typedFrame.taskRunId
+          const sessionId = typedFrame.sessionId
           if (taskRunId && !useAiRealtimeStore.getState().subscriptionsByTaskRunId[taskRunId]) {
             useAiRealtimeStore.getState().subscribeTask(taskRunId, undefined)
+          }
+          if (sessionId && taskRunId) {
+            useChatStore.getState().addExternalTaskPlaceholder(sessionId, taskRunId)
+            void useChatStore.getState().fetchMessages(sessionId)
           }
         }
       })

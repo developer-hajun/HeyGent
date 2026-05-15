@@ -73,6 +73,7 @@ type ChatState = {
   }) => Promise<RawAiSession | null>
   fetchModelOptions: (sessionId?: string) => Promise<ModelOptionsResultPayload>
   handleRealtimeFrame: (frame: AiRealtimeRawFrame) => void
+  addExternalTaskPlaceholder: (sessionId: string, taskRunId: string) => void
   clearChatState: () => void
 }
 
@@ -405,6 +406,36 @@ export const useChatStore = create<ChatState>((set, get) => ({
       default:
         return
     }
+  },
+  addExternalTaskPlaceholder: (sessionId, taskRunId) => {
+    set((state) => {
+      const existingMessages = state.messagesBySessionId[sessionId] ?? []
+      const hasTask = existingMessages.some((m) => m.taskRunId === taskRunId)
+      if (hasTask) return {}
+
+      return {
+        messagesBySessionId: {
+          ...state.messagesBySessionId,
+          [sessionId]: [
+            ...existingMessages,
+            {
+              id: `assistant_${taskRunId}`,
+              sessionId,
+              role: 'assistant' as const,
+              content: '',
+              status: 'streaming' as const,
+              taskRunId,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+        sessionsById: upsertSessionPreview(state, {
+          sessionId,
+          activeTaskRunId: taskRunId,
+          lastTaskRunStatus: 'RUNNING',
+        }),
+      }
+    })
   },
   clearChatState: () =>
     set({
