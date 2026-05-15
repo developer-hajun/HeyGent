@@ -38,18 +38,17 @@ public class ComposioService {
     // Notion 연결 URL 생성
     public String getNotionConnectUrl(Long userId) {
         HttpHeaders headers = buildHeaders();
+        // Composio 정책 변경: /connected_accounts/link 로 호출. auth_config_id + user_id 평면 구조.
         Map<String, Object> body = Map.of(
-            "auth_config", Map.of("id", integrationId),
-            "connection", Map.of(
-                "user_id", userId.toString(),
-                "redirect_uri", redirectUri
-            )
+            "auth_config_id", integrationId,
+            "user_id", userId.toString(),
+            "callback_url", redirectUri
         );
 
         try {
             log.info("[Composio] 연결 URL 요청 - userId: {}, body: {}", userId, body);
             Map response = restTemplate.postForObject(
-                BASE_URL + "/connected_accounts",
+                BASE_URL + "/connected_accounts/link",
                 new HttpEntity<>(body, headers),
                 Map.class
             );

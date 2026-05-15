@@ -140,6 +140,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         useTaskRunStore.getState().handleRealtimeFrame(frame)
         useWorkStore.getState().handleRealtimeFrame(frame)
         recoverTaskRunAfterGap(frame)
+        subscribeChildTaskRunFromParentEvent(socketClient, frame)
         if (frame.type === 'task.new') {
           const typedFrame = frame as { type: string; taskRunId?: string; sessionId?: string }
           const taskRunId = typedFrame.taskRunId
@@ -187,7 +188,6 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
           setCommandClient(commandClient)
           setAuthStatus('authenticated')
           setConnectionStatus('authenticated')
-          socketClient.subscribeAll()
           void useChatStore
             .getState()
             .fetchSessions()
@@ -437,6 +437,71 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         .catch((error) => {
           setLastError(
             error instanceof Error ? error.message : 'TaskRun 이벤트 복구에 실패했습니다.',
+          )
+        })
+    }
+
+    const subscribeChildTaskRunFromParentEvent = (
+      socketClient: TaskRunSocketClient,
+      frame: { type: string; payload?: unknown; data?: unknown },
+    ) => {
+      if (frame.type !== 'task.event') {
+        return
+      }
+
+      const taskEvent = getFramePayload(frame)
+      if (!isJsonObject(taskEvent)) {
+        return
+      }
+
+      const eventPayload = taskEvent.payload
+      if (!isJsonObject(eventPayload)) {
+        return
+      }
+
+      const reason = getStringField(eventPayload, 'reason')
+      if (reason === undefined || !reason.startsWith('session_agent_work.')) {
+        return
+      }
+
+      const parentTaskRunId = getStringField(taskEvent, 'task_run_id', 'taskRunId')
+      const childTaskRunId =
+        getStringField(eventPayload, 'childTaskRunId', 'child_task_run_id') ??
+        getStringField(eventPayload, 'taskRunId', 'task_run_id')
+
+      if (
+        childTaskRunId === undefined ||
+        childTaskRunId === parentTaskRunId ||
+        autoSubscribedChildTaskRunsRef.current.has(childTaskRunId)
+      ) {
+        return
+      }
+
+      autoSubscribedChildTaskRunsRef.current.add(childTaskRunId)
+
+      try {
+        useAiRealtimeStore
+          .getState()
+          .subscribeTask(childTaskRunId, getRecoveryLastSequence(childTaskRunId))
+      } catch (error) {
+        setLastError(error instanceof Error ? error.message : 'child TaskRun 구독에 실패했습니다.')
+        return
+      }
+
+      void useTaskRunStore
+        .getState()
+        .recoverTaskRun(childTaskRunId)
+        .then(() => {
+          if (socketRef.current !== socketClient || !socketClient.isAuthenticated()) {
+            return
+          }
+          useAiRealtimeStore
+            .getState()
+            .subscribeTask(childTaskRunId, getRecoveryLastSequence(childTaskRunId), { force: true })
+        })
+        .catch((error) => {
+          setLastError(
+            error instanceof Error ? error.message : 'child TaskRun 이벤트 복구에 실패했습니다.',
           )
         })
     }

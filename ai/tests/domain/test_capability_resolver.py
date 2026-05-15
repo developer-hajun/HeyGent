@@ -15,6 +15,10 @@ class DummySkillRegistry:
                 "metadata": {"runtime": {"required_toolsets": ["messaging"]}},
                 "body": "`mattermost.send` runtime tool 로 메시지를 보낸다.",
             },
+            "notion": {
+                "name": "notion",
+                "body": "`notion.execute` runtime tool 로 Notion 프록시 명령을 실행한다.",
+            },
         }
 
 
@@ -43,6 +47,19 @@ def test_capability_resolver_uses_skill_metadata_runtime_toolsets():
 
     assert capabilities.enabled_toolsets == ("skills", "messaging")
     assert "mattermost.send" in capabilities.enabled_tool_names
+
+
+def test_capability_resolver_adds_notion_toolset_from_skill_body():
+    capabilities = resolve_task_capabilities(
+        {
+            "enabled_toolsets": ["skills"],
+            "enabledSkillNames": ["notion"],
+        },
+        skill_registry=DummySkillRegistry(),
+    )
+
+    assert capabilities.enabled_toolsets == ("skills", "notion")
+    assert "notion.execute" in capabilities.enabled_tool_names
 
 
 def test_capability_resolver_opens_skill_toolsets_without_requested_toolsets():

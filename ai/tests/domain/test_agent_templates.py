@@ -29,6 +29,10 @@ def test_main_agent_template_includes_mattermost_send_skill():
     assert "mattermost-send" in MAIN_AGENT_TEMPLATE.skills
 
 
+def test_main_agent_template_includes_notion_skill():
+    assert "notion" in MAIN_AGENT_TEMPLATE.skills
+
+
 def test_main_agent_template_uses_team_lead_display_copy():
     assert MAIN_AGENT_TEMPLATE.display_name == "팀장"
     assert MAIN_AGENT_TEMPLATE.name == "팀장"
@@ -50,6 +54,13 @@ def test_builtin_agent_template_skills_exist_in_builtin_catalog():
     assert template_skills
     assert template_skills.isdisjoint(LEGACY_AGENT_SKILL_IDS)
     assert template_skills.issubset(catalog_skill_names)
+
+
+def test_builtin_subagent_templates_do_not_default_to_notion_or_mattermost():
+    restricted_defaults = {"notion", "mattermost-send"}
+
+    for template in BUILTIN_AGENT_TEMPLATES:
+        assert restricted_defaults.isdisjoint(template.skills)
 
 
 def test_k_service_template_includes_korean_life_skills():
@@ -179,7 +190,7 @@ def test_agent_profile_skill_sanitizer_removes_catalog_missing_skills():
         app=SimpleNamespace(
             state=SimpleNamespace(
                 agent_repository=agent_repository,
-                skill_repository=_FakeSkillRepository(["subagent-driven-development"]),
+                skill_repository=_FakeSkillRepository(["notion", "subagent-driven-development"]),
             )
         )
     )
@@ -190,8 +201,8 @@ def test_agent_profile_skill_sanitizer_removes_catalog_missing_skills():
         user=SimpleNamespace(user_id=1),
     )
 
-    assert sanitized["config_snapshot"]["skills"] == ["subagent-driven-development"]
-    assert agent_repository.updated_config["skills"] == ["subagent-driven-development"]
+    assert sanitized["config_snapshot"]["skills"] == ["notion", "subagent-driven-development"]
+    assert agent_repository.updated_config["skills"] == ["notion", "subagent-driven-development"]
 
 
 class _FakeSkillRepository:
