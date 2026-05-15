@@ -64,9 +64,10 @@ export function ChatSessionPage() {
   const activityOpen = useUIStore((state) => state.taskActivityPanelOpen)
   const setActivityOpen = useUIStore((state) => state.setTaskActivityPanelOpen)
   const setSessionWorkspaceCollapsed = useUIStore((state) => state.setSessionWorkspaceCollapsed)
-  const [prototypeRequestedSessionId, setPrototypeRequestedSessionId] = useState<string | null>(
-    null,
-  )
+  const prototypePanelSessionId = useUIStore((state) => state.prototypePanelSessionId)
+  const prototypePanelOpenRequest = useUIStore((state) => state.prototypePanelOpenRequest)
+  const requestPrototypePanel = useUIStore((state) => state.requestPrototypePanel)
+  const prototypeAutoCollapsedSessionIdsRef = useRef<Set<string>>(new Set())
 
   const storeMessages = useChatStore((state) =>
     sessionId === '' ? EMPTY_MESSAGES : (state.messagesBySessionId[sessionId] ?? EMPTY_MESSAGES),
@@ -370,8 +371,11 @@ export function ChatSessionPage() {
     if (!sessionId || isSending) return
     setComposerDraft(null)
     if (hasPrototypeIntent(content)) {
-      setPrototypeRequestedSessionId(sessionId)
-      setSessionWorkspaceCollapsed(true)
+      requestPrototypePanel(sessionId)
+      if (!prototypeAutoCollapsedSessionIdsRef.current.has(sessionId)) {
+        prototypeAutoCollapsedSessionIdsRef.current.add(sessionId)
+        setSessionWorkspaceCollapsed(true)
+      }
     }
 
     if (!authenticatedReady || commandClient === null) {
@@ -511,17 +515,11 @@ export function ChatSessionPage() {
   const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')
   const prototypeRequestActive =
     hasActiveChatTurn && hasPrototypeIntent(latestUserMessage?.content ?? '')
-  const prototypePanelRequested = prototypeRequestedSessionId === sessionId
-
-  useEffect(() => {
-    if (!prototypeRequestActive) return
-    setSessionWorkspaceCollapsed(true)
-  }, [prototypeRequestActive, setSessionWorkspaceCollapsed])
+  const prototypePanelRequested = prototypePanelSessionId === sessionId
 
   const handlePrototypeArtifactVisible = useCallback(() => {
-    setPrototypeRequestedSessionId(sessionId)
-    setSessionWorkspaceCollapsed(true)
-  }, [sessionId, setSessionWorkspaceCollapsed])
+    requestPrototypePanel(sessionId)
+  }, [requestPrototypePanel, sessionId])
 
   const isStreaming = messages.some(
     (message) => message.role === 'assistant' && message.status === 'streaming',
@@ -636,6 +634,7 @@ export function ChatSessionPage() {
         <PrototypePanel
           sessionId={sessionId}
           openHint={prototypeRequestActive || prototypePanelRequested}
+          reopenSignal={prototypePanelOpenRequest}
           onArtifactVisible={handlePrototypeArtifactVisible}
         />
       )}

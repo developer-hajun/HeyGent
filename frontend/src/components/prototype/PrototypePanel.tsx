@@ -7,7 +7,7 @@ import {
   type SandpackFiles,
 } from '@codesandbox/sandpack-react'
 import { Code2, Eye, Loader2, RefreshCw, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { getActivePrototypeArtifact, type PrototypeArtifact } from '@/apis/prototypes'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -16,18 +16,28 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 type PrototypePanelProps = {
   sessionId: string
   openHint: boolean
+  reopenSignal?: number
   onArtifactVisible?: () => void
 }
 
 type LoadState = 'idle' | 'loading' | 'ready' | 'error'
 
-export function PrototypePanel({ sessionId, openHint, onArtifactVisible }: PrototypePanelProps) {
+export function PrototypePanel({
+  sessionId,
+  openHint,
+  reopenSignal,
+  onArtifactVisible,
+}: PrototypePanelProps) {
   const [artifact, setArtifact] = useState<PrototypeArtifact | null>(null)
   const [loadState, setLoadState] = useState<LoadState>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [dismissedVersionId, setDismissedVersionId] = useState<string | null>(null)
+  const [dismissedArtifact, setDismissedArtifact] = useState<{
+    versionId: string
+    reopenSignal?: number
+  } | null>(null)
   const [previewKey, setPreviewKey] = useState(0)
-  const shouldPoll = openHint || artifact === null
+  const notifiedVersionIdRef = useRef<string | null>(null)
+  const shouldPoll = openHint && artifact === null
 
   useEffect(() => {
     let cancelled = false
@@ -40,7 +50,8 @@ export function PrototypePanel({ sessionId, openHint, onArtifactVisible }: Proto
         setArtifact(response.artifact)
         setLoadState('ready')
         setErrorMessage(null)
-        if (response.artifact) {
+        if (response.artifact && notifiedVersionIdRef.current !== response.artifact.versionId) {
+          notifiedVersionIdRef.current = response.artifact.versionId
           onArtifactVisible?.()
         }
       } catch (error) {
@@ -66,7 +77,10 @@ export function PrototypePanel({ sessionId, openHint, onArtifactVisible }: Proto
   }, [onArtifactVisible, sessionId, shouldPoll])
 
   const visible = Boolean(openHint || artifact)
-  const dismissed = artifact?.versionId !== undefined && dismissedVersionId === artifact.versionId
+  const dismissed =
+    artifact?.versionId !== undefined &&
+    dismissedArtifact?.versionId === artifact.versionId &&
+    dismissedArtifact.reopenSignal === reopenSignal
 
   if (!visible || dismissed) {
     return null
@@ -76,7 +90,7 @@ export function PrototypePanel({ sessionId, openHint, onArtifactVisible }: Proto
   const presetLabel = artifact?.designPresetId ?? 'DESIGN.md'
 
   return (
-    <aside className="border-border bg-background flex w-[min(50vw,760px)] min-w-[520px] shrink-0 flex-col border-l">
+    <aside className="border-border bg-background flex h-full min-h-0 w-[min(50vw,760px)] min-w-[520px] shrink-0 flex-col self-stretch overflow-hidden border-l">
       <header className="border-border flex h-12 items-center gap-2 border-b px-3">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
@@ -104,7 +118,9 @@ export function PrototypePanel({ sessionId, openHint, onArtifactVisible }: Proto
           variant="ghost"
           size="icon-sm"
           aria-label="프로토타입 패널 닫기"
-          onClick={() => setDismissedVersionId(artifact?.versionId ?? 'pending')}
+          onClick={() =>
+            setDismissedArtifact({ versionId: artifact?.versionId ?? 'pending', reopenSignal })
+          }
         >
           <X className="h-4 w-4" />
         </Button>
@@ -123,59 +139,66 @@ function PrototypeSandpack({ artifact }: { artifact: PrototypeArtifact }) {
   const files = useMemo(() => buildSandpackFiles(artifact), [artifact])
 
   return (
-    <SandpackProvider
-      files={files}
-      template="react"
-      theme="dark"
-      customSetup={{
-        dependencies: {
-          '@vitejs/plugin-react': '4.3.4',
-          'lucide-react': '0.468.0',
-          motion: '12.23.24',
-          recharts: '2.12.7',
-        },
-        devDependencies: {
-          typescript: '5.6.3',
-          vite: '5.4.11',
-        },
-      }}
-      options={{
-        activeFile: artifact.entryFile || '/src/App.tsx',
-        visibleFiles: Object.keys(files).filter((path) => path.startsWith('/src/')),
-      }}
-    >
-      <Tabs defaultValue="preview" className="flex min-h-0 flex-1 flex-col">
-        <div className="border-border flex h-10 items-center justify-between border-b px-3">
-          <TabsList className="h-8">
-            <TabsTrigger value="preview" className="h-7 gap-1.5 px-2 text-xs">
-              <Eye className="h-3.5 w-3.5" />
-              Preview
-            </TabsTrigger>
-            <TabsTrigger value="code" className="h-7 gap-1.5 px-2 text-xs">
-              <Code2 className="h-3.5 w-3.5" />
-              Code
-            </TabsTrigger>
-          </TabsList>
-          <span className="text-muted-foreground text-[11px]">v{artifact.versionNumber}</span>
-        </div>
-        <TabsContent value="preview" className="m-0 min-h-0 flex-1">
-          <SandpackLayout className="h-full !rounded-none !border-0">
-            <SandpackPreview
-              className="h-full"
-              showNavigator
-              showOpenInCodeSandbox={false}
-              showRefreshButton
-            />
-          </SandpackLayout>
-        </TabsContent>
-        <TabsContent value="code" className="m-0 min-h-0 flex-1">
-          <SandpackLayout className="h-full !rounded-none !border-0">
-            <SandpackFileExplorer className="min-w-48" />
-            <SandpackCodeEditor className="h-full flex-1" showLineNumbers showTabs closableTabs />
-          </SandpackLayout>
-        </TabsContent>
-      </Tabs>
-    </SandpackProvider>
+    <div className="flex min-h-0 flex-1 flex-col bg-[#0b1020] [&_.cm-content]:!text-slate-100 [&_.cm-editor]:!h-full [&_.cm-editor]:!bg-[#0b1020] [&_.cm-gutters]:!border-slate-800 [&_.cm-gutters]:!bg-[#0b1020] [&_.cm-gutters]:!text-slate-500 [&_.cm-line]:!text-slate-100 [&_.cm-scroller]:!h-full [&_.sp-code-editor]:!h-full [&_.sp-code-editor]:!bg-[#0b1020] [&_.sp-file-explorer]:!h-full [&_.sp-file-explorer]:!bg-[#0f172a] [&_.sp-file-explorer]:!text-slate-200 [&_.sp-layout]:!h-full [&_.sp-layout]:!bg-[#0b1020] [&_.sp-preview]:!h-full [&_.sp-preview-container]:!h-full [&_.sp-stack]:!h-full [&_.sp-wrapper]:!h-full [&_iframe]:!h-full">
+      <SandpackProvider
+        files={files}
+        template="react"
+        theme="dark"
+        customSetup={{
+          dependencies: {
+            '@vitejs/plugin-react': '4.3.4',
+            'lucide-react': '0.468.0',
+            motion: '12.23.24',
+            recharts: '2.12.7',
+          },
+          devDependencies: {
+            typescript: '5.6.3',
+            vite: '5.4.11',
+          },
+        }}
+        options={{
+          activeFile: artifact.entryFile || '/src/App.tsx',
+          visibleFiles: Object.keys(files).filter((path) => path.startsWith('/src/')),
+        }}
+      >
+        <Tabs defaultValue="preview" className="flex h-full min-h-0 flex-1 flex-col">
+          <div className="border-border bg-background flex h-10 shrink-0 items-center justify-between border-b px-3">
+            <TabsList className="h-8">
+              <TabsTrigger value="preview" className="h-7 gap-1.5 px-2 text-xs">
+                <Eye className="h-3.5 w-3.5" />
+                Preview
+              </TabsTrigger>
+              <TabsTrigger value="code" className="h-7 gap-1.5 px-2 text-xs">
+                <Code2 className="h-3.5 w-3.5" />
+                Code
+              </TabsTrigger>
+            </TabsList>
+            <span className="text-muted-foreground text-[11px]">v{artifact.versionNumber}</span>
+          </div>
+          <TabsContent value="preview" className="m-0 min-h-0 flex-1 overflow-hidden">
+            <SandpackLayout className="h-full min-h-0 !rounded-none !border-0">
+              <SandpackPreview
+                className="h-full min-h-0"
+                showNavigator
+                showOpenInCodeSandbox={false}
+                showRefreshButton
+              />
+            </SandpackLayout>
+          </TabsContent>
+          <TabsContent value="code" className="m-0 min-h-0 flex-1 overflow-hidden">
+            <SandpackLayout className="h-full min-h-0 !rounded-none !border-0">
+              <SandpackFileExplorer className="h-full min-w-48 shrink-0" />
+              <SandpackCodeEditor
+                className="h-full min-h-0 flex-1"
+                showLineNumbers
+                showTabs
+                closableTabs
+              />
+            </SandpackLayout>
+          </TabsContent>
+        </Tabs>
+      </SandpackProvider>
+    </div>
   )
 }
 
