@@ -38,8 +38,8 @@ const STEP_TERMINAL_EVENT_TYPES = new Set([
   'step.cancelled',
 ])
 
-const TASK_COMPLETED_EVENT_TYPES = new Set(['task.completed', 'session.message.completed'])
-const TASK_FAILED_EVENT_TYPES = new Set(['task.failed', 'session.message.failed'])
+const TASK_COMPLETED_EVENT_TYPES = new Set(['task.completed'])
+const TASK_FAILED_EVENT_TYPES = new Set(['task.failed'])
 const TASK_CANCELED_EVENT_TYPES = new Set(['task.canceled', 'task.cancelled'])
 
 function getTimestamp(value: unknown): number {
@@ -70,6 +70,8 @@ function resolveDestination(
     if (TASK_COMPLETED_EVENT_TYPES.has(latestEvent.event_type)) return 'rest'
     if (TASK_FAILED_EVENT_TYPES.has(latestEvent.event_type)) return 'calling'
     if (TASK_CANCELED_EVENT_TYPES.has(latestEvent.event_type)) return 'rest'
+    // step 단위 종료 이벤트는 task 전체 완료가 아님 — stale taskRun.status로 낙하하지 않도록 null 반환
+    if (STEP_TERMINAL_EVENT_TYPES.has(latestEvent.event_type)) return null
   }
 
   // step 단위 종료 이벤트(step.completed 등)의 status는 task 완료를 의미하지 않음
