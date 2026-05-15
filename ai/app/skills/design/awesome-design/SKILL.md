@@ -1,6 +1,6 @@
 ---
 name: awesome-design
-description: 제품 아이디어, 기획안, 화면 프로토타입, UI 코드 생성, 웹 프리뷰 요청에 DESIGN.md 컬렉션을 적용합니다. 사용자가 "디자인해줘", "화면 만들어줘", "예쁘게 잡아줘", "기획을 화면으로 보여줘", 대시보드/관리콘솔/랜딩/앱 생성처럼 구체적이거나 모호하게 요청해도 사용합니다. `design.list_presets`, `design.read_preset`, `prototype.create_artifact`로 DESIGN.md를 읽고 React 컴포넌트 프로토타입 Artifact를 생성합니다.
+description: 제품 아이디어, 기획안, 웹사이트, 웹페이지, 화면 프로토타입, UI 코드 생성, 웹 프리뷰 요청에 DESIGN.md 컬렉션을 적용합니다. 사용자가 "디자인해줘", "화면/사이트/페이지 만들어줘", "예쁘게 잡아줘", "기획을 화면으로 보여줘", 대시보드/관리콘솔/랜딩/앱/정보성 웹사이트 생성처럼 구체적이거나 모호하게 요청해도 사용합니다. `design.list_presets`, `design.read_preset`, `prototype.create_artifact`로 DESIGN.md를 읽고 React 컴포넌트 프로토타입 Artifact를 생성합니다.
 license: MIT
 metadata:
   category: design
@@ -14,7 +14,8 @@ metadata:
 - 제품 아이디어를 화면으로 구체화해야 할 때
 - 제품 기획 대화 중 바로 확인 가능한 프로토타입 화면이 필요할 때
 - 사용자가 "디자인해줘", "화면 만들어줘", "예쁘게 만들어줘", "UI 잡아줘"처럼 모호하게 요청할 때
-- 사용자가 대시보드, SaaS, 앱 화면, 랜딩 화면, 관리 콘솔, 설정 화면, 온보딩, 결제/가격표, 데이터 테이블 같은 UI 생성을 요청할 때
+- 사용자가 웹사이트, 웹페이지, 사이트, 페이지, 대시보드, SaaS, 앱 화면, 랜딩 화면, 관리 콘솔, 설정 화면, 온보딩, 결제/가격표, 데이터 테이블 같은 UI 생성을 요청할 때
+- 사용자가 날씨/기상예보, 리포트, 지역 정보, 조사 결과처럼 가져온 정보를 화면이나 사이트로 구성해 달라고 요청할 때
 - 사용자가 텍스트 기획안, 제품 설명, 기능 목록, 고객군, 업무 플로우를 화면으로 보고 싶어 할 때
 - 사용자가 기존 화면이나 생성 결과를 더 완성도 있게 다듬어 달라고 할 때
 - 생성된 코드를 웹 프리뷰로 보여줘야 할 때
@@ -37,3 +38,4 @@ metadata:
 - 화면이 복잡하면 `/src/components/...`로 컴포넌트를 분리한다.
 - `prototype.create_artifact`의 `files`에는 파일 경로별 코드를 모두 넣고, `framework`는 `react`, `styling`은 `css` 또는 `mixed`, `entryFile`은 `/src/App.tsx`로 둔다.
 - 코드 탭이나 프리뷰에서 다시 사용할 수 있도록 한 세션 안의 생성 코드는 같은 흐름으로 이어간다.
+- 결과를 보고할 때는 실제 `prototype.create_artifact` 결과의 `artifactId`, `versionId`, `designPresetId`를 기준으로 말한다. 도구 호출 여부를 추측하거나, 이미 Artifact가 생성된 뒤에 스킬을 쓰지 않았다고 단정하지 않는다.

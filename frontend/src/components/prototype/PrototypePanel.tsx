@@ -7,6 +7,7 @@ import {
   type SandpackFiles,
 } from '@codesandbox/sandpack-react'
 import { Code2, Eye, Loader2, RefreshCw, X } from 'lucide-react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { getActivePrototypeArtifact, type PrototypeArtifact } from '@/apis/prototypes'
 import { Button } from '@/components/ui/button'
@@ -21,6 +22,10 @@ type PrototypePanelProps = {
 }
 
 type LoadState = 'idle' | 'loading' | 'ready' | 'error'
+type PrototypeTab = 'preview' | 'code'
+
+const MIN_PROTOTYPE_PANEL_WIDTH = 480
+const MAX_PROTOTYPE_PANEL_WIDTH = 1040
 
 export function PrototypePanel({
   sessionId,
@@ -36,6 +41,8 @@ export function PrototypePanel({
     reopenSignal?: number
   } | null>(null)
   const [previewKey, setPreviewKey] = useState(0)
+  const [activeTab, setActiveTab] = useState<PrototypeTab>('preview')
+  const [panelWidth, setPanelWidth] = useState(() => getInitialPanelWidth())
   const notifiedVersionIdRef = useRef<string | null>(null)
   const shouldPoll = openHint && artifact === null
 
@@ -88,9 +95,50 @@ export function PrototypePanel({
 
   const title = artifact?.title ?? '프로토타입 생성 중'
   const presetLabel = artifact?.designPresetId ?? 'DESIGN.md'
+  const handleResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = panelWidth
+    const previousCursor = document.body.style.cursor
+    const previousUserSelect = document.body.style.userSelect
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const maxWidth =
+        typeof window === 'undefined'
+          ? MAX_PROTOTYPE_PANEL_WIDTH
+          : Math.min(
+              MAX_PROTOTYPE_PANEL_WIDTH,
+              Math.max(MIN_PROTOTYPE_PANEL_WIDTH, window.innerWidth - 360),
+            )
+      const nextWidth = startWidth + startX - moveEvent.clientX
+      setPanelWidth(Math.min(maxWidth, Math.max(MIN_PROTOTYPE_PANEL_WIDTH, nextWidth)))
+    }
+
+    const handlePointerUp = () => {
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousUserSelect
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+  }
 
   return (
-    <aside className="border-border bg-background flex h-full min-h-0 w-[min(50vw,760px)] min-w-[520px] shrink-0 flex-col self-stretch overflow-hidden border-l">
+    <aside
+      className="border-border bg-background relative flex h-full min-h-0 shrink-0 flex-col self-stretch overflow-hidden border-l"
+      style={{ width: panelWidth }}
+    >
+      <div
+        role="separator"
+        aria-label="프로토타입 패널 너비 조절"
+        className="hover:bg-primary/40 absolute top-0 left-0 z-10 h-full w-1 cursor-col-resize bg-transparent transition-colors"
+        onPointerDown={handleResizeStart}
+      />
       <header className="border-border flex h-12 items-center gap-2 border-b px-3">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
@@ -127,7 +175,12 @@ export function PrototypePanel({
       </header>
 
       {artifact ? (
-        <PrototypeSandpack key={`${artifact.versionId}:${previewKey}`} artifact={artifact} />
+        <PrototypeSandpack
+          key={`${artifact.versionId}:${previewKey}`}
+          activeTab={activeTab}
+          artifact={artifact}
+          onTabChange={setActiveTab}
+        />
       ) : (
         <PrototypeLoading loadState={loadState} errorMessage={errorMessage} />
       )}
@@ -135,7 +188,15 @@ export function PrototypePanel({
   )
 }
 
-function PrototypeSandpack({ artifact }: { artifact: PrototypeArtifact }) {
+function PrototypeSandpack({
+  activeTab,
+  artifact,
+  onTabChange,
+}: {
+  activeTab: PrototypeTab
+  artifact: PrototypeArtifact
+  onTabChange: (value: PrototypeTab) => void
+}) {
   const files = useMemo(() => buildSandpackFiles(artifact), [artifact])
 
   return (
@@ -161,21 +222,31 @@ function PrototypeSandpack({ artifact }: { artifact: PrototypeArtifact }) {
           visibleFiles: Object.keys(files).filter((path) => path.startsWith('/src/')),
         }}
       >
-        <Tabs defaultValue="preview" className="flex h-full min-h-0 flex-1 flex-col">
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => onTabChange(value as PrototypeTab)}
+          className="flex h-full min-h-0 flex-1 flex-col"
+        >
           <div className="border-border bg-background flex h-10 shrink-0 items-center justify-between border-b px-3">
-            <TabsList className="h-8">
-              <TabsTrigger value="preview" className="h-7 gap-1.5 px-2 text-xs">
+            <TabsList className="dark:bg-muted dark:text-muted-foreground h-8 bg-slate-200 text-slate-700">
+              <TabsTrigger
+                value="preview"
+                className="dark:data-[state=active]:!bg-background dark:data-[state=active]:!text-foreground h-7 gap-1.5 px-2 text-xs data-[state=active]:!bg-white data-[state=active]:!text-slate-950"
+              >
                 <Eye className="h-3.5 w-3.5" />
                 Preview
               </TabsTrigger>
-              <TabsTrigger value="code" className="h-7 gap-1.5 px-2 text-xs">
+              <TabsTrigger
+                value="code"
+                className="dark:data-[state=active]:!bg-background dark:data-[state=active]:!text-foreground h-7 gap-1.5 px-2 text-xs data-[state=active]:!bg-white data-[state=active]:!text-slate-950"
+              >
                 <Code2 className="h-3.5 w-3.5" />
                 Code
               </TabsTrigger>
             </TabsList>
             <span className="text-muted-foreground text-[11px]">v{artifact.versionNumber}</span>
           </div>
-          <TabsContent value="preview" className="m-0 min-h-0 flex-1 overflow-hidden">
+          <TabsContent forceMount value="preview" className="m-0 min-h-0 flex-1 overflow-hidden">
             <SandpackLayout className="h-full min-h-0 !rounded-none !border-0">
               <SandpackPreview
                 className="h-full min-h-0"
@@ -185,7 +256,7 @@ function PrototypeSandpack({ artifact }: { artifact: PrototypeArtifact }) {
               />
             </SandpackLayout>
           </TabsContent>
-          <TabsContent value="code" className="m-0 min-h-0 flex-1 overflow-hidden">
+          <TabsContent forceMount value="code" className="m-0 min-h-0 flex-1 overflow-hidden">
             <SandpackLayout className="h-full min-h-0 !rounded-none !border-0">
               <SandpackFileExplorer className="h-full min-w-48 shrink-0" />
               <SandpackCodeEditor
@@ -289,4 +360,12 @@ function buildSandpackFiles(artifact: PrototypeArtifact): SandpackFiles {
 function normalizeSandpackPath(path: string) {
   const normalized = path.replaceAll('\\', '/').trim()
   return normalized.startsWith('/') ? normalized : `/${normalized}`
+}
+
+function getInitialPanelWidth() {
+  if (typeof window === 'undefined') return 760
+  return Math.min(
+    MAX_PROTOTYPE_PANEL_WIDTH,
+    Math.max(MIN_PROTOTYPE_PANEL_WIDTH, Math.round(window.innerWidth * 0.5)),
+  )
 }
