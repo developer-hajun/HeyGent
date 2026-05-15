@@ -28,7 +28,11 @@ class BackendMemoryItem:
 
 
 class BackendMemoryClient:
-    """backend 내부 장기기억 API를 호출하는 client이다."""
+    """AI runtime에서 Spring backend 장기기억 API를 호출하는 client이다.
+
+    recall 조회, 기억 후보 저장, 사용 피드백 전달처럼 장기기억의 실제
+    저장소인 backend와 통신하는 경계 역할을 맡는다.
+    """
 
     def __init__(self, *, settings: Settings | None = None, http_client: httpx.AsyncClient | None = None) -> None:
         self._settings = settings or get_settings()
@@ -47,6 +51,7 @@ class BackendMemoryClient:
         scope_type: str | None = None,
         resource_id: str | None = None,
         tags: list[str] | None = None,
+        metadata_categories: list[str] | None = None,
     ) -> list[BackendMemoryItem]:
         """AI 요청 전 prompt에 주입할 장기기억 후보를 조회한다."""
 
@@ -62,6 +67,8 @@ class BackendMemoryClient:
         self._put_if_present(params, "resourceId", resource_id)
         if tags:
             params["tags"] = tags
+        if metadata_categories:
+            params["metadataCategories"] = metadata_categories
 
         try:
             response = await self._http_client.get(
@@ -102,12 +109,14 @@ class BackendMemoryClient:
         user_id: str,
         memory_id: int,
         usefulness_score: float | None = None,
+        source_task_run_id: str | None = None,
     ) -> BackendMemoryItem:
         """AI 응답에 실제 사용한 장기기억을 backend에 피드백한다."""
 
         payload: dict[str, Any] = {"userId": self._coerce_user_id(user_id)}
         if usefulness_score is not None:
             payload["usefulnessScore"] = usefulness_score
+        self._put_if_present(payload, "sourceTaskRunId", source_task_run_id)
 
         try:
             response = await self._http_client.post(

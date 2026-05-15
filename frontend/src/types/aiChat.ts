@@ -83,6 +83,12 @@ export type ChatMessageView = {
   taskRunId?: string
   clientMessageId?: string
   createdAt?: string
+  work?: {
+    id: string
+    identifier?: string
+    title?: string
+    assigneeAgentId?: string | null
+  }
   raw?: RawAiMessage
 }
 

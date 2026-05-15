@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import replace
+from datetime import timedelta
 from typing import Any
 
 from app.contracts.event.task_events import TaskEventEnvelope
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
+from app.domain.orchestration.run_lifecycle import classify_task_run_liveness
+from app.domain.agents import BUILTIN_AGENT_TEMPLATES, DEFAULT_SESSION_TEMPLATE_KEYS, MAIN_AGENT_TEMPLATE
 from app.domain.tasks.models import StepRun, TaskRun
 
 
@@ -30,6 +32,97 @@ class InMemoryTaskRepository:
         task.updated_at = saved.updated_at
         self.tasks[saved.task_run_id] = saved
         return deepcopy(saved)
+
+    def create_pending_task(self, task: TaskRun) -> TaskRun:
+        now = utc_now()
+        task.status = "PENDING"
+        task.queue_status = "queued"
+        task.queued_at = task.queued_at or now
+        task.next_attempt_at = task.next_attempt_at or now
+        task.claim_owner = None
+        task.claimed_at = None
+        task.lease_expires_at = None
+        task.heartbeat_at = None
+        return self.create_task(task)
+
+    def claim_next_task(self, *, claim_owner: str, lease_seconds: int = 300) -> TaskRun | None:
+        now = utc_now()
+        candidates = [
+            task
+            for task in self.tasks.values()
+            if task.queue_status in {"queued", "failed_retry"} and (task.next_attempt_at is None or task.next_attempt_at <= now)
+        ]
+        candidates.sort(key=lambda task: task.queued_at or task.created_at or now)
+        if not candidates:
+            return None
+        task = deepcopy(candidates[0])
+        task.status = "RUNNING"
+        task.queue_status = "claimed"
+        task.claim_owner = claim_owner
+        task.claimed_at = now
+        task.heartbeat_at = now
+        task.lease_expires_at = now + timedelta(seconds=max(1, int(lease_seconds)))
+        task.attempts = int(task.attempts or 0) + 1
+        self.tasks[task.task_run_id] = deepcopy(task)
+        return deepcopy(task)
+
+    def heartbeat_task_claim(self, task_run_id: str, *, claim_owner: str, lease_seconds: int = 300) -> TaskRun | None:
+        task = self.tasks.get(task_run_id)
+        if task is None or task.claim_owner != claim_owner:
+            return None
+        now = utc_now()
+        task.queue_status = "running"
+        task.heartbeat_at = now
+        task.lease_expires_at = now + timedelta(seconds=max(1, int(lease_seconds)))
+        task.updated_at = now
+        return deepcopy(task)
+
+    def fail_task_claim(self, task_run_id: str, *, claim_owner: str, error_message: str, retry: bool = False) -> TaskRun | None:
+        task = self.tasks.get(task_run_id)
+        if task is None or task.claim_owner != claim_owner:
+            return None
+        task.status = "PENDING" if retry else "FAILED"
+        task.queue_status = "failed_retry" if retry else "terminal"
+        task.error_message = error_message
+        task.last_claim_error = error_message
+        task.claim_owner = None
+        task.lease_expires_at = None
+        task.heartbeat_at = None
+        task.next_attempt_at = utc_now() + timedelta(seconds=10) if retry else None
+        task.updated_at = utc_now()
+        if not retry:
+            task.ended_at = task.ended_at or task.updated_at
+        return deepcopy(task)
+
+    def recover_stale_task_run(self, task_run_id: str, *, reason: str) -> TaskRun | None:
+        task = self.tasks.get(task_run_id)
+        if task is None or task.status not in {"PENDING", "RUNNING"}:
+            return None
+        now = utc_now()
+        task.status = "FAILED"
+        task.queue_status = "terminal"
+        task.error_message = "실행 상태가 만료되어 자동 복구되었습니다."
+        task.last_claim_error = reason
+        task.claim_owner = None
+        task.lease_expires_at = None
+        task.heartbeat_at = None
+        task.next_attempt_at = None
+        task.updated_at = now
+        task.ended_at = task.ended_at or now
+        return deepcopy(task)
+
+    def recover_stale_task_runs(self, *, orphan_after_seconds: int = 300, limit: int = 100) -> list[TaskRun]:
+        recovered: list[TaskRun] = []
+        for task in list(self.tasks.values()):
+            if len(recovered) >= max(1, int(limit)):
+                break
+            liveness = classify_task_run_liveness(task, orphan_after_seconds=orphan_after_seconds)
+            if not liveness.should_recover:
+                continue
+            saved = self.recover_stale_task_run(task.task_run_id, reason=liveness.reason)
+            if saved is not None:
+                recovered.append(saved)
+        return recovered
 
     def update_task(self, task: TaskRun) -> TaskRun:
         saved = deepcopy(task)
@@ -377,6 +470,7 @@ class InMemoryTranscriptStore:
         client_message_id: str,
         task_run_id: str,
         base_history_version: int,
+        metadata_patch: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         session = self._require_product_session(owner_key=owner_key, session_id=session_id)
         for message in self.messages.get(session_id, []):
@@ -397,15 +491,18 @@ class InMemoryTranscriptStore:
         current_version = int(session.get("history_version") or 0)
         if current_version != int(base_history_version):
             raise ValueError("history version mismatch")
+        metadata = {
+            "source": "api.session",
+            "client_message_id": client_message_id,
+            "task_run_id": task_run_id,
+        }
+        if metadata_patch:
+            metadata.update(metadata_patch)
         message_id = self.append_message(
             session_id=session_id,
             role="user",
             content=content,
-            metadata={
-                "source": "api.session",
-                "client_message_id": client_message_id,
-                "task_run_id": task_run_id,
-            },
+            metadata=metadata,
         )
         after_version = current_version + 1
         session["history_version"] = after_version
@@ -534,6 +631,339 @@ class InMemoryTranscriptStore:
             if len(results) >= limit:
                 break
         return results
+
+
+class InMemorySkillRepository:
+    storage_backend = "memory"
+
+    def __init__(self) -> None:
+        self.catalog: dict[str, dict[str, Any]] = {}
+        self.user_settings: dict[tuple[str, str], bool] = {}
+        self.agent_settings: dict[str, list[str]] = {}
+
+    def sync_builtin_catalog(self, skills: list[dict[str, Any]]) -> None:
+        for skill in skills:
+            name = str(skill.get("name") or "").strip()
+            if not name:
+                continue
+            self.catalog[name] = {
+                "skill_id": name,
+                "name": name,
+                "display_name": name.replace("-", " ").strip().title() or name,
+                "description": str(skill.get("description") or ""),
+                "source_type": "builtin",
+                "source_path": str(skill.get("path") or "") or None,
+                "version": 1,
+                "default_enabled": True,
+                "enabled": True,
+                "metadata": {"hasBody": bool(str(skill.get("body") or "").strip())},
+                "config_snapshot": {},
+                "body": str(skill.get("body") or ""),
+                "files": [],
+            }
+
+    def list_user_skills(self, *, owner_key: str, owner_user_id: int | None) -> list[dict[str, Any]]:
+        return [self._with_user_enabled(owner_key, item) for item in sorted(self.catalog.values(), key=lambda row: row["name"])]
+
+    def set_user_skill_enabled(
+        self,
+        *,
+        owner_key: str,
+        owner_user_id: int | None,
+        skill_id: str,
+        enabled: bool,
+    ) -> dict[str, Any] | None:
+        if skill_id not in self.catalog:
+            return None
+        self.user_settings[(owner_key, skill_id)] = bool(enabled)
+        return self.get_user_skill(owner_key=owner_key, skill_id=skill_id)
+
+    def get_user_skill(self, *, owner_key: str, skill_id: str) -> dict[str, Any] | None:
+        item = self.catalog.get(skill_id)
+        if item is None:
+            return None
+        return self._with_user_enabled(owner_key, item)
+
+    def get_user_skill_detail(self, *, owner_key: str, skill_id: str) -> dict[str, Any] | None:
+        item = self.get_user_skill(owner_key=owner_key, skill_id=skill_id)
+        return dict(item) if item is not None else None
+
+    def set_agent_skill_settings(self, *, profile_id: str, skill_ids: list[str]) -> None:
+        self.agent_settings[profile_id] = [skill_id for skill_id in dict.fromkeys(skill_ids) if skill_id in self.catalog]
+
+    def effective_skill_names(
+        self,
+        *,
+        owner_key: str,
+        profile_id: str | None = None,
+        requested_skill_names: list[str] | None = None,
+        explicit_agent_selection: bool = False,
+    ) -> list[str]:
+        enabled = {
+            name
+            for name in self.catalog
+            if self.user_settings.get((owner_key, name), self.catalog[name].get("default_enabled", True))
+        }
+        requested = {str(item).strip() for item in requested_skill_names or [] if str(item).strip()}
+        if explicit_agent_selection:
+            return sorted(enabled.intersection(requested))
+        if requested:
+            matched = enabled.intersection(requested)
+            if matched:
+                return sorted(matched)
+        if profile_id and self.agent_settings.get(profile_id):
+            return sorted(enabled.intersection(self.agent_settings[profile_id]))
+        if profile_id:
+            return []
+        return sorted(enabled)
+
+    def _with_user_enabled(self, owner_key: str, item: dict[str, Any]) -> dict[str, Any]:
+        copied = deepcopy(item)
+        copied["enabled"] = bool(self.user_settings.get((owner_key, copied["skill_id"]), copied.get("default_enabled", True)))
+        return copied
+
+
+class InMemoryAgentRepository:
+    storage_backend = "memory"
+
+    def __init__(self) -> None:
+        self.profiles: dict[str, dict[str, Any]] = {}
+        self.bundles: dict[str, dict[str, Any]] = {}
+
+    def ensure_builtin_templates(self) -> None:
+        return None
+
+    def list_templates(self) -> list[dict[str, Any]]:
+        order = {template_key: index for index, template_key in enumerate(DEFAULT_SESSION_TEMPLATE_KEYS)}
+        templates = [self._template_payload(template) for template in BUILTIN_AGENT_TEMPLATES]
+        visible_templates = [
+            template
+            for template in templates
+            if str(template.get("template_key") or template.get("templateKey") or "") in order
+        ]
+        return sorted(
+            visible_templates,
+            key=lambda item: order.get(str(item.get("template_key") or item.get("templateKey") or ""), len(order)),
+        )
+
+    def get_template(self, template_key: str) -> dict[str, Any] | None:
+        for template in [MAIN_AGENT_TEMPLATE, *BUILTIN_AGENT_TEMPLATES]:
+            if template.template_key == template_key:
+                return self._template_payload(template)
+        return None
+
+    def create_default_session_agents(
+        self,
+        *,
+        session_id: str,
+        owner_key: str,
+        owner_user_id: int | None,
+    ) -> list[dict[str, Any]]:
+        self.ensure_session_main_agent(
+            session_id=session_id,
+            owner_key=owner_key,
+            owner_user_id=owner_user_id,
+        )
+        agents: list[dict[str, Any]] = []
+        for template_key in DEFAULT_SESSION_TEMPLATE_KEYS:
+            existing = self.get_session_agent_by_template(
+                session_id=session_id,
+                owner_key=owner_key,
+                template_key=template_key,
+            )
+            if existing is not None:
+                agents.append(existing)
+                continue
+            agents.append(
+                self.create_session_agent_from_template(
+                    session_id=session_id,
+                    owner_key=owner_key,
+                    owner_user_id=owner_user_id,
+                    template_key=template_key,
+                )
+            )
+        return agents
+
+    def create_session_agent_from_template(
+        self,
+        *,
+        session_id: str,
+        owner_key: str,
+        owner_user_id: int | None,
+        template_key: str,
+    ) -> dict[str, Any]:
+        template = self.get_template(template_key)
+        if template is None:
+            raise KeyError(template_key)
+        return self.create_session_agent(
+            session_id=session_id,
+            owner_key=owner_key,
+            owner_user_id=owner_user_id,
+            config_snapshot=dict(template["default_config_snapshot"]),
+            delegation_policy=template.get("default_policy") or {"canDelegate": False},
+            template_key=template_key,
+            agent_type="user_subagent",
+        )
+
+    def ensure_session_main_agent(
+        self,
+        *,
+        session_id: str,
+        owner_key: str,
+        owner_user_id: int | None,
+    ) -> dict[str, Any]:
+        existing = self.get_session_main_agent(session_id=session_id, owner_key=owner_key)
+        if existing is not None:
+            return existing
+        return self.create_session_agent(
+            session_id=session_id,
+            owner_key=owner_key,
+            owner_user_id=owner_user_id,
+            config_snapshot=self._config_snapshot(MAIN_AGENT_TEMPLATE),
+            delegation_policy={"canDelegate": True},
+            template_key=MAIN_AGENT_TEMPLATE.template_key,
+            agent_type="main",
+        )
+
+    def create_session_agent(
+        self,
+        *,
+        session_id: str,
+        owner_key: str,
+        owner_user_id: int | None,
+        config_snapshot: dict[str, Any],
+        delegation_policy: dict[str, Any] | None = None,
+        template_key: str | None = None,
+        agent_type: str = "user_subagent",
+    ) -> dict[str, Any]:
+        profile_id = new_id("agent_profile")
+        bundle_id = new_id("instruction_bundle")
+        profile = {
+            "profile_id": profile_id,
+            "owner_key": owner_key,
+            "owner_user_id": owner_user_id,
+            "session_id": session_id,
+            "profile_key": f"session.{session_id}.{profile_id}",
+            "profile_version": 1,
+            "agent_type": agent_type,
+            "provider_name": config_snapshot.get("adapterType"),
+            "model_name": config_snapshot.get("model"),
+            "config_snapshot": deepcopy(config_snapshot),
+            "delegation_policy": deepcopy(delegation_policy or {"canDelegate": False}),
+            "template_key": template_key,
+            "bundle_id": bundle_id,
+            "entry_document_key": config_snapshot.get("entryDocumentKey") or "AGENTS.md",
+            "instruction_mode": "managed",
+        }
+        self.profiles[profile_id] = profile
+        self.bundles[bundle_id] = {
+            "bundle_id": bundle_id,
+            "profile_id": profile_id,
+            "mode": "managed",
+            "entry_document_key": profile["entry_document_key"],
+            "documents": deepcopy(config_snapshot.get("documents") or []),
+        }
+        return deepcopy(profile)
+
+    def list_session_agents(self, *, session_id: str, owner_key: str) -> list[dict[str, Any]]:
+        return [
+            deepcopy(profile)
+            for profile in self.profiles.values()
+            if profile.get("session_id") == session_id
+            and profile.get("owner_key") == owner_key
+            and profile.get("agent_type") == "user_subagent"
+        ]
+
+    def get_session_main_agent(self, *, session_id: str, owner_key: str) -> dict[str, Any] | None:
+        for profile in self.profiles.values():
+            if (
+                profile.get("session_id") == session_id
+                and profile.get("owner_key") == owner_key
+                and profile.get("agent_type") == "main"
+            ):
+                return deepcopy(profile)
+        return None
+
+    def get_session_agent(self, *, profile_id: str, owner_key: str) -> dict[str, Any] | None:
+        profile = self.profiles.get(profile_id)
+        if profile is None or profile.get("owner_key") != owner_key:
+            return None
+        return deepcopy(profile)
+
+    def update_session_agent(
+        self,
+        *,
+        session_id: str,
+        owner_key: str,
+        profile_id: str,
+        config_snapshot: dict[str, Any],
+        delegation_policy: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        profile = self.profiles.get(profile_id)
+        if profile is None or profile.get("owner_key") != owner_key or profile.get("session_id") != session_id:
+            return None
+        profile["profile_version"] = int(profile.get("profile_version") or 1) + 1
+        profile["provider_name"] = config_snapshot.get("adapterType")
+        profile["model_name"] = config_snapshot.get("model")
+        profile["config_snapshot"] = deepcopy(config_snapshot)
+        if delegation_policy is not None:
+            profile["delegation_policy"] = deepcopy(delegation_policy)
+        profile["entry_document_key"] = config_snapshot.get("entryDocumentKey") or "AGENTS.md"
+        bundle = self.bundles.get(str(profile.get("bundle_id") or ""))
+        if bundle is not None:
+            bundle["entry_document_key"] = profile["entry_document_key"]
+            bundle["documents"] = deepcopy(config_snapshot.get("documents") or [])
+        return deepcopy(profile)
+
+    def get_session_agent_by_template(self, *, session_id: str, owner_key: str, template_key: str) -> dict[str, Any] | None:
+        for profile in self.profiles.values():
+            if (
+                profile.get("session_id") == session_id
+                and profile.get("owner_key") == owner_key
+                and profile.get("template_key") == template_key
+                and profile.get("agent_type") == "user_subagent"
+            ):
+                return deepcopy(profile)
+        return None
+
+    def get_instruction_bundle(self, *, profile_id: str, owner_key: str) -> dict[str, Any] | None:
+        profile = self.get_session_agent(profile_id=profile_id, owner_key=owner_key)
+        if profile is None:
+            return None
+        bundle = self.bundles.get(str(profile.get("bundle_id") or ""))
+        if bundle is None:
+            return None
+        return deepcopy(bundle)
+
+    @classmethod
+    def _template_payload(cls, template) -> dict[str, Any]:
+        return {
+            "template_id": f"system:agent-template:{template.template_key}:1",
+            "templateKey": template.template_key,
+            "template_key": template.template_key,
+            "default_config_snapshot": cls._config_snapshot(template),
+            "default_policy": {"canDelegate": False},
+        }
+
+    @staticmethod
+    def _config_snapshot(template) -> dict[str, Any]:
+        return {
+            "templateKey": template.template_key,
+            "displayName": template.display_name,
+            "name": template.name,
+            "role": template.role,
+            "title": template.title,
+            "description": template.description,
+            "adapterType": template.adapter_type,
+            "model": template.model,
+            "profileImage": template.profile_image,
+            "skills": list(template.skills),
+            "entryDocumentKey": "AGENTS.md",
+            "documents": [
+                {"documentKey": key, "displayName": display_name, "content": content}
+                for key, display_name, content in template.documents
+            ],
+        }
 
 
 def _owner_user_id(value: Any) -> int | None:

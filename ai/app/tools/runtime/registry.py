@@ -56,6 +56,8 @@ def _discover_runtime_tool_modules() -> None:
     from app.tools.browser import browser_tool  # noqa: F401
     from app.tools.delegation import delegate_tool  # noqa: F401
     from app.tools.file import file_tools  # noqa: F401
+    from app.tools.messaging import mattermost_tool  # noqa: F401
+    from app.tools.notion import notion_tool  # noqa: F401
     from app.tools.planning import step_tool  # noqa: F401
     from app.tools.planning import todo_tool  # noqa: F401
     from app.tools.session import session_search_tool  # noqa: F401
@@ -63,3 +65,4 @@ def _discover_runtime_tool_modules() -> None:
     from app.tools.skills import skills_tool  # noqa: F401
     from app.tools.terminal import terminal_tool  # noqa: F401
     from app.tools.web import web_tools  # noqa: F401
+    from app.tools.work import session_agent_tool  # noqa: F401

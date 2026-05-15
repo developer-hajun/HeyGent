@@ -1,6 +1,7 @@
 package com.ssafy.heygent.domain.memory.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -33,8 +34,10 @@ import com.ssafy.heygent.domain.memory.entity.MemoryStatus;
 import com.ssafy.heygent.domain.memory.entity.MemoryStoreType;
 import com.ssafy.heygent.domain.memory.entity.MemoryType;
 import com.ssafy.heygent.domain.memory.entity.UserMemory;
+import com.ssafy.heygent.domain.memory.entity.UserMemoryEvent;
 import com.ssafy.heygent.domain.memory.repository.UserMemoryRepository;
 import com.ssafy.heygent.domain.memory.repository.UserMemoryVectorRepository;
+import com.ssafy.heygent.global.exception.CustomException;
 
 @ExtendWith(MockitoExtension.class)
 class UserMemoryServiceEventTest {
@@ -108,6 +111,7 @@ class UserMemoryServiceEventTest {
             null,
             null,
             null,
+            null,
             null
         );
 
@@ -143,7 +147,53 @@ class UserMemoryServiceEventTest {
 
         assertThat(response.getUsedCount()).isEqualTo(1L);
         assertThat(response.getUsefulnessScore()).isEqualTo(0.8);
-        verify(userMemoryEventService).record(memory, MemoryEventType.USED, 0.8, Map.of());
+        verify(userMemoryEventService).record(memory, MemoryEventType.USED, 0.8, Map.of(), null, null);
+    }
+
+    @Test
+    void markUsedWithTaskRunIdIsIdempotent() {
+        UserMemory memory = memory(41L);
+        when(userMemoryRepository.findById(41L)).thenReturn(Optional.of(memory));
+        when(userMemoryEventService.existsEvent(memory, MemoryEventType.USED, "task_1")).thenReturn(true);
+
+        UserMemoryResponse response = userMemoryService.markUsed(USER_ID, 41L, 0.8, "task_1");
+
+        assertThat(response.getUsedCount()).isZero();
+        verify(userMemoryEventService).existsEvent(memory, MemoryEventType.USED, "task_1");
+    }
+
+    @Test
+    void getMemoryEventsReturnsOwnedMemoryEvents() {
+        UserMemory memory = memory(45L);
+        UserMemoryEvent event = memoryEvent(100L, 45L, MemoryEventType.RECALLED);
+        when(userMemoryRepository.findById(45L)).thenReturn(Optional.of(memory));
+        when(userMemoryEventService.findEvents(USER_ID, 45L)).thenReturn(List.of(event));
+
+        var responses = userMemoryService.getMemoryEvents(USER_ID, 45L);
+
+        assertThat(responses).hasSize(1);
+        assertThat(responses.get(0).getId()).isEqualTo(100L);
+        assertThat(responses.get(0).getMemoryId()).isEqualTo(45L);
+        assertThat(responses.get(0).getEventType()).isEqualTo(MemoryEventType.RECALLED);
+        assertThat(responses.get(0).getTaskRunId()).isEqualTo("task-1");
+        assertThat(responses.get(0).getMetadata()).isEqualTo(Map.of("queryProvided", true));
+    }
+
+    @Test
+    void getMemoryEventsRejectsOtherUserMemory() {
+        UserMemory memory = UserMemory.builder()
+            .id(46L)
+            .userId(999L)
+            .memoryType(MemoryType.FACT)
+            .content("다른 사용자 기억")
+            .importance(0.8)
+            .confidence(0.9)
+            .status(MemoryStatus.ACTIVE)
+            .build();
+        when(userMemoryRepository.findById(46L)).thenReturn(Optional.of(memory));
+
+        assertThatThrownBy(() -> userMemoryService.getMemoryEvents(USER_ID, 46L))
+            .isInstanceOf(CustomException.class);
     }
 
     @Test
@@ -170,6 +220,57 @@ class UserMemoryServiceEventTest {
             eq(MemoryEventType.INVALIDATED),
             isNull(),
             eq(Map.of("supersededByMemoryId", 51L, "operationType", MemoryEventType.UPDATED.name()))
+        );
+    }
+
+    @Test
+    void updateInvalidatesAdditionalTargetMemories() {
+        CreateMemoryRequest request = createMemoryRequest();
+        ReflectionTestUtils.setField(request, "operationType", MemoryOperationType.UPDATE);
+        ReflectionTestUtils.setField(request, "targetMemoryId", 50L);
+        ReflectionTestUtils.setField(request, "additionalTargetMemoryIds", List.of(50L, 52L, 53L, 52L));
+        ReflectionTestUtils.setField(request, "updateReason", "충돌하는 기존 선호를 최신 선호로 정리");
+        UserMemory targetMemory = memory(50L);
+        UserMemory additionalTargetMemory = memory(52L);
+        UserMemory anotherAdditionalTargetMemory = memory(53L);
+
+        when(memoryEmbeddingService.embed(anyString())).thenReturn(List.of(0.1, 0.2));
+        when(userMemoryRepository.findById(50L)).thenReturn(Optional.of(targetMemory));
+        when(userMemoryRepository.findById(52L)).thenReturn(Optional.of(additionalTargetMemory));
+        when(userMemoryRepository.findById(53L)).thenReturn(Optional.of(anotherAdditionalTargetMemory));
+        when(userMemoryRepository.save(any(UserMemory.class))).thenAnswer(invocation -> {
+            UserMemory savedMemory = invocation.getArgument(0);
+            ReflectionTestUtils.setField(savedMemory, "id", 51L);
+            return savedMemory;
+        });
+
+        UserMemoryResponse response = userMemoryService.create(USER_ID, request);
+
+        assertThat(response.getId()).isEqualTo(51L);
+        assertThat(targetMemory.getStatus()).isEqualTo(MemoryStatus.INACTIVE);
+        assertThat(additionalTargetMemory.getStatus()).isEqualTo(MemoryStatus.INACTIVE);
+        assertThat(anotherAdditionalTargetMemory.getStatus()).isEqualTo(MemoryStatus.INACTIVE);
+        assertThat(additionalTargetMemory.getSupersededByMemoryId()).isEqualTo(51L);
+        assertThat(anotherAdditionalTargetMemory.getSupersededByMemoryId()).isEqualTo(51L);
+        verify(userMemoryEventService).record(
+            eq(additionalTargetMemory),
+            eq(MemoryEventType.INVALIDATED),
+            isNull(),
+            eq(Map.of(
+                "supersededByMemoryId", 51L,
+                "operationType", MemoryEventType.UPDATED.name(),
+                "additionalTarget", true
+            ))
+        );
+        verify(userMemoryEventService).record(
+            eq(anotherAdditionalTargetMemory),
+            eq(MemoryEventType.INVALIDATED),
+            isNull(),
+            eq(Map.of(
+                "supersededByMemoryId", 51L,
+                "operationType", MemoryEventType.UPDATED.name(),
+                "additionalTarget", true
+            ))
         );
     }
 
@@ -245,6 +346,20 @@ class UserMemoryServiceEventTest {
             .accessCount(0L)
             .usedCount(0L)
             .usefulnessScore(0.0)
+            .build();
+    }
+
+    private UserMemoryEvent memoryEvent(Long id, Long memoryId, MemoryEventType eventType) {
+        return UserMemoryEvent.builder()
+            .id(id)
+            .memoryId(memoryId)
+            .userId(USER_ID)
+            .eventType(eventType)
+            .taskRunId("task-1")
+            .messageId("msg-1")
+            .score(0.8)
+            .metadata(Map.of("queryProvided", true))
+            .createdAt(LocalDateTime.of(2026, 5, 11, 15, 30))
             .build();
     }
 }

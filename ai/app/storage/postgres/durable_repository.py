@@ -7,6 +7,7 @@ from typing import Any, Callable
 from app.contracts.event.task_events import TaskEventEnvelope
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
+from app.domain.orchestration.run_lifecycle import classify_task_run_liveness
 from app.domain.tasks.models import StepRun, TaskRun
 
 
@@ -25,9 +26,12 @@ class PostgresDurableRepository:
             """
             INSERT INTO run_anchors (
                 task_run_id, session_id, owner_key, owner_user_id, session_key,
-                current_step_run_id, durable_status, agent_config_snapshot, anchor_payload
+                current_step_run_id, durable_status, queue_status, claim_owner,
+                queued_at, claimed_at, lease_expires_at, heartbeat_at, next_attempt_at,
+                attempts, last_claim_error, agent_profile_id, agent_profile_version,
+                agent_config_snapshot, anchor_payload
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
             ON CONFLICT (task_run_id) DO UPDATE SET
                 session_id = EXCLUDED.session_id,
                 owner_key = EXCLUDED.owner_key,
@@ -35,6 +39,17 @@ class PostgresDurableRepository:
                 session_key = EXCLUDED.session_key,
                 current_step_run_id = EXCLUDED.current_step_run_id,
                 durable_status = EXCLUDED.durable_status,
+                queue_status = EXCLUDED.queue_status,
+                claim_owner = EXCLUDED.claim_owner,
+                queued_at = COALESCE(run_anchors.queued_at, EXCLUDED.queued_at),
+                claimed_at = EXCLUDED.claimed_at,
+                lease_expires_at = EXCLUDED.lease_expires_at,
+                heartbeat_at = EXCLUDED.heartbeat_at,
+                next_attempt_at = EXCLUDED.next_attempt_at,
+                attempts = EXCLUDED.attempts,
+                last_claim_error = EXCLUDED.last_claim_error,
+                agent_profile_id = EXCLUDED.agent_profile_id,
+                agent_profile_version = EXCLUDED.agent_profile_version,
                 agent_config_snapshot = EXCLUDED.agent_config_snapshot,
                 anchor_payload = EXCLUDED.anchor_payload,
                 revision = run_anchors.revision + 1,
@@ -48,6 +63,17 @@ class PostgresDurableRepository:
                 payload.get("session_key"),
                 payload.get("current_step_run_id"),
                 payload.get("durable_status", "OPEN"),
+                payload.get("queue_status", "queued"),
+                payload.get("claim_owner"),
+                payload.get("queued_at") or utc_now(),
+                payload.get("claimed_at"),
+                payload.get("lease_expires_at"),
+                payload.get("heartbeat_at"),
+                payload.get("next_attempt_at"),
+                int(payload.get("attempts") or 0),
+                payload.get("last_claim_error"),
+                payload.get("agent_profile_id"),
+                payload.get("agent_profile_version"),
                 _json(payload.get("agent_config_snapshot", {})),
                 _json(payload.get("anchor_payload", {})),
             ),
@@ -165,6 +191,155 @@ class PostgresTaskRepository(PostgresDurableRepository):
         self._save_task_anchor(task)
         return task
 
+    def create_pending_task(self, task: TaskRun) -> TaskRun:
+        now_dt = utc_now()
+        task.status = "PENDING"
+        task.queue_status = "queued"
+        task.queued_at = task.queued_at or now_dt
+        task.claim_owner = None
+        task.claimed_at = None
+        task.lease_expires_at = None
+        task.heartbeat_at = None
+        task.next_attempt_at = task.next_attempt_at or now_dt
+        task.attempts = int(task.attempts or 0)
+        return self.create_task(task)
+
+    def claim_next_task(self, *, claim_owner: str, lease_seconds: int = 300) -> TaskRun | None:
+        now_dt = utc_now()
+        lease_expires_at = now_dt + timedelta(seconds=max(1, int(lease_seconds)))
+        connection = self.connection_factory()
+        row = connection.execute(
+            """
+            WITH claimable AS (
+                SELECT task_run_id
+                FROM run_anchors
+                WHERE queue_status IN ('queued', 'failed_retry')
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= now())
+                ORDER BY queued_at ASC, created_at ASC
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE run_anchors AS ra
+            SET queue_status = 'claimed',
+                claim_owner = %s,
+                claimed_at = %s,
+                heartbeat_at = %s,
+                lease_expires_at = %s,
+                attempts = ra.attempts + 1,
+                last_claim_error = NULL,
+                updated_at = now()
+            FROM claimable
+            WHERE ra.task_run_id = claimable.task_run_id
+            RETURNING ra.*
+            """,
+            (claim_owner, now_dt, now_dt, lease_expires_at),
+        ).fetchone()
+        connection.commit()
+        anchor = _normalize_row(row)
+        if anchor is None:
+            return None
+        task = _task_from_payload((anchor.get("anchor_payload") or {}).get("task"))
+        if task is None:
+            return None
+        task.status = "RUNNING"
+        task.queue_status = "claimed"
+        task.claim_owner = claim_owner
+        task.claimed_at = now_dt
+        task.heartbeat_at = now_dt
+        task.lease_expires_at = lease_expires_at
+        task.attempts = int(anchor.get("attempts") or task.attempts or 0)
+        self.update_task(task)
+        return task
+
+    def heartbeat_task_claim(self, task_run_id: str, *, claim_owner: str, lease_seconds: int = 300) -> TaskRun | None:
+        now_dt = utc_now()
+        lease_expires_at = now_dt + timedelta(seconds=max(1, int(lease_seconds)))
+        task = self.get_task(task_run_id)
+        if task is None or task.claim_owner != claim_owner:
+            return None
+        task.queue_status = "running"
+        task.heartbeat_at = now_dt
+        task.lease_expires_at = lease_expires_at
+        return self.update_task(task)
+
+    def fail_task_claim(self, task_run_id: str, *, claim_owner: str, error_message: str, retry: bool = False) -> TaskRun | None:
+        task = self.get_task(task_run_id)
+        if task is None or task.claim_owner != claim_owner:
+            return None
+        task.status = "PENDING" if retry else "FAILED"
+        task.queue_status = "failed_retry" if retry else "terminal"
+        task.error_message = error_message
+        task.last_claim_error = error_message
+        task.next_attempt_at = utc_now() + timedelta(seconds=10) if retry else None
+        task.claim_owner = None
+        task.lease_expires_at = None
+        task.heartbeat_at = None
+        if not retry:
+            task.ended_at = task.ended_at or utc_now()
+        return self.update_task(task)
+
+    def recover_stale_task_run(self, task_run_id: str, *, reason: str) -> TaskRun | None:
+        task = self.get_task(task_run_id)
+        if task is None or task.status not in {"PENDING", "RUNNING"}:
+            return None
+        liveness = classify_task_run_liveness(task)
+        if not liveness.should_recover:
+            return None
+        now_dt = utc_now()
+        task.status = "FAILED"
+        task.queue_status = "terminal"
+        task.error_message = "실행 상태가 만료되어 자동 복구되었습니다."
+        task.last_claim_error = reason or liveness.reason
+        task.claim_owner = None
+        task.lease_expires_at = None
+        task.heartbeat_at = None
+        task.next_attempt_at = None
+        task.ended_at = task.ended_at or now_dt
+        return self.update_task(task)
+
+    def recover_stale_task_runs(self, *, orphan_after_seconds: int = 300, limit: int = 100) -> list[TaskRun]:
+        recovered: list[TaskRun] = []
+        candidates = self._load_stale_recovery_candidates(orphan_after_seconds=orphan_after_seconds, limit=limit)
+        for task in candidates:
+            liveness = classify_task_run_liveness(task, orphan_after_seconds=orphan_after_seconds)
+            if not liveness.should_recover:
+                continue
+            saved = self.recover_stale_task_run(task.task_run_id, reason=liveness.reason)
+            if saved is not None:
+                recovered.append(saved)
+        return recovered
+
+    def _load_stale_recovery_candidates(self, *, orphan_after_seconds: int, limit: int) -> list[TaskRun]:
+        connection = self.connection_factory()
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM run_anchors
+            WHERE queue_status IN ('claimed', 'running')
+              AND (
+                lease_expires_at < now()
+                OR heartbeat_at < now() - (%s * interval '1 second')
+                OR (
+                  lease_expires_at IS NULL
+                  AND heartbeat_at IS NULL
+                  AND updated_at < now() - (%s * interval '1 second')
+                )
+              )
+            ORDER BY updated_at ASC, created_at ASC
+            LIMIT %s
+            """,
+            (max(1, int(orphan_after_seconds)), max(1, int(orphan_after_seconds)), max(1, int(limit))),
+        ).fetchall()
+        tasks: list[TaskRun] = []
+        for row in rows:
+            normalized = _normalize_row(row) or {}
+            task = _task_from_payload((normalized.get("anchor_payload") or {}).get("task"))
+            if task is None:
+                continue
+            _apply_anchor_queue_fields(task, normalized)
+            tasks.append(task)
+        return tasks
+
     def update_task(self, task: TaskRun) -> TaskRun:
         task.updated_at = utc_now()
         self._save_task_anchor(task)
@@ -174,7 +349,10 @@ class PostgresTaskRepository(PostgresDurableRepository):
         anchor = self.get_run_anchor(task_run_id)
         if not anchor:
             return None
-        return _task_from_payload((anchor.get("anchor_payload") or {}).get("task"))
+        task = _task_from_payload((anchor.get("anchor_payload") or {}).get("task"))
+        if task is not None:
+            _apply_anchor_queue_fields(task, anchor)
+        return task
 
     def list_tasks(self, *, status: str | None = None, session_key: str | None = None, limit: int = 20, offset: int = 0) -> list[TaskRun]:
         tasks = self._load_all_tasks()
@@ -241,6 +419,18 @@ class PostgresTaskRepository(PostgresDurableRepository):
                 "session_key": anchor.get("session_key"),
                 "current_step_run_id": anchor.get("current_step_run_id"),
                 "durable_status": anchor.get("durable_status", "OPEN"),
+                "queue_status": anchor.get("queue_status", "queued"),
+                "claim_owner": anchor.get("claim_owner"),
+                "queued_at": anchor.get("queued_at"),
+                "claimed_at": anchor.get("claimed_at"),
+                "lease_expires_at": anchor.get("lease_expires_at"),
+                "heartbeat_at": anchor.get("heartbeat_at"),
+                "next_attempt_at": anchor.get("next_attempt_at"),
+                "attempts": anchor.get("attempts"),
+                "last_claim_error": anchor.get("last_claim_error"),
+                "agent_profile_id": anchor.get("agent_profile_id"),
+                "agent_profile_version": anchor.get("agent_profile_version"),
+                "agent_config_snapshot": anchor.get("agent_config_snapshot", {}),
                 "anchor_payload": payload,
             },
         )
@@ -467,8 +657,14 @@ class PostgresTaskRepository(PostgresDurableRepository):
     def _save_task_anchor(self, task: TaskRun) -> None:
         existing = self.get_run_anchor(task.task_run_id) or {}
         payload = dict(existing.get("anchor_payload") or {})
+        task.queue_status = _effective_queue_status(task)
+        if task.queue_status in {"terminal", "canceled"}:
+            task.claim_owner = None
+            task.lease_expires_at = None
+            task.heartbeat_at = None
         payload["task"] = _task_payload(task)
         agent_config_snapshot = _agent_config_snapshot_from_task(task)
+        agent_profile_id, agent_profile_version = _agent_profile_ref_from_task(task)
         # anchor_payload의 events는 append_event가 관리하므로 TaskRun 저장 때 지우지 않는다.
         # agent_config_snapshot은 TaskRun input과 별도 컬럼에도 남겨 재시작 시
         # 설정 원본을 anchor JSON 파싱 없이 확인할 수 있게 한다.
@@ -481,6 +677,17 @@ class PostgresTaskRepository(PostgresDurableRepository):
                 "session_key": task.session_key,
                 "current_step_run_id": task.current_step_run_id,
                 "durable_status": _durable_status(task.status),
+                "queue_status": task.queue_status,
+                "claim_owner": task.claim_owner,
+                "queued_at": task.queued_at or task.created_at or utc_now(),
+                "claimed_at": task.claimed_at,
+                "lease_expires_at": task.lease_expires_at,
+                "heartbeat_at": task.heartbeat_at,
+                "next_attempt_at": task.next_attempt_at,
+                "attempts": task.attempts,
+                "last_claim_error": task.last_claim_error,
+                "agent_profile_id": agent_profile_id,
+                "agent_profile_version": agent_profile_version,
                 "agent_config_snapshot": agent_config_snapshot,
                 "anchor_payload": payload,
             },
@@ -505,8 +712,15 @@ class PostgresTaskRepository(PostgresDurableRepository):
     def _load_all_tasks(self) -> list[TaskRun]:
         connection = self.connection_factory()
         rows = connection.execute("SELECT * FROM run_anchors ORDER BY updated_at DESC, created_at DESC").fetchall()
-        tasks = [_task_from_payload((_normalize_row(row) or {}).get("anchor_payload", {}).get("task")) for row in rows]
-        return [task for task in tasks if task is not None]
+        tasks: list[TaskRun] = []
+        for row in rows:
+            normalized = _normalize_row(row) or {}
+            task = _task_from_payload((normalized.get("anchor_payload") or {}).get("task"))
+            if task is None:
+                continue
+            _apply_anchor_queue_fields(task, normalized)
+            tasks.append(task)
+        return tasks
 
     def _finish_approval(self, approval_id: str, *, status: str, response_payload: dict[str, Any]) -> dict[str, Any] | None:
         connection = self.connection_factory()
@@ -545,7 +759,17 @@ def _required(payload: dict[str, Any], key: str) -> Any:
 
 
 def _json(value: Any) -> str:
-    return json.dumps(value or {}, ensure_ascii=False, sort_keys=True)
+    return json.dumps(_sanitize_json_value(value or {}), ensure_ascii=False, sort_keys=True)
+
+
+def _sanitize_json_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, list):
+        return [_sanitize_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _sanitize_json_value(item) for key, item in value.items()}
+    return value
 
 
 def _json_load(value: Any, default: Any) -> Any:
@@ -570,6 +794,20 @@ def _normalize_row(row: Any) -> dict[str, Any] | None:
     return normalized
 
 
+def _apply_anchor_queue_fields(task: TaskRun, row: dict[str, Any]) -> None:
+    task.queue_status = row.get("queue_status") or task.queue_status
+    task.claim_owner = row.get("claim_owner") or task.claim_owner
+    task.queued_at = _dt(row.get("queued_at")) or task.queued_at
+    task.claimed_at = _dt(row.get("claimed_at")) or task.claimed_at
+    task.lease_expires_at = _dt(row.get("lease_expires_at")) or task.lease_expires_at
+    task.heartbeat_at = _dt(row.get("heartbeat_at")) or task.heartbeat_at
+    task.next_attempt_at = _dt(row.get("next_attempt_at")) or task.next_attempt_at
+    task.attempts = int(row.get("attempts") or task.attempts or 0)
+    task.last_claim_error = row.get("last_claim_error") or task.last_claim_error
+    task.revision = int(row.get("revision") or task.revision or 0)
+    task.updated_at = _dt(row.get("updated_at")) or task.updated_at
+
+
 def _task_payload(task: TaskRun) -> dict[str, Any]:
     return {
         "task_run_id": task.task_run_id,
@@ -585,6 +823,15 @@ def _task_payload(task: TaskRun) -> dict[str, Any]:
         "wait_payload": task.wait_payload,
         "error_message": task.error_message,
         "progress_summary": task.progress_summary,
+        "queue_status": task.queue_status,
+        "claim_owner": task.claim_owner,
+        "queued_at": _iso(task.queued_at),
+        "claimed_at": _iso(task.claimed_at),
+        "lease_expires_at": _iso(task.lease_expires_at),
+        "heartbeat_at": _iso(task.heartbeat_at),
+        "next_attempt_at": _iso(task.next_attempt_at),
+        "attempts": task.attempts,
+        "last_claim_error": task.last_claim_error,
         "revision": task.revision,
         "created_at": _iso(task.created_at),
         "started_at": _iso(task.started_at),
@@ -611,6 +858,24 @@ def _agent_config_snapshot_from_task(task: TaskRun) -> dict[str, Any]:
     return snapshot
 
 
+def _agent_profile_ref_from_task(task: TaskRun) -> tuple[str | None, int | None]:
+    input_payload = dict(task.input_payload or {})
+    profile = input_payload.get("targetAgentProfile")
+    if not isinstance(profile, dict):
+        profile = input_payload.get("target_agent_profile")
+    if not isinstance(profile, dict):
+        return None, None
+    profile_id = str(profile.get("profileId") or profile.get("profile_id") or "").strip()
+    if not profile_id:
+        return None, None
+    raw_version = profile.get("profileVersion") or profile.get("profile_version")
+    try:
+        profile_version = int(raw_version) if raw_version is not None else None
+    except (TypeError, ValueError):
+        profile_version = None
+    return profile_id, profile_version
+
+
 def _task_from_payload(payload: dict[str, Any] | None) -> TaskRun | None:
     if not payload:
         return None
@@ -628,6 +893,15 @@ def _task_from_payload(payload: dict[str, Any] | None) -> TaskRun | None:
         wait_payload=payload.get("wait_payload") or {},
         error_message=payload.get("error_message"),
         progress_summary=payload.get("progress_summary"),
+        queue_status=payload.get("queue_status"),
+        claim_owner=payload.get("claim_owner"),
+        queued_at=_dt(payload.get("queued_at")),
+        claimed_at=_dt(payload.get("claimed_at")),
+        lease_expires_at=_dt(payload.get("lease_expires_at")),
+        heartbeat_at=_dt(payload.get("heartbeat_at")),
+        next_attempt_at=_dt(payload.get("next_attempt_at")),
+        attempts=int(payload.get("attempts") or 0),
+        last_claim_error=payload.get("last_claim_error"),
         revision=int(payload.get("revision") or 0),
         created_at=_dt(payload.get("created_at")),
         started_at=_dt(payload.get("started_at")),
@@ -702,6 +976,36 @@ def _durable_status(status: str) -> str:
     if status in {"COMPLETED", "FAILED", "CANCELED"}:
         return "TERMINAL"
     return "OPEN"
+
+
+def _queue_status_from_task_status(status: str) -> str:
+    if status == "PENDING":
+        return "queued"
+    if status == "RUNNING":
+        return "running"
+    if status == "WAITING":
+        return "waiting"
+    if status == "CANCELED":
+        return "canceled"
+    if status in {"COMPLETED", "FAILED"}:
+        return "terminal"
+    return "queued"
+
+
+def _effective_queue_status(task: TaskRun) -> str:
+    status = task.status
+    current = task.queue_status
+    if status in {"COMPLETED", "FAILED"}:
+        return "terminal"
+    if status == "CANCELED":
+        return "canceled"
+    if status == "WAITING":
+        return "waiting"
+    if status == "RUNNING":
+        return "running"
+    if status == "PENDING" and current in {"queued", "failed_retry"}:
+        return current
+    return _queue_status_from_task_status(status)
 
 
 def _iso(value: Any) -> str | None:

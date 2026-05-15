@@ -23,6 +23,53 @@ class ProjectingTaskRepository:
         self._save_task_snapshot(saved_task)
         return saved_task
 
+    def create_pending_task(self, task: TaskRun) -> TaskRun:
+        saved_task = self.durable_repository.create_pending_task(task)
+        self._save_task_snapshot(saved_task)
+        return saved_task
+
+    def claim_next_task(self, *, claim_owner: str, lease_seconds: int = 300) -> TaskRun | None:
+        saved_task = self.durable_repository.claim_next_task(claim_owner=claim_owner, lease_seconds=lease_seconds)
+        if saved_task is not None:
+            self._save_task_snapshot(saved_task)
+        return saved_task
+
+    def heartbeat_task_claim(self, task_run_id: str, *, claim_owner: str, lease_seconds: int = 300) -> TaskRun | None:
+        saved_task = self.durable_repository.heartbeat_task_claim(
+            task_run_id,
+            claim_owner=claim_owner,
+            lease_seconds=lease_seconds,
+        )
+        if saved_task is not None:
+            self._save_task_snapshot(saved_task)
+        return saved_task
+
+    def fail_task_claim(self, task_run_id: str, *, claim_owner: str, error_message: str, retry: bool = False) -> TaskRun | None:
+        saved_task = self.durable_repository.fail_task_claim(
+            task_run_id,
+            claim_owner=claim_owner,
+            error_message=error_message,
+            retry=retry,
+        )
+        if saved_task is not None:
+            self._save_task_snapshot(saved_task)
+        return saved_task
+
+    def recover_stale_task_run(self, task_run_id: str, *, reason: str) -> TaskRun | None:
+        saved_task = self.durable_repository.recover_stale_task_run(task_run_id, reason=reason)
+        if saved_task is not None:
+            self._save_task_snapshot(saved_task)
+        return saved_task
+
+    def recover_stale_task_runs(self, *, orphan_after_seconds: int = 300, limit: int = 100) -> list[TaskRun]:
+        saved_tasks = self.durable_repository.recover_stale_task_runs(
+            orphan_after_seconds=orphan_after_seconds,
+            limit=limit,
+        )
+        for task in saved_tasks:
+            self._save_task_snapshot(task)
+        return saved_tasks
+
     def update_task(self, task: TaskRun) -> TaskRun:
         saved_task = self.durable_repository.update_task(task)
         self._save_task_snapshot(saved_task)

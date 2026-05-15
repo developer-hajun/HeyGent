@@ -14,6 +14,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ssafy.heygent.domain.iot.dto.DevicePairRequest;
 import com.ssafy.heygent.domain.iot.dto.DeviceResponse;
 import com.ssafy.heygent.domain.iot.entity.IotDeviceStatus;
+import com.ssafy.heygent.domain.iot.service.DeviceDisplayCoordinator;
 import com.ssafy.heygent.domain.iot.service.DevicePairingService;
 import com.ssafy.heygent.domain.iot.service.DeviceService;
 import com.ssafy.heygent.global.config.jwt.JwtProvider;
@@ -51,6 +52,9 @@ class DeviceControllerTest {
 
     @MockBean
     private DevicePairingService devicePairingService;
+
+    @MockBean
+    private DeviceDisplayCoordinator deviceDisplayCoordinator;
 
     @MockBean
     private JwtProvider jwtProvider;

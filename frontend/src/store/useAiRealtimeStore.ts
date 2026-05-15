@@ -81,20 +81,20 @@ export const useAiRealtimeStore = create<AiRealtimeState>((set, get) => ({
   sendCommand: (type, payload) => {
     const { authenticatedReady, commandClient } = get()
     if (!authenticatedReady) {
-      return Promise.reject(new Error('AI WebSocket 인증이 완료된 뒤 다시 시도해 주세요.'))
+      return Promise.reject(new Error('서버에 연결되지 않았습니다. 잠시 후 다시 시도해 주세요.'))
     }
     if (commandClient === null) {
-      return Promise.reject(new Error('AI realtime command client가 아직 준비되지 않았습니다.'))
+      return Promise.reject(new Error('서버에 연결되지 않았습니다. 잠시 후 다시 시도해 주세요.'))
     }
     return commandClient.sendCommand(type, payload)
   },
   subscribeTask: (taskRunId, lastSequence, options = {}) => {
     const { authStatus, socketClient } = get()
     if (socketClient === null) {
-      throw new Error('AI WebSocket client가 아직 준비되지 않았습니다.')
+      throw new Error('서버에 연결되지 않았습니다. 잠시 후 다시 시도해 주세요.')
     }
     if (authStatus !== 'authenticated' || !socketClient.isAuthenticated()) {
-      throw new Error('AI WebSocket 인증 완료 전에는 구독할 수 없습니다.')
+      throw new Error('서버에 연결되지 않았습니다. 잠시 후 다시 시도해 주세요.')
     }
 
     const current = get().subscriptionsByTaskRunId[taskRunId]

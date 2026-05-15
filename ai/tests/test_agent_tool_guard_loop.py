@@ -38,6 +38,23 @@ class FakeProvider:
         return next(self.responses)
 
 
+class AsyncOnlyProvider(FakeProvider):
+    def respond(self, *args, **kwargs):
+        raise AssertionError("sync respond should not be used")
+
+    async def respond_async(self, messages, tools, model, tool_choice=None, runtime_context=None):
+        self.calls.append(
+            {
+                "messages": list(messages),
+                "tools": tools,
+                "model": model,
+                "tool_choice": tool_choice,
+                "runtime_context": runtime_context,
+            }
+        )
+        return next(self.responses)
+
+
 class FakePromptBuilder:
     def build_agent_loop_prompt(self, **kwargs) -> str:
         return "agent loop prompt"
@@ -196,6 +213,23 @@ def test_worker_transcript_session_id_is_reused_without_collapsing_into_parent_s
 
     assert session_id == "agent_session_worker"
     assert "parent_session" not in session_store.sessions_by_key
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_prefers_provider_respond_async():
+    provider = AsyncOnlyProvider([_response(text="async ok")])
+    handler = ToolCallingLoopHandler(
+        provider=provider,
+        prompt_builder=FakePromptBuilder(),
+        tool_runtime=RecordingRuntime(),
+        tool_catalog=FakeToolCatalog(),
+    )
+
+    outcome = await handler.execute_async(task=_task(), step=_step())
+
+    assert outcome["step_status"] == StepStatus.COMPLETED
+    assert outcome["result_payload"]["text"] == "async ok"
+    assert provider.calls[0]["runtime_context"]["task_run_id"] == "task_guard"
 
 
 def _task(input_payload: dict | None = None):
@@ -378,6 +412,28 @@ def test_agent_loop_explicit_max_iterations_can_exceed_legacy_hard_clamp():
     assert outcome["result_payload"]["text"] == "ITERATION_13_DONE"
     assert len(provider.calls) == 14
     assert len(runtime.calls) == 13
+
+
+def test_agent_loop_fails_when_max_iterations_are_exhausted_without_final_answer():
+    responses = [
+        _response(tool_calls=[_tool_call(f"call_{index}", "terminal_run", {"argv": ["echo", str(index)]})])
+        for index in range(2)
+    ]
+    provider = FakeProvider(responses)
+    runtime = RecordingRuntime()
+    guard = StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW))
+
+    outcome = _handler(provider, runtime, guard).execute(
+        task=_task({"prompt": "run", "max_iterations": 2}),
+        step=_step(),
+    )
+
+    assert outcome["task_status"] == TaskStatus.FAILED
+    assert outcome["step_status"] == StepStatus.FAILED
+    assert outcome["result_payload"]["error"]["code"] == "max_iterations_exceeded"
+    assert outcome["error_message"] == "작업 반복 한도(2)에 도달했습니다."
+    assert len(provider.calls) == 2
+    assert len(runtime.calls) == 2
 
 
 def test_agent_loop_worker_payload_uses_worker_default_when_max_iterations_is_absent():

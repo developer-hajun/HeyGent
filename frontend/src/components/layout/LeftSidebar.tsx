@@ -1,38 +1,57 @@
-import { useRef, useCallback, useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router'
 import {
-  ChevronLeft,
+  Building2,
   ChevronRight,
   Loader2,
-  MessageCircle,
+  LayoutDashboard,
   MessageSquare,
-  Clock,
-  GripVertical,
+  Monitor,
+  Moon,
   Plus,
+  Sun,
   User,
   Settings,
+  Key,
+  Globe,
   LogOut,
   UserCircle,
   X,
   Edit3,
-  MoreHorizontal,
   Pin,
-  PinOff,
-  Trash2,
 } from 'lucide-react'
 import { useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { SettingsDialog } from '@/components/SettingsDialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { NewSessionModal, type CustomAgentConfig } from '@/components/session/NewSessionModal'
-import { SessionSettingsModal } from '@/components/session/SessionSettingsModal'
-import { useUIStore } from '@/store/useUIStore'
+import { defaultAgentSessionConfig } from '@/components/session/defaultAgentSession'
+import { getCurrentWorkspaceSessionId } from '@/components/sessionWorkspace/sessionWorkspaceUtils'
+import { getSessionTime, isRemovedSidebarSession } from './sessionListUtils'
+import { DEFAULT_SIDEBAR_COLLAPSED_WIDTH, useUIStore } from '@/store/useUIStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useChatStore } from '@/store/useChatStore'
+import { useTaskRunStore } from '@/store/useTaskRunStore'
 import { logout } from '@/apis/auth'
+import { agentProfilesToPanelItems, createDefaultSessionAgents } from '@/apis/agents'
+import { createSession as createAiSession } from '@/apis/sessions'
 import { updateMyInfo } from '@/apis/users'
-import type { RawAiSession } from '@/types/aiChat'
+import type { ChatMessageView, RawAiSession } from '@/types/aiChat'
+import type { RawTaskRun } from '@/types/taskRuns'
+import { shouldClearSessionRunFromPersistedMessages } from '@/utils/chatLiveState'
+import { isTerminalTaskRunStatus } from '@/utils/taskRunDisplayStatus'
 
 type SidebarSession = {
   id: string
@@ -43,57 +62,47 @@ type SidebarSession = {
   raw: RawAiSession
 }
 
-type SessionConfirmAction = 'delete'
-
-type SessionConfirmState = {
-  sessionId: string
-  action: SessionConfirmAction
-}
-
 export function LeftSidebar() {
   const {
     sidebarCollapsed: collapsed,
-    sidebarWidth: width,
     settingsOpen,
     settingsInitialTab,
+    settingsSingleTab,
+    sidebarWidth,
     setSidebarCollapsed,
-    clampSidebarWidth,
+    setSidebarWidth,
+    setSessionWorkspaceCollapsed,
     setSettingsOpen,
+    theme,
+    setTheme,
   } = useUIStore()
-  const { selectedSessionId, setSelectedSessionId, pinnedSessionIds, togglePinSession } =
-    useSessionStore()
+  const { setAgentPanelsForSession, setSelectedSessionId, pinnedSessionIds } = useSessionStore()
   const [profileOpen, setProfileOpen] = useState(false)
-  const [sessionsPopoverOpen, setSessionsPopoverOpen] = useState(false)
   const [newSessionModalOpen, setNewSessionModalOpen] = useState(false)
-  const [sessionSettingsSessionId, setSessionSettingsSessionId] = useState<string | null>(null)
-  const [sessionConfirm, setSessionConfirm] = useState<SessionConfirmState | null>(null)
+  const [newSessionCreating, setNewSessionCreating] = useState(false)
+  const [newSessionError, setNewSessionError] = useState<string | null>(null)
   const commandClient = useAiRealtimeStore((state) => state.commandClient)
   const realtimeStatus = useAiRealtimeStore((state) => state.connectionStatus)
   const sessionsById = useChatStore((state) => state.sessionsById)
+  const messagesBySessionId = useChatStore((state) => state.messagesBySessionId)
+  const taskRunsById = useTaskRunStore((state) => state.taskRunsById)
   const sessionListLoading = useChatStore((state) => state.sessionListLoading)
   const chatError = useChatStore((state) => state.sessionListError ?? state.lastError)
   const fetchSessions = useChatStore((state) => state.fetchSessions)
-  const deleteSession = useChatStore((state) => state.deleteSession)
-  const isResizing = useRef(false)
-  const startX = useRef(0)
-  const startWidth = useRef(0)
   const navigate = useNavigate()
   const location = useLocation()
+  const currentWorkspaceSessionId = getCurrentWorkspaceSessionId(location.pathname)
   const sidebarSessions = useMemo(() => {
     const all = Object.values(sessionsById)
-      .map(toSidebarSession)
+      .map((session) =>
+        toSidebarSession(session, messagesBySessionId[session.session_id] ?? [], taskRunsById),
+      )
       .filter((s) => !isRemovedSidebarSession(s.raw))
       .sort((first, second) => getSessionTime(second.raw) - getSessionTime(first.raw))
     const pinned = all.filter((s) => pinnedSessionIds.has(s.id))
     const unpinned = all.filter((s) => !pinnedSessionIds.has(s.id))
     return [...pinned, ...unpinned]
-  }, [sessionsById, pinnedSessionIds])
-  const runningSessions = useMemo(
-    () => sidebarSessions.filter((session) => session.isRunning),
-    [sidebarSessions],
-  )
-  const sessionSettingsSession =
-    sessionSettingsSessionId === null ? null : (sessionsById[sessionSettingsSessionId] ?? null)
+  }, [messagesBySessionId, pinnedSessionIds, sessionsById, taskRunsById])
 
   useEffect(() => {
     if (commandClient === null) {
@@ -103,466 +112,313 @@ export function LeftSidebar() {
     void fetchSessions().catch(() => undefined)
   }, [commandClient, fetchSessions])
 
-  const handleNewChat = () => {
-    setNewSessionModalOpen(true)
+  const createDefaultAgentSession = (config: CustomAgentConfig) => {
+    setNewSessionCreating(true)
+    setNewSessionError(null)
+    void createAiSession({
+      title: '새 AI 세션',
+      model: config.model.trim() || undefined,
+      settings: {
+        ...(config.persona.trim() ? { systemPrompt: config.persona.trim() } : {}),
+        ...(config.model.trim() ? { model: config.model.trim() } : {}),
+        delegationPolicy: config.delegationPolicy,
+      },
+      metadataPatch: {
+        ui: {
+          agentName: config.agentName,
+          callName: config.callName,
+          agentProfileImage: config.profileImage,
+          instructionsEntryFile: config.instructionsEntryFile,
+          instructionsMode: config.instructionsMode,
+          instructionsRootPath: config.instructionsRootPath,
+          instructionsFiles: config.instructionsFiles,
+        },
+      },
+    })
+      .then(async (session) => {
+        const profiles = await createDefaultSessionAgents(session.session_id)
+        setAgentPanelsForSession(session.session_id, agentProfilesToPanelItems(profiles))
+        void fetchSessions().catch(() => undefined)
+        setSelectedSessionId(session.session_id)
+        setNewSessionModalOpen(false)
+        setSidebarCollapsed(true)
+        setSessionWorkspaceCollapsed(false)
+        navigate(`/session/${session.session_id}`)
+      })
+      .catch((error) => {
+        setNewSessionError(getNewSessionErrorMessage(error))
+        setSidebarCollapsed(false)
+      })
+      .finally(() => {
+        setNewSessionCreating(false)
+      })
+  }
+
+  // + 버튼 클릭 시 즉시 기본 에이전트 세션 생성, 1초 이상 호버하면 새 세션 모달 열림
+  const HOVER_THRESHOLD_MS = 1000
+  const newChatHoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const newChatHoverFiredRef = useRef(false)
+
+  const handleNewChatHoverStart = () => {
+    if (newSessionCreating) return
+    newChatHoverFiredRef.current = false
+    if (newChatHoverTimer.current !== null) {
+      clearTimeout(newChatHoverTimer.current)
+    }
+    newChatHoverTimer.current = setTimeout(() => {
+      newChatHoverFiredRef.current = true
+      setNewSessionModalOpen(true)
+    }, HOVER_THRESHOLD_MS)
+  }
+
+  const handleNewChatHoverEnd = () => {
+    if (newChatHoverTimer.current !== null) {
+      clearTimeout(newChatHoverTimer.current)
+      newChatHoverTimer.current = null
+    }
+  }
+
+  const handleNewChatClick = () => {
+    // 호버 타이머가 이미 모달을 띄웠으면 클릭은 무시
+    if (newChatHoverFiredRef.current) {
+      newChatHoverFiredRef.current = false
+      return
+    }
+    if (newChatHoverTimer.current !== null) {
+      clearTimeout(newChatHoverTimer.current)
+      newChatHoverTimer.current = null
+    }
+    if (newSessionCreating) return
+    createDefaultAgentSession(defaultAgentSessionConfig())
+  }
+
+  const handleOpenPrimaryRoute = (path: string) => {
+    if (collapsed) {
+      setSidebarCollapsed(false)
+    }
+    navigate(path)
   }
 
   const handleOpenChatSession = (sessionId: string, event?: React.MouseEvent) => {
     event?.stopPropagation()
+    setSelectedSessionId(sessionId)
+    if (!collapsed) {
+      setSidebarCollapsed(true)
+    }
+    setSessionWorkspaceCollapsed(false)
     navigate(`/session/${sessionId}`)
   }
 
-  const handleConfirmSessionAction = async () => {
-    if (sessionConfirm === null) {
-      return
+  const handleSidebarResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (collapsed) return
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = sidebarWidth
+    const previousCursor = document.body.style.cursor
+    const previousUserSelect = document.body.style.userSelect
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      setSidebarWidth(startWidth + moveEvent.clientX - startX)
     }
 
-    const { sessionId, action } = sessionConfirm
-    try {
-      if (action === 'delete') {
-        await deleteSession(sessionId)
-      }
-
-      if (location.pathname === `/session/${sessionId}`) {
-        navigate('/new-chat')
-      }
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : '세션 작업에 실패했습니다.')
-    } finally {
-      setSessionConfirm(null)
+    const handlePointerUp = () => {
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousUserSelect
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
     }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
   }
-
-  const startResize = useCallback(
-    (e: React.MouseEvent) => {
-      isResizing.current = true
-      startX.current = e.clientX
-      startWidth.current = width
-      document.body.style.cursor = 'col-resize'
-      document.body.style.userSelect = 'none'
-      e.preventDefault()
-    },
-    [width],
-  )
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing.current) return
-      const delta = e.clientX - startX.current
-      clampSidebarWidth(startWidth.current + delta)
-    }
-    const handleMouseUp = () => {
-      if (!isResizing.current) return
-      isResizing.current = false
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-    }
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [clampSidebarWidth])
 
   return (
     <>
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
-        sessionId={
-          location.pathname.startsWith('/session/') ? location.pathname.slice(9) : undefined
-        }
+        sessionId={getCurrentWorkspaceSessionId(location.pathname) ?? undefined}
         initialTab={settingsInitialTab as 'apiKeys'}
+        singleTab={settingsSingleTab}
       />
       <NewSessionModal
+        error={newSessionError}
         open={newSessionModalOpen}
-        onOpenChange={setNewSessionModalOpen}
+        onOpenChange={(open) => {
+          if (newSessionCreating) return
+          setNewSessionError(null)
+          setNewSessionModalOpen(open)
+        }}
+        submitting={newSessionCreating}
         onConfirm={(config) => {
+          if (config?.seedDefaultAgents) {
+            createDefaultAgentSession(config)
+            return
+          }
           storePendingSessionConfig(config)
           setNewSessionModalOpen(false)
-          if (config) {
+          if (config && !config.seedDefaultAgents) {
+            setSidebarCollapsed(false)
             navigate('/agent-status')
           } else {
+            setSidebarCollapsed(true)
             navigate('/new-chat')
           }
         }}
       />
-      <SessionSettingsModal
-        open={sessionSettingsSessionId !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSessionSettingsSessionId(null)
-          }
-        }}
-        session={sessionSettingsSession}
-      />
-      {sessionConfirm !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-card border-border w-80 rounded-2xl border p-6 shadow-xl">
-            <h3 className="text-foreground mb-2 text-base font-semibold">
-              {getSessionConfirmTitle(sessionConfirm.action)}
-            </h3>
-            <p className="text-muted-foreground mb-5 text-sm">
-              {getSessionConfirmMessage(sessionConfirm.action)}
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setSessionConfirm(null)}
-                className="bg-muted text-foreground hover:bg-muted/80 flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
-              >
-                취소
-              </button>
-              <button
-                onClick={() => void handleConfirmSessionAction()}
-                className={`flex-1 rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors ${
-                  sessionConfirm.action === 'delete'
-                    ? 'bg-red-500 hover:bg-red-600'
-                    : 'bg-primary hover:bg-primary/90'
-                }`}
-              >
-                {getSessionConfirmButtonLabel(sessionConfirm.action)}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div
-        className="bg-sidebar border-sidebar-border relative flex shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200 ease-in-out"
-        style={{ width: collapsed ? 52 : width }}
+        className="bg-background border-border relative flex shrink-0 flex-col overflow-hidden border-r transition-[width] duration-200 ease-in-out"
+        style={{ width: collapsed ? DEFAULT_SIDEBAR_COLLAPSED_WIDTH : sidebarWidth }}
       >
+        {!collapsed && (
+          <div
+            role="separator"
+            aria-label="사이드바 너비 조절"
+            className="hover:bg-primary/40 absolute top-0 right-0 z-20 h-full w-1 cursor-col-resize touch-none transition-colors"
+            onPointerDown={handleSidebarResizeStart}
+          />
+        )}
         {/* ── Collapsed Rail ── */}
         {collapsed && (
-          <div className="flex h-full flex-col items-center gap-1 py-3">
-            {/* Expand button */}
-            <CollapsedTooltip label="사이드바 열기">
+          <div className="flex h-full flex-col items-center gap-1.5 px-2 py-4">
+            <div className="flex h-12 shrink-0 items-center justify-center">
               <button
-                onClick={() => setSidebarCollapsed(false)}
-                className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
+                type="button"
+                onClick={() => handleOpenPrimaryRoute('/agent-status')}
+                className="flex h-12 w-12 items-center justify-center rounded-xl"
+                aria-label="에이전트 상태로 이동"
               >
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </CollapsedTooltip>
-
-            <div className="bg-sidebar-border my-1 h-px w-6" />
-
-            {/* New Chat button */}
-            <CollapsedTooltip label="새 채팅">
-              <button
-                onClick={handleNewChat}
-                className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
-              >
-                <Plus className="h-4 w-4" />
-              </button>
-            </CollapsedTooltip>
-
-            {/* Sessions icon — hover로 팝오버 */}
-            <Popover open={sessionsPopoverOpen} onOpenChange={setSessionsPopoverOpen}>
-              <PopoverTrigger asChild>
-                <button
-                  onMouseEnter={() => setSessionsPopoverOpen(true)}
-                  onMouseLeave={() => setSessionsPopoverOpen(false)}
-                  className="hover:bg-sidebar-accent text-muted-foreground relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors"
-                >
-                  <MessageSquare className="h-4 w-4" />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent
-                side="right"
-                align="start"
-                className="w-72 rounded-2xl p-3"
-                onMouseEnter={() => setSessionsPopoverOpen(true)}
-                onMouseLeave={() => setSessionsPopoverOpen(false)}
-              >
-                <div className="mb-2">
-                  <h3 className="text-foreground mb-1 text-sm font-semibold">대화 세션</h3>
-                  <p className="text-muted-foreground text-xs">최근 대화 세션</p>
-                </div>
-                <div className="space-y-1.5">
-                  {sidebarSessions.slice(0, 3).map((session) => {
-                    const isActive =
-                      location.pathname === '/agent-status' && selectedSessionId === session.id
-                    const isChatActive = location.pathname === `/session/${session.id}`
-                    return (
-                      <div
-                        key={session.id}
-                        onClick={() => {
-                          setSelectedSessionId(session.id)
-                          navigate('/agent-status')
-                          setSessionsPopoverOpen(false)
-                        }}
-                        className={`cursor-pointer rounded-lg p-2.5 transition-colors ${
-                          isActive
-                            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                            : 'hover:bg-muted'
-                        }`}
-                      >
-                        <div className="mb-1 flex items-center justify-between gap-1">
-                          <p
-                            className={`truncate text-sm ${isActive ? 'text-sidebar-accent-foreground font-medium' : 'text-foreground/80'}`}
-                          >
-                            {session.title}
-                          </p>
-                          <button
-                            type="button"
-                            aria-label="채팅 열기"
-                            onClick={(event) => {
-                              handleOpenChatSession(session.id, event)
-                              setSessionsPopoverOpen(false)
-                            }}
-                            className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors ${
-                              isChatActive
-                                ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-                                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                            }`}
-                          >
-                            {session.isRunning && (
-                              <Loader2 className="text-primary absolute -top-0.5 -right-0.5 h-3 w-3 animate-spin" />
-                            )}
-                            <MessageCircle className="h-4 w-4" />
-                          </button>
-                        </div>
-                        <p className="text-muted-foreground truncate text-xs">{session.preview}</p>
-                        <div className="mt-1 flex items-center gap-1">
-                          <Clock className="text-muted-foreground h-3 w-3" />
-                          <span className="text-muted-foreground text-xs">{session.time}</span>
-                        </div>
-                      </div>
-                    )
-                  })}
-                  {sidebarSessions.length === 0 && (
-                    <EmptySessionNotice
-                      realtimeStatus={realtimeStatus}
-                      loading={sessionListLoading}
-                      error={chatError}
-                    />
-                  )}
-                </div>
-              </PopoverContent>
-            </Popover>
-
-            {/* Running session loading indicators */}
-            {runningSessions.map((session) => (
-              <CollapsedTooltip key={session.id} label={session.title}>
-                <button
-                  onClick={(event) => handleOpenChatSession(session.id, event)}
-                  aria-label="채팅 열기"
-                  className={`hover:bg-sidebar-accent relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
-                    location.pathname === `/session/${session.id}`
-                      ? 'text-primary'
-                      : 'text-muted-foreground'
-                  }`}
-                >
-                  <Loader2 className="text-primary absolute top-1 right-1 h-3 w-3 animate-spin" />
-                  <MessageCircle className="h-4 w-4" strokeWidth={2.5} />
-                </button>
-              </CollapsedTooltip>
-            ))}
-
-            <div className="flex-1" />
-
-            {/* Profile icon (collapsed) */}
-            <div className="bg-sidebar-border my-1 h-px w-6" />
-            <Popover open={profileOpen} onOpenChange={setProfileOpen}>
-              <PopoverTrigger asChild>
-                <CollapsedTooltip label="프로필">
-                  <button className="hover:bg-sidebar-accent flex h-9 w-9 items-center justify-center rounded-lg transition-colors">
-                    <ProfileAvatar size={32} />
-                  </button>
-                </CollapsedTooltip>
-              </PopoverTrigger>
-              <PopoverContent side="right" align="end" className="w-52 rounded-2xl p-1.5">
-                <ProfileMenu
-                  onSettingsClick={() => {
-                    setProfileOpen(false)
-                    setSettingsOpen(true)
-                  }}
+                <img
+                  src="/img_logo_light.png"
+                  alt="HeyGent"
+                  className="h-9 w-9 object-contain dark:hidden"
                 />
-              </PopoverContent>
-            </Popover>
-          </div>
-        )}
+                <img
+                  src="/img_logo_dark.png"
+                  alt="HeyGent"
+                  className="hidden h-9 w-9 object-contain dark:block"
+                />
+              </button>
+            </div>
 
-        {/* ── Expanded Panel ── */}
-        {!collapsed && (
-          <div className="flex h-full flex-col overflow-hidden">
-            {/* Header */}
-            <div className="border-sidebar-border flex h-12 shrink-0 items-center justify-between border-b px-4">
-              <div className="flex items-center gap-2">
-                <MessageSquare className="text-muted-foreground h-4 w-4" />
-                <span className="text-foreground text-sm font-semibold">대화 세션</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setSidebarCollapsed(true)}
-                  className="hover:bg-sidebar-accent text-muted-foreground hover:text-foreground flex h-7 w-7 items-center justify-center rounded-md transition-colors"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </button>
+            <div className="bg-border my-1 h-px w-10" />
+
+            <CollapsedTooltip label="에이전트 상태">
+              <button
+                type="button"
+                onClick={() => handleOpenPrimaryRoute('/agent-status')}
+                className={`hover:bg-accent/50 flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${
+                  location.pathname.startsWith('/agent-status')
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                aria-label="에이전트 상태로 이동"
+              >
+                <Building2 className="h-5 w-5" />
+              </button>
+            </CollapsedTooltip>
+
+            <CollapsedTooltip label="대시보드">
+              <button
+                type="button"
+                onClick={() => handleOpenPrimaryRoute('/')}
+                className={`hover:bg-accent/50 flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${
+                  location.pathname === '/'
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                aria-label="대시보드로 이동"
+              >
+                <LayoutDashboard className="h-5 w-5" />
+              </button>
+            </CollapsedTooltip>
+
+            <div className="bg-border my-1 h-px w-10" />
+
+            {/* New Chat button — 클릭=기본 에이전트 즉시 생성 / 1초 이상 호버=새 세션 모달 */}
+            <CollapsedTooltip label="새 세션 (길게 누르면 옵션 선택)">
+              <button
+                type="button"
+                onClick={handleNewChatClick}
+                onMouseEnter={handleNewChatHoverStart}
+                onMouseLeave={handleNewChatHoverEnd}
+                onFocus={handleNewChatHoverStart}
+                onBlur={handleNewChatHoverEnd}
+                disabled={newSessionCreating}
+                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-12 w-12 items-center justify-center rounded-xl transition-colors disabled:opacity-50"
+              >
+                {newSessionCreating ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <Plus className="h-5 w-5" />
+                )}
+              </button>
+            </CollapsedTooltip>
+
+            <div className="min-h-0 w-full flex-1 overflow-x-hidden overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="flex flex-col items-center gap-1.5">
+                {sidebarSessions.map((session) => (
+                  <CollapsedTooltip key={session.id} label={session.title}>
+                    <button
+                      type="button"
+                      onClick={(event) => handleOpenChatSession(session.id, event)}
+                      aria-label={`${session.title} 채팅 열기`}
+                      className={`hover:bg-accent/50 relative flex h-12 w-12 items-center justify-center rounded-xl transition-colors ${
+                        currentWorkspaceSessionId === session.id
+                          ? 'bg-accent text-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {session.isRunning && (
+                        <Loader2 className="text-primary absolute top-1 right-1 h-3 w-3 animate-spin" />
+                      )}
+                      <MessageSquare className="h-5 w-5" />
+                    </button>
+                  </CollapsedTooltip>
+                ))}
               </div>
             </div>
 
-            <div className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-3">
-              {/* ── Sessions ── */}
-              <section>
-                <div className="space-y-1">
-                  {/* New Chat button */}
-                  <button
-                    onClick={handleNewChat}
-                    className="hover:bg-sidebar-accent border-sidebar-border flex w-full items-center gap-2 rounded-lg border border-dashed p-2.5 transition-colors"
-                  >
-                    <Plus className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
-                    <span className="text-muted-foreground text-sm">새 채팅 시작</span>
-                  </button>
+            {/* Theme toggle (collapsed) */}
+            <CollapsedTooltip label={theme === 'dark' ? '라이트 모드' : '다크 모드'}>
+              <button
+                type="button"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-12 w-12 items-center justify-center rounded-xl transition-colors"
+                aria-label={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+              >
+                {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+              </button>
+            </CollapsedTooltip>
 
-                  {sidebarSessions.map((session) => {
-                    const isActive =
-                      location.pathname === '/agent-status' && selectedSessionId === session.id
-                    const isChatActive = location.pathname === `/session/${session.id}`
-                    const isPinned = pinnedSessionIds.has(session.id)
-                    return (
-                      <div
-                        key={session.id}
-                        onClick={() => {
-                          setSelectedSessionId(session.id)
-                          navigate('/agent-status')
-                        }}
-                        className={`group flex cursor-pointer items-center gap-2 rounded-lg p-2.5 transition-colors ${
-                          isActive
-                            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                            : 'hover:bg-sidebar-accent'
-                        }`}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="mb-0.5 flex items-center gap-1">
-                            {isPinned && <Pin className="text-primary h-3 w-3 shrink-0" />}
-                            <p
-                              className={`truncate text-sm ${isActive ? 'text-sidebar-accent-foreground font-medium' : 'text-foreground/80'}`}
-                            >
-                              {session.title}
-                            </p>
-                          </div>
-                          <p className="text-muted-foreground truncate text-xs">
-                            {session.preview}
-                          </p>
-                          <div className="mt-1.5 flex items-center gap-1">
-                            <Clock className="text-muted-foreground h-3 w-3" />
-                            <span className="text-muted-foreground text-xs">{session.time}</span>
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-1">
-                          {/* ⋯ menu */}
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <button
-                                type="button"
-                                aria-label="세션 옵션"
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-muted-foreground hover:bg-sidebar-accent hover:text-foreground flex h-7 w-7 items-center justify-center rounded-md opacity-0 transition-all group-hover:opacity-100"
-                              >
-                                <MoreHorizontal className="h-4 w-4" />
-                              </button>
-                            </PopoverTrigger>
-                            <PopoverContent
-                              side="right"
-                              align="start"
-                              className="w-40 rounded-xl p-1"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setSessionSettingsSessionId(session.id)
-                                }}
-                                className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
-                              >
-                                <Settings className="text-muted-foreground h-4 w-4 shrink-0" />
-                                <span>설정</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  togglePinSession(session.id)
-                                }}
-                                className="hover:bg-muted flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors"
-                              >
-                                {isPinned ? (
-                                  <>
-                                    <PinOff className="text-muted-foreground h-4 w-4 shrink-0" />
-                                    <span>고정 해제</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Pin className="text-muted-foreground h-4 w-4 shrink-0" />
-                                    <span>채팅 고정</span>
-                                  </>
-                                )}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setSessionConfirm({ sessionId: session.id, action: 'delete' })
-                                }}
-                                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm text-red-500 transition-colors hover:bg-red-50"
-                              >
-                                <Trash2 className="h-4 w-4 shrink-0" />
-                                <span>삭제</span>
-                              </button>
-                            </PopoverContent>
-                          </Popover>
-                          {/* Chat open button */}
-                          <button
-                            type="button"
-                            aria-label="채팅 열기"
-                            onClick={(event) => handleOpenChatSession(session.id, event)}
-                            className={`relative flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                              isChatActive
-                                ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-                                : 'text-muted-foreground hover:bg-sidebar-accent hover:text-foreground'
-                            }`}
-                          >
-                            {session.isRunning && (
-                              <Loader2 className="text-primary absolute -top-0.5 -right-0.5 h-3 w-3 animate-spin" />
-                            )}
-                            <MessageCircle className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  })}
-                  {sidebarSessions.length === 0 && (
-                    <EmptySessionNotice
-                      realtimeStatus={realtimeStatus}
-                      loading={sessionListLoading}
-                      error={chatError}
-                    />
-                  )}
-                </div>
-              </section>
-            </div>
-
-            {/* ── Profile Footer (Fixed) ── */}
-            <div className="border-sidebar-border shrink-0 border-t px-3 py-2">
+            {/* Profile (collapsed) — 우측 SessionWorkspaceMenu의 border-t 위치와 정렬 */}
+            <div className="border-border -mx-2 mt-1.5 -mb-4 flex shrink-0 justify-center self-stretch border-t py-3">
               <Popover open={profileOpen} onOpenChange={setProfileOpen}>
                 <PopoverTrigger asChild>
-                  <button className="hover:bg-sidebar-accent flex w-full items-center gap-3 rounded-lg p-2 transition-colors">
-                    <ProfileAvatar size={32} />
-                    <div className="min-w-0 flex-1 text-left">
-                      <p className="text-foreground truncate text-sm font-medium">
-                        <ProfileName />
-                      </p>
-                    </div>
+                  <button
+                    aria-label="프로필"
+                    className="hover:bg-accent/50 flex h-10 w-10 items-center justify-center rounded-xl transition-colors"
+                  >
+                    <ProfileAvatar size={28} />
                   </button>
                 </PopoverTrigger>
-                <PopoverContent side="top" align="start" className="w-52 rounded-2xl p-1.5">
+                <PopoverContent side="right" align="end" className="w-52 rounded-2xl p-1.5">
                   <ProfileMenu
-                    onSettingsClick={() => {
+                    onOpenApiKeys={() => {
                       setProfileOpen(false)
-                      setSettingsOpen(true)
+                      setSettingsOpen(true, 'apiKeys', { singleTab: true })
+                    }}
+                    onOpenExternal={() => {
+                      setProfileOpen(false)
+                      setSettingsOpen(true, 'external', { singleTab: true })
+                    }}
+                    onOpenBridge={() => {
+                      setProfileOpen(false)
+                      navigate('/settings/bridge')
                     }}
                   />
                 </PopoverContent>
@@ -571,14 +427,168 @@ export function LeftSidebar() {
           </div>
         )}
 
-        {/* ── Resize Handle ── */}
+        {/* ── Expanded Panel ── */}
         {!collapsed && (
-          <div
-            className="group absolute top-0 right-0 bottom-0 z-10 flex w-1 cursor-col-resize items-center justify-center"
-            onMouseDown={startResize}
-          >
-            <div className="group-hover:bg-primary/30 h-8 w-0.5 rounded-full bg-transparent transition-colors" />
-            <GripVertical className="text-muted-foreground/40 absolute h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
+          <div className="flex h-full flex-col overflow-hidden">
+            <div className="flex h-12 shrink-0 items-center overflow-hidden px-3">
+              <button
+                type="button"
+                onClick={() => handleOpenPrimaryRoute('/agent-status')}
+                className="flex h-full w-full min-w-0 items-center justify-center rounded-lg p-0"
+                aria-label="에이전트 상태로 이동"
+              >
+                <img
+                  src="/text_logo_light.png"
+                  alt="HeyGent"
+                  className="h-7 w-auto max-w-[220px] shrink-0 scale-[2] object-contain dark:hidden"
+                />
+                <img
+                  src="/text_logo_dark.png"
+                  alt="HeyGent"
+                  className="hidden h-7 w-auto max-w-[220px] shrink-0 scale-[2] object-contain dark:block"
+                />
+              </button>
+            </div>
+
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-3 py-3">
+              <nav className="flex shrink-0 flex-col gap-1">
+                <button
+                  type="button"
+                  onClick={() => handleOpenPrimaryRoute('/agent-status')}
+                  className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-sm font-medium transition-colors ${
+                    location.pathname.startsWith('/agent-status')
+                      ? 'bg-accent text-foreground'
+                      : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
+                  }`}
+                >
+                  <Building2 className="h-5 w-5 shrink-0" />
+                  <span>에이전트 상태</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenPrimaryRoute('/')}
+                  className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-sm font-medium transition-colors ${
+                    location.pathname === '/'
+                      ? 'bg-accent text-foreground'
+                      : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
+                  }`}
+                >
+                  <LayoutDashboard className="h-5 w-5 shrink-0" />
+                  <span>대시보드</span>
+                </button>
+              </nav>
+
+              {/* ── Sessions ── */}
+              <section className="mt-4 flex min-h-0 flex-1 flex-col">
+                <div className="text-muted-foreground/60 px-2.5 py-1.5 font-mono text-[10px] font-medium tracking-widest">
+                  <span>대화 세션</span>
+                </div>
+                <div className="mt-0.5 flex shrink-0 flex-col gap-0.5">
+                  <button
+                    onClick={handleNewChatClick}
+                    onMouseEnter={handleNewChatHoverStart}
+                    onMouseLeave={handleNewChatHoverEnd}
+                    onFocus={handleNewChatHoverStart}
+                    onBlur={handleNewChatHoverEnd}
+                    disabled={newSessionCreating}
+                    title="클릭하면 기본 에이전트로 새 세션이 시작됩니다. 길게 누르면 옵션을 선택할 수 있어요."
+                    className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm font-medium transition-colors disabled:opacity-50"
+                  >
+                    {newSessionCreating ? (
+                      <Loader2 className="text-muted-foreground h-5 w-5 shrink-0 animate-spin" />
+                    ) : (
+                      <Plus className="text-muted-foreground h-5 w-5 shrink-0" />
+                    )}
+                    <span className="text-muted-foreground truncate text-sm">
+                      {newSessionCreating ? '세션을 만드는 중...' : '새 세션'}
+                    </span>
+                  </button>
+                </div>
+                <div className="mt-0.5 min-h-0 flex-1 overflow-x-hidden overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  <div className="flex flex-col gap-0.5">
+                    {sidebarSessions.map((session) => {
+                      const isActive = currentWorkspaceSessionId === session.id
+                      const isPinned = pinnedSessionIds.has(session.id)
+                      return (
+                        <button
+                          type="button"
+                          key={session.id}
+                          onClick={() => {
+                            setSelectedSessionId(session.id)
+                            setSidebarCollapsed(true)
+                            setSessionWorkspaceCollapsed(false)
+                            navigate(`/session/${session.id}`)
+                          }}
+                          className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm font-medium transition-colors ${
+                            isActive
+                              ? 'bg-accent text-foreground'
+                              : 'text-foreground/80 hover:bg-accent/50 hover:text-foreground'
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1">
+                              {isPinned && <Pin className="text-primary h-3 w-3 shrink-0" />}
+                              <p className="truncate">{session.title}</p>
+                            </div>
+                          </div>
+                          {session.isRunning && (
+                            <Loader2 className="text-primary h-3.5 w-3.5 shrink-0 animate-spin" />
+                          )}
+                        </button>
+                      )
+                    })}
+                    {sidebarSessions.length === 0 && (
+                      <EmptySessionNotice
+                        realtimeStatus={realtimeStatus}
+                        loading={sessionListLoading}
+                        error={chatError}
+                      />
+                    )}
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            {/* ── Profile Footer (Fixed) ── */}
+            <div className="border-border flex shrink-0 items-center gap-2 border-t px-3 py-3">
+              <Popover open={profileOpen} onOpenChange={setProfileOpen}>
+                <PopoverTrigger asChild>
+                  <button className="hover:bg-accent/50 flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors">
+                    <ProfileAvatar size={20} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-foreground truncate text-sm font-medium">
+                        <ProfileName />
+                      </p>
+                    </div>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent side="top" align="start" className="w-52 rounded-2xl p-1.5">
+                  <ProfileMenu
+                    onOpenApiKeys={() => {
+                      setProfileOpen(false)
+                      setSettingsOpen(true, 'apiKeys', { singleTab: true })
+                    }}
+                    onOpenExternal={() => {
+                      setProfileOpen(false)
+                      setSettingsOpen(true, 'external', { singleTab: true })
+                    }}
+                    onOpenBridge={() => {
+                      setProfileOpen(false)
+                      navigate('/settings/bridge')
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
+              <button
+                type="button"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors"
+                aria-label={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+                title={theme === 'dark' ? '라이트 모드' : '다크 모드'}
+              >
+                {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -594,6 +604,20 @@ function storePendingSessionConfig(config: CustomAgentConfig | undefined) {
   sessionStorage.setItem('ai-new-session-config', JSON.stringify(config))
 }
 
+function getNewSessionErrorMessage(error: unknown) {
+  if (isAxiosLikeError(error)) {
+    const detail = error.response?.data?.detail
+    if (typeof detail === 'string' && detail.trim() !== '') {
+      return detail
+    }
+  }
+  return error instanceof Error ? error.message : '세션을 만들지 못했습니다.'
+}
+
+function isAxiosLikeError(error: unknown): error is { response?: { data?: { detail?: unknown } } } {
+  return typeof error === 'object' && error !== null && 'response' in error
+}
+
 function EmptySessionNotice({
   realtimeStatus,
   loading,
@@ -606,37 +630,20 @@ function EmptySessionNotice({
   const message =
     error ??
     (loading ? '세션 목록을 불러오는 중입니다.' : null) ??
-    (realtimeStatus === 'authenticated' ? '아직 표시할 대화 세션이 없습니다.' : 'AI 연결 준비 중')
+    (realtimeStatus === 'authenticated' ? '아직 표시할 대화 세션이 없습니다.' : '서버 연결 준비 중')
 
   return (
-    <div className="border-sidebar-border text-muted-foreground rounded-lg border border-dashed p-3 text-xs leading-5">
+    <div className="border-border text-muted-foreground border border-dashed p-3 text-xs leading-5">
       {message}
     </div>
   )
 }
 
-function getSessionConfirmTitle(action: SessionConfirmAction) {
-  if (action === 'delete') {
-    return '채팅 삭제'
-  }
-  return '채팅 삭제'
-}
-
-function getSessionConfirmMessage(action: SessionConfirmAction) {
-  if (action === 'delete') {
-    return '이 채팅을 삭제하시겠습니까? 서버의 삭제 정책에 따라 복구가 제한될 수 있습니다.'
-  }
-  return '이 채팅을 삭제하시겠습니까? 서버의 삭제 정책에 따라 복구가 제한될 수 있습니다.'
-}
-
-function getSessionConfirmButtonLabel(action: SessionConfirmAction) {
-  if (action === 'delete') {
-    return '삭제'
-  }
-  return '삭제'
-}
-
-function toSidebarSession(session: RawAiSession): SidebarSession {
+function toSidebarSession(
+  session: RawAiSession,
+  messages: ChatMessageView[],
+  taskRunsById: Record<string, RawTaskRun>,
+): SidebarSession {
   const title =
     getStringValue(session.title) ??
     getStringValue(session.session_key) ??
@@ -656,11 +663,37 @@ function toSidebarSession(session: RawAiSession): SidebarSession {
     title,
     preview,
     time: formatSessionTime(session),
-    isRunning:
-      isRunningTaskRunStatus(taskRunStatus) ||
-      (activeTaskRunId !== undefined && taskRunStatus === undefined),
+    isRunning: isSidebarSessionRunning(
+      session,
+      messages,
+      taskRunsById,
+      activeTaskRunId,
+      taskRunStatus,
+    ),
     raw: session,
   }
+}
+
+function isSidebarSessionRunning(
+  session: RawAiSession,
+  messages: ChatMessageView[],
+  taskRunsById: Record<string, RawTaskRun>,
+  activeTaskRunId: string | undefined,
+  taskRunStatus: string | undefined,
+) {
+  if (
+    activeTaskRunId !== undefined &&
+    isTerminalTaskRunStatus(taskRunsById[activeTaskRunId]?.status)
+  ) {
+    return false
+  }
+  if (shouldClearSessionRunFromPersistedMessages(session, messages)) {
+    return false
+  }
+  if (activeTaskRunId !== undefined && taskRunStatus === undefined) {
+    return taskRunsById[activeTaskRunId] !== undefined
+  }
+  return isRunningTaskRunStatus(taskRunStatus)
 }
 
 function getStringValue(value: unknown) {
@@ -673,18 +706,6 @@ function getMessageCountPreview(session: RawAiSession) {
     return undefined
   }
   return `${count}개 메시지`
-}
-
-function getSessionTime(session: RawAiSession) {
-  const rawTime =
-    getStringValue(session.last_message_at) ??
-    getStringValue(session.updated_at) ??
-    getStringValue(session.created_at)
-  if (rawTime === undefined) {
-    return 0
-  }
-  const time = new Date(rawTime).getTime()
-  return Number.isFinite(time) ? time : 0
 }
 
 function formatSessionTime(session: RawAiSession) {
@@ -703,10 +724,6 @@ function formatSessionTime(session: RawAiSession) {
 
 function isRunningTaskRunStatus(status: string | undefined) {
   return status === 'PENDING' || status === 'RUNNING' || status === 'WAITING'
-}
-
-function isRemovedSidebarSession(session: RawAiSession) {
-  return session.deleted_at != null || session.status === 'DELETED'
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -772,19 +789,39 @@ function ProfileName() {
 // ────────────────────────────────────────────────────────────────────────────
 // Profile Menu Component
 // ────────────────────────────────────────────────────────────────────────────
-function ProfileMenu({ onSettingsClick }: { onSettingsClick: () => void }) {
+function ProfileMenu({
+  onOpenApiKeys,
+  onOpenExternal,
+  onOpenBridge,
+}: {
+  onOpenApiKeys: () => void
+  onOpenExternal: () => void
+  onOpenBridge: () => void
+}) {
   const [view, setView] = useState<'menu' | 'profile'>('menu')
+  const [settingsSubOpen, setSettingsSubOpen] = useState(false)
   const [isLoggingOut, setIsLoggingOut] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
-  const navigate = useNavigate()
   const { refreshToken, clearTokens, userInfo, setUserInfo } = useAuthStore()
+  const navigate = useNavigate()
   const [nickname, setNickname] = useState(userInfo?.nickname ?? '')
+
+  const handleConfirmLogout = async () => {
+    if (isLoggingOut) return
+    setIsLoggingOut(true)
+    try {
+      if (refreshToken) await logout(refreshToken)
+    } finally {
+      clearTokens()
+      navigate('/login', { replace: true })
+    }
+  }
 
   if (view === 'profile') {
     return (
       <div className="p-2">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex items-center justify-between pl-1">
           <h3 className="text-foreground text-sm font-semibold">프로필</h3>
           <button
             onClick={() => setView('menu')}
@@ -797,8 +834,10 @@ function ProfileMenu({ onSettingsClick }: { onSettingsClick: () => void }) {
         <div className="space-y-3">
           {/* Nickname Input */}
           <div>
-            <label className="text-muted-foreground mb-1.5 block text-xs font-medium">닉네임</label>
-            <div className="flex items-center gap-2">
+            <label className="text-muted-foreground mb-1.5 block pl-1 text-xs font-medium">
+              이름
+            </label>
+            <div className="relative">
               <input
                 type="text"
                 value={nickname}
@@ -808,7 +847,7 @@ function ProfileMenu({ onSettingsClick }: { onSettingsClick: () => void }) {
                 }}
                 maxLength={100}
                 disabled={isSaving}
-                className="border-border bg-background text-foreground focus:ring-primary/20 flex-1 rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:outline-none disabled:opacity-60"
+                className="border-border bg-background text-foreground focus:ring-primary/20 w-full rounded-lg border py-2 pr-10 pl-3 text-sm focus:ring-2 focus:outline-none disabled:opacity-60"
               />
               <button
                 onClick={async () => {
@@ -826,7 +865,8 @@ function ProfileMenu({ onSettingsClick }: { onSettingsClick: () => void }) {
                   }
                 }}
                 disabled={isSaving || !nickname.trim()}
-                className="bg-primary hover:bg-primary/90 rounded-lg p-2 text-white transition-colors disabled:opacity-50"
+                aria-label="이름 저장"
+                className="text-muted-foreground hover:bg-muted hover:text-foreground absolute top-1/2 right-1.5 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md transition-colors disabled:opacity-50"
               >
                 {isSaving ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -837,49 +877,104 @@ function ProfileMenu({ onSettingsClick }: { onSettingsClick: () => void }) {
             </div>
             {saveError && <p className="mt-1 text-xs text-red-500">{saveError}</p>}
           </div>
-
-          {/* Logout Button */}
-          <button
-            onClick={async () => {
-              if (isLoggingOut) return
-              setIsLoggingOut(true)
-              try {
-                if (refreshToken) await logout(refreshToken)
-              } finally {
-                clearTokens()
-                navigate('/login', { replace: true })
-              }
-            }}
-            disabled={isLoggingOut}
-            className="flex w-full items-center gap-3 rounded-xl bg-red-50 px-3 py-2.5 text-red-600 transition-colors hover:bg-red-100 disabled:opacity-60"
-          >
-            <LogOut className="h-4 w-4 shrink-0" />
-            <span className="text-sm font-medium">
-              {isLoggingOut ? '로그아웃 중...' : '로그아웃'}
-            </span>
-          </button>
         </div>
       </div>
     )
   }
 
-  const menuItems = [
-    { icon: UserCircle, label: '프로필', action: () => setView('profile') },
-    { icon: Settings, label: '설정', action: onSettingsClick },
-  ]
-
   return (
     <div className="space-y-0.5">
-      {menuItems.map((item, index) => (
-        <button
-          key={index}
-          onClick={item.action}
-          className="hover:bg-muted flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors"
+      <button
+        onClick={() => setView('profile')}
+        className="hover:bg-muted flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors"
+      >
+        <UserCircle className="text-muted-foreground h-4 w-4 shrink-0" />
+        <span className="text-foreground text-sm">프로필</span>
+      </button>
+
+      {/* 설정 — 우측에 nested 오버레이 */}
+      <Popover open={settingsSubOpen} onOpenChange={setSettingsSubOpen}>
+        <PopoverTrigger asChild>
+          <button className="hover:bg-muted flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors">
+            <Settings className="text-muted-foreground h-4 w-4 shrink-0" />
+            <span className="text-foreground flex-1 text-sm">설정</span>
+            <ChevronRight className="text-muted-foreground h-4 w-4 shrink-0" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          side="right"
+          align="start"
+          sideOffset={8}
+          className="w-52 rounded-2xl p-1.5"
         >
-          <item.icon className="text-muted-foreground h-4 w-4 shrink-0" />
-          <span className="text-foreground text-sm">{item.label}</span>
-        </button>
-      ))}
+          <div className="space-y-0.5">
+            <button
+              onClick={() => {
+                setSettingsSubOpen(false)
+                onOpenApiKeys()
+              }}
+              className="hover:bg-muted flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors"
+            >
+              <Key className="text-muted-foreground h-4 w-4 shrink-0" />
+              <span className="text-foreground text-sm">API 키</span>
+            </button>
+            <button
+              onClick={() => {
+                setSettingsSubOpen(false)
+                onOpenExternal()
+              }}
+              className="hover:bg-muted flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors"
+            >
+              <Globe className="text-muted-foreground h-4 w-4 shrink-0" />
+              <span className="text-foreground text-sm">외부 서비스</span>
+            </button>
+            <button
+              onClick={() => {
+                setSettingsSubOpen(false)
+                onOpenBridge()
+              }}
+              className="hover:bg-muted flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors"
+            >
+              <Monitor className="text-muted-foreground h-4 w-4 shrink-0" />
+              <span className="text-foreground text-sm">내 PC 브릿지</span>
+            </button>
+          </div>
+        </PopoverContent>
+      </Popover>
+
+      <div className="border-border/70 mt-1 border-t pt-1">
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <button
+              disabled={isLoggingOut}
+              className="flex w-full items-center gap-3 rounded-xl bg-red-50 px-3 py-2.5 text-red-600 transition-colors hover:bg-red-100 disabled:opacity-60"
+            >
+              <LogOut className="h-4 w-4 shrink-0" />
+              <span className="text-sm font-medium">
+                {isLoggingOut ? '로그아웃 중...' : '로그아웃'}
+              </span>
+            </button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>로그아웃할까요?</AlertDialogTitle>
+              <AlertDialogDescription>
+                현재 계정에서 로그아웃하고 로그인 화면으로 이동합니다.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isLoggingOut}>취소</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={isLoggingOut}
+                onClick={() => void handleConfirmLogout()}
+                className="bg-red-600 text-white hover:bg-red-700"
+              >
+                {isLoggingOut ? '로그아웃 중...' : '로그아웃'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
     </div>
   )
 }

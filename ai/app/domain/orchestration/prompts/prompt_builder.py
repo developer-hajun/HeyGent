@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from app.domain.providers.model.base import AgentMessage
 from app.domain.orchestration.prompts.compression import compress_prompt_sections
@@ -11,6 +12,10 @@ from app.domain.orchestration.prompts.step_context_prompt import build_step_cont
 from app.domain.orchestration.prompts.step_run_boundary_prompt import build_step_run_boundary_prompt
 from app.domain.orchestration.prompts.step_run_prompt import build_step_run_prompt
 from app.domain.orchestration.prompts.task_context_prompt import build_task_context_prompt
+
+_MEMORY_APPLICATION_BLOCK_PATTERN = re.compile(
+    r"(?s)<memory-application-instructions>.*?</memory-application-instructions>"
+)
 
 
 def assemble_agent_loop_messages(
@@ -70,7 +75,10 @@ class PromptBuilder:
                 self.skill_prompt_builder.build(input_payload=input_payload),
                 build_project_context_prompt(input_payload=input_payload),
                 build_gateway_context_prompt(input_payload=input_payload),
+                build_work_context_prompt(input_payload=input_payload),
+                self.skill_prompt_builder.build_catalog(input_payload=input_payload),
                 base_prompt,
+                str(input_payload.get("persistent_memory_context", "")).strip(),
             ]
         )
         return "\n\n".join(parts)
@@ -100,6 +108,23 @@ class PromptBuilder:
     ) -> str:
         base_prompt = self.build_model_prompt(input_payload=input_payload)
         sections = [base_prompt]
+        sections.append(
+            "\n".join(
+                [
+                    "세션 에이전트 라우팅 기준:",
+                    "세션 에이전트 후보를 볼 때는 후보의 이름, 호칭, 할 수 있는 일, 연결된 스킬 이름과 공용 스킬 설명이 사용자 요청과 맞아야 합니다.",
+                    "사용자 요청 전체 또는 요청 안의 의미 있는 하위 작업이 다른 세션 에이전트의 skill 이름이나 설명과 맞고, 그 에이전트가 해당 skill을 바탕으로 현재 실행 에이전트보다 더 적합하게 처리할 가능성이 있으면 session_agent_task 로 맡기세요.",
+                    "현재 실행 에이전트가 직접 답할 수 있더라도 위 조건을 만족하면 호출을 우선하세요.",
+                    "위 조건을 만족하면 첫 tool-call 턴에서 step 도구로 현재 단계를 in_progress 로 선언한 뒤 session_agent_task 를 호출하고, 후보 실행 결과를 받은 다음 최종 답변을 작성하세요.",
+                    "session_agent_task 는 작업 보드에 보이는 하위 작업과 실제 세션 에이전트 실행을 묶는 도구입니다.",
+                    "후보가 요청의 핵심 부분을 수행할 수 있고, 독립 산출물이나 책임 분리가 자연스러울 때 세션 에이전트 작업으로 분리하세요.",
+                    "단순 응답, 맥락 정리, 최종 종합, 또는 분리할 실익이 낮은 작업은 팀장이 직접 처리해도 됩니다.",
+                    "수행할 수 있는 세션 에이전트가 없으면 임의로 배정하지 말고 팀장이 직접 진행하거나 필요한 정보와 사용자 결정 지점을 남기세요.",
+                    "특정 skill 절차가 필요한 하위 작업이면 session_agent_task 입력의 requiredSkillNames에 필요한 skill 이름을 담으세요.",
+                    "session_agent_task 입력에는 담당자가 다시 묻지 않아도 실행할 수 있도록 제목, 지시, 기대 산출물, 완료 기준, 제약을 구체적으로 담으세요.",
+                ]
+            )
+        )
         if available_tools:
             sections.append(self._build_tool_catalog_prompt(available_tools))
         if tool_results:
@@ -135,12 +160,8 @@ class PromptBuilder:
                     "도구 호출은 본문 JSON으로 쓰지 말고 모델의 tool call 응답으로 반환하세요.",
                     "이미 충분한 정보가 있으면 더 이상 도구를 부르지 말고 일반 답변으로 종료하세요.",
                     "직전에 같은 도구를 같은 인자로 실행했다면 반복하지 말고 답변 종료를 우선하세요.",
-                    "delegate 는 하위 작업으로 분리했을 때 더 명확한 경우에만 사용하세요.",
-                    "사용자가 worker, subagent, 서브에이전트, 하위 에이전트로 나누어 처리하라고 명시하면 직접 처리로 대체하지 말고 delegate_task 를 호출하세요.",
-                    "사용자가 여러 관점/영역을 각각 worker 로 검토하라고 요청하면 관점/영역별로 독립된 delegate_task 를 호출하고, parent 는 그 결과를 받은 뒤 비교·종합하세요.",
-                    "명시된 worker 대상이 아직 남아 있으면 parent 가 web_search, web_extract, terminal.run, write_file 등으로 그 하위 작업을 직접 수행하지 마세요.",
-                    "여러 worker 대상이 명시된 요청에서는 하나의 delegate_task 로 전부 합치지 말고, 각 대상마다 별도 delegate_task 결과를 받은 뒤 다음 판단을 하세요.",
-                    "delegate_task 결과가 필요한 문서 작성, 파일 저장, 최종 종합 도구 호출은 worker 결과를 받은 다음 턴에서 판단하세요.",
+                    "workId가 연결된 실행은 답변을 끝내기 전에 work_disposition 도구로 작업 상태를 명시하세요.",
+                    "완료 조건을 만족하면 done, 산출물은 있지만 사용자나 담당자의 확인이 필요하면 in_review, 실제 선행 작업/필수 입력/권한/도구가 없어 더 진행할 수 없을 때만 blocked, 등록만 요청한 작업이면 todo를 남기세요.",
                     "승인이 없으면 진행하면 안 되는 경우에만 approval 을 요청하세요.",
                     "사용자에게 보일 큰 작업 단계는 step 도구로 선언하고, 세부 체크리스트는 todo 도구로 갱신하세요.",
                     "사용자가 저장 위치로 폴더 경로를 주고 파일명을 생략하면, 그 폴더 경로 자체를 파일명으로 바꾸지 말고 폴더 안에 의미 있는 파일명을 만들어 저장하세요.",
@@ -148,6 +169,9 @@ class PromptBuilder:
                 ]
             )
         )
+        memory_application_instructions = _memory_application_instructions(input_payload)
+        if memory_application_instructions:
+            sections.append(memory_application_instructions)
         return "\n\n".join(compress_prompt_sections(sections))
 
     def _merge_skill_context(self, *, base_prompt: str, input_payload: dict) -> str:
@@ -183,6 +207,186 @@ class PromptBuilder:
             if key and title:
                 lines.append(f"{marker} {key}: {title} ({status})")
         return "\n".join(lines)
+
+
+def build_work_context_prompt(*, input_payload: dict) -> str:
+    work_context = input_payload.get("workContext")
+    target_agent_profile = input_payload.get("targetAgentProfile")
+    target_agent_instructions = input_payload.get("targetAgentInstructions")
+    session_agent_profiles = input_payload.get("sessionAgentProfiles")
+    work_id = str(input_payload.get("workId") or "").strip()
+    work_identifier = str(input_payload.get("workIdentifier") or "").strip()
+    assignee_agent_id = str(input_payload.get("workAssigneeAgentId") or "").strip()
+    has_session_agent_profiles = isinstance(session_agent_profiles, list) and bool(session_agent_profiles)
+    if not work_id and not work_identifier and not isinstance(work_context, dict) and not has_session_agent_profiles:
+        return ""
+
+    lines = ["연결된 작업 컨텍스트:" if work_id or work_identifier or isinstance(work_context, dict) else "세션 에이전트 컨텍스트:"]
+    if work_identifier:
+        lines.append(f"- 작업 번호: {work_identifier}")
+    if assignee_agent_id:
+        lines.append(f"- 담당 에이전트: {assignee_agent_id}")
+        if assignee_agent_id != "CEO":
+            lines.append("- 담당자가 팀장이 아니면 현재 실행은 해당 세션 에이전트가 맡은 작업 실행입니다.")
+            lines.append("- 담당 작업 실행 자체를 worker delegate로 다시 위임하지 마세요.")
+    if isinstance(target_agent_profile, dict):
+        profile_lines = _build_target_agent_profile_lines(target_agent_profile)
+        if profile_lines:
+            lines.append("- 실행 에이전트 설정:")
+            lines.extend(f"  - {line}" for line in profile_lines)
+    if isinstance(target_agent_instructions, dict):
+        instruction_lines = _build_target_agent_instruction_lines(target_agent_instructions)
+        if instruction_lines:
+            lines.append("- 실행 에이전트 지침:")
+            lines.extend(instruction_lines)
+    if has_session_agent_profiles:
+        profile_lines = _build_session_agent_profile_lines(session_agent_profiles)
+        if profile_lines:
+            lines.append("- 세션 에이전트 후보:")
+            lines.extend(f"  - {line}" for line in profile_lines)
+        skill_description_lines = _build_session_agent_skill_description_lines(session_agent_profiles)
+        if skill_description_lines:
+            lines.append("- 세션 에이전트 공용 스킬 설명:")
+            lines.extend(f"  - {line}" for line in skill_description_lines)
+    if isinstance(work_context, dict):
+        title = str(work_context.get("title") or "").strip()
+        if title:
+            lines.append(f"- 제목: {title}")
+        labels = work_context.get("labels")
+        if isinstance(labels, list) and labels:
+            lines.append("- 라벨: " + ", ".join(str(label) for label in labels if str(label).strip()))
+        prompt_preview = str(work_context.get("promptPreview") or "").strip()
+        if prompt_preview:
+            lines.append("- 요약:")
+            lines.append(prompt_preview)
+    return "\n".join(lines)
+
+
+def _build_session_agent_profile_lines(profiles: list) -> list[str]:
+    lines: list[str] = []
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        config = profile.get("configSnapshot") or profile.get("config_snapshot") or {}
+        if not isinstance(config, dict):
+            config = {}
+        profile_id = str(profile.get("profileId") or profile.get("profile_id") or "").strip()
+        name = str(config.get("name") or profile.get("profileKey") or profile.get("profile_key") or "").strip()
+        title = str(config.get("title") or "").strip()
+        description = str(config.get("description") or "").strip()
+        role = str(config.get("role") or profile.get("agentType") or profile.get("agent_type") or "").strip()
+        skills = _text_list(config.get("skills") or profile.get("skills"))
+        parts = []
+        if name:
+            parts.append(f"이름={name}")
+        if title:
+            parts.append(f"호칭={title}")
+        if description:
+            parts.append(f"할 수 있는 일={description}")
+        if skills:
+            parts.append("스킬=" + ", ".join(skills))
+        if role:
+            parts.append(f"참고 분류={role}")
+        if profile_id and parts:
+            lines.append(f"{profile_id}: " + " / ".join(parts))
+        elif profile_id:
+            lines.append(profile_id)
+    return lines
+
+
+def _build_session_agent_skill_description_lines(profiles: list) -> list[str]:
+    seen: set[str] = set()
+    lines: list[str] = []
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        config = profile.get("configSnapshot") or profile.get("config_snapshot") or {}
+        if not isinstance(config, dict):
+            config = {}
+        for line in _skill_description_lines(profile.get("skillDescriptions") or config.get("skillDescriptions")):
+            name = line.split(":", 1)[0].strip()
+            key = name or line
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(line)
+    return lines
+
+
+def _build_target_agent_profile_lines(profile: dict) -> list[str]:
+    config = profile.get("configSnapshot") or profile.get("config_snapshot") or {}
+    if not isinstance(config, dict):
+        config = {}
+    fields = [
+        ("name", "이름"),
+        ("role", "역할"),
+        ("title", "타이틀"),
+        ("description", "설명"),
+        ("adapterType", "연결 방식"),
+        ("model", "모델"),
+    ]
+    lines: list[str] = []
+    for key, label in fields:
+        value = str(config.get(key) or profile.get(key) or "").strip()
+        if value:
+            lines.append(f"{label}: {value}")
+    skills = config.get("skills") or profile.get("skills")
+    if isinstance(skills, list):
+        skill_names = [str(skill).strip() for skill in skills if str(skill).strip()]
+        if skill_names:
+            lines.append("스킬: " + ", ".join(skill_names))
+    return lines
+
+
+def _text_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _skill_description_lines(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    lines: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("skillId") or item.get("skill_id") or "").strip()
+        description = str(item.get("description") or "").strip()
+        if not name:
+            continue
+        if len(description) > 120:
+            description = description[:117].rstrip() + "..."
+        detail_parts = [part for part in [description] if part]
+        lines.append(f"{name}: " + " / ".join(detail_parts) if detail_parts else name)
+    return lines
+
+
+def _build_target_agent_instruction_lines(bundle: dict) -> list[str]:
+    entry_key = str(bundle.get("entryDocumentKey") or bundle.get("entry_document_key") or "AGENTS.md").strip()
+    documents = bundle.get("documents")
+    if not isinstance(documents, list):
+        return []
+    lines: list[str] = []
+    for document in documents:
+        if not isinstance(document, dict):
+            continue
+        key = str(document.get("documentKey") or document.get("document_key") or "").strip()
+        content = str(document.get("content") or "").strip()
+        if not key or not content:
+            continue
+        prefix = "기본 지침 문서" if key == entry_key else "참고 지침 문서"
+        lines.append(f"  - {prefix}: {key}")
+        lines.append(content[:6000])
+    return lines
+
+
+def _memory_application_instructions(input_payload: dict[str, object]) -> str:
+    memory_context = str(input_payload.get("persistent_memory_context", "")).strip()
+    if not memory_context:
+        return ""
+    match = _MEMORY_APPLICATION_BLOCK_PATTERN.search(memory_context)
+    return match.group(0).strip() if match else ""
 
 
 class PromptManager(PromptBuilder):

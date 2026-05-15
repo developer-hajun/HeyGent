@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 
 from app.clients.backend_auth import BackendAuthVerifyResult
+from app.clients.backend_memory import BackendMemoryItem
 from app.contracts.event.task_events import TaskEventEnvelope
 from app.contracts.task.task_status import TaskStatus
 from app.domain.orchestration.delegation.spec import ChildSessionLaunchResult
@@ -61,15 +62,25 @@ def _patch_respond(monkeypatch, responses: list[AgentModelResponse | Exception])
     iterator = iter(responses)
     calls: list[dict] = []
 
-    def fake_respond(self, messages, tools, model, tool_choice=None):
+    def fake_respond(self, messages, tools, model, tool_choice=None, runtime_context=None):
         calls.append({"messages": messages, "tools": tools, "model": model, "tool_choice": tool_choice})
         next_response = next(iterator)
         if isinstance(next_response, Exception):
             raise next_response
         return next_response
 
+    async def fake_respond_async(self, messages, tools, model, tool_choice=None, runtime_context=None):
+        return fake_respond(
+            self,
+            messages=messages,
+            tools=tools,
+            model=model,
+            tool_choice=tool_choice,
+            runtime_context=runtime_context,
+        )
+
     monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond", fake_respond)
-    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.respond", fake_respond)
+    monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond_async", fake_respond_async)
     return calls
 
 
@@ -94,7 +105,6 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
                             ]
                         },
                     ),
-                    _tool_call("call_skills", "skills_list", {}),
                     _tool_call(
                         "call_todo",
                         "todo",
@@ -126,10 +136,12 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
     assert body["status"] == "COMPLETED"
     assert "task_type" in body
     assert body["result_payload"]["text"] == "NATIVE_LOOP_DONE"
-    assert [item["name"] for item in body["result_payload"]["tool_results"]] == ["step", "skills.list", "todo", "terminal.run"]
+    assert [item["name"] for item in body["result_payload"]["tool_results"]] == ["step", "todo", "terminal.run"]
     assert body["todo_state"]["currentKey"] is None
     exposed_tool_names = [tool["function"]["name"] for tool in provider_calls[0]["tools"]]
     assert "skills_list" in exposed_tool_names
+    assert "skills_read" in exposed_tool_names
+    assert "web_search" in exposed_tool_names
     assert "terminal_run" in exposed_tool_names
     assert all("." not in name for name in exposed_tool_names)
 
@@ -144,9 +156,47 @@ def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, mon
 
     transcript_session = client.app.state.session_store.get_latest_session_by_key("sess_native_loop")
     transcript = client.app.state.session_store.list_messages(transcript_session["id"])
-    assert [message["role"] for message in transcript] == ["user", "assistant", "tool", "tool", "tool", "tool", "assistant"]
+    assert [message["role"] for message in transcript] == ["user", "assistant", "tool", "tool", "tool", "assistant"]
     assert transcript[1]["tool_calls"][0]["id"] == "call_step"
     assert transcript[2]["tool_call_id"] == "call_step"
+
+
+def test_direct_task_run_attaches_backend_memory_context(client, monkeypatch):
+    client.app.state.backend_memory_client.memories = [
+        BackendMemoryItem(
+            id=11,
+            memory_type="PREFERENCE",
+            store_type="PROFILE",
+            scope_type="GLOBAL",
+            content="사용자는 결과를 세 줄 요약으로 받는 것을 선호한다.",
+            metadata={"workspaceKey": "team-a"},
+        )
+    ]
+    provider_calls = _patch_respond(monkeypatch, [_response(text="MEMORY_CONTEXT_DONE")])
+
+    response = client.post(
+        "/ai/api/v1/taskRuns",
+        headers={"Authorization": "Bearer 42", "X-Workspace-Key": "team-a"},
+        json={
+            "owner_key": "ignored-owner",
+            "session_key": "sess_memory_context",
+            "input_payload": {
+                "prompt": "회의 내용을 정리해줘",
+                "persistent_memory_context": "client supplied context",
+                "model": "gpt-test",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    task = client.app.state.repository.get_task(body["task_run_id"])
+    assert task is not None
+    assert "사용자는 결과를 세 줄 요약으로 받는 것을 선호한다." in task.input_payload["persistent_memory_context"]
+    assert "client supplied context" not in str(task.input_payload)
+    assert client.app.state.backend_memory_client.calls[0]["user_id"] == "42"
+    assert client.app.state.backend_memory_client.calls[0]["workspace_key"] == "team-a"
+    assert "사용자는 결과를 세 줄 요약" in str(provider_calls[0]["messages"])
 
 
 def test_agent_loop_emits_runtime_tool_progress_events_before_completion(client, monkeypatch, tmp_path):
@@ -346,15 +396,25 @@ def test_agent_loop_materializes_only_llm_declared_steps_after_run_scoped_tool_e
 def test_agent_loop_does_not_create_steprun_before_first_provider_call(client, monkeypatch):
     observed_step_counts: list[int] = []
 
-    def fake_respond(self, messages, tools, model, tool_choice=None):
+    def fake_respond(self, messages, tools, model, tool_choice=None, runtime_context=None):
         _ = (self, messages, tools, model, tool_choice)
         tasks = client.app.state.repository.list_tasks(limit=10)
         assert len(tasks) == 1
         observed_step_counts.append(len(client.app.state.repository.list_steps(tasks[0].task_run_id)))
         return _response(text="FIRST_PROVIDER_DONE")
 
+    async def fake_respond_async(self, messages, tools, model, tool_choice=None, runtime_context=None):
+        return fake_respond(
+            self,
+            messages=messages,
+            tools=tools,
+            model=model,
+            tool_choice=tool_choice,
+            runtime_context=runtime_context,
+        )
+
     monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond", fake_respond)
-    monkeypatch.setattr("app.domain.providers.model.openai_oauth.OpenAIOAuthProvider.respond", fake_respond)
+    monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond_async", fake_respond_async)
 
     response = client.post(
         "/ai/api/v1/taskRuns",
@@ -378,7 +438,7 @@ def test_agent_loop_does_not_create_steprun_before_first_provider_call(client, m
     assert len(client.app.state.repository.list_steps(body["task_run_id"])) == 0
 
 
-def test_agent_loop_runs_provider_response_off_event_loop(client, monkeypatch):
+def test_agent_loop_uses_native_async_provider_without_thread_fallback(client, monkeypatch):
     to_thread_calls: list[str] = []
 
     async def fake_to_thread(func, /, *args, **kwargs):
@@ -386,7 +446,7 @@ def test_agent_loop_runs_provider_response_off_event_loop(client, monkeypatch):
         return func(*args, **kwargs)
 
     monkeypatch.setattr("app.domain.orchestration.agent.tool_calling_loop.asyncio.to_thread", fake_to_thread)
-    _patch_respond(monkeypatch, [_response(text="THREAD_PROVIDER_DONE")])
+    _patch_respond(monkeypatch, [_response(text="ASYNC_PROVIDER_DONE")])
 
     response = client.post(
         "/ai/api/v1/taskRuns",
@@ -401,7 +461,7 @@ def test_agent_loop_runs_provider_response_off_event_loop(client, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["status"] == "COMPLETED"
-    assert to_thread_calls == ["fake_respond"]
+    assert to_thread_calls == []
 
 
 def test_step_events_use_llm_declared_step_title_as_realtime_summary(client, monkeypatch):
@@ -890,6 +950,8 @@ def test_agent_loop_keeps_delegate_step_running_until_worker_result_before_file_
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "COMPLETED"
+    assert body["displayContext"]["taskRunId"] == body["task_run_id"]
+    assert body["displayContext"]["assigneeAgent"]["kind"] == "main"
     assert (workspace / "tmp/testfile/depth1/report.md").read_text(encoding="utf-8").startswith("# AI 서브에이전트 depth1 설계")
 
     steps = client.get(f"/ai/api/v1/taskRuns/{body['task_run_id']}/steps").json()
@@ -900,6 +962,9 @@ def test_agent_loop_keeps_delegate_step_running_until_worker_result_before_file_
     research_step, write_step = steps
     assert research_step["detail_json"]["agentDetail"]["workerSessionId"] is not None
     assert research_step["detail_json"]["agentDetail"]["workers"][0]["status"] == TaskStatus.COMPLETED
+    assert research_step["displayContext"]["stepRunId"] == research_step["step_run_id"]
+    assert research_step["displayContext"]["actorAgent"]["kind"] == "worker"
+    assert research_step["displayContext"]["delegatedAgents"][0]["agentSessionId"] == research_step["detail_json"]["agentDetail"]["workerSessionId"]
 
     events = client.app.state.repository.list_events(body["task_run_id"])
     delegate_update = next(
@@ -916,6 +981,8 @@ def test_agent_loop_keeps_delegate_step_running_until_worker_result_before_file_
     )
     assert events.index(delegate_update) < events.index(write_tool_started)
     assert write_tool_started.step_run_id == write_step["step_run_id"]
+    assert write_tool_started.payload["displayContext"]["taskRunId"] == body["task_run_id"]
+    assert write_tool_started.payload["displayContext"]["stepRunId"] == write_step["step_run_id"]
 
     first_turn_tool_messages = [
         message for message in provider_calls[1]["messages"]
@@ -1405,7 +1472,9 @@ def test_taskruns_cancel_records_pending_tool_result_without_resuming_loop(clien
     assert canceled_tool_message["tool_name"] == "terminal.run"
 
 
-def test_taskruns_resume_and_cancel_reject_non_waiting_task(client):
+def test_taskruns_resume_and_cancel_reject_non_waiting_task(client, monkeypatch):
+    _patch_respond(monkeypatch, [_response(text="NON_WAITING_DONE")])
+
     create_response = client.post(
         "/ai/api/v1/taskRuns",
         json={

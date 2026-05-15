@@ -1,3 +1,7 @@
+from datetime import timedelta
+import json
+
+from app.core.time import utc_now
 from app.domain.tasks.repository import (
     ApprovalRepository,
     DurableRunAnchorRepository,
@@ -7,12 +11,15 @@ from app.domain.tasks.repository import (
     TaskRunRepository,
 )
 from app.domain.tasks.models import TaskRun
+from app.contracts.event.task_events import TaskEventEnvelope
 from app.storage.queries.approval_queries import CREATE_APPROVAL_REQUESTS
 from app.storage.queries.task_queries import CREATE_TASK_RUNS
 from app.storage.postgres.schema import POSTGRES_SCHEMA_STATEMENTS, render_postgres_schema
 from app.storage.postgres.connection import apply_configured_postgres_migrations
 from app.storage.postgres.durable_repository import PostgresDurableRepository, PostgresTaskRepository
 from app.storage.postgres.migrations import POSTGRES_MIGRATIONS, apply_postgres_migrations
+from app.contracts.work.responses import WorkItemResponse
+from app.domain.work.models import WorkItem
 from tests.fakes import InMemoryTaskRepository
 from app.storage.postgres.session_store import PostgresSessionStore, _owner_filter_params, _owner_filter_sql
 
@@ -43,6 +50,31 @@ def test_postgres_task_repository_satisfies_runtime_repository_protocols():
     assert isinstance(repository, TaskRepository)
 
 
+def test_in_memory_task_repository_claims_pending_tasks_atomically_by_state():
+    repository = InMemoryTaskRepository()
+    repository.create_pending_task(
+        TaskRun(
+            task_run_id="task-queue-1",
+            task_type="agent.loop",
+            owner_key="42",
+            session_key="session-1",
+            status="PENDING",
+        )
+    )
+
+    claimed = repository.claim_next_task(claim_owner="worker-a", lease_seconds=30)
+    claimed_again = repository.claim_next_task(claim_owner="worker-b", lease_seconds=30)
+
+    assert claimed is not None
+    assert claimed.task_run_id == "task-queue-1"
+    assert claimed.status == "RUNNING"
+    assert claimed.queue_status == "claimed"
+    assert claimed.claim_owner == "worker-a"
+    assert claimed.attempts == 1
+    assert claimed.lease_expires_at is not None
+    assert claimed_again is None
+
+
 def test_postgres_schema_contains_required_durable_tables():
     schema_sql = "\n".join(POSTGRES_SCHEMA_STATEMENTS)
 
@@ -58,6 +90,19 @@ def test_postgres_schema_contains_required_durable_tables():
         "ai_agent_templates",
         "provider_oauth_states",
         "provider_tokens",
+        "work_counters",
+        "work_items",
+        "work_labels",
+        "work_label_links",
+        "work_comments",
+        "work_relations",
+        "work_runs",
+        "work_wake_requests",
+        "work_recovery_actions",
+        "work_read_states",
+        "ai_skill_catalog",
+        "ai_user_skill_settings",
+        "ai_agent_skill_settings",
     }
 
     for table_name in required_tables:
@@ -83,6 +128,12 @@ def test_postgres_schema_contains_anchor_profile_and_worker_linkage_columns():
         "revision BIGINT NOT NULL DEFAULT 0",
         "event_epoch BIGINT NOT NULL DEFAULT 1",
         "last_durable_sequence BIGINT NOT NULL DEFAULT 0",
+        "queue_status TEXT NOT NULL DEFAULT 'queued'",
+        "claim_owner TEXT",
+        "lease_expires_at TIMESTAMPTZ",
+        "attempts INTEGER NOT NULL DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS idx_run_anchors_queue_claim",
+        "CREATE INDEX IF NOT EXISTS idx_run_anchors_active_owner_session",
         "parent_step_run_id TEXT",
         "worker_session_id TEXT",
         "agent_profile_version INTEGER",
@@ -129,11 +180,111 @@ def test_postgres_schema_contains_user_owner_and_session_lifecycle_columns():
 
     assert "0006_session_owner_lifecycle_settings" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
     assert "0007_session_command_receipts" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "0008_work_board_schema" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
     assert "ALTER TABLE agent_sessions" in migration_sql
     assert "ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES users(id)" in migration_sql
     assert "ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}'::jsonb" in migration_sql
     assert "agent_sessions_public_owner_user_required" in migration_sql
     assert "CREATE TABLE IF NOT EXISTS session_command_receipts" in migration_sql
+    assert "CREATE TABLE IF NOT EXISTS work_items" in migration_sql
+
+
+def test_postgres_work_schema_contains_board_execution_fields():
+    schema_sql = render_postgres_schema()
+
+    for expected in [
+        "identifier TEXT NOT NULL",
+        "status TEXT NOT NULL",
+        "assignee_agent_id TEXT",
+        "parent_id TEXT REFERENCES work_items(work_id) ON DELETE SET NULL",
+        "raw_user_input TEXT",
+        "execution_instruction TEXT",
+        "expected_deliverable TEXT",
+        "acceptance_criteria JSONB NOT NULL DEFAULT '[]'::jsonb",
+        "constraints_payload JSONB NOT NULL DEFAULT '[]'::jsonb",
+        "client_request_id TEXT",
+        "active_run_id TEXT",
+        "latest_run_id TEXT",
+        "UNIQUE (session_id, identifier)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_session_client_request",
+        "CREATE INDEX IF NOT EXISTS idx_work_items_session_status_updated",
+    ]:
+        assert expected in schema_sql
+
+
+def test_postgres_work_schema_contains_flow_order_contract():
+    schema_sql = render_postgres_schema()
+    migration_sql = "\n".join(statement for migration in POSTGRES_MIGRATIONS for statement in migration.statements)
+
+    assert "flow_order INTEGER" in schema_sql
+    assert "CREATE INDEX IF NOT EXISTS idx_work_items_parent_flow_order" in schema_sql
+    assert "0011_work_flow_order" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "ADD COLUMN IF NOT EXISTS flow_order INTEGER" in migration_sql
+    assert "idx_work_items_parent_flow_order" in migration_sql
+
+
+def test_postgres_work_schema_contains_wake_recovery_contract():
+    schema_sql = render_postgres_schema()
+    migration_sql = "\n".join(statement for migration in POSTGRES_MIGRATIONS for statement in migration.statements)
+
+    for expected in [
+        "CREATE TABLE IF NOT EXISTS work_wake_requests",
+        "scheduled_retry",
+        "next_attempt_at TIMESTAMPTZ",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_work_wake_requests_work_active",
+        "CREATE TABLE IF NOT EXISTS work_recovery_actions",
+        "idempotency_key TEXT NOT NULL UNIQUE",
+        "payload JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "CREATE INDEX IF NOT EXISTS idx_work_recovery_actions_work_created",
+    ]:
+        assert expected in schema_sql
+
+    assert "0013_work_recovery_actions" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "0014_task_run_queue_claims" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "0015_allow_nested_session_agent_runs" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "DROP CONSTRAINT IF EXISTS work_wake_requests_status_check" in migration_sql
+    assert "DROP INDEX IF EXISTS idx_run_anchors_one_active_per_owner_session" in migration_sql
+
+
+def test_postgres_schema_contains_user_skill_settings_contract():
+    schema_sql = render_postgres_schema()
+    migration_sql = "\n".join(statement for migration in POSTGRES_MIGRATIONS for statement in migration.statements)
+
+    for expected in [
+        "CREATE TABLE IF NOT EXISTS ai_skill_catalog",
+        "CREATE TABLE IF NOT EXISTS ai_user_skill_settings",
+        "CREATE TABLE IF NOT EXISTS ai_agent_skill_settings",
+        "source_type TEXT NOT NULL DEFAULT 'builtin'",
+        "enabled BOOLEAN NOT NULL",
+        "PRIMARY KEY (owner_key, skill_id)",
+        "PRIMARY KEY (profile_id, skill_id)",
+        "CREATE INDEX IF NOT EXISTS idx_ai_user_skill_settings_owner_enabled",
+        "CREATE INDEX IF NOT EXISTS idx_ai_agent_skill_settings_profile_enabled",
+    ]:
+        assert expected in schema_sql
+
+    assert "0016_user_skill_settings" in [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    assert "CREATE TABLE IF NOT EXISTS ai_skill_catalog" in migration_sql
+
+
+def test_work_item_response_exposes_flow_order_for_diagram_layout():
+    response = WorkItemResponse.model_validate(
+        WorkItem(
+            work_id="work-flow-child",
+            identifier="TASK-2",
+            session_id="session-flow",
+            owner_key="user-flow",
+            owner_user_id=7,
+            title="시장 분석",
+            description=None,
+            status="todo",
+            parent_id="work-flow-root",
+            flow_order=2,
+        ),
+        from_attributes=True,
+    )
+
+    assert response.model_dump(by_alias=True)["flowOrder"] == 2
 
 
 def test_sqlite_task_and_approval_contracts_keep_owner_user_columns():
@@ -362,6 +513,17 @@ class _FakeDurableConnection:
                 session_key,
                 current_step_run_id,
                 durable_status,
+                queue_status,
+                claim_owner,
+                queued_at,
+                claimed_at,
+                lease_expires_at,
+                heartbeat_at,
+                next_attempt_at,
+                attempts,
+                last_claim_error,
+                agent_profile_id,
+                agent_profile_version,
                 agent_config_snapshot,
                 anchor_payload,
             ) = params
@@ -373,6 +535,17 @@ class _FakeDurableConnection:
                 "session_key": session_key,
                 "current_step_run_id": current_step_run_id,
                 "durable_status": durable_status,
+                "queue_status": queue_status,
+                "claim_owner": claim_owner,
+                "queued_at": queued_at,
+                "claimed_at": claimed_at,
+                "lease_expires_at": lease_expires_at,
+                "heartbeat_at": heartbeat_at,
+                "next_attempt_at": next_attempt_at,
+                "attempts": attempts,
+                "last_claim_error": last_claim_error,
+                "agent_profile_id": agent_profile_id,
+                "agent_profile_version": agent_profile_version,
                 "agent_config_snapshot": agent_config_snapshot,
                 "anchor_payload": anchor_payload,
             }
@@ -414,6 +587,8 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
             "session_key": "session_pg",
             "current_step_run_id": "step_pg_anchor",
             "durable_status": "WAITING",
+            "agent_profile_id": "agent_profile_pg",
+            "agent_profile_version": 3,
             "agent_config_snapshot": {"model": "gpt-session", "enabled_toolsets": ["session"]},
             "anchor_payload": {"reason": "approval"},
         },
@@ -430,11 +605,47 @@ def test_postgres_durable_repository_upserts_run_and_step_anchors():
     )
 
     assert run_anchor["owner_key"] == "user_pg"
+    assert run_anchor["agent_profile_id"] == "agent_profile_pg"
+    assert run_anchor["agent_profile_version"] == 3
     assert run_anchor["agent_config_snapshot"] == {"model": "gpt-session", "enabled_toolsets": ["session"]}
     assert run_anchor["anchor_payload"] == {"reason": "approval"}
     assert step_anchor["step_order"] == 3
     assert step_anchor["anchor_payload"] == {"tool": "terminal.run"}
     assert connection.commits == 2
+
+
+def test_postgres_durable_repository_preserves_agent_profile_columns_when_appending_events():
+    connection = _FakeDurableConnection()
+    repository = PostgresTaskRepository(lambda: connection)
+
+    repository.upsert_run_anchor(
+        "task_pg_agent_anchor",
+        {
+            "owner_key": "user_pg",
+            "session_key": "session_pg",
+            "agent_profile_id": "agent_profile_pg",
+            "agent_profile_version": 2,
+            "agent_config_snapshot": {"model": "gpt-session"},
+            "anchor_payload": {"task": {"task_run_id": "task_pg_agent_anchor"}},
+        },
+    )
+
+    repository.append_event(
+        TaskEventEnvelope(
+            event_id="event-1",
+            event_type="task.started",
+            task_run_id="task_pg_agent_anchor",
+            producer="test",
+            occurred_at="2026-05-11T00:00:00+00:00",
+            status="RUNNING",
+        )
+    )
+
+    anchor = repository.get_run_anchor("task_pg_agent_anchor")
+    assert anchor is not None
+    assert anchor["agent_profile_id"] == "agent_profile_pg"
+    assert anchor["agent_profile_version"] == 2
+    assert anchor["agent_config_snapshot"] == {"model": "gpt-session"}
 
 
 def test_postgres_task_repository_copies_task_settings_to_run_anchor_config_snapshot():
@@ -451,18 +662,103 @@ def test_postgres_task_repository_copies_task_settings_to_run_anchor_config_snap
                 "settings_snapshot": {"model": "gpt-session", "systemPrompt": "세션 프롬프트"},
                 "enabled_toolsets": ["session", "planning"],
                 "delegation_policy": {"canDelegate": False},
+                "targetAgentProfile": {"profileId": "agent_profile_42", "profileVersion": 2},
             },
         )
     )
 
     anchor = repository.get_run_anchor("task_pg_settings_anchor")
     assert anchor is not None
+    assert anchor["agent_profile_id"] == "agent_profile_42"
+    assert anchor["agent_profile_version"] == 2
     assert anchor["agent_config_snapshot"] == {
         "model": "gpt-session",
         "systemPrompt": "세션 프롬프트",
         "toolsets": ["session", "planning"],
         "delegationPolicy": {"canDelegate": False},
     }
+
+
+def test_postgres_task_repository_marks_completed_claim_as_terminal():
+    connection = _FakeDurableConnection()
+    repository = PostgresTaskRepository(lambda: connection)
+    task = TaskRun(
+        task_run_id="task_pg_claim_complete",
+        task_type="agent.loop",
+        owner_key="42",
+        session_key="session_pg_claim",
+        status="RUNNING",
+        queue_status="claimed",
+        claim_owner="worker-a",
+    )
+    repository.create_task(task)
+
+    task.status = "COMPLETED"
+    repository.update_task(task)
+
+    anchor = repository.get_run_anchor("task_pg_claim_complete")
+    assert anchor is not None
+    assert anchor["queue_status"] == "terminal"
+    assert anchor["claim_owner"] is None
+    assert anchor["lease_expires_at"] is None
+    assert anchor["heartbeat_at"] is None
+    assert anchor["anchor_payload"]["task"]["queue_status"] == "terminal"
+
+
+def test_postgres_task_repository_recovers_stale_running_task_as_terminal():
+    connection = _FakeDurableConnection()
+    repository = PostgresTaskRepository(lambda: connection)
+    task = TaskRun(
+        task_run_id="task_pg_stale_recover",
+        task_type="agent.loop",
+        owner_key="42",
+        session_key="session_pg_stale",
+        status="RUNNING",
+        queue_status="running",
+        claim_owner=None,
+    )
+    repository.create_task(task)
+    old_updated_at = utc_now() - timedelta(minutes=20)
+    connection.run_anchors["task_pg_stale_recover"]["updated_at"] = old_updated_at
+    payload = json.loads(connection.run_anchors["task_pg_stale_recover"]["anchor_payload"])
+    payload["task"]["updated_at"] = old_updated_at.isoformat()
+    connection.run_anchors["task_pg_stale_recover"]["anchor_payload"] = payload
+
+    recovered = repository.recover_stale_task_run("task_pg_stale_recover", reason="claim_signal_stale")
+
+    assert recovered is not None
+    assert recovered.status == "FAILED"
+    assert recovered.queue_status == "terminal"
+    assert recovered.error_message == "실행 상태가 만료되어 자동 복구되었습니다."
+    anchor = repository.get_run_anchor("task_pg_stale_recover")
+    assert anchor is not None
+    assert anchor["queue_status"] == "terminal"
+    assert anchor["anchor_payload"]["task"]["status"] == "FAILED"
+    assert anchor["anchor_payload"]["task"]["queue_status"] == "terminal"
+
+
+def test_postgres_task_repository_does_not_recover_refreshed_running_task():
+    connection = _FakeDurableConnection()
+    repository = PostgresTaskRepository(lambda: connection)
+    task = TaskRun(
+        task_run_id="task_pg_refreshed_recover",
+        task_type="agent.loop",
+        owner_key="42",
+        session_key="session_pg_refreshed",
+        status="RUNNING",
+        queue_status="running",
+        lease_expires_at=utc_now() + timedelta(minutes=5),
+        heartbeat_at=utc_now(),
+    )
+    repository.create_task(task)
+
+    recovered = repository.recover_stale_task_run("task_pg_refreshed_recover", reason="claim_signal_stale")
+
+    assert recovered is None
+    saved = repository.get_task("task_pg_refreshed_recover")
+    assert saved is not None
+    assert saved.status == "RUNNING"
+    assert saved.queue_status == "running"
 
 
 def test_postgres_task_repository_reads_agent_profile_by_key():

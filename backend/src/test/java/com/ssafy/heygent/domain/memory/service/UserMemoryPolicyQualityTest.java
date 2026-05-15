@@ -189,6 +189,7 @@ class UserMemoryPolicyQualityTest {
             "workspace-a",
             null,
             null,
+            null,
             null
         );
 

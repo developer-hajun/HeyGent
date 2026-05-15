@@ -93,6 +93,7 @@ services:
     # 작업 범위를 좁혀야 하면 별도 workspace 디렉터리만 mount한다.
     volumes:
       - .:/workspace
+      - /home/ubuntu/heygent-env/secrets:/app/secrets:ro
     environment:
       # 컨테이너 내부에서 AI 파일 도구가 기준으로 삼는 작업 루트.
       - HEYGENT_WORKSPACE_ROOT=/workspace

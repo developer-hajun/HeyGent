@@ -398,9 +398,51 @@ def _normalize_operation(operation: dict[str, Any] | None) -> dict[str, Any] | N
         "status": normalize_operation_status(raw.get("status")),
         "summary": raw.get("summary"),
     }
+    operation_error = _normalize_operation_error(raw, fallback_summary=normalized["summary"], status=normalized["status"])
+    if operation_error is not None:
+        normalized["error"] = operation_error
     if raw_kind and normalized_kind != raw_kind.lower():
         normalized["rawKind"] = raw_kind
     return normalized
+
+
+def _normalize_operation_error(
+    raw: dict[str, Any],
+    *,
+    fallback_summary: Any,
+    status: str,
+) -> dict[str, Any] | None:
+    raw_error = raw.get("error")
+    source = raw_error if isinstance(raw_error, dict) else {}
+    retryable = source.get("retryable")
+    if not isinstance(retryable, bool):
+        retryable = raw.get("retryable")
+
+    normalized: dict[str, Any] = {}
+    code = _safe_text(source.get("code") or raw.get("error_code") or raw.get("errorCode") or raw.get("code"))
+    message = _safe_text(
+        source.get("message")
+        or raw.get("error_message")
+        or raw.get("errorMessage")
+        or (raw_error if isinstance(raw_error, str) else None)
+    )
+    error_type = _safe_text(source.get("type") or raw.get("error_type") or raw.get("errorType"))
+
+    if code:
+        normalized["code"] = code
+    if message:
+        normalized["message"] = message
+    if error_type:
+        normalized["type"] = error_type
+    if isinstance(retryable, bool):
+        normalized["retryable"] = retryable
+
+    if not normalized and status == "failed":
+        summary = _safe_text(fallback_summary)
+        if summary:
+            normalized["message"] = summary
+
+    return normalized or None
 
 
 def _operation_status_counts(operations: list[dict[str, Any]]) -> dict[str, int]:
@@ -429,3 +471,14 @@ def _safe_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _safe_text(value: Any, *, max_length: int = 500) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.strip().split())
+    if not text:
+        return None
+    if len(text) > max_length:
+        return f"{text[:max_length]}..."
+    return text

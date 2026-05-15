@@ -138,6 +138,51 @@ def test_build_operation_detail_counts_pending_running_and_canceled_operations()
     assert detail["statusCounts"]["canceled"] == 1
 
 
+def test_build_operation_detail_preserves_operation_error():
+    patch = build_operation_detail(
+        [
+            {
+                "key": "tool.browser.1",
+                "title": "브라우저 확인",
+                "kind": "tool",
+                "status": "failed",
+                "summary": "브라우저 열기 실패",
+                "error": {
+                    "code": "browser_timeout",
+                    "message": "Timed out opening page",
+                    "type": "TimeoutError",
+                    "retryable": True,
+                },
+            }
+        ]
+    )
+
+    operation = patch["operationDetail"]["operations"][0]
+    assert operation["error"] == {
+        "code": "browser_timeout",
+        "message": "Timed out opening page",
+        "type": "TimeoutError",
+        "retryable": True,
+    }
+    assert patch["operationDetail"]["failedCount"] == 1
+
+
+def test_build_operation_detail_adds_error_message_for_failed_operation_summary():
+    patch = build_operation_detail(
+        [
+            {
+                "key": "handler.failure",
+                "title": "실행 실패",
+                "status": "failed",
+                "summary": "TimeoutError: tool execution timed out",
+            }
+        ]
+    )
+
+    operation = patch["operationDetail"]["operations"][0]
+    assert operation["error"] == {"message": "TimeoutError: tool execution timed out"}
+
+
 def test_infer_semantic_status_returns_canceled_when_remaining_operations_are_canceled():
     status = infer_semantic_status(
         lifecycle="running",

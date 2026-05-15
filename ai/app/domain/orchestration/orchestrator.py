@@ -17,6 +17,12 @@ class Orchestrator:
     async def start(self, request: OrchestrationRequest) -> TaskRun:
         return await self.loop_runner.start(request)
 
+    async def enqueue_start(self, request: OrchestrationRequest) -> TaskRun:
+        return await self.loop_runner.enqueue_start(request)
+
+    async def execute_claimed(self, task: TaskRun) -> TaskRun:
+        return await self.loop_runner.execute_claimed(task)
+
     async def resume(self, *, task_run_id: str, approval_id: str, payload: dict) -> TaskRun:
         task = self.repository.get_task(task_run_id)
         if task is None:

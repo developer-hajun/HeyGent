@@ -24,8 +24,8 @@ public class OpenAiProperties {
     private String embeddingModel = "text-embedding-3-small";
     private int timeoutSeconds = 60;
     private String credentialEncryptionKey = "";
-    private OAuth oauth = new OAuth();
     private CodexOAuth codexOAuth = new CodexOAuth();
+    private CodexDeviceOAuth codexDeviceOAuth = new CodexDeviceOAuth();
 
     public boolean hasApiKey() {
         return StringUtils.hasText(apiKey);
@@ -44,25 +44,20 @@ public class OpenAiProperties {
 
     @Getter
     @Setter
-    public static class OAuth {
+    public static class CodexOAuth {
 
-        private String clientId = "";
-        private String clientSecret = "";
-        private String redirectUri = "http://localhost:8080/api/v1/ai/openai/oauth/callback";
-        private String authorizeUrl = "https://auth.openai.com/oauth/authorize";
+        private String clientId = "app_EMoamEEZ73f0CkXaXp7hrann";
         private String tokenUrl = "https://auth.openai.com/oauth/token";
-        private List<String> scopes = new ArrayList<>(List.of("openid", "profile", "email", "offline_access"));
+        private int refreshSkewSeconds = 300;
     }
 
     @Getter
     @Setter
-    public static class CodexOAuth {
+    public static class CodexDeviceOAuth {
 
-        private String clientId = "app_EMoamEEZ73f0CkXaXp7hrann";
-        private String redirectUri = "http://localhost:1455/auth/callback";
-        private String authorizeUrl = "https://auth.openai.com/oauth/authorize";
-        private String tokenUrl = "https://auth.openai.com/oauth/token";
-        private List<String> scopes = new ArrayList<>(List.of("openid", "profile", "email", "offline_access"));
-        private int refreshSkewSeconds = 300;
+        private String command = "codex";
+        private String workspaceRoot = "";
+        private int startTimeoutSeconds = 30;
+        private int authTimeoutSeconds = 900;
     }
 }

@@ -1,20 +1,41 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 import json
 import logging
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from pydantic import BaseModel
 
+from app.api.session_agent_profiles import (
+    agent_profile_prompt_payload as _agent_profile_prompt_payload,
+    instruction_bundle_prompt_payload as _instruction_bundle_prompt_payload,
+    profile_model as _profile_model,
+)
+from app.api.ws.command_types import (
+    WebSocketAuthContext,
+    WebSocketBackgroundContext,
+    WebSocketCommandContext,
+    WebSocketCommandError,
+)
+from app.api.memory_context import attach_persistent_memory_context
+from app.api.memory_mark_used import mark_used_recalled_memories
+from app.api.memory_observation import attach_memory_observation_to_task
+from app.api.memory_writeback import writeback_persistent_memory_candidates
 from app.contracts.task.task_status import TaskStatus
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
+from app.domain.orchestration.capabilities import apply_task_capabilities
+from app.domain.orchestration.contracts import OrchestrationRequest
+from app.domain.orchestration.run_lifecycle import classify_task_run_liveness
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
+from app.domain.tasks.activity_transcript import build_activity_transcript
+from app.domain.tasks.display_context import build_task_display_context
+from app.domain.work import WorkService
 logger = logging.getLogger(__name__)
 
 _PUBLIC_SESSION_SOURCE = "api.session"
@@ -49,55 +70,22 @@ _PROTECTED_SESSION_METADATA_KEYS = {
 }
 _SESSION_METADATA_PATCH_ALLOWLIST = {"pinned", "color", "tags", "description", "lastViewedAt", "last_viewed_at", "ui"}
 _SESSION_SETTINGS_ALLOWLIST = {"model", "systemPrompt", "system_prompt", "toolsets", "delegationPolicy", "delegation_policy"}
-_PUBLIC_SESSION_TOOLSETS = {"skills", "session", "planning", "web", "safe"}
-
-
-class WebSocketCommandError(Exception):
-    """command.error frame으로 변환할 수 있는 WebSocket protocol 오류다."""
-
-    def __init__(self, code: str, message: str, *, retryable: bool = False) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.retryable = retryable
-
-
-@dataclass(slots=True)
-class WebSocketAuthContext:
-    """인증된 WebSocket 연결이 살아 있는 동안만 유지되는 메모리 컨텍스트다.
-
-    access_token은 backend 호출이 필요한 후속 command에서만 메모리로 참조할 수 있다.
-    DB, event, projection, detail_json에는 절대 넣지 않는다.
-    """
-
-    user_id: str
-    access_token: str
-    workspace_key: str | None = None
-    scopes: list[str] | None = None
-    token_expires_at: str | None = None
-    scope_expires_at: str | None = None
-
-
-@dataclass(slots=True)
-class WebSocketCommandContext:
-    websocket: Any
-    auth: WebSocketAuthContext
-    gateway_session_id: str
-    session_service: Any
-    send_json: Callable[[dict[str, Any]], Awaitable[None]]
-    background_tasks: set[asyncio.Task]
-    after_response_callbacks: list[Callable[[], None]]
-
-
-@dataclass(slots=True)
-class WebSocketBackgroundContext:
-    """연결 종료 뒤에도 실행될 수 있는 작업용 컨텍스트다.
-
-    background task는 WebSocket close 이후까지 남을 수 있으므로 accessToken을 참조하지 않는다.
-    """
-
-    websocket: Any
-    send_json: Callable[[dict[str, Any]], Awaitable[None]]
+_PUBLIC_SESSION_TOOLSETS = {"skills", "session", "planning", "web", "work", "messaging", "safe"}
+_OPENAI_MODEL_FALLBACKS = (
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+    "gpt-5.2",
+    "gpt-5.1",
+    "gpt-5",
+    "gpt-5-mini",
+    "gpt-5-nano",
+    "gpt-4.1",
+    "gpt-4.1-mini",
+    "gpt-4o",
+    "gpt-4o-mini",
+)
 
 
 class WebSocketCommandRouter:
@@ -246,6 +234,13 @@ class WebSocketCommandRouter:
             )
             if _is_public_session(session)
         ]
+        sessions.sort(
+            key=lambda session: (
+                session.get("updated_at") or session.get("started_at"),
+                session.get("archived_at") is not None,
+            ),
+            reverse=True,
+        )
         selected = sessions[offset : offset + page_size]
         return (
             "session.list.result",
@@ -326,8 +321,35 @@ class WebSocketCommandRouter:
         conversation_history = compact_conversation_history(
             build_conversation_history(session_store.list_messages(session_id))
         )
+        task_input = dict(input_payload)
+        task_input["sessionId"] = session_id
+        task_input["ownerKey"] = context.auth.user_id
+        task_input["ownerUserId"] = _owner_user_id(context.auth.user_id)
         settings_snapshot = _session_settings_snapshot(session)
-        effective_model = str(settings_snapshot.get("model") or model or "").strip() or None
+        _seed_default_session_agents_if_requested(
+            context.websocket.app.state,
+            task_input=task_input,
+            session_id=session_id,
+            owner_key=context.auth.user_id,
+        )
+        main_profile = _attach_main_agent_context(
+            context.websocket.app.state,
+            task_input=task_input,
+            session_id=session_id,
+            owner_key=context.auth.user_id,
+        )
+        session_agent_profiles = _attach_session_agent_candidates(
+            context.websocket.app.state,
+            task_input=task_input,
+            session_id=session_id,
+            owner_key=context.auth.user_id,
+        )
+        if session_agent_profiles:
+            task_input["allowSessionAgentRootWork"] = True
+        profile_model = _profile_model(main_profile) if main_profile is not None else None
+        effective_model = str(profile_model or settings_snapshot.get("model") or model or "").strip() or None
+        if effective_model:
+            task_input["model"] = effective_model
         transcript_session_id = _create_task_transcript_session(
             session_store,
             session_id=session_id,
@@ -335,17 +357,42 @@ class WebSocketCommandRouter:
             title=session.get("title") or content[:120],
             model=effective_model,
         )
-        task_input = dict(input_payload)
-        if effective_model and not task_input.get("model"):
-            task_input["model"] = effective_model
         task_input["prompt"] = content
         task_input["transcript_session_id"] = transcript_session_id
         task_input["conversation_history"] = conversation_history
         task_input["system_prompt_snapshot"] = get_system_prompt_snapshot(session)
         task_input["base_history_version"] = base_history_version
         _apply_session_settings_snapshot(task_input, settings_snapshot, session=session)
+        work_id = _work_id_from_task_input(task_input)
+        work_metadata: dict[str, Any] = {}
+        if work_id is not None:
+            work = _attach_work_context_or_ws_error(
+                context,
+                task_input=task_input,
+                work_id=work_id,
+                session_id=session_id,
+                owner_key=context.auth.user_id,
+            )
+            work_metadata = {
+                "work_id": work.work_id,
+                "work_identifier": work.identifier,
+                "work_title": work.title,
+                "work_assignee_agent_id": work.assignee_agent_id,
+            }
+        apply_task_capabilities(
+            task_input,
+            skill_registry=getattr(context.websocket.app.state, "skill_registry", None),
+            default_toolsets=_default_agent_loop_toolsets(context.websocket.app.state),
+        )
         # token memory context는 durable payload에 넣지 않는다. backend 호출이 필요해지면
         # context.auth.access_token에서만 꺼내 쓰도록 경계를 고정한다.
+        await attach_persistent_memory_context(
+            app_state=context.websocket.app.state,
+            task_input=task_input,
+            user_id=str(context.auth.user_id),
+            query=content,
+            workspace_key=context.auth.workspace_key or session.get("workspace_key"),
+        )
 
         handler = context.websocket.app.state.tool_registry.resolve()
         task = context.websocket.app.state.task_engine.planner.materialize_task(
@@ -361,6 +408,7 @@ class WebSocketCommandRouter:
             client_message_id=client_message_id,
             task_run_id=task.task_run_id,
             base_history_version=base_history_version,
+            metadata_patch=work_metadata,
         )
         if user_append.get("duplicate"):
             accepted = {
@@ -379,8 +427,36 @@ class WebSocketCommandRouter:
             "after_user_message_version": user_append["after_user_message_version"],
             "completion_expected_version": user_append["completion_expected_version"],
         }
+        task_execution_supervisor = getattr(context.websocket.app.state, "task_execution_supervisor", None)
         try:
-            context.websocket.app.state.repository.create_task(task)
+            if task_execution_supervisor is not None:
+                background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
+
+                async def finish_supervised_task(completed_task: Any) -> None:
+                    await self._finish_created_message_task(
+                        context=background_context,
+                        session_id=session_id,
+                        user_message_id=int(user_append["message_id"]),
+                        task=task,
+                        completed_task=completed_task,
+                    )
+
+                task = await task_execution_supervisor.submit(
+                    OrchestrationRequest(
+                        task_run_id=task.task_run_id,
+                        owner_key=context.auth.user_id,
+                        session_key=session_id,
+                        input_payload=dict(task.input_payload or {}),
+                    ),
+                    on_complete=finish_supervised_task,
+                )
+            else:
+                context.websocket.app.state.repository.create_task(task)
+            if work_id is not None:
+                WorkService(context.websocket.app.state.work_repository).mark_run_started(
+                    work_id=work_id,
+                    task_run_id=task.task_run_id,
+                )
         except Exception:
             session_store.clear_stale_running_task(
                 owner_key=context.auth.user_id,
@@ -405,22 +481,23 @@ class WebSocketCommandRouter:
         }
         self._accepted_messages[idempotency_key] = accepted
 
-        def start_background_task() -> None:
-            background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
-            background_task = asyncio.create_task(
-                self._run_created_message_task(
-                    context=background_context,
-                    session_id=session_id,
-                    user_message_id=int(user_append["message_id"]),
-                    task=task,
-                    handler=handler,
+        if task_execution_supervisor is None:
+            def start_background_task() -> None:
+                background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
+                background_task = asyncio.create_task(
+                    self._run_created_message_task(
+                        context=background_context,
+                        session_id=session_id,
+                        user_message_id=int(user_append["message_id"]),
+                        task=task,
+                        handler=handler,
+                    )
                 )
-            )
-            context.background_tasks.add(background_task)
-            background_task.add_done_callback(context.background_tasks.discard)
+                context.background_tasks.add(background_task)
+                background_task.add_done_callback(context.background_tasks.discard)
 
-        # accepted frame을 먼저 보낸 뒤 agent.loop/task.event fan-out을 시작한다.
-        context.after_response_callbacks.append(start_background_task)
+            # accepted frame을 먼저 보낸 뒤 agent.loop/task.event fan-out을 시작한다.
+            context.after_response_callbacks.append(start_background_task)
         return "session.message.accepted", dict(accepted)
 
     async def _session_message_retry(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
@@ -466,6 +543,13 @@ class WebSocketCommandRouter:
             if effective_model:
                 task_input["model"] = effective_model
             _apply_session_settings_snapshot(task_input, settings_snapshot, session=session)
+            await attach_persistent_memory_context(
+                app_state=context.websocket.app.state,
+                task_input=task_input,
+                user_id=str(context.auth.user_id),
+                query=str(content),
+                workspace_key=context.auth.workspace_key or session.get("workspace_key"),
+            )
             handler = context.websocket.app.state.tool_registry.resolve()
             task = context.websocket.app.state.task_engine.planner.materialize_task(
                 owner_key=context.auth.user_id,
@@ -474,7 +558,30 @@ class WebSocketCommandRouter:
                 handler=handler,
                 task_run_id=retry_state["task_run_id"],
             )
-            context.websocket.app.state.repository.create_task(task)
+            task_execution_supervisor = getattr(context.websocket.app.state, "task_execution_supervisor", None)
+            if task_execution_supervisor is not None:
+                background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
+
+                async def finish_supervised_retry(completed_task: Any) -> None:
+                    await self._finish_created_message_task(
+                        context=background_context,
+                        session_id=session_id,
+                        user_message_id=int(retry_state["user_message_id"]),
+                        task=task,
+                        completed_task=completed_task,
+                    )
+
+                task = await task_execution_supervisor.submit(
+                    OrchestrationRequest(
+                        task_run_id=task.task_run_id,
+                        owner_key=context.auth.user_id,
+                        session_key=session_id,
+                        input_payload=dict(task.input_payload or {}),
+                    ),
+                    on_complete=finish_supervised_retry,
+                )
+            else:
+                context.websocket.app.state.repository.create_task(task)
             context.session_service.subscribe_task(
                 session_id=context.gateway_session_id,
                 websocket=context.websocket,
@@ -497,21 +604,22 @@ class WebSocketCommandRouter:
             "history_version": retry_state["completion_expected_version"],
         }
 
-        def start_background_task() -> None:
-            background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
-            background_task = asyncio.create_task(
-                self._run_created_message_task(
-                    context=background_context,
-                    session_id=session_id,
-                    user_message_id=int(retry_state["user_message_id"]),
-                    task=task,
-                    handler=handler,
+        if task_execution_supervisor is None:
+            def start_background_task() -> None:
+                background_context = WebSocketBackgroundContext(websocket=context.websocket, send_json=context.send_json)
+                background_task = asyncio.create_task(
+                    self._run_created_message_task(
+                        context=background_context,
+                        session_id=session_id,
+                        user_message_id=int(retry_state["user_message_id"]),
+                        task=task,
+                        handler=handler,
+                    )
                 )
-            )
-            context.background_tasks.add(background_task)
-            background_task.add_done_callback(context.background_tasks.discard)
+                context.background_tasks.add(background_task)
+                background_task.add_done_callback(context.background_tasks.discard)
 
-        context.after_response_callbacks.append(start_background_task)
+            context.after_response_callbacks.append(start_background_task)
         return "session.message.accepted", accepted
 
     async def _session_message_undo(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
@@ -735,30 +843,31 @@ class WebSocketCommandRouter:
             current_model = (_session_settings_snapshot(session).get("model") or session.get("model"))
         settings = context.websocket.app.state.settings
         default_model = str(current_model or getattr(settings, "openai_response_model", "") or "gpt-5.4")
-        providers = []
-        registry = context.websocket.app.state.provider_registry
-        for provider in registry.health():
-            payload_item = provider.model_dump(mode="json") if hasattr(provider, "model_dump") else dict(provider)
-            provider_name = str(payload_item.get("provider_name") or "default")
-            provider_models = [
-                {
-                    "id": default_model,
-                    "label": default_model,
-                    "provider": provider_name,
-                    "is_current": default_model == current_model or current_model is None,
-                }
-            ]
-            providers.append(
-                {
-                    "slug": provider_name,
-                    "provider_name": provider_name,
-                    "models": provider_models,
-                    "is_current": any(model["is_current"] for model in provider_models),
-                    "total_models": len(provider_models),
-                    "warning": None if payload_item.get("healthy") or payload_item.get("configured") or payload_item.get("connected") else payload_item.get("detail"),
-                    "health": payload_item,
-                }
-            )
+        model_ids = await _list_openai_models_for_user(
+            context.websocket.app.state,
+            user_id=context.auth.user_id,
+            fallback_model=default_model,
+        )
+        provider_models = [
+            {
+                "id": model_id,
+                "label": model_id,
+                "provider": "OpenAI",
+                "is_current": model_id == current_model or (current_model is None and model_id == default_model),
+            }
+            for model_id in model_ids
+        ]
+        providers = [
+            {
+                "slug": "openai_api_key",
+                "provider_name": "openai_api_key",
+                "models": provider_models,
+                "is_current": any(model["is_current"] for model in provider_models),
+                "total_models": len(provider_models),
+                "warning": None,
+                "health": {"provider_name": "openai_api_key", "configured": True, "connected": True},
+            }
+        ]
         return ("model.options.result", {"model": default_model, "providers": providers, "models": [model for provider in providers for model in provider["models"]]})
 
     async def _task_runs_active_list(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
@@ -770,14 +879,24 @@ class WebSocketCommandRouter:
         if projection is not None and session_id:
             for task_run_id in projection.list_active_task_ids(session_key=session_id):
                 task = projection.get_task_snapshot(task_run_id)
-                if task is None or str(task.owner_key) != str(context.auth.user_id):
+                canonical_task = repository.get_task(task_run_id)
+                if canonical_task is None or str(canonical_task.owner_key) != str(context.auth.user_id):
                     continue
-                steps = _projection_steps(projection, task.task_run_id)
-                items_by_task_run_id[task.task_run_id] = _active_task_payload(task, steps, source="active", repository=repository)
+                if not _is_live_active_task(repository, canonical_task):
+                    continue
+                steps = _projection_steps(projection, canonical_task.task_run_id)
+                items_by_task_run_id[canonical_task.task_run_id] = _active_task_payload(
+                    canonical_task,
+                    steps,
+                    source="active",
+                    repository=repository,
+                )
 
         total = repository.count_tasks_by_statuses(_ACTIVE_TASK_STATUSES, session_key=session_id)
         for task in repository.list_tasks_by_statuses(_ACTIVE_TASK_STATUSES, session_key=session_id, limit=max(total, 1), offset=0):
             if task.task_run_id in items_by_task_run_id or str(task.owner_key) != str(context.auth.user_id):
+                continue
+            if not _is_live_active_task(repository, task):
                 continue
             items_by_task_run_id[task.task_run_id] = _active_task_payload(
                 task,
@@ -817,22 +936,26 @@ class WebSocketCommandRouter:
             if include_events
             else []
         )
+        task_payload = _jsonable(task)
+        task_payload["displayContext"] = build_task_display_context(task)
         snapshot = {
-            "task": _jsonable(task),
-            "task_run": _jsonable(task),
+            "task": task_payload,
+            "task_run": task_payload,
             "pending_approval": pending_approval,
             "approvals": [pending_approval] if pending_approval is not None else [],
             "events": events,
+            "activity_items": build_activity_transcript(events),
+            "activityItems": build_activity_transcript(events),
         }
         if include_steps:
-            step_payloads = [_jsonable(step) for step in steps]
+            step_payloads = [_step_payload_with_display_context(task, step) for step in steps]
             snapshot["steps"] = step_payloads
             snapshot["step_runs"] = step_payloads
         if include_flow:
             snapshot["flow"] = {
                 "task_run_id": task.task_run_id,
                 "current_step_run_id": task.current_step_run_id,
-                "nodes": [_jsonable(step) for step in steps],
+                "nodes": [_step_payload_with_display_context(task, step) for step in steps],
                 "edges": [
                     {"from_step_run_id": previous.step_run_id, "to_step_run_id": current.step_run_id, "relation": "next"}
                     for previous, current in zip(steps, steps[1:])
@@ -879,11 +1002,14 @@ class WebSocketCommandRouter:
                 events = durable_events
 
         latest_sequence = max((int(event.get("sequence") or 0) for event in events), default=None)
+        activity_items = build_activity_transcript(events)
         return (
             "taskRun.events.replay.result",
             {
                 "task_run_id": task_run_id,
                 "events": events,
+                "activity_items": activity_items,
+                "activityItems": activity_items,
                 "latest_sequence": latest_sequence,
                 "retention_exceeded": retention_exceeded,
             },
@@ -967,82 +1093,16 @@ class WebSocketCommandRouter:
                 handler=handler,
                 resume_payload=None,
             )
-            completed_status = str(completed_task.status)
-            completion_expected_version = int((task.input_payload or {}).get("completion_expected_version") or 0)
-            if completed_status == TaskStatus.WAITING.value:
-                # WAITING은 사용자가 볼 최종 assistant 응답이 아니라 approval 대기 상태다.
-                # running guard를 유지해야 resume이 같은 task ownership으로 이어진다.
-                await context.send_json(
-                    _event_frame(
-                        "session.message.waiting",
-                        {
-                            "session_id": session_id,
-                            "message_id": f"waiting:{completed_task.task_run_id}",
-                            "user_message_id": str(user_message_id),
-                            "task_run_id": completed_task.task_run_id,
-                            "status": completed_status,
-                            "pending_approval": _pending_approval_payload(
-                                context.websocket.app.state.repository.get_open_approval(completed_task.task_run_id)
-                            ),
-                        },
-                    )
-                )
-                return
-            if completed_status != TaskStatus.COMPLETED.value:
-                context.websocket.app.state.session_store.clear_stale_running_task(
-                    owner_key=completed_task.owner_key,
-                    session_id=session_id,
-                    task_run_id=completed_task.task_run_id,
-                )
-                await context.send_json(
-                    _event_frame(
-                        "session.message.failed",
-                        {
-                            "session_id": session_id,
-                            "message_id": f"failed:{completed_task.task_run_id}",
-                            "user_message_id": str(user_message_id),
-                            "task_run_id": completed_task.task_run_id,
-                            "status": completed_status,
-                            "error": {
-                                "code": "task_not_completed",
-                                "message": _assistant_content_from_task(completed_task),
-                                "retryable": completed_status in {TaskStatus.FAILED.value, TaskStatus.CANCELED.value},
-                            },
-                        },
-                    )
-                )
-                return
-            content = _assistant_content_from_task(completed_task)
-            assistant_append = context.websocket.app.state.session_store.append_assistant_message_and_finish_task(
-                owner_key=completed_task.owner_key,
+            await self._finish_created_message_task(
+                context=context,
                 session_id=session_id,
-                task_run_id=completed_task.task_run_id,
-                content=content,
-                completion_expected_version=completion_expected_version,
-                status=completed_status,
-            )
-            # 현재 Task Engine에는 토큰 단위 streaming hook이 없으므로 delta를 합성하지 않는다.
-            # 프론트에는 durable assistant 메시지가 저장된 뒤 completed frame만 보낸다.
-            await context.send_json(
-                _event_frame(
-                    "session.message.completed",
-                    {
-                        "session_id": session_id,
-                        "message_id": _stored_message_id(
-                            context.websocket.app.state.session_store,
-                            session_id=session_id,
-                            stored_ref=assistant_append["message_id"],
-                        ),
-                        "content": content,
-                        "task_run_id": completed_task.task_run_id,
-                        "status": completed_status,
-                        "finish_reason": "stop",
-                        "history_version": assistant_append["completion_result_version"],
-                    },
-                )
+                user_message_id=user_message_id,
+                task=task,
+                completed_task=completed_task,
             )
         except Exception:
             logger.exception("session.message.create background 실행에 실패했습니다.")
+            _mark_ws_linked_work_run_failed(context, task=task)
             try:
                 context.websocket.app.state.session_store.clear_stale_running_task(
                     owner_key=task.owner_key,
@@ -1073,6 +1133,123 @@ class WebSocketCommandRouter:
                 )
             except Exception:
                 logger.exception("session.message.failed frame 전송에 실패했습니다.")
+
+    async def _finish_created_message_task(
+        self,
+        *,
+        context: WebSocketBackgroundContext,
+        session_id: str,
+        user_message_id: int,
+        task: Any,
+        completed_task: Any,
+    ) -> None:
+            completed_status = str(completed_task.status)
+            completion_expected_version = int((task.input_payload or {}).get("completion_expected_version") or 0)
+            if completed_status == TaskStatus.WAITING.value:
+                # WAITING은 사용자가 볼 최종 assistant 응답이 아니라 approval 대기 상태다.
+                # running guard를 유지해야 resume이 같은 task ownership으로 이어진다.
+                await context.send_json(
+                    _event_frame(
+                        "session.message.waiting",
+                        {
+                            "session_id": session_id,
+                            "message_id": f"waiting:{completed_task.task_run_id}",
+                            "user_message_id": str(user_message_id),
+                            "task_run_id": completed_task.task_run_id,
+                            "status": completed_status,
+                            "pending_approval": _pending_approval_payload(
+                                context.websocket.app.state.repository.get_open_approval(completed_task.task_run_id)
+                            ),
+                        },
+                    )
+                )
+                return
+            if completed_status != TaskStatus.COMPLETED.value:
+                _apply_ws_linked_work_result(context, task=completed_task)
+                context.websocket.app.state.session_store.clear_stale_running_task(
+                    owner_key=completed_task.owner_key,
+                    session_id=session_id,
+                    task_run_id=completed_task.task_run_id,
+                )
+                await context.send_json(
+                    _event_frame(
+                        "session.message.failed",
+                        {
+                            "session_id": session_id,
+                            "message_id": f"failed:{completed_task.task_run_id}",
+                            "user_message_id": str(user_message_id),
+                            "task_run_id": completed_task.task_run_id,
+                            "status": completed_status,
+                            "error": {
+                                "code": "task_not_completed",
+                                "message": _assistant_content_from_task(completed_task),
+                                "retryable": completed_status in {TaskStatus.FAILED.value, TaskStatus.CANCELED.value},
+                            },
+                        },
+                    )
+                )
+                return
+            _apply_ws_linked_work_result(context, task=completed_task)
+            content = _assistant_content_from_task(completed_task)
+            assistant_append = context.websocket.app.state.session_store.append_assistant_message_and_finish_task(
+                owner_key=completed_task.owner_key,
+                session_id=session_id,
+                task_run_id=completed_task.task_run_id,
+                content=content,
+                completion_expected_version=completion_expected_version,
+                status=completed_status,
+            )
+            await context.send_json(
+                _event_frame(
+                    "taskRun.snapshot.result",
+                    _task_snapshot_payload(completed_task),
+                )
+            )
+            # 현재 Task Engine에는 토큰 단위 streaming hook이 없으므로 delta를 합성하지 않는다.
+            # 프론트에는 durable assistant 메시지가 저장된 뒤 completed frame만 보낸다.
+            await context.send_json(
+                _event_frame(
+                    "session.message.completed",
+                    {
+                        "session_id": session_id,
+                        "message_id": _stored_message_id(
+                            context.websocket.app.state.session_store,
+                            session_id=session_id,
+                            stored_ref=assistant_append["message_id"],
+                        ),
+                        "content": content,
+                        "task_run_id": completed_task.task_run_id,
+                        "status": completed_status,
+                        "finish_reason": "stop",
+                        "history_version": assistant_append["completion_result_version"],
+                    },
+                )
+            )
+            session = context.websocket.app.state.session_store.get_session(session_id) or {}
+            writeback_observation = await writeback_persistent_memory_candidates(
+                app_state=context.websocket.app.state,
+                user_id=str(completed_task.owner_key),
+                user_message=str((completed_task.input_payload or {}).get("prompt") or ""),
+                assistant_message=content,
+                session_id=session_id,
+                workspace_key=str(session.get("workspace_key") or "") or None,
+                task_run_id=completed_task.task_run_id,
+                user_message_id=str(user_message_id),
+                assistant_message_id=str(assistant_append["message_id"]),
+            )
+            mark_used_observation = await mark_used_recalled_memories(
+                app_state=context.websocket.app.state,
+                task_input=dict(completed_task.input_payload or {}),
+                user_id=str(completed_task.owner_key),
+                assistant_message=content,
+                task_run_id=completed_task.task_run_id,
+            )
+            attach_memory_observation_to_task(
+                task=completed_task,
+                repository=context.websocket.app.state.repository,
+                writeback=writeback_observation,
+                mark_used=mark_used_observation,
+            )
 
     async def _run_resume_task(self, *, context: WebSocketBackgroundContext, task_run_id: str, approval_id: str, payload: dict[str, Any]) -> None:
         try:
@@ -1205,8 +1382,21 @@ def _event_frame(frame_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _task_snapshot_payload(task: Any) -> dict[str, Any]:
+    task_payload = _jsonable(task)
+    task_payload["displayContext"] = build_task_display_context(task)
+    return {
+        "task": task_payload,
+        "task_run": task_payload,
+        "events": [],
+    }
+
+
 def _create_public_session(context: WebSocketCommandContext, *, content: str, model: str | None, settings: dict[str, Any] | None = None) -> dict[str, Any]:
     session_id = new_id("session")
+    metadata = {"source": _PUBLIC_SESSION_SOURCE}
+    if context.auth.workspace_key:
+        metadata["workspace_key"] = context.auth.workspace_key
     context.websocket.app.state.session_store.create_session(
         session_id=session_id,
         session_key=session_id,
@@ -1214,13 +1404,150 @@ def _create_public_session(context: WebSocketCommandContext, *, content: str, mo
         user_id=context.auth.user_id,
         model=model,
         title=_derive_session_title(content),
-        metadata={"source": _PUBLIC_SESSION_SOURCE},
+        metadata=metadata,
         settings=settings or {},
     )
     session = context.websocket.app.state.session_store.get_session(session_id)
     if session is None:
         raise WebSocketCommandError("internal_error", "session was not created", retryable=True)
     return session
+
+
+def _work_id_from_task_input(task_input: dict[str, Any]) -> str | None:
+    candidate = task_input.get("workId") or task_input.get("work_id")
+    text = str(candidate or "").strip()
+    return text or None
+
+
+def _attach_work_context_or_ws_error(
+    context: WebSocketCommandContext,
+    *,
+    task_input: dict[str, Any],
+    work_id: str,
+    session_id: str,
+    owner_key: str,
+) -> Any:
+    repository = getattr(context.websocket.app.state, "work_repository", None)
+    if repository is None:
+        raise WebSocketCommandError("work_repository_missing", "work repository is not configured")
+    work = repository.get_work(work_id)
+    if work is None:
+        raise WebSocketCommandError("work_not_found", "work not found")
+    if str(work.owner_key) != str(owner_key):
+        raise WebSocketCommandError("forbidden", "work owner mismatch")
+    if work.session_id != session_id:
+        raise WebSocketCommandError("work_session_mismatch", "work belongs to another session")
+    task_input["workId"] = work.work_id
+    task_input["workIdentifier"] = work.identifier
+    task_input["workAssigneeAgentId"] = work.assignee_agent_id
+    task_input["workContext"] = repository.context_preview(work.work_id)
+    _attach_target_agent_context(context.websocket.app.state, task_input=task_input, work=work)
+    _apply_work_execution_defaults(task_input, settings=context.websocket.app.state.settings)
+    return work
+
+
+def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work: Any) -> None:
+    assignee_agent_id = str(work.assignee_agent_id or "").strip()
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return
+    if not assignee_agent_id or assignee_agent_id == "CEO":
+        profile = agent_repository.ensure_session_main_agent(
+            session_id=work.session_id,
+            owner_key=str(work.owner_key),
+            owner_user_id=None,
+        )
+    else:
+        profile = agent_repository.get_session_agent(profile_id=assignee_agent_id, owner_key=str(work.owner_key))
+    if profile is None:
+        return
+    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(
+        profile,
+        skill_registry=getattr(state, "skill_registry", None),
+    )
+    profile_id = str(profile.get("profile_id") or assignee_agent_id)
+    _attach_effective_skill_names(
+        state,
+        task_input=task_input,
+        owner_key=str(work.owner_key),
+        profile=profile,
+        profile_id=profile_id,
+    )
+    if not assignee_agent_id or assignee_agent_id == "CEO":
+        _attach_session_agent_candidates(state, task_input=task_input, session_id=work.session_id, owner_key=str(work.owner_key))
+    profile_model = _profile_model(profile)
+    if profile_model:
+        task_input["model"] = profile_model
+    bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
+    if bundle is None:
+        return
+    task_input["targetAgentInstructions"] = _instruction_bundle_prompt_payload(bundle)
+
+
+def _attach_main_agent_context(
+    state: Any,
+    *,
+    task_input: dict[str, Any],
+    session_id: str,
+    owner_key: str,
+) -> dict[str, Any] | None:
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return None
+    profile = agent_repository.ensure_session_main_agent(
+        session_id=session_id,
+        owner_key=str(owner_key),
+        owner_user_id=_owner_user_id(owner_key),
+    )
+    if profile is None:
+        return None
+    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(
+        profile,
+        skill_registry=getattr(state, "skill_registry", None),
+    )
+    profile_id = str(profile.get("profile_id") or "").strip()
+    _attach_effective_skill_names(
+        state,
+        task_input=task_input,
+        owner_key=str(owner_key),
+        profile=profile,
+        profile_id=profile_id or None,
+    )
+    if profile_id:
+        bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(owner_key))
+        if bundle is not None:
+            task_input["targetAgentInstructions"] = _instruction_bundle_prompt_payload(bundle)
+    return profile
+
+
+def _apply_work_execution_defaults(task_input: dict[str, Any], *, settings: Any) -> None:
+    if task_input.get("max_iterations") not in (None, ""):
+        return
+    raw_value = getattr(settings, "work_execution_max_iterations", 24)
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        value = 24
+    raw_upper = getattr(settings, "agent_loop_max_iterations", 120)
+    try:
+        upper_bound = int(raw_upper)
+    except (TypeError, ValueError):
+        upper_bound = 120
+    task_input["max_iterations"] = max(1, min(value, max(1, upper_bound)))
+
+
+def _apply_ws_linked_work_result(context: WebSocketBackgroundContext, *, task: Any) -> None:
+    WorkService(context.websocket.app.state.work_repository).apply_linked_task_result(task=task)
+
+
+def _mark_ws_linked_work_run_failed(context: WebSocketBackgroundContext, *, task: Any) -> None:
+    work_id = _work_id_from_task_input(dict(getattr(task, "input_payload", {}) or {}))
+    if work_id is None:
+        return
+    try:
+        context.websocket.app.state.work_repository.update_run_status(work_id, task.task_run_id, "FAILED")
+    except Exception:
+        logger.exception("작업 실행 연결 상태 갱신에 실패했습니다.")
 
 
 def _create_task_transcript_session(session_store: Any, *, session_id: str, owner_key: str, title: str | None, model: str | None) -> str:
@@ -1255,8 +1582,10 @@ def _refresh_stale_running_guard(context: WebSocketCommandContext, session: dict
     if not task_run_id:
         return session
     task = context.websocket.app.state.repository.get_task(str(task_run_id))
-    if task is not None and str(task.status) in _ACTIVE_TASK_STATUSES:
+    liveness = classify_task_run_liveness(task)
+    if liveness.blocks_session:
         return session
+    _recover_stale_task_if_needed(context.websocket.app.state.repository, task, liveness=liveness)
     # Postgres의 running_task_run_id는 재시작 뒤에도 남는 영속 guard다.
     # TaskRun이 이미 terminal이거나 projection/task row를 잃은 경우에는 다음 명령을 막지 않도록
     # 같은 task_run_id 소유 guard만 정리한다.
@@ -1639,7 +1968,7 @@ def _apply_session_settings_snapshot(task_input: dict[str, Any], settings: dict[
 
     snapshot = dict(settings)
     task_input["settings_snapshot"] = snapshot
-    if "model" in snapshot:
+    if "model" in snapshot and not task_input.get("model"):
         task_input["model"] = snapshot["model"]
     if "toolsets" in snapshot:
         task_input["toolsets"] = list(snapshot["toolsets"])
@@ -1647,6 +1976,51 @@ def _apply_session_settings_snapshot(task_input: dict[str, Any], settings: dict[
     if "delegationPolicy" in snapshot:
         task_input["delegation_policy"] = dict(snapshot["delegationPolicy"])
     task_input["system_prompt_snapshot"] = get_system_prompt_snapshot(session)
+
+
+def _default_agent_loop_toolsets(state: Any) -> tuple[str, ...]:
+    tool_catalog = getattr(state, "tool_catalog", None)
+    default_toolsets = getattr(tool_catalog, "default_toolsets", None)
+    if isinstance(default_toolsets, tuple):
+        return default_toolsets
+    if isinstance(default_toolsets, list):
+        return tuple(str(item) for item in default_toolsets if str(item).strip())
+    # 세션 설정 allowlist는 사용자가 저장할 수 있는 안전한 설정 범위이고,
+    # 기본 실행 권한은 실제 agent.loop 런타임 조립값을 우선 신뢰한다.
+    return tuple(sorted(_PUBLIC_SESSION_TOOLSETS))
+
+
+async def _list_openai_models_for_user(state: Any, *, user_id: str, fallback_model: str) -> list[str]:
+    models: list[str] = []
+    registry = getattr(state, "provider_registry", None)
+    provider = None
+    if registry is not None and hasattr(registry, "get"):
+        try:
+            provider = registry.get("openai_api")
+        except KeyError:
+            provider = None
+    if provider is not None and hasattr(provider, "list_user_models"):
+        try:
+            models = await provider.list_user_models(user_id=user_id, model=fallback_model)
+        except Exception:
+            models = []
+
+    preferred = [fallback_model, *_OPENAI_MODEL_FALLBACKS]
+    configured = getattr(getattr(state, "settings", None), "openai_allowed_models", None)
+    if isinstance(configured, str):
+        preferred.extend([item.strip() for item in configured.split(",") if item.strip()])
+    elif isinstance(configured, (list, tuple, set)):
+        preferred.extend([str(item).strip() for item in configured if str(item).strip()])
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for model in [*preferred, *models]:
+        model_id = str(model or "").strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        merged.append(model_id)
+    return merged or [fallback_model]
 
 
 def _json_dumps(value: Any) -> str:
@@ -1726,15 +2100,45 @@ def _session_list_preview_payload(context: WebSocketCommandContext, *, session_i
         result["last_message_at"] = last_message.get("timestamp")
 
     tasks = context.websocket.app.state.repository.list_tasks(session_key=session_id, limit=50, offset=0)
+    tasks = [task for task in tasks if not _is_expired_running_task(task)]
     if not tasks:
         return result
 
-    active_task = next((task for task in tasks if task.status in _ACTIVE_TASK_STATUSES), None)
+    active_task = next((task for task in tasks if _is_sidebar_active_task(task)), None)
     latest_task = active_task or tasks[0]
     result["last_task_run_status"] = latest_task.status
     if active_task is not None:
         result["active_task_run_id"] = active_task.task_run_id
     return result
+
+
+def _is_sidebar_active_task(task: Any) -> bool:
+    return classify_task_run_liveness(task).blocks_session
+
+
+def _is_live_active_task(repository: Any, task: Any) -> bool:
+    liveness = classify_task_run_liveness(task)
+    if liveness.blocks_session:
+        return True
+    _recover_stale_task_if_needed(repository, task, liveness=liveness)
+    return False
+
+
+def _recover_stale_task_if_needed(repository: Any, task: Any, *, liveness: Any | None = None) -> None:
+    if task is None:
+        return
+    current_liveness = liveness or classify_task_run_liveness(task)
+    if not current_liveness.should_recover:
+        return
+    recover = getattr(repository, "recover_stale_task_run", None)
+    if recover is None:
+        return
+    recover(str(task.task_run_id), reason=str(current_liveness.reason))
+
+
+def _is_expired_running_task(task: Any) -> bool:
+    liveness = classify_task_run_liveness(task)
+    return liveness.should_recover and not liveness.blocks_session
 
 
 def _message_payload(message: dict[str, Any]) -> dict[str, Any]:
@@ -1824,6 +2228,7 @@ def _task_status_for_payload(context: WebSocketCommandContext, task_run_id: str)
 
 def _active_task_payload(task: Any, steps: list[Any], *, source: str, repository: Any) -> dict[str, Any]:
     current_step = _select_current_step(task, steps)
+    current_step_payload = _step_payload_with_display_context(task, current_step) if current_step is not None else None
     return {
         "task_run_id": task.task_run_id,
         "source": source,
@@ -1831,11 +2236,80 @@ def _active_task_payload(task: Any, steps: list[Any], *, source: str, repository
         "status": task.status,
         "title": task.title,
         "current_step_run_id": task.current_step_run_id,
-        "current_step": _jsonable(current_step) if current_step is not None else None,
+        "current_step": current_step_payload,
         "updated_at": task.updated_at,
         "wait_reason": (task.wait_payload or {}).get("reason"),
         "pending_approval": _pending_approval_payload(repository.get_open_approval(task.task_run_id)),
+        "displayContext": build_task_display_context(task),
     }
+
+
+def _seed_default_session_agents_if_requested(
+    state: Any,
+    *,
+    task_input: dict[str, Any],
+    session_id: str,
+    owner_key: str,
+) -> None:
+    snapshot = task_input.get("sessionConfigSnapshot") or task_input.get("session_config_snapshot")
+    if not isinstance(snapshot, dict) or snapshot.get("seedDefaultAgents") is not True:
+        return
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return
+    agent_repository.create_default_session_agents(
+        session_id=session_id,
+        owner_key=str(owner_key),
+        owner_user_id=_owner_user_id(owner_key),
+    )
+
+
+def _attach_session_agent_candidates(
+    state: Any,
+    *,
+    task_input: dict[str, Any],
+    session_id: str,
+    owner_key: str,
+) -> list[dict[str, Any]]:
+    agent_repository = getattr(state, "agent_repository", None)
+    if agent_repository is None:
+        return []
+    profiles = [
+        _agent_profile_prompt_payload(
+            item,
+            skill_registry=getattr(state, "skill_registry", None),
+        )
+        for item in agent_repository.list_session_agents(session_id=session_id, owner_key=str(owner_key))
+    ]
+    if profiles:
+        task_input["sessionAgentProfiles"] = profiles
+    return profiles
+
+
+def _attach_effective_skill_names(
+    state: Any,
+    *,
+    task_input: dict[str, Any],
+    owner_key: str,
+    profile: dict[str, Any],
+    profile_id: str | None,
+) -> None:
+    skill_repository = getattr(state, "skill_repository", None)
+    if skill_repository is None:
+        return
+    config = profile.get("config_snapshot") if isinstance(profile.get("config_snapshot"), dict) else {}
+    task_input["enabledSkillNames"] = skill_repository.effective_skill_names(
+        owner_key=str(owner_key),
+        profile_id=profile_id,
+        requested_skill_names=[str(skill) for skill in list(config.get("skills") or [])],
+        explicit_agent_selection=config.get("skillSelectionMode") == "explicit",
+    )
+
+
+def _step_payload_with_display_context(task: Any, step: Any) -> dict[str, Any]:
+    payload = _jsonable(step)
+    payload["displayContext"] = build_task_display_context(task, step)
+    return payload
 
 
 def _projection_steps(projection: Any, task_run_id: str) -> list[Any]:
