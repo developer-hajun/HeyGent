@@ -79,12 +79,15 @@ async def lifespan(app: FastAPI):
         dsn=settings.postgres_dsn,
         enabled=settings.postgres_migrations_enabled,
     )
-    # PooledConnectionFactory: 매 DB 작업마다 새 TCP 연결을 열던 방식을 커넥션 풀로 교체한다.
-    postgres_connection_factory = PooledConnectionFactory(
-        settings.postgres_dsn,
-        min_size=2,
-        max_size=10,
-    )
+    try:
+        postgres_connection_factory = PooledConnectionFactory(
+            settings.postgres_dsn,
+            min_size=2,
+            max_size=10,
+        )
+    except RuntimeError:
+        # psycopg-pool 미설치 환경에서는 기존 방식으로 fallback한다.
+        postgres_connection_factory = lambda: connect_postgres(settings.postgres_dsn)
     durable_repository = PostgresTaskRepository(postgres_connection_factory)
     task_projection_store = build_task_projection_store(
         redis_url=settings.redis_url,
