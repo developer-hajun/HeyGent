@@ -135,6 +135,29 @@ def test_prototype_create_artifact_requires_bound_session_and_owner():
     assert result["error"]["code"] == "prototype_context_required"
 
 
+def test_prototype_create_artifact_requires_design_preset_id():
+    runtime = LocalToolRuntime(
+        skill_registry=object(),
+        session_store=DummySessionStore(),
+        prototype_repository=FakePrototypeRepository(),
+    ).bind_request_context(
+        owner_key="42",
+        runtime_context={"sessionId": "session_1"},
+    )
+
+    result = runtime.run_call(
+        name="prototype.create_artifact",
+        args={
+            "title": "프로토타입",
+            "files": {"/src/App.tsx": "export default function App() { return null }"},
+        },
+        enabled_toolsets=("prototype",),
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "design_preset_required"
+
+
 def test_prototype_get_active_artifact_returns_session_files_for_followup_edits():
     repository = FakePrototypeRepository()
     runtime = LocalToolRuntime(
@@ -149,6 +172,7 @@ def test_prototype_get_active_artifact_returns_session_files_for_followup_edits(
         name="prototype.create_artifact",
         args={
             "title": "대시보드",
+            "designPresetId": "linear.app",
             "files": {
                 "/src/App.tsx": "export default function App() { return <main>v1</main> }",
                 "/src/styles.css": "body { margin: 0; }",
@@ -166,3 +190,37 @@ def test_prototype_get_active_artifact_returns_session_files_for_followup_edits(
     assert result["ok"] is True
     assert result["artifact"]["artifactId"] == "artifact_1"
     assert result["artifact"]["files"]["/src/App.tsx"]["code"].endswith("<main>v1</main> }")
+
+
+def test_prototype_create_artifact_preserves_active_design_preset_for_followup_edits():
+    repository = FakePrototypeRepository()
+    runtime = LocalToolRuntime(
+        skill_registry=object(),
+        session_store=DummySessionStore(),
+        prototype_repository=repository,
+    ).bind_request_context(
+        owner_key="42",
+        runtime_context={"sessionId": "session_1"},
+    )
+    runtime.run_call(
+        name="prototype.create_artifact",
+        args={
+            "title": "대시보드",
+            "designPresetId": "linear.app",
+            "files": {"/src/App.tsx": "export default function App() { return <main>v1</main> }"},
+        },
+        enabled_toolsets=("prototype",),
+    )
+
+    result = runtime.run_call(
+        name="prototype.create_artifact",
+        args={
+            "title": "대시보드 수정",
+            "files": {"/src/App.tsx": "export default function App() { return <main>v2</main> }"},
+        },
+        enabled_toolsets=("prototype",),
+    )
+
+    assert result["ok"] is True
+    assert result["designPresetId"] == "linear.app"
+    assert repository.calls[-1]["design_preset_id"] == "linear.app"

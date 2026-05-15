@@ -121,10 +121,13 @@ def _iter_preset_files() -> list[Path]:
 
 def _preset_summary(path: Path) -> dict[str, str]:
     preset_id = path.parent.name
-    title = _first_heading(path.read_text(encoding="utf-8"))
+    content = path.read_text(encoding="utf-8")
+    title = _first_heading(content)
+    description = _frontmatter_value(content, "description")
     return {
         "preset_id": preset_id,
         "title": title or preset_id.replace("-", " ").title(),
+        "description": description,
         "document_name": "DESIGN.md",
         "path": path.relative_to(_DESIGN_SKILL_DIR).as_posix(),
     }
@@ -134,6 +137,21 @@ def _first_heading(content: str) -> str:
     for line in content.splitlines():
         if line.startswith("# "):
             return line[2:].strip()
+    return ""
+
+
+def _frontmatter_value(content: str, key: str) -> str:
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return ""
+
+    prefix = f"{key}:"
+    for line in lines[1:]:
+        stripped = line.strip()
+        if stripped == "---":
+            return ""
+        if stripped.startswith(prefix):
+            return stripped[len(prefix) :].strip().strip('"').strip("'")
     return ""
 
 

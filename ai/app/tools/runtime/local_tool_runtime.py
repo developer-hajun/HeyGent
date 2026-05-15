@@ -551,6 +551,16 @@ class LocalToolRuntime:
         styling = self._optional_text(args.get("styling")) or "css"
         entry_file = self._optional_text(args.get("entryFile") or args.get("entry_file")) or _default_entry_file(files)
         design_preset_id = self._optional_text(args.get("designPresetId") or args.get("design_preset_id"))
+        if not design_preset_id:
+            active_record = self.prototype_repository.get_active_artifact(session_id=session_id, owner_key=owner_key)
+            if active_record is not None:
+                design_preset_id = self._optional_text(active_record.get("design_preset_id"))
+        if not design_preset_id:
+            return prototype_tool_error(
+                "design_preset_required",
+                "DESIGN.md prototype creation requires designPresetId. Call design.list_presets, "
+                "read one preset with design.read_preset, then retry with that exact preset_id.",
+            )
         summary = self._optional_text(args.get("summary")) or "프로토타입 버전을 생성했습니다."
         metadata = args.get("metadata") if isinstance(args.get("metadata"), dict) else {}
         task_run_id = self._optional_text(self.runtime_context.get("taskRunId") or self.runtime_context.get("task_run_id"))

@@ -35,7 +35,10 @@ _PROTOTYPE_CREATE_ARTIFACT_DEFINITION = register_runtime_tool_definition(
                 },
                 "designPresetId": {
                     "type": "string",
-                    "description": "DESIGN.md preset id used as visual context.",
+                    "description": (
+                        "Required DESIGN.md preset id used as visual context. Pass the exact preset_id "
+                        "returned by design.read_preset."
+                    ),
                 },
                 "entryFile": {
                     "type": "string",
@@ -50,7 +53,10 @@ _PROTOTYPE_CREATE_ARTIFACT_DEFINITION = register_runtime_tool_definition(
                     "description": (
                         "Map of absolute project file paths to source code or { code } objects. "
                         "Use React/CSS files that render in Sandpack. Built-in dependencies include "
-                        "lucide-react, motion, framer-motion, recharts, clsx, and date-fns."
+                        "lucide-react, motion/framer-motion, recharts, Radix UI primitives, "
+                        "react-resizable-panels, react-router, axios, d3, three/@react-three, "
+                        "gsap, lottie-react, animejs, react-icons, react-is, mapbox-gl, bootstrap, clsx, "
+                        "date-fns, sonner, vaul, and zustand."
                     ),
                     "additionalProperties": {
                         "anyOf": [

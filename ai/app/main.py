@@ -169,6 +169,8 @@ async def lifespan(app: FastAPI):
             "browser",
             "work",
             "messaging",
+            "design",
+            "prototype",
         ),
     )
     child_session_launcher = ChildSessionLauncher()

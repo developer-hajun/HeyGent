@@ -34,6 +34,21 @@ def test_design_read_preset_returns_design_md_content():
     assert result["content_length"] == len("".join(result["content_chunks"]))
 
 
+def test_design_list_presets_includes_frontmatter_descriptions():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    result = runtime.run_call(
+        name="design.list_presets",
+        args={},
+        enabled_toolsets=("design",),
+    )
+
+    cursor = next(preset for preset in result["presets"] if preset["preset_id"] == "cursor")
+    assert result["ok"] is True
+    assert "description" in cursor
+    assert "AI-first code editor" in cursor["description"]
+
+
 def test_design_read_preset_preserves_dotted_ids():
     runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
 
