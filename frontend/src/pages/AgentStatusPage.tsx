@@ -837,7 +837,6 @@ function isSpotOccupied(
   })
 }
 
-const nowMs = Date.now.bind(Date)
 const ALL_AGENT_SLOT_IDS = [
   'agent01',
   'agent02',
@@ -930,7 +929,7 @@ export function AgentStatusPage() {
   }, [])
   const runtimeGridRef = useRef<boolean[][]>(OBSTACLE_GRID)
   const walkTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({})
-  const lastSpawnSoundRef = useRef<number>(0)
+
   const initialSessionAgentProfileIdsRef = useRef<Set<string>>(new Set())
   const capturedInitialAgentPanelsRef = useRef(false)
 
@@ -1059,14 +1058,18 @@ export function AgentStatusPage() {
 
   const handleMove = (agentId: string, rawDestination: UIDestination) => {
     // 팀장 전용 목적지 매핑
-    //   작업 중(desk) → work 좌표에서 ceo_work 스프라이트
-    //   완료(rest)   → desk 좌표에서 ceo_desk 스프라이트
+    //   작업 중(desk)       → work 좌표에서 ceo_work 스프라이트
+    //   완료/실패(rest/calling) → desk 좌표에서 ceo_desk 스프라이트
+    //   meeting             → explain 좌표로 걸어 이동 (서브 2명 이상 작업 시 랜덤 타이머로 호출)
+    //   그 외               → work (안전 폴백 — ceo는 work/desk/meeting만 허용)
     const destination: UIDestination =
       agentId === 'ceo' && rawDestination === 'desk'
         ? 'work'
-        : agentId === 'ceo' && rawDestination === 'rest'
+        : agentId === 'ceo' && (rawDestination === 'rest' || rawDestination === 'calling')
           ? 'desk'
-          : rawDestination
+          : agentId === 'ceo' && rawDestination !== 'meeting' && rawDestination !== 'work'
+            ? 'work'
+            : rawDestination
 
     // 미등록 에이전트 자동 스폰
     const spawnedKeys = useAgentVisualizationStore.getState().spawnedKeys
@@ -1131,13 +1134,8 @@ export function AgentStatusPage() {
         return
       }
 
-      // 서브에이전트('+' 버튼) 첫 등장: 엘리베이터 입장 + 전구 + 효과음
+      // 서브에이전트('+' 버튼) 첫 등장: 엘리베이터 입장 + 전구
       setSpawningIds((s) => new Set([...s, agentId]))
-      const now = nowMs()
-      if (now - lastSpawnSoundRef.current > 2000) {
-        lastSpawnSoundRef.current = now
-        playSpawnSound()
-      }
       setTimeout(() => {
         setSpawningIds((s) => {
           const n = new Set(s)
@@ -1164,6 +1162,26 @@ export function AgentStatusPage() {
               position: { ...deskPosition },
               state: 'sitting_desk' as const,
               targetState: 'sitting_desk' as const,
+              walkFrame: 0 as const,
+              transitionDuration: 0,
+              pendingWaypoints: [],
+              targetPosition: null,
+              standWaitTarget: null,
+              facingRight: false,
+            },
+          ]
+        }
+        if (agentId === 'ceo') {
+          // CEO는 절대 initialPosition에서 걸어 들어오지 않는다 — 직접 work에 배치
+          const workPos = config.destinations.work ?? config.destinations.desk
+          if (!workPos) return prevAgents
+          return [
+            ...prevAgents,
+            {
+              config,
+              position: { ...workPos },
+              state: 'sitting_work' as const,
+              targetState: 'sitting_work' as const,
               walkFrame: 0 as const,
               transitionDuration: 0,
               pendingWaypoints: [],
@@ -1221,29 +1239,15 @@ export function AgentStatusPage() {
             : a,
         )
       }
-      if (agent.state === 'walking') {
-        // 이동 중 목적지 변경: 경로는 유지하고 도착 시 전환할 targetState만 갱신
-        // rest는 소파 빈 자리 탐색이 필요해 mid-walk 갱신 불가 — 나머지만 처리
-        if (destination !== 'rest') {
-          const newTargetState = DESTINATION_MAP[destination as UIDestination]?.targetState
-          if (newTargetState && agent.targetState !== newTargetState) {
-            return prev.map((a) =>
-              a.config.id === agentId ? { ...a, targetState: newTargetState } : a,
-            )
-          }
-        }
-        return prev
-      }
-
-      if (
-        agentId === 'ceo' &&
-        (destination === 'desk' || destination === 'work') &&
-        (agent.state === 'sitting_desk' || agent.state === 'sitting_work')
-      ) {
+      // CEO work/desk 전환은 현재 상태·이동 중 여부와 무관하게 항상 즉시 텔레포트
+      if (agentId === 'ceo' && (destination === 'desk' || destination === 'work')) {
         const nextPosition = agent.config.destinations[destination as Destination]
         const nextState = DESTINATION_MAP[destination as UIDestination]?.targetState
-        if (!nextPosition || !nextState || agent.state === nextState) return prev
+        if (!nextPosition || !nextState) return prev
+        const alreadyThere =
+          agent.state === nextState && !agent.targetPosition && agent.pendingWaypoints.length === 0
         clearWalkTimer('ceo')
+        if (alreadyThere) return prev
         return prev.map((a) =>
           a.config.id === 'ceo'
             ? {
@@ -1261,8 +1265,33 @@ export function AgentStatusPage() {
         )
       }
 
-      // 팀장: sitting_work ↔ sitting_desk 즉시 전환 (걷기 없이)
-      // — 두 좌표가 근접해 걸어가기 어색하며, idle(첫 등장) 상태는 통과시켜 정상 walk 처리
+      if (agent.state === 'walking') {
+        // 이동 중 목적지 변경: 경로는 유지하고 도착 시 전환할 targetState만 갱신
+        // rest는 소파 빈 자리 탐색이 필요해 mid-walk 갱신 불가 — 나머지만 처리
+        // 휴게 목적지(소파/플로어)로 이동 중에는 targetState 덮어쓰기 금지 — sitting_desk가 소파 좌표에 배치되는 문제 방지
+        if (destination !== 'rest') {
+          const isWalkingToRest =
+            agent.targetState === 'sitting_sofa' || agent.targetState === 'sitting_floor_lean'
+          if (!isWalkingToRest) {
+            const newTargetState = DESTINATION_MAP[destination as UIDestination]?.targetState
+            if (newTargetState && agent.targetState !== newTargetState) {
+              return prev.map((a) =>
+                a.config.id === agentId ? { ...a, targetState: newTargetState } : a,
+              )
+            }
+          }
+        }
+        return prev
+      }
+
+      // 이미 휴게 상태면 아무것도 하지 않음 — 페이지 재진입 시 불필요한 걷기 방지
+      if (
+        destination === 'rest' &&
+        (agent.state === 'sitting_sofa' || agent.state === 'sitting_floor_lean')
+      ) {
+        return prev
+      }
+
       // ── rest → 소파 빈 자리 우선 배정, 둘 다 차면 floorLean ──────────────
       let internalDest: Destination
       let destPoint: { x: number; y: number }
@@ -1462,33 +1491,43 @@ export function AgentStatusPage() {
     }
   }, [profileIdMap, setAgents, addSpawnedKey])
 
-  // 팀장이 sitting_work 상태이고 서브에이전트가 있으면 주기적으로 explain(화이트보드) 좌표로 이동
+  // 팀장 상태 구독 — explain 타이머 조건 판단에 사용
   const ceoState = useAgentVisualizationStore(
     (s) => s.agentRuntimes.find((a) => a.config.id === 'ceo')?.state,
   )
-  const hasSubAgents = useAgentVisualizationStore((s) =>
-    s.agentRuntimes.some((a) => a.config.id !== 'ceo'),
+
+  // 책상에 있거나 책상으로 이동 중인 서브에이전트 수
+  const workingSubCount = useAgentVisualizationStore(
+    (s) =>
+      s.agentRuntimes.filter(
+        (a) =>
+          a.config.id !== 'ceo' &&
+          (a.state === 'sitting_desk' ||
+            (a.state === 'walking' && a.targetState === 'sitting_desk')),
+      ).length,
   )
 
+  // 서브 2명 이상 작업 중 + CEO sitting_work → 40~80초 후 explain 좌표로 걸어 이동
   useEffect(() => {
-    if (!hasSubAgents || ceoState !== 'sitting_work') return
-    // 40~80초 사이 랜덤 간격으로 explain 좌표로 이동
+    if (workingSubCount < 2 || ceoState !== 'sitting_work') return
     const delay = 40_000 + Math.random() * 40_000
     const timer = setTimeout(() => {
-      const ceo = useAgentVisualizationStore
-        .getState()
-        .agentRuntimes.find((a) => a.config.id === 'ceo')
-      const subs = useAgentVisualizationStore
-        .getState()
-        .agentRuntimes.filter((a) => a.config.id !== 'ceo')
-      if (ceo?.state === 'sitting_work' && subs.length > 0) {
+      const store = useAgentVisualizationStore.getState()
+      const ceo = store.agentRuntimes.find((a) => a.config.id === 'ceo')
+      const currentSubCount = store.agentRuntimes.filter(
+        (a) =>
+          a.config.id !== 'ceo' &&
+          (a.state === 'sitting_desk' ||
+            (a.state === 'walking' && a.targetState === 'sitting_desk')),
+      ).length
+      if (ceo?.state === 'sitting_work' && currentSubCount >= 2) {
         handleMoveRef.current('ceo', 'meeting')
       }
     }, delay)
     return () => clearTimeout(timer)
-  }, [ceoState, hasSubAgents])
+  }, [workingSubCount, ceoState])
 
-  // 팀장이 explain(sitting_meeting) 도착 후 15~25초 뒤 work로 복귀
+  // CEO explain 도착 후 15~25초 뒤 work로 즉시 복귀
   useEffect(() => {
     if (ceoState !== 'sitting_meeting') return
     const delay = 15_000 + Math.random() * 10_000
@@ -1497,7 +1536,7 @@ export function AgentStatusPage() {
         .getState()
         .agentRuntimes.find((a) => a.config.id === 'ceo')
       if (ceo?.state === 'sitting_meeting') {
-        handleMoveRef.current('ceo', 'desk') // 팀장 매핑: 'desk' → work 좌표
+        handleMoveRef.current('ceo', 'desk')
       }
     }, delay)
     return () => clearTimeout(timer)
@@ -1510,10 +1549,7 @@ export function AgentStatusPage() {
 
       if (agent.pendingWaypoints.length > 0) {
         const [next, ...rest] = agent.pendingWaypoints
-        // 최종 목적지 방향 기준으로 facing 유지 — 경유 웨이포인트 방향에 흔들리지 않도록
-        const finalTarget = agent.targetPosition ?? next
-        const overallDx = finalTarget.x - agent.position.x
-        const facingRight = Math.abs(overallDx) > CELL ? overallDx > 0 : agent.facingRight
+        // facingRight는 워크 시작 시점에 확정 — 경유 웨이포인트마다 재계산 시 방향 좌우 반전 발생
         return prev.map((a) =>
           a.config.id === agentId
             ? {
@@ -1521,7 +1557,6 @@ export function AgentStatusPage() {
                 position: { ...next },
                 transitionDuration: calcDuration(a.position, next),
                 pendingWaypoints: rest,
-                facingRight,
               }
             : a,
         )
