@@ -9,7 +9,7 @@ import {
 } from '@codesandbox/sandpack-react'
 import { Code2, Eye, Loader2, RefreshCw, X } from 'lucide-react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { getActivePrototypeArtifact, type PrototypeArtifact } from '@/apis/prototypes'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -285,6 +285,35 @@ function PrototypeSandpack({
 }) {
   const dependencies = useMemo(() => resolvePrototypeDependencies(artifact), [artifact])
   const files = useMemo(() => buildSandpackFiles(artifact, dependencies), [artifact, dependencies])
+  const mountKey = useId()
+  const activeTabRef = useRef(activeTab)
+  const previousTabRef = useRef(activeTab)
+  const [runtimeKey, setRuntimeKey] = useState(0)
+
+  useEffect(() => {
+    activeTabRef.current = activeTab
+    if (previousTabRef.current !== activeTab && activeTab === 'preview') {
+      setRuntimeKey((value) => value + 1)
+    }
+    previousTabRef.current = activeTab
+  }, [activeTab])
+
+  useEffect(() => {
+    const remountVisiblePreview = () => {
+      if (document.visibilityState === 'hidden' || activeTabRef.current !== 'preview') return
+      setRuntimeKey((value) => value + 1)
+    }
+
+    window.addEventListener('focus', remountVisiblePreview)
+    window.addEventListener('pageshow', remountVisiblePreview)
+    document.addEventListener('visibilitychange', remountVisiblePreview)
+
+    return () => {
+      window.removeEventListener('focus', remountVisiblePreview)
+      window.removeEventListener('pageshow', remountVisiblePreview)
+      document.removeEventListener('visibilitychange', remountVisiblePreview)
+    }
+  }, [])
 
   return (
     <div className="prototype-sandpack flex min-h-0 w-full min-w-0 flex-1 flex-col bg-[#0b1020] [&_.cm-content]:!text-slate-100 [&_.cm-editor]:!h-full [&_.cm-editor]:!w-full [&_.cm-editor]:!bg-[#0b1020] [&_.cm-gutters]:!border-slate-800 [&_.cm-gutters]:!bg-[#0b1020] [&_.cm-gutters]:!text-slate-500 [&_.cm-line]:!text-slate-100 [&_.cm-scroller]:!h-full [&_.cm-scroller]:!w-full [&_.sp-code-editor]:!h-full [&_.sp-code-editor]:!w-full [&_.sp-code-editor]:!bg-[#0b1020] [&_.sp-file-explorer]:!h-full [&_.sp-file-explorer]:!bg-[#0f172a] [&_.sp-file-explorer]:!text-slate-200 [&_.sp-layout]:!h-full [&_.sp-layout]:!w-full [&_.sp-layout]:!max-w-none [&_.sp-layout]:!flex-1 [&_.sp-layout]:!bg-[#0b1020] [&_.sp-preview]:!h-full [&_.sp-preview]:!w-full [&_.sp-preview]:!max-w-none [&_.sp-preview-container]:!h-full [&_.sp-preview-container]:!w-full [&_.sp-preview-container]:!max-w-none [&_.sp-stack]:!h-full [&_.sp-stack]:!w-full [&_.sp-wrapper]:!h-full [&_.sp-wrapper]:!w-full [&_.sp-wrapper]:!max-w-none [&_iframe]:!h-full [&_iframe]:!w-full">
@@ -309,6 +338,7 @@ function PrototypeSandpack({
         }
       `}</style>
       <SandpackProvider
+        key={`${artifact.versionId}:${mountKey}:${runtimeKey}`}
         files={files}
         template="react-ts"
         theme="dark"
@@ -389,13 +419,13 @@ function PrototypeSandpack({
             </SandpackLayout>
           </TabsContent>
         </Tabs>
-        <SandpackAutoRun versionId={artifact.versionId} />
+        <SandpackAutoRun activeTab={activeTab} versionId={artifact.versionId} />
       </SandpackProvider>
     </div>
   )
 }
 
-function SandpackAutoRun({ versionId }: { versionId: string }) {
+function SandpackAutoRun({ activeTab, versionId }: { activeTab: PrototypeTab; versionId: string }) {
   const { sandpack } = useSandpack()
   const { runSandpack } = sandpack
   const runSandpackRef = useRef(runSandpack)
@@ -404,13 +434,41 @@ function SandpackAutoRun({ versionId }: { versionId: string }) {
     runSandpackRef.current = runSandpack
   }, [runSandpack])
 
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      runSandpackRef.current()
-    }, 50)
+  const schedulePreviewRun = useCallback(
+    () =>
+      [50, 500, 1500, 3500].map((delay) =>
+        window.setTimeout(() => {
+          runSandpackRef.current()
+        }, delay),
+      ),
+    [],
+  )
 
-    return () => window.clearTimeout(timeoutId)
-  }, [versionId])
+  useEffect(() => {
+    if (activeTab !== 'preview') return
+    const timeoutIds = schedulePreviewRun()
+
+    return () => {
+      for (const timeoutId of timeoutIds) window.clearTimeout(timeoutId)
+    }
+  }, [activeTab, versionId])
+
+  useEffect(() => {
+    const rerunVisiblePreview = () => {
+      if (document.visibilityState === 'hidden') return
+      schedulePreviewRun()
+    }
+
+    window.addEventListener('focus', rerunVisiblePreview)
+    window.addEventListener('pageshow', rerunVisiblePreview)
+    document.addEventListener('visibilitychange', rerunVisiblePreview)
+
+    return () => {
+      window.removeEventListener('focus', rerunVisiblePreview)
+      window.removeEventListener('pageshow', rerunVisiblePreview)
+      document.removeEventListener('visibilitychange', rerunVisiblePreview)
+    }
+  }, [])
 
   return null
 }
