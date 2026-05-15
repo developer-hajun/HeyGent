@@ -50,6 +50,9 @@ class FcmMessagingService : FirebaseMessagingService() {
             ?: "새 AI 응답이 도착했습니다."
         val sessionId = message.data["sessionId"]
 
+        // 앱 내 채팅 화면 갱신 트리거 (포그라운드/백그라운드 공통)
+        FcmEventBus.emitRefresh(sessionId)
+
         showNotification(title, body, sessionId)
     }
 
