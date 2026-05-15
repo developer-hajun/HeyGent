@@ -1,6 +1,7 @@
 package com.ssafy.heygent.domain.health.service;
 
 import com.ssafy.heygent.domain.health.dto.request.SamsungHealthRequestDto;
+import com.ssafy.heygent.domain.health.dto.response.HealthSummaryResponseDto;
 import com.ssafy.heygent.domain.health.entity.*;
 import com.ssafy.heygent.domain.health.repository.MeasurementLogRepository;
 import com.ssafy.heygent.domain.user.entity.User;
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -61,5 +63,11 @@ public class HealthService {
         mainLog.setDetails(activity, profile, vital, sleep);
 
         logRepository.save(mainLog);
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<HealthSummaryResponseDto> getLatestHealthData(Long userId) {
+        return logRepository.findTopByUser_IdOrderByMeasuredAtDesc(userId)
+                .map(HealthSummaryResponseDto::from);
     }
 }
