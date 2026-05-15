@@ -25,6 +25,9 @@ from app.domain.orchestration.runtime_planning.todo_state import (
 class ToolCallingLoopHandler:
     """현재 provider 위에서 native tool call(모델이 구조화된 도구 호출을 직접 반환하는 방식) loop를 실행한다."""
 
+    # inspect.signature() 결과를 인스턴스 생성 시 한 번만 계산해 매 LLM 턴의 리플렉션 비용을 제거한다.
+    _TRANSCRIPT_REPLAY_LIMIT = 200
+
     def __init__(
         self,
         provider,
@@ -40,6 +43,10 @@ class ToolCallingLoopHandler:
         self.tool_catalog = tool_catalog
         self.session_store = session_store
         self.tool_guard = tool_guard or ToolGuard()
+        # provider 메서드 시그니처 캐싱 (매 LLM 턴 inspect 호출 제거)
+        self._respond_has_runtime_context: bool | None = None
+        self._respond_async_has_runtime_context: bool | None = None
+        self._respond_async_has_on_text_delta: bool | None = None
 
     def execute(self, *, task, step, resume_payload=None) -> dict[str, Any]:
         return asyncio.run(self.execute_async(task=task, step=step, resume_payload=resume_payload))
@@ -153,12 +160,14 @@ class ToolCallingLoopHandler:
         llm_call_count = 0
 
         for turn_index in range(1, max_iterations + 1):
+            on_text_delta = self._build_text_delta_callback(progress_sink) if progress_sink is not None else None
             generated = await self._respond_with_runtime_context_async(
                 messages=messages,
                 tools=provider_tools,
                 model=model,
                 tool_choice=None,
                 runtime_context=self._model_runtime_context(task=task, step=step, task_input=task_input),
+                on_text_delta=on_text_delta,
             )
             llm_call_count += 1
             messages.append(generated.message)
@@ -475,7 +484,7 @@ class ToolCallingLoopHandler:
             return []
 
         messages: list[AgentMessage | ToolResultMessage] = []
-        for row in self.session_store.list_messages(session_id):
+        for row in self.session_store.list_messages(session_id, limit=self._TRANSCRIPT_REPLAY_LIMIT):
             role = str(row.get("role") or "")
             if role == "tool":
                 tool_call_id = str(row.get("tool_call_id") or "")
@@ -973,8 +982,10 @@ class ToolCallingLoopHandler:
         tool_choice: dict[str, Any] | str | None,
         runtime_context: dict[str, Any],
     ):
-        signature = inspect.signature(self.provider.respond)
-        if "runtime_context" in signature.parameters:
+        # 시그니처는 최초 1회만 검사해 인스턴스에 캐싱한다.
+        if self._respond_has_runtime_context is None:
+            self._respond_has_runtime_context = "runtime_context" in inspect.signature(self.provider.respond).parameters
+        if self._respond_has_runtime_context:
             return self.provider.respond(
                 messages=messages,
                 tools=tools,
@@ -997,24 +1008,26 @@ class ToolCallingLoopHandler:
         model: str,
         tool_choice: dict[str, Any] | str | None,
         runtime_context: dict[str, Any],
+        on_text_delta=None,
     ):
         respond_async = getattr(self.provider, "respond_async", None)
         if callable(respond_async):
-            signature = inspect.signature(respond_async)
-            if "runtime_context" in signature.parameters:
-                return await respond_async(
-                    messages=messages,
-                    tools=tools,
-                    model=model,
-                    tool_choice=tool_choice,
-                    runtime_context=runtime_context,
-                )
-            return await respond_async(
-                messages=messages,
-                tools=tools,
-                model=model,
-                tool_choice=tool_choice,
-            )
+            # 시그니처는 최초 1회만 검사해 인스턴스에 캐싱한다.
+            if self._respond_async_has_runtime_context is None:
+                sig = inspect.signature(respond_async)
+                self._respond_async_has_runtime_context = "runtime_context" in sig.parameters
+                self._respond_async_has_on_text_delta = "on_text_delta" in sig.parameters
+            kwargs: dict[str, Any] = {
+                "messages": messages,
+                "tools": tools,
+                "model": model,
+                "tool_choice": tool_choice,
+            }
+            if self._respond_async_has_runtime_context:
+                kwargs["runtime_context"] = runtime_context
+            if self._respond_async_has_on_text_delta and on_text_delta is not None:
+                kwargs["on_text_delta"] = on_text_delta
+            return await respond_async(**kwargs)
         return await asyncio.to_thread(
             self._respond_with_runtime_context,
             messages=messages,
@@ -1023,6 +1036,22 @@ class ToolCallingLoopHandler:
             tool_choice=tool_choice,
             runtime_context=runtime_context,
         )
+
+    @staticmethod
+    def _build_text_delta_callback(progress_sink):
+        """progress_sink를 LLM 텍스트 델타 콜백으로 변환한다."""
+
+        async def on_text_delta(delta: str) -> None:
+            try:
+                await progress_sink(
+                    event_type="text.delta",
+                    summary_message=None,
+                    payload={"delta": delta},
+                )
+            except Exception:
+                pass
+
+        return on_text_delta
 
     @staticmethod
     def _model_runtime_context(*, task, step, task_input: dict[str, Any]) -> dict[str, Any]:

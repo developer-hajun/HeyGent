@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -616,16 +617,8 @@ class TaskEngine:
 
         if task_status == TaskStatus.COMPLETED:
             await self._emit("task.completed", task, payload=task.result_payload)
-            # FCM 푸시: 웹/다른 기기에서 보낸 메시지도 모바일에 동기화
-            try:
-                if task.session_key:
-                    for fcm_token in get_fcm_tokens(str(task.owner_key)):
-                        send_chat_notification(fcm_token, session_id=task.session_key, content="")
-                    logger.info(f"FCM 발송 완료: owner={task.owner_key} session={task.session_key}")
-                else:
-                    logger.debug(f"FCM 스킵: token={bool(fcm_token)} session={task.session_key}")
-            except Exception as e:
-                logger.warning(f"FCM 발송 실패 (무시): {e}")
+            # FCM 푸시를 백그라운드로 분리해 완료 이벤트 발행 직후 클라이언트에 응답이 전달되게 한다.
+            asyncio.create_task(self._send_fcm_notification(task))
             return task
 
         if task_status == TaskStatus.FAILED:
@@ -732,13 +725,7 @@ class TaskEngine:
 
         if task_status == TaskStatus.COMPLETED:
             await self._emit("task.completed", task, step, payload=task.result_payload)
-            # FCM 푸시: 웹/다른 기기에서 보낸 메시지도 모바일에 동기화
-            try:
-                if task.session_key:
-                    for fcm_token in get_fcm_tokens(str(task.owner_key)):
-                        send_chat_notification(fcm_token, session_id=task.session_key, content="")
-            except Exception:
-                pass
+            asyncio.create_task(self._send_fcm_notification(task))
             return task
 
         if task_status == TaskStatus.FAILED:
@@ -1392,6 +1379,20 @@ class TaskEngine:
         if materialized is None:
             return None
         return materialized
+
+    async def _send_fcm_notification(self, task: TaskRun) -> None:
+        """task 완료 FCM 푸시를 백그라운드에서 전송한다.
+
+        완료 이벤트 발행 직후 클라이언트로 응답이 전달될 수 있도록 critical path 밖에서 실행한다.
+        """
+        if not task.session_key:
+            return
+        try:
+            for fcm_token in get_fcm_tokens(str(task.owner_key)):
+                send_chat_notification(fcm_token, session_id=task.session_key, content="")
+            logger.info(f"FCM 발송 완료: owner={task.owner_key} session={task.session_key}")
+        except Exception as exc:
+            logger.warning(f"FCM 발송 실패 (무시): {exc}")
 
     async def _emit(
         self,

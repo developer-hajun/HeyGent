@@ -1,4 +1,4 @@
-from app.storage.postgres.connection import apply_configured_postgres_migrations, connect_postgres
+from app.storage.postgres.connection import apply_configured_postgres_migrations, connect_postgres, PooledConnectionFactory
 from app.storage.postgres.agent_repository import PostgresAgentRepository
 from app.storage.postgres.durable_repository import PostgresDurableRepository, PostgresTaskRepository
 from app.storage.postgres.migrations import POSTGRES_MIGRATIONS, PostgresMigration, apply_postgres_migrations
@@ -24,5 +24,6 @@ __all__ = [
     "apply_configured_postgres_migrations",
     "apply_postgres_migrations",
     "connect_postgres",
+    "PooledConnectionFactory",
     "render_postgres_schema",
 ]
