@@ -44,7 +44,6 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
   const snapshotFetchedTaskRunsRef = useRef<Set<string>>(new Set())
   const autoSubscribedChildTaskRunsRef = useRef<Set<string>>(new Set())
   const externalTaskSessionMapRef = useRef<Map<string, string>>(new Map())
-  const autoSubscribedChildTaskRunsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     const clearPingInterval = () => {

@@ -837,7 +837,6 @@ function isSpotOccupied(
   })
 }
 
-const nowMs = Date.now.bind(Date)
 const ALL_AGENT_SLOT_IDS = [
   'agent01',
   'agent02',
@@ -930,7 +929,7 @@ export function AgentStatusPage() {
   }, [])
   const runtimeGridRef = useRef<boolean[][]>(OBSTACLE_GRID)
   const walkTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({})
-  const lastSpawnSoundRef = useRef<number>(0)
+
   const initialSessionAgentProfileIdsRef = useRef<Set<string>>(new Set())
   const capturedInitialAgentPanelsRef = useRef(false)
 
@@ -1135,13 +1134,8 @@ export function AgentStatusPage() {
         return
       }
 
-      // 서브에이전트('+' 버튼) 첫 등장: 엘리베이터 입장 + 전구 + 효과음
+      // 서브에이전트('+' 버튼) 첫 등장: 엘리베이터 입장 + 전구
       setSpawningIds((s) => new Set([...s, agentId]))
-      const now = nowMs()
-      if (now - lastSpawnSoundRef.current > 2000) {
-        lastSpawnSoundRef.current = now
-        playSpawnSound()
-      }
       setTimeout(() => {
         setSpawningIds((s) => {
           const n = new Set(s)
@@ -1274,14 +1268,27 @@ export function AgentStatusPage() {
       if (agent.state === 'walking') {
         // 이동 중 목적지 변경: 경로는 유지하고 도착 시 전환할 targetState만 갱신
         // rest는 소파 빈 자리 탐색이 필요해 mid-walk 갱신 불가 — 나머지만 처리
+        // 휴게 목적지(소파/플로어)로 이동 중에는 targetState 덮어쓰기 금지 — sitting_desk가 소파 좌표에 배치되는 문제 방지
         if (destination !== 'rest') {
-          const newTargetState = DESTINATION_MAP[destination as UIDestination]?.targetState
-          if (newTargetState && agent.targetState !== newTargetState) {
-            return prev.map((a) =>
-              a.config.id === agentId ? { ...a, targetState: newTargetState } : a,
-            )
+          const isWalkingToRest =
+            agent.targetState === 'sitting_sofa' || agent.targetState === 'sitting_floor_lean'
+          if (!isWalkingToRest) {
+            const newTargetState = DESTINATION_MAP[destination as UIDestination]?.targetState
+            if (newTargetState && agent.targetState !== newTargetState) {
+              return prev.map((a) =>
+                a.config.id === agentId ? { ...a, targetState: newTargetState } : a,
+              )
+            }
           }
         }
+        return prev
+      }
+
+      // 이미 휴게 상태면 아무것도 하지 않음 — 페이지 재진입 시 불필요한 걷기 방지
+      if (
+        destination === 'rest' &&
+        (agent.state === 'sitting_sofa' || agent.state === 'sitting_floor_lean')
+      ) {
         return prev
       }
 
@@ -1542,10 +1549,7 @@ export function AgentStatusPage() {
 
       if (agent.pendingWaypoints.length > 0) {
         const [next, ...rest] = agent.pendingWaypoints
-        // 최종 목적지 방향 기준으로 facing 유지 — 경유 웨이포인트 방향에 흔들리지 않도록
-        const finalTarget = agent.targetPosition ?? next
-        const overallDx = finalTarget.x - agent.position.x
-        const facingRight = Math.abs(overallDx) > CELL ? overallDx > 0 : agent.facingRight
+        // facingRight는 워크 시작 시점에 확정 — 경유 웨이포인트마다 재계산 시 방향 좌우 반전 발생
         return prev.map((a) =>
           a.config.id === agentId
             ? {
@@ -1553,7 +1557,6 @@ export function AgentStatusPage() {
                 position: { ...next },
                 transitionDuration: calcDuration(a.position, next),
                 pendingWaypoints: rest,
-                facingRight,
               }
             : a,
         )

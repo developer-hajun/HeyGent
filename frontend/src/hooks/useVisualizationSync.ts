@@ -30,12 +30,15 @@ function resolveProfileKey(
   return undefined
 }
 
-// step 단위 종료 event_type — 태스크 전체가 끝난 건 아님 (다음 step이 올 수 있음)
+// 자식 단위 종료 event_type — 태스크 전체가 끝난 건 아님 (다음 step/tool이 올 수 있음)
+// useTaskRunStore의 isChildTerminalEvent와 동일 집합을 유지한다.
 const STEP_TERMINAL_EVENT_TYPES = new Set([
   'step.completed',
   'step.failed',
   'step.canceled',
   'step.cancelled',
+  'tool.completed',
+  'search.completed',
 ])
 
 const TASK_COMPLETED_EVENT_TYPES = new Set(['task.completed'])
@@ -70,8 +73,12 @@ function resolveDestination(
     if (TASK_COMPLETED_EVENT_TYPES.has(latestEvent.event_type)) return 'rest'
     if (TASK_FAILED_EVENT_TYPES.has(latestEvent.event_type)) return 'calling'
     if (TASK_CANCELED_EVENT_TYPES.has(latestEvent.event_type)) return 'rest'
-    // step 단위 종료 이벤트는 task 전체 완료가 아님 — stale taskRun.status로 낙하하지 않도록 null 반환
-    if (STEP_TERMINAL_EVENT_TYPES.has(latestEvent.event_type)) return null
+    // step 단위 종료 이벤트는 task 전체 완료가 아님 — taskRun.status가 RUNNING이면 desk 유지
+    if (STEP_TERMINAL_EVENT_TYPES.has(latestEvent.event_type)) {
+      const s = taskRun.status?.toUpperCase()
+      if (s === 'RUNNING' || s === 'WAITING' || s === 'BLOCKED') return 'desk'
+      return null
+    }
   }
 
   // step 단위 종료 이벤트(step.completed 등)의 status는 task 완료를 의미하지 않음
