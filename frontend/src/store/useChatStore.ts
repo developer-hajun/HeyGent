@@ -73,6 +73,7 @@ type ChatState = {
   }) => Promise<RawAiSession | null>
   fetchModelOptions: (sessionId?: string) => Promise<ModelOptionsResultPayload>
   handleRealtimeFrame: (frame: AiRealtimeRawFrame) => void
+  addExternalTaskPlaceholder: (sessionId: string, taskRunId: string) => void
   clearChatState: () => void
 }
 
@@ -187,7 +188,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const messages = getRawMessageList(payload).map(toChatMessageView)
 
       set((state) => ({
-        messagesBySessionId: { ...state.messagesBySessionId, [sessionId]: messages },
+        messagesBySessionId: {
+          ...state.messagesBySessionId,
+          [sessionId]: mergeLiveMessagesIntoPersistedList(
+            messages,
+            state.messagesBySessionId[sessionId] ?? [],
+            sessionId,
+          ),
+        },
         loadingSessionIds: { ...state.loadingSessionIds, [sessionId]: false },
         lastError: null,
       }))
@@ -405,6 +413,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
       default:
         return
     }
+  },
+  addExternalTaskPlaceholder: (sessionId, taskRunId) => {
+    set((state) => {
+      const existingMessages = state.messagesBySessionId[sessionId] ?? []
+      const hasTask = existingMessages.some((m) => m.taskRunId === taskRunId)
+      if (hasTask) return {}
+
+      return {
+        messagesBySessionId: {
+          ...state.messagesBySessionId,
+          [sessionId]: [
+            ...existingMessages,
+            {
+              id: `assistant_${taskRunId}`,
+              sessionId,
+              role: 'assistant' as const,
+              content: '',
+              status: 'streaming' as const,
+              taskRunId,
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        },
+        sessionsById: upsertSessionPreview(state, {
+          sessionId,
+          activeTaskRunId: taskRunId,
+          lastTaskRunStatus: 'RUNNING',
+        }),
+      }
+    })
+    const sessionPanels = useSessionStore.getState().agentPanelsBySessionId[sessionId] ?? []
+    startVisualizationForSession(sessionId, taskRunId, sessionPanels)
+    refreshVisualizationSessionAgents(sessionId, taskRunId)
   },
   clearChatState: () =>
     set({
