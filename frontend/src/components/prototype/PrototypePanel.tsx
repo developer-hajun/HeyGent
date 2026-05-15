@@ -28,7 +28,11 @@ type PrototypeTab = 'preview' | 'code'
 
 const MIN_PROTOTYPE_PANEL_WIDTH = 480
 const MAX_PROTOTYPE_PANEL_WIDTH = 1040
-const PROTOTYPE_DEPENDENCIES = {
+const PROTOTYPE_CORE_DEPENDENCIES = {
+  react: '^19.2.5',
+  'react-dom': '^19.2.5',
+} as const
+const PROTOTYPE_AVAILABLE_DEPENDENCIES = {
   '@dnd-kit/core': '^6.3.1',
   '@dnd-kit/utilities': '^3.2.2',
   '@radix-ui/react-accordion': '^1.2.12',
@@ -77,9 +81,7 @@ const PROTOTYPE_DEPENDENCIES = {
   'mapbox-gl': '^3.23.1',
   motion: '^12.38.0',
   'next-themes': '^0.4.6',
-  react: '^19.2.5',
   'react-day-picker': '^9.14.0',
-  'react-dom': '^19.2.5',
   'react-hook-form': '^7.74.0',
   'react-icons': '^5.6.0',
   'react-is': '^19.2.6',
@@ -94,6 +96,16 @@ const PROTOTYPE_DEPENDENCIES = {
   vaul: '^1.1.2',
   zustand: '^5.0.12',
 } as const
+const PROTOTYPE_LINKED_DEPENDENCIES: Partial<
+  Record<
+    keyof typeof PROTOTYPE_AVAILABLE_DEPENDENCIES,
+    (keyof typeof PROTOTYPE_AVAILABLE_DEPENDENCIES)[]
+  >
+> = {
+  '@react-three/drei': ['@react-three/fiber', 'three'],
+  '@react-three/fiber': ['three'],
+  recharts: ['react-is'],
+}
 const PROTOTYPE_DEV_DEPENDENCIES = {
   '@vitejs/plugin-react': '^6.0.1',
   typescript: '~6.0.2',
@@ -271,7 +283,8 @@ function PrototypeSandpack({
   artifact: PrototypeArtifact
   onTabChange: (value: PrototypeTab) => void
 }) {
-  const files = useMemo(() => buildSandpackFiles(artifact), [artifact])
+  const dependencies = useMemo(() => resolvePrototypeDependencies(artifact), [artifact])
+  const files = useMemo(() => buildSandpackFiles(artifact, dependencies), [artifact, dependencies])
 
   return (
     <div className="prototype-sandpack flex min-h-0 w-full min-w-0 flex-1 flex-col bg-[#0b1020] [&_.cm-content]:!text-slate-100 [&_.cm-editor]:!h-full [&_.cm-editor]:!w-full [&_.cm-editor]:!bg-[#0b1020] [&_.cm-gutters]:!border-slate-800 [&_.cm-gutters]:!bg-[#0b1020] [&_.cm-gutters]:!text-slate-500 [&_.cm-line]:!text-slate-100 [&_.cm-scroller]:!h-full [&_.cm-scroller]:!w-full [&_.sp-code-editor]:!h-full [&_.sp-code-editor]:!w-full [&_.sp-code-editor]:!bg-[#0b1020] [&_.sp-file-explorer]:!h-full [&_.sp-file-explorer]:!bg-[#0f172a] [&_.sp-file-explorer]:!text-slate-200 [&_.sp-layout]:!h-full [&_.sp-layout]:!w-full [&_.sp-layout]:!max-w-none [&_.sp-layout]:!flex-1 [&_.sp-layout]:!bg-[#0b1020] [&_.sp-preview]:!h-full [&_.sp-preview]:!w-full [&_.sp-preview]:!max-w-none [&_.sp-preview-container]:!h-full [&_.sp-preview-container]:!w-full [&_.sp-preview-container]:!max-w-none [&_.sp-stack]:!h-full [&_.sp-stack]:!w-full [&_.sp-wrapper]:!h-full [&_.sp-wrapper]:!w-full [&_.sp-wrapper]:!max-w-none [&_iframe]:!h-full [&_iframe]:!w-full">
@@ -300,7 +313,7 @@ function PrototypeSandpack({
         template="react-ts"
         theme="dark"
         customSetup={{
-          dependencies: PROTOTYPE_DEPENDENCIES,
+          dependencies,
           devDependencies: PROTOTYPE_DEV_DEPENDENCIES,
         }}
         options={{
@@ -439,13 +452,16 @@ function PrototypeLoading({
   )
 }
 
-function buildSandpackFiles(artifact: PrototypeArtifact): SandpackFiles {
+function buildSandpackFiles(
+  artifact: PrototypeArtifact,
+  dependencies: Record<string, string>,
+): SandpackFiles {
   const baseFiles: SandpackFiles = {
     '/package.json': {
       code: JSON.stringify(
         {
           scripts: { dev: 'vite --host 0.0.0.0' },
-          dependencies: PROTOTYPE_DEPENDENCIES,
+          dependencies,
           devDependencies: PROTOTYPE_DEV_DEPENDENCIES,
         },
         null,
@@ -478,6 +494,46 @@ function buildSandpackFiles(artifact: PrototypeArtifact): SandpackFiles {
       ]),
     ),
   }
+}
+
+function resolvePrototypeDependencies(artifact: PrototypeArtifact): Record<string, string> {
+  const dependencies: Record<string, string> = { ...PROTOTYPE_CORE_DEPENDENCIES }
+  const source = Object.values(artifact.files)
+    .map((file) => file.code)
+    .join('\n')
+  const packages = new Set<string>()
+  const importPattern =
+    /(?:import|export)\s+(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]|require\(\s*['"]([^'"]+)['"]\s*\)|import\(\s*['"]([^'"]+)['"]\s*\)/g
+
+  for (const match of source.matchAll(importPattern)) {
+    const packageName = getPackageName(match[1] ?? match[2] ?? match[3] ?? '')
+    if (packageName) packages.add(packageName)
+  }
+
+  for (const packageName of Array.from(packages)) {
+    addPrototypeDependency(dependencies, packageName)
+  }
+
+  return dependencies
+}
+
+function addPrototypeDependency(dependencies: Record<string, string>, packageName: string) {
+  if (packageName in PROTOTYPE_CORE_DEPENDENCIES) return
+  if (!(packageName in PROTOTYPE_AVAILABLE_DEPENDENCIES)) return
+
+  const dependencyName = packageName as keyof typeof PROTOTYPE_AVAILABLE_DEPENDENCIES
+  dependencies[dependencyName] = PROTOTYPE_AVAILABLE_DEPENDENCIES[dependencyName]
+  for (const linkedDependency of PROTOTYPE_LINKED_DEPENDENCIES[dependencyName] ?? []) {
+    dependencies[linkedDependency] = PROTOTYPE_AVAILABLE_DEPENDENCIES[linkedDependency]
+  }
+}
+
+function getPackageName(specifier: string) {
+  const normalized = specifier.trim()
+  if (!normalized || normalized.startsWith('.') || normalized.startsWith('/')) return ''
+  const parts = normalized.split('/')
+  if (normalized.startsWith('@')) return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : normalized
+  return parts[0] ?? ''
 }
 
 function sanitizePrototypeCode(code: string) {
