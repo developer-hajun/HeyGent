@@ -44,6 +44,7 @@ class LocalToolRuntime:
         owner_key: str | None = None,
         work_repository=None,
         agent_repository=None,
+        prototype_repository=None,
         runtime_context: dict[str, Any] | None = None,
     ) -> None:
         self.skill_registry = skill_registry
@@ -52,6 +53,7 @@ class LocalToolRuntime:
         self.owner_key = str(owner_key) if owner_key else None
         self.work_repository = work_repository
         self.agent_repository = agent_repository
+        self.prototype_repository = prototype_repository
         self.runtime_context = dict(runtime_context or {})
         self.workspace_root = self._resolve_workspace_root(workspace_root)
         self._step_items: list[dict[str, str]] = []
@@ -71,6 +73,9 @@ class LocalToolRuntime:
                 "work_disposition": self._work_disposition,
                 "mattermost.send": self._send_mattermost_message,
                 "notion.execute": self._execute_notion,
+                "design.list_presets": self._list_design_presets,
+                "design.read_preset": self._read_design_preset,
+                "prototype.create_artifact": self._create_prototype_artifact,
                 "terminal.run": self._run_terminal_command,
                 "web_search": self._run_web_search,
                 "web_extract": self._run_web_extract,
@@ -115,6 +120,7 @@ class LocalToolRuntime:
             owner_key=self.owner_key,
             work_repository=self.work_repository,
             agent_repository=self.agent_repository,
+            prototype_repository=self.prototype_repository,
             runtime_context=self.runtime_context,
         )
         bound._step_items = [dict(item) for item in self._step_items]
@@ -136,6 +142,7 @@ class LocalToolRuntime:
             owner_key=owner_key or self.owner_key,
             work_repository=self.work_repository,
             agent_repository=self.agent_repository,
+            prototype_repository=self.prototype_repository,
             runtime_context=runtime_context if runtime_context is not None else self.runtime_context,
         )
         bound._step_items = [dict(item) for item in self._step_items]
@@ -501,6 +508,84 @@ class LocalToolRuntime:
             "execute_notion_handler",
             args,
         )
+
+    def _list_design_presets(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler(
+            "app.tools.design.design_tool",
+            "list_design_presets_handler",
+            args,
+        )
+
+    def _read_design_preset(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler(
+            "app.tools.design.design_tool",
+            "read_design_preset_handler",
+            args,
+        )
+
+    def _create_prototype_artifact(self, args: dict[str, Any]) -> dict[str, Any]:
+        from app.tools.prototype.prototype_tool import normalize_prototype_files, prototype_tool_error
+
+        if self.prototype_repository is None:
+            return prototype_tool_error("prototype_repository_unavailable", "prototype artifact storage is not configured.")
+
+        session_id = self._optional_text(
+            args.get("_trusted_session_id")
+            or self.runtime_context.get("sessionId")
+            or self.runtime_context.get("session_id")
+        )
+        owner_key = self._optional_text(args.get("_trusted_owner_key") or self.owner_key)
+        if not session_id or not owner_key:
+            return prototype_tool_error(
+                "prototype_context_required",
+                "prototype artifact creation requires a bound session and owner.",
+            )
+
+        files = normalize_prototype_files(args.get("files"))
+        if not files:
+            return prototype_tool_error("prototype_files_required", "prototype files are required.")
+
+        title = self._optional_text(args.get("title")) or "프로토타입"
+        framework = self._optional_text(args.get("framework")) or "react"
+        styling = self._optional_text(args.get("styling")) or "css"
+        entry_file = self._optional_text(args.get("entryFile") or args.get("entry_file")) or _default_entry_file(files)
+        design_preset_id = self._optional_text(args.get("designPresetId") or args.get("design_preset_id"))
+        summary = self._optional_text(args.get("summary")) or "프로토타입 버전을 생성했습니다."
+        metadata = args.get("metadata") if isinstance(args.get("metadata"), dict) else {}
+        task_run_id = self._optional_text(self.runtime_context.get("taskRunId") or self.runtime_context.get("task_run_id"))
+        prompt_message_id = self._optional_text(
+            self.runtime_context.get("promptMessageId") or self.runtime_context.get("prompt_message_id")
+        )
+
+        saved = self.prototype_repository.create_artifact_version(
+            session_id=session_id,
+            owner_key=owner_key,
+            title=title,
+            framework=framework,
+            styling=styling,
+            design_preset_id=design_preset_id,
+            entry_file=entry_file,
+            files=files,
+            summary=summary,
+            task_run_id=task_run_id,
+            prompt_message_id=prompt_message_id,
+            metadata=metadata,
+        )
+        return {
+            "ok": True,
+            "activeArtifactId": saved["artifact_id"],
+            "activeArtifactVersionId": saved["version_id"],
+            "artifactId": saved["artifact_id"],
+            "versionId": saved["version_id"],
+            "versionNumber": saved["version_number"],
+            "framework": saved["framework"],
+            "styling": saved["styling"],
+            "designPresetId": saved.get("design_preset_id"),
+            "entryFile": saved["entry_file"],
+            "previewMode": "sandpack" if saved["framework"] == "react" else "iframe",
+            "fileCount": len(saved["files"]),
+            "summary": saved.get("summary") or "",
+        }
 
     def _run_browser_navigate(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_navigate_handler", args)
@@ -909,6 +994,11 @@ class LocalToolRuntime:
             trusted_args.pop("userId", None)
             trusted_args.pop("user_id", None)
             trusted_args["_trusted_user_id"] = self.owner_key
+        if tool_name == "prototype.create_artifact":
+            trusted_args["_trusted_owner_key"] = self.owner_key
+            trusted_args["_trusted_session_id"] = self._optional_text(
+                self.runtime_context.get("sessionId") or self.runtime_context.get("session_id")
+            )
         return trusted_args
 
     def _resolve_terminal_cwd(self, value: Any) -> str:
@@ -1187,8 +1277,7 @@ class LocalToolRuntime:
         text_parts: list[str],
     ) -> list[str]:
         explicit = self._string_list(args.get("requiredSkillNames") or args.get("required_skill_names"))
-        if explicit:
-            return explicit
+        required: list[str] = list(explicit)
 
         parent_skill_names = self._string_list(
             context.get("enabledSkillNames")
@@ -1202,10 +1291,9 @@ class LocalToolRuntime:
             if isinstance(config, dict):
                 parent_skill_names = self._string_list(config.get("skills"))
         if not parent_skill_names:
-            return []
+            return required
 
         haystack = self._normalize_match_text(" ".join(text_parts))
-        required: list[str] = []
         for skill_name in parent_skill_names:
             if self._normalize_match_text(skill_name) in haystack:
                 self._append_unique(required, skill_name)
@@ -1395,3 +1483,10 @@ class LocalToolRuntime:
         if isinstance(allowed_values, list) and value not in allowed_values:
             return f"{path} must be one of: {', '.join(str(item) for item in allowed_values)}"
         return None
+
+
+def _default_entry_file(files: dict[str, Any]) -> str:
+    for candidate in ("/src/App.tsx", "/src/App.jsx", "/src/main.tsx", "/src/main.jsx", "/index.html"):
+        if candidate in files:
+            return candidate
+    return next(iter(files))

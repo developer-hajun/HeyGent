@@ -80,7 +80,7 @@ _PROTECTED_SESSION_METADATA_KEYS = {
 }
 _SESSION_METADATA_PATCH_ALLOWLIST = {"pinned", "color", "tags", "description", "lastViewedAt", "last_viewed_at", "ui"}
 _SESSION_SETTINGS_ALLOWLIST = {"model", "systemPrompt", "system_prompt", "toolsets", "delegationPolicy", "delegation_policy"}
-_PUBLIC_SESSION_TOOLSETS = {"skills", "session", "planning", "web", "work", "messaging", "safe"}
+_PUBLIC_SESSION_TOOLSETS = {"skills", "session", "planning", "web", "work", "messaging", "design", "prototype", "safe"}
 
 
 @router.post(

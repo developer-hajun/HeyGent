@@ -44,6 +44,7 @@ from app.domain.providers.model import OpenAIAPIProvider
 from app.domain.providers.registry import ProviderRegistry
 from app.storage.postgres import (
     PostgresAgentRepository,
+    PostgresPrototypeArtifactRepository,
     PostgresSessionStore,
     PostgresSkillRepository,
     PostgresTaskRepository,
@@ -134,6 +135,7 @@ async def lifespan(app: FastAPI):
     work_repository = PostgresWorkRepository(postgres_connection_factory)
     workflow_template_repository = PostgresWorkflowTemplateRepository(postgres_connection_factory)
     agent_repository = PostgresAgentRepository(postgres_connection_factory)
+    prototype_repository = PostgresPrototypeArtifactRepository(postgres_connection_factory)
     agent_repository.ensure_builtin_templates()
     # recall_service = RecallService(session_store)
     # memory_store = MemoryStore()
@@ -153,6 +155,7 @@ async def lifespan(app: FastAPI):
         bridge_session_manager=bridge_session_manager,
         work_repository=work_repository,
         agent_repository=agent_repository,
+        prototype_repository=prototype_repository,
     )
     tool_catalog = ToolCatalog(
         tool_runtime,
@@ -234,6 +237,7 @@ async def lifespan(app: FastAPI):
     app.state.work_repository = work_repository
     app.state.workflow_template_repository = workflow_template_repository
     app.state.agent_repository = agent_repository
+    app.state.prototype_repository = prototype_repository
     app.state.skill_repository = skill_repository
     # app.state.recall_service = recall_service
     # app.state.memory_store = memory_store

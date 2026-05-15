@@ -5,6 +5,7 @@ import { ChatComposer } from '@/components/chat/ChatComposer'
 import { ChatEmptyState } from '@/components/chat/ChatEmptyState'
 import { ChatMessageList } from '@/components/chat/ChatMessageList'
 import type { ChatConnectionState } from '@/components/chat/chatTypes'
+import { PrototypePanel } from '@/components/prototype/PrototypePanel'
 import { StepRunActivityPanel } from '@/components/taskRuns/StepRunActivityPanel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -62,6 +63,10 @@ export function ChatSessionPage() {
   const accessToken = useAuthStore((state) => state.accessToken)
   const activityOpen = useUIStore((state) => state.taskActivityPanelOpen)
   const setActivityOpen = useUIStore((state) => state.setTaskActivityPanelOpen)
+  const setSessionWorkspaceCollapsed = useUIStore((state) => state.setSessionWorkspaceCollapsed)
+  const [prototypeRequestedSessionId, setPrototypeRequestedSessionId] = useState<string | null>(
+    null,
+  )
 
   const storeMessages = useChatStore((state) =>
     sessionId === '' ? EMPTY_MESSAGES : (state.messagesBySessionId[sessionId] ?? EMPTY_MESSAGES),
@@ -364,6 +369,10 @@ export function ChatSessionPage() {
   const handleSend = async (content: string) => {
     if (!sessionId || isSending) return
     setComposerDraft(null)
+    if (hasPrototypeIntent(content)) {
+      setPrototypeRequestedSessionId(sessionId)
+      setSessionWorkspaceCollapsed(true)
+    }
 
     if (!authenticatedReady || commandClient === null) {
       setLoadState(
@@ -499,6 +508,21 @@ export function ChatSessionPage() {
         message.status === 'streaming' ||
         message.status === 'waiting',
     )
+  const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')
+  const prototypeRequestActive =
+    hasActiveChatTurn && hasPrototypeIntent(latestUserMessage?.content ?? '')
+  const prototypePanelRequested = prototypeRequestedSessionId === sessionId
+
+  useEffect(() => {
+    if (!prototypeRequestActive) return
+    setSessionWorkspaceCollapsed(true)
+  }, [prototypeRequestActive, setSessionWorkspaceCollapsed])
+
+  const handlePrototypeArtifactVisible = useCallback(() => {
+    setPrototypeRequestedSessionId(sessionId)
+    setSessionWorkspaceCollapsed(true)
+  }, [sessionId, setSessionWorkspaceCollapsed])
+
   const isStreaming = messages.some(
     (message) => message.role === 'assistant' && message.status === 'streaming',
   )
@@ -608,6 +632,13 @@ export function ChatSessionPage() {
         onSelectTaskRun={setSelectedTaskRunId}
         onFocusTaskRunMessage={handleFocusTaskRunMessage}
       />
+      {!isPendingSession && (
+        <PrototypePanel
+          sessionId={sessionId}
+          openHint={prototypeRequestActive || prototypePanelRequested}
+          onArtifactVisible={handlePrototypeArtifactVisible}
+        />
+      )}
     </main>
   )
 }
@@ -861,6 +892,24 @@ function extractWorkIdentifier(content: string) {
 function normalizeWorkIdentifier(identifier: string) {
   const match = identifier.match(/\btask\s*[-#]?\s*(\d+)\b/i)
   return match ? `TASK-${match[1]}` : identifier.trim().toUpperCase()
+}
+
+function hasPrototypeIntent(content: string) {
+  const normalized = content.toLowerCase()
+  return [
+    'design.md',
+    '디자인',
+    '화면',
+    '프로토타입',
+    'prototype',
+    'preview',
+    '프리뷰',
+    'ui',
+    '대시보드',
+    '랜딩',
+    '관리콘솔',
+    '앱',
+  ].some((keyword) => normalized.includes(keyword))
 }
 
 function toChatConnectionState(

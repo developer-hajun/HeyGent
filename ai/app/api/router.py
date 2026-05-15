@@ -8,6 +8,7 @@ from app.api.http.bridge_internal import router as bridge_internal_router
 from app.api.http.device_tokens import router as device_tokens_router
 from app.api.http.health import router as health_router
 from app.api.http.providers import router as providers_router
+from app.api.http.prototypes import router as prototypes_router
 from app.api.http.sessions import router as sessions_router
 from app.api.http.tasks import router as tasks_router
 from app.api.http.work import router as work_router
@@ -27,6 +28,7 @@ def build_api_router(settings: Settings) -> APIRouter:
     api_router = APIRouter(prefix=settings.api_prefix)
     api_router.include_router(health_router)
     api_router.include_router(sessions_router)
+    api_router.include_router(prototypes_router)
     api_router.include_router(device_tokens_router)
     api_router.include_router(work_router)
     api_router.include_router(workflow_templates_router)
