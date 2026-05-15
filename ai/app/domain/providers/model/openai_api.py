@@ -261,6 +261,7 @@ class OpenAIAPIProvider(BaseProvider):
         """
         stream_body = {**request_body, "stream": True}
         completed_response_json: dict[str, Any] | None = None
+        accumulated_text_parts: list[str] = []
 
         async with self._http_client.stream(
             "POST",
@@ -290,6 +291,7 @@ class OpenAIAPIProvider(BaseProvider):
                 if event_type == "response.output_text.delta":
                     delta = str(event_data.get("delta") or "")
                     if delta:
+                        accumulated_text_parts.append(delta)
                         try:
                             await on_text_delta(delta)
                         except Exception:
@@ -304,6 +306,14 @@ class OpenAIAPIProvider(BaseProvider):
             # 스트림이 response.completed 없이 끊긴 경우 빈 응답으로 처리한다.
             completed_response_json = {"id": "", "output": [], "usage": {}}
 
+        # response.completed의 output에 텍스트가 없으면 누적한 delta 텍스트를 주입한다.
+        # extract_responses_output_text가 output_text 직접 필드를 우선 참조하므로 여기에 삽입한다.
+        if accumulated_text_parts and not self._has_text_in_output(completed_response_json):
+            completed_response_json = {
+                **completed_response_json,
+                "output_text": "".join(accumulated_text_parts),
+            }
+
         return build_agent_model_response(
             provider_name=call_provider_name,
             requested_model=call_model,
@@ -315,6 +325,18 @@ class OpenAIAPIProvider(BaseProvider):
                 "tool_choice": tool_choice,
             },
         )
+
+    @staticmethod
+    def _has_text_in_output(response_json: dict[str, Any]) -> bool:
+        """response_json에 이미 추출 가능한 텍스트가 있는지 확인한다."""
+        if isinstance(response_json.get("output_text"), str) and response_json["output_text"].strip():
+            return True
+        for item in response_json.get("output") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "message" or item.get("role") == "assistant":
+                return True
+        return False
 
     async def aclose(self) -> None:
         if self._owns_http_client:
