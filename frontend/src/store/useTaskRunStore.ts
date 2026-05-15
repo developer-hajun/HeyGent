@@ -142,6 +142,7 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
       const retentionExceeded = getBooleanField(payload, 'retention_exceeded', 'retentionExceeded')
 
       mergeReplayResult(taskRunId, events, payload, set)
+      subscribeChildTaskRunsFromEvents(events, get, set)
 
       if (retentionExceeded) {
         // replay 보관 구간을 벗어난 경우에는 event 전체 복구가 불가능하므로 snapshot으로 현재 상태를 맞춘다.

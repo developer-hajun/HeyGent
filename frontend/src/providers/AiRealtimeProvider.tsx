@@ -43,6 +43,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
   const pendingRecoveryClientRef = useRef<TaskRunSocketClient | null>(null)
   const snapshotFetchedTaskRunsRef = useRef<Set<string>>(new Set())
   const externalTaskSessionMapRef = useRef<Map<string, string>>(new Map())
+  const autoSubscribedChildTaskRunsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     const clearPingInterval = () => {
@@ -487,6 +488,11 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         setLastError(error instanceof Error ? error.message : 'child TaskRun 구독에 실패했습니다.')
         return
       }
+
+      void useTaskRunStore
+        .getState()
+        .fetchSnapshot(childTaskRunId)
+        .catch(() => {})
 
       void useTaskRunStore
         .getState()

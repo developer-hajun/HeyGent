@@ -120,16 +120,20 @@ export function useVisualizationSync(
     const pendingMoves: Record<string, { destination: UIDestination; sortTime: number }> = {}
 
     for (const taskRun of Object.values(taskRunsById)) {
+      const profileKey = resolveProfileKey(taskRun.displayContext?.actorAgent, profileIdMap)
+      if (!profileKey) continue
+
+      // CEO 세션 필터: 다른 세션의 CEO task run 제외
+      // 서브에이전트는 sub-session ID를 가지므로 세션 필터를 적용하지 않고
+      // profileIdMap 귀속으로 현재 세션 범위를 보장한다
       if (
+        profileKey === 'ceo' &&
         sessionId !== undefined &&
         taskRun.session_id !== undefined &&
         taskRun.session_id !== sessionId
       ) {
         continue
       }
-
-      const profileKey = resolveProfileKey(taskRun.displayContext?.actorAgent, profileIdMap)
-      if (!profileKey) continue
 
       // 해당 task run의 최신 이벤트 (sequence 순 정렬된 배열의 마지막)
       const events = eventsByTaskRunId[taskRun.task_run_id] ?? []
