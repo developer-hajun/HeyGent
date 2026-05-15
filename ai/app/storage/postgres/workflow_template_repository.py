@@ -18,6 +18,7 @@ class PostgresWorkflowTemplateRepository:
         *,
         owner_key: str,
         owner_user_id: int | None,
+        session_id: str,
         name: str,
         description: str,
         graph: WorkflowTemplateGraph,
@@ -26,14 +27,15 @@ class PostgresWorkflowTemplateRepository:
         connection = self.connection_factory()
         row = connection.execute(
             """
-            INSERT INTO workflow_templates (template_id, owner_key, owner_user_id, name, description, graph)
-            VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+            INSERT INTO workflow_templates (template_id, owner_key, owner_user_id, session_id, name, description, graph)
+            VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
             RETURNING *
             """,
             (
                 template_id,
                 owner_key,
                 owner_user_id,
+                session_id,
                 name,
                 description,
                 json.dumps(graph.to_jsonable(), ensure_ascii=False),
@@ -79,15 +81,22 @@ class PostgresWorkflowTemplateRepository:
         ).fetchone()
         return _template_from_row(row)
 
-    def list_for_owner(self, owner_key: str, *, limit: int = 50, offset: int = 0) -> list[WorkflowTemplate]:
+    def list_for_session(
+        self,
+        owner_key: str,
+        session_id: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[WorkflowTemplate]:
         rows = self.connection_factory().execute(
             """
             SELECT * FROM workflow_templates
-            WHERE owner_key = %s
+            WHERE owner_key = %s AND session_id = %s
             ORDER BY updated_at DESC, created_at DESC
             LIMIT %s OFFSET %s
             """,
-            (owner_key, limit, offset),
+            (owner_key, session_id, limit, offset),
         ).fetchall()
         return [tmpl for row in rows if (tmpl := _template_from_row(row)) is not None]
 
@@ -114,6 +123,7 @@ def _template_from_row(row: Any) -> WorkflowTemplate | None:
         template_id=str(record["template_id"]),
         owner_key=str(record["owner_key"]),
         owner_user_id=record.get("owner_user_id"),
+        session_id=record.get("session_id"),
         name=str(record["name"]),
         description=str(record.get("description") or ""),
         graph=WorkflowTemplateGraph.from_jsonable(graph_value),

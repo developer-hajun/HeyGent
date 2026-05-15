@@ -17,7 +17,7 @@ import {
   type NodeProps,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { FileText, Loader2, Pencil, Play, Plus, Save, Trash2, X, Zap } from 'lucide-react'
+import { Loader2, Pencil, Play, Plus, Save, Trash2, Workflow, X, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/components/ui/utils'
@@ -71,8 +71,10 @@ const FLOW_EDGE_TYPES = { blocks: BlocksEdge }
 const CEO_NODE_ID = 'ceo'
 const START_BOX_NODE_ID = 'start-box'
 
-const BG_GRADIENT =
-  'radial-gradient(1200px 600px at 30% 0%, rgba(99, 102, 241, 0.18), transparent 60%), radial-gradient(1000px 500px at 80% 100%, rgba(168, 85, 247, 0.18), transparent 55%), linear-gradient(180deg, #0b0f1d 0%, #14102c 100%)'
+// 캔버스 배경: 진한 회색 (모눈종이 느낌)
+const CANVAS_BG_STYLE: CSSProperties = {
+  background: '#a8aeb8',
+}
 
 const CEO_NODE_WIDTH = 240
 const CEO_NODE_HEIGHT = 70
@@ -167,7 +169,7 @@ function WorkflowTemplateEditorInner({
   // ── 템플릿 목록 로드 ──
   const refreshTemplates = useCallback(async () => {
     try {
-      const res = await listWorkflowTemplates()
+      const res = await listWorkflowTemplates(sessionId)
       setTemplates(res.items)
       if (selectedTemplateId === null && res.items.length > 0) {
         setSelectedTemplateId(res.items[0].templateId)
@@ -175,7 +177,7 @@ function WorkflowTemplateEditorInner({
     } catch (error) {
       console.error(error)
     }
-  }, [selectedTemplateId])
+  }, [selectedTemplateId, sessionId])
 
   /* eslint-disable react-hooks/set-state-in-effect, react-hooks/exhaustive-deps */
   useEffect(() => {
@@ -575,12 +577,12 @@ function WorkflowTemplateEditorInner({
     if (!selectedTemplate) return
     const name = draftName.trim()
     if (!name) {
-      toast.error('그림 이름이 필요합니다')
+      toast.error('작업명이 필요합니다')
       return
     }
     setBusySaving(true)
     try {
-      const updated = await updateWorkflowTemplate(selectedTemplate.templateId, {
+      const updated = await updateWorkflowTemplate(sessionId, selectedTemplate.templateId, {
         name,
         description: draftDescription,
         graph: buildGraphForSave(),
@@ -599,12 +601,12 @@ function WorkflowTemplateEditorInner({
   const handleSaveNew = async () => {
     const name = draftName.trim()
     if (!name) {
-      toast.error('그림 이름이 필요합니다')
+      toast.error('작업명이 필요합니다')
       return
     }
     setBusySaving(true)
     try {
-      const created = await createWorkflowTemplate({
+      const created = await createWorkflowTemplate(sessionId, {
         name,
         description: draftDescription,
         graph: buildGraphForSave(),
@@ -634,7 +636,7 @@ function WorkflowTemplateEditorInner({
     }
     setBusyRunning(true)
     try {
-      await instantiateWorkflowTemplate(selectedTemplate.templateId, sessionId)
+      await instantiateWorkflowTemplate(sessionId, selectedTemplate.templateId)
       toast.success(`"${selectedTemplate.name}" 작업 생성됨`)
       // 팀장 에이전트한테 시작 신호 — 이미 만들어진 자식 작업들을 명시해 위임 유도
       try {
@@ -707,7 +709,7 @@ function WorkflowTemplateEditorInner({
   // ── 템플릿 삭제 ──
   const handleDeleteTemplate = async (templateId: string) => {
     try {
-      await deleteWorkflowTemplate(templateId)
+      await deleteWorkflowTemplate(sessionId, templateId)
       setTemplates((prev) => prev.filter((t) => t.templateId !== templateId))
       if (selectedTemplateId === templateId) {
         setSelectedTemplateId(null)
@@ -728,7 +730,7 @@ function WorkflowTemplateEditorInner({
         type: 'ceo',
         position: userPositions[CEO_NODE_ID] ?? { x: ceoX, y: ceoY },
         data: {
-          label: draftName || '새 그림',
+          label: draftName || '새 작업',
           onCardClick: () => {
             setLeaderInitializing(false)
             setLeaderModalOpen(true)
@@ -743,7 +745,7 @@ function WorkflowTemplateEditorInner({
         type: 'startBox',
         position: userPositions[START_BOX_NODE_ID] ?? { x: START_BOX_X, y: START_BOX_Y },
         data: {
-          label: inStartBox.size > 0 ? `${inStartBox.size}개 동시 시작` : '병렬 시작 그룹',
+          label: inStartBox.size > 0 ? `${inStartBox.size}개 작업` : '비어있음',
         },
         draggable: true,
         style: { width: startBoxWidth, height: START_BOX_HEIGHT },
@@ -805,11 +807,11 @@ function WorkflowTemplateEditorInner({
         type: 'straight',
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: '#fbbf24',
+          color: '#52525b',
           width: 28,
           height: 28,
         },
-        style: { stroke: '#fbbf24', strokeWidth: 3 },
+        style: { stroke: '#52525b', strokeWidth: 3 },
         selectable: false,
       },
       ...draftEdges.map((e) => ({
@@ -819,7 +821,7 @@ function WorkflowTemplateEditorInner({
         type: 'blocks',
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: '#a78bfa',
+          color: '#71717a',
           width: 18,
           height: 18,
         },
@@ -839,7 +841,7 @@ function WorkflowTemplateEditorInner({
             type="button"
             onClick={handleNewTemplate}
             className="text-muted-foreground hover:text-foreground rounded-md p-1"
-            title="새 그림"
+            title="새 작업"
           >
             <Plus className="h-4 w-4" />
           </button>
@@ -918,7 +920,6 @@ function WorkflowTemplateEditorInner({
             isNewTemplate={selectedTemplate === null}
             pointerPos={pointerPos}
             templateName={draftName || null}
-            dirty={draftDirty}
           />
         )}
       </main>
@@ -993,7 +994,6 @@ function CanvasArea({
   canRun,
   canSaveExisting,
   connectingSourceSlot,
-  dirty,
   edges,
   hasDraft,
   isNewTemplate,
@@ -1013,7 +1013,6 @@ function CanvasArea({
   canRun: boolean
   canSaveExisting: boolean
   connectingSourceSlot: string | null
-  dirty: boolean
   edges: Edge[]
   hasDraft: boolean
   isNewTemplate: boolean
@@ -1062,7 +1061,7 @@ function CanvasArea({
             markerHeight="7"
             orient="auto-start-reverse"
           >
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#a78bfa" />
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#71717a" />
           </marker>
         </defs>
         <line
@@ -1070,7 +1069,7 @@ function CanvasArea({
           y1={y1}
           x2={x2}
           y2={y2}
-          stroke="#a78bfa"
+          stroke="#71717a"
           strokeWidth={2}
           strokeDasharray="6 4"
           markerEnd="url(#ghost-arrow)"
@@ -1084,7 +1083,7 @@ function CanvasArea({
     <div
       ref={setContainerRef}
       className="relative h-full w-full"
-      style={{ background: BG_GRADIENT, '--xy-node-boxshadow-selected': 'none' } as CSSProperties}
+      style={{ ...CANVAS_BG_STYLE, '--xy-node-boxshadow-selected': 'none' } as CSSProperties}
     >
       <style>{`.react-flow__node { visibility: visible !important; }`}</style>
       <ReactFlow
@@ -1116,22 +1115,16 @@ function CanvasArea({
           }
         }}
       >
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={28}
-          size={1.1}
-          color="rgba(255,255,255,0.06)"
-        />
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1.8} color="#7d8290" />
       </ReactFlow>
 
       {ghostLine}
 
-      {/* 상단 좌측 — 그림 이름 + dirty 표시 */}
+      {/* 상단 좌측 — 작업명 */}
       <div className="pointer-events-none absolute top-4 left-4 z-10 flex items-center gap-2">
-        <div className="pointer-events-auto rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 backdrop-blur-xl">
-          <FileText className="mr-1 inline h-3 w-3" />
-          {isNewTemplate ? '새 그림' : (templateName ?? '그림')}
-          {dirty && <span className="ml-1 text-amber-300">●</span>}
+        <div className="pointer-events-auto rounded-full border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-900 shadow-sm">
+          <Workflow className="mr-1 inline h-3.5 w-3.5" />
+          {isNewTemplate ? '새 작업' : (templateName ?? '작업')}
         </div>
       </div>
 
@@ -1142,7 +1135,7 @@ function CanvasArea({
             type="button"
             onClick={onSaveNew}
             disabled={!hasDraft || busySaving}
-            className="flex h-10 items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/20 px-4 text-sm font-semibold text-emerald-200 shadow-2xl shadow-emerald-500/30 backdrop-blur-xl transition-all hover:scale-105 hover:bg-emerald-500/30 disabled:opacity-50"
+            className="flex h-9 items-center gap-2 rounded-md bg-zinc-900 px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-zinc-800 disabled:opacity-50"
           >
             {busySaving ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -1157,7 +1150,7 @@ function CanvasArea({
               type="button"
               onClick={onSaveExisting}
               disabled={!canSaveExisting || busySaving}
-              className="flex h-10 items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/20 px-4 text-sm font-semibold text-emerald-200 backdrop-blur-xl transition-all hover:scale-105 hover:bg-emerald-500/30 disabled:opacity-40"
+              className="flex h-9 items-center gap-2 rounded-md border border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-900 shadow-sm transition-colors hover:bg-zinc-50 disabled:opacity-40"
             >
               {busySaving ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -1170,7 +1163,7 @@ function CanvasArea({
               type="button"
               onClick={onRun}
               disabled={!canRun || busyRunning}
-              className="flex h-10 items-center gap-2 rounded-full border border-violet-400/40 bg-violet-500/20 px-4 text-sm font-semibold text-violet-200 backdrop-blur-xl transition-all hover:scale-105 hover:bg-violet-500/30 disabled:opacity-40"
+              className="flex h-9 items-center gap-2 rounded-md bg-zinc-900 px-4 text-sm font-medium text-white shadow-sm transition-colors hover:bg-zinc-800 disabled:opacity-40"
             >
               {busyRunning ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -1185,15 +1178,15 @@ function CanvasArea({
 
       {connectingSourceSlot !== null && (
         <div className="pointer-events-none absolute inset-x-0 top-20 z-20 flex justify-center">
-          <div className="pointer-events-auto flex items-center gap-3 rounded-full border border-violet-400/40 bg-violet-500/10 px-4 py-2 text-sm shadow-2xl backdrop-blur-xl">
-            <Zap className="h-4 w-4 text-violet-300" />
-            <span className="text-white">
-              <span className="font-semibold text-violet-200">잇기 모드</span> · 다음 작업 클릭
+          <div className="border-border bg-background text-foreground pointer-events-auto flex items-center gap-3 rounded-md border px-4 py-2 text-sm shadow">
+            <Zap className="text-foreground/60 h-4 w-4" />
+            <span>
+              <span className="font-semibold">잇기 모드</span> · 다음 작업 클릭
             </span>
             <button
               type="button"
               onClick={onCancelConnecting}
-              className="rounded-md px-2 py-0.5 text-xs text-white/60 hover:text-white"
+              className="text-muted-foreground hover:text-foreground rounded px-2 py-0.5 text-xs"
             >
               취소 (ESC)
             </button>
@@ -1204,7 +1197,7 @@ function CanvasArea({
       <button
         type="button"
         onClick={onRequestAddAgent}
-        className="absolute right-6 bottom-6 z-10 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-2xl shadow-violet-500/40 transition-all hover:scale-110"
+        className="bg-foreground text-background hover:bg-foreground/90 absolute right-6 bottom-6 z-10 flex h-12 w-12 items-center justify-center rounded-full shadow-lg transition-transform hover:scale-105"
         aria-label="작업 추가"
       >
         <Plus className="h-6 w-6" />
@@ -1217,7 +1210,7 @@ function CanvasArea({
 // 노드 (CEO / 박스 / 작업)
 // ──────────────────────────────────────────────────────────────────────────────
 function CeoFlowNode({ data }: NodeProps<FlowNode>) {
-  const label = typeof data.label === 'string' ? data.label : '새 그림'
+  const label = typeof data.label === 'string' ? data.label : '새 작업'
   const onCardClick = (data.onCardClick as () => void) ?? (() => undefined)
   const [downPos, setDownPos] = useState<{ x: number; y: number } | null>(null)
   return (
@@ -1237,9 +1230,9 @@ function CeoFlowNode({ data }: NodeProps<FlowNode>) {
           setDownPos(null)
           if (Math.sqrt(dx * dx + dy * dy) < 5) onCardClick()
         }}
-        className="flex cursor-pointer items-center gap-3 rounded-2xl border border-amber-300/30 bg-amber-500/10 px-4 py-2.5 shadow-2xl backdrop-blur-xl transition-all hover:border-amber-300/60 hover:bg-amber-500/15"
+        className="flex cursor-pointer items-center gap-3 rounded-xl border-2 border-zinc-800 bg-white px-4 py-3 shadow-md transition-all hover:shadow-lg"
       >
-        <div className="h-12 w-12 shrink-0 overflow-hidden rounded-full bg-amber-50/10 ring-2 ring-amber-300/40">
+        <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full bg-zinc-100 ring-2 ring-amber-500">
           <img
             src={CEO_PROFILE_IMAGE}
             alt=""
@@ -1248,10 +1241,10 @@ function CeoFlowNode({ data }: NodeProps<FlowNode>) {
           />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-[10px] font-semibold tracking-wider text-amber-300 uppercase">
+          <div className="text-[10px] font-bold tracking-wider text-amber-700 uppercase">
             팀장 에이전트
           </div>
-          <div className="truncate text-sm font-semibold text-white">{label}</div>
+          <div className="truncate text-sm font-semibold text-zinc-900">{label}</div>
         </div>
       </div>
     </div>
@@ -1259,7 +1252,7 @@ function CeoFlowNode({ data }: NodeProps<FlowNode>) {
 }
 
 function StartBoxFlowNode({ data }: NodeProps<FlowNode>) {
-  const label = typeof data.label === 'string' ? data.label : '병렬 시작 그룹'
+  const label = typeof data.label === 'string' ? data.label : '비어있음'
   return (
     <div className="group/box relative h-full w-full">
       <Handle
@@ -1269,10 +1262,10 @@ function StartBoxFlowNode({ data }: NodeProps<FlowNode>) {
         className="!h-1 !w-1 !border-0 !bg-transparent"
         style={{ top: -24 }}
       />
-      <div className="pointer-events-auto h-full w-full rounded-2xl border-2 border-dashed border-violet-400/40 bg-violet-500/[0.04] transition-all hover:border-violet-400/80 hover:bg-violet-500/[0.08]">
-        <div className="pointer-events-none absolute -top-3 left-4 flex items-center gap-1.5 rounded-full border border-violet-400/40 bg-[#14102c] px-2.5 py-0.5 text-[10px] font-semibold tracking-wider text-violet-300 uppercase">
+      <div className="pointer-events-auto h-full w-full rounded-xl border-2 border-dashed border-zinc-700 bg-transparent transition-colors hover:border-zinc-900">
+        <div className="pointer-events-none absolute -top-3 left-4 flex items-center gap-1.5 rounded-full border border-zinc-700 bg-white px-2.5 py-0.5 text-[10px] font-bold tracking-wider text-zinc-800 uppercase shadow-sm">
           <Zap className="h-3 w-3" />
-          병렬 시작 · {label}
+          시작 그룹 · {label}
         </div>
       </div>
     </div>
@@ -1305,30 +1298,29 @@ function TemplateFlowNode({ data }: NodeProps<FlowNode>) {
       <div
         onClick={onCardClick}
         className={cn(
-          'group relative flex w-[148px] cursor-pointer flex-col items-center gap-2 rounded-2xl border-2 p-3 shadow-xl transition-all',
-          'border-violet-400/30 bg-[#1e1b4b]',
-          'hover:border-violet-300 hover:shadow-2xl hover:shadow-violet-500/30',
-          isSource && '!border-violet-400 ring-2 ring-violet-400',
-          isValid && '!border-emerald-400 ring-2 ring-emerald-400',
+          'group bg-card border-border relative flex w-[148px] cursor-pointer flex-col items-center gap-2 rounded-xl border p-3 shadow-sm transition-colors',
+          'hover:border-foreground/40',
+          isSource && '!border-foreground ring-foreground/30 ring-2',
+          isValid && '!border-emerald-500 ring-2 ring-emerald-500/40',
           isInvalid && '!border-red-500/70 opacity-70 ring-2 ring-red-500/70',
         )}
       >
         <div className="relative">
-          <div className="h-14 w-14 overflow-hidden rounded-full bg-white/5 shadow-lg ring-2 ring-white/15">
+          <div className="bg-muted ring-border h-14 w-14 overflow-hidden rounded-full shadow-lg ring-2">
             {imageUrl ? (
               <img src={imageUrl} alt="" className="h-full w-full object-cover" draggable={false} />
             ) : (
-              <div className="flex h-full w-full items-center justify-center text-base font-semibold text-white/70">
+              <div className="text-foreground/80 flex h-full w-full items-center justify-center text-base font-semibold">
                 {agentName.charAt(0).toUpperCase() || '?'}
               </div>
             )}
           </div>
         </div>
         <div className="w-full text-center">
-          <div className="line-clamp-2 text-[12px] leading-tight font-semibold text-white">
+          <div className="text-foreground line-clamp-2 text-[12px] leading-tight font-semibold">
             {node.title}
           </div>
-          <div className="mt-1 truncate text-[10px] text-white/50">{agentName}</div>
+          <div className="text-muted-foreground mt-1 truncate text-[10px]">{agentName}</div>
         </div>
       </div>
     </div>
@@ -1356,12 +1348,11 @@ function BlocksEdge({ id, source, target, markerEnd }: EdgeProps) {
       <path
         id={id}
         d={path}
-        stroke="#a78bfa"
+        stroke="#71717a"
         strokeWidth={2}
         fill="none"
         markerEnd={markerEnd}
-        className="transition-all group-hover/edge:!stroke-[#c4b5fd] group-hover/edge:[stroke-width:3]"
-        style={{ filter: 'drop-shadow(0 0 4px rgba(167, 139, 250, 0.4))' }}
+        className="transition-all group-hover/edge:!stroke-[#27272a] group-hover/edge:[stroke-width:3]"
       />
     </g>
   )
@@ -1413,23 +1404,25 @@ function intersectBorderY(cx: number, cy: number, ox: number, oy: number, w: num
 // ──────────────────────────────────────────────────────────────────────────────
 function EmptyState({ onStart }: { onStart: () => void }) {
   return (
-    <div className="relative h-full w-full" style={{ background: BG_GRADIENT } as CSSProperties}>
-      <div className="flex h-full w-full flex-col items-center justify-center gap-4">
-        <div className="flex h-16 w-16 items-center justify-center rounded-full border border-white/10 bg-white/5">
-          <FileText className="h-7 w-7 text-white/40" />
+    <div className="relative h-full w-full" style={CANVAS_BG_STYLE}>
+      <div className="flex h-full w-full flex-col items-center justify-center gap-5 px-6">
+        <div className="flex h-16 w-16 items-center justify-center rounded-full border-2 border-zinc-500 bg-zinc-200 shadow-sm">
+          <Workflow className="h-7 w-7 text-zinc-700" />
         </div>
-        <div className="text-center">
-          <div className="text-base font-semibold text-white">아직 그림이 없어요</div>
-          <div className="mt-1 max-w-xs text-xs text-white/50">
-            작업과 순서를 그림으로 그려보세요. 저장하면 같은 그림으로 여러 번 실행할 수 있어요.
-          </div>
+        <div className="max-w-md text-center">
+          <div className="text-lg font-bold text-zinc-900">저장된 워크플로우가 없어요</div>
+          <p className="mt-2 text-sm leading-6 text-zinc-700">
+            팀장 에이전트가 처리할 작업을 만들어보세요.
+            <br />
+            작업과 순서를 한 번 정의해두면, 같은 흐름으로 여러 번 실행할 수 있어요.
+          </p>
         </div>
         <button
           type="button"
           onClick={onStart}
-          className="mt-2 flex items-center gap-2 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-500 px-5 py-2.5 text-sm font-semibold text-white shadow-2xl shadow-violet-500/40 transition-all hover:scale-105"
+          className="mt-1 flex items-center gap-2 rounded-md bg-zinc-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-zinc-800"
         >
-          <Plus className="h-4 w-4" />첫 작업 추가하기
+          <Plus className="h-4 w-4" />새 워크플로우 만들기
         </button>
       </div>
     </div>
@@ -1453,22 +1446,22 @@ function CardActionSheet({
       onClick={onCancel}
     >
       <div
-        className="w-[280px] max-w-full overflow-hidden rounded-2xl border border-white/10 bg-[#14102c]/95 shadow-2xl backdrop-blur-xl"
+        className="border-border bg-popover text-popover-foreground w-[280px] max-w-full overflow-hidden rounded-xl border shadow-lg"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="p-2">
           <button
             type="button"
             onClick={onEdit}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-white transition-colors hover:bg-white/10"
+            className="text-foreground hover:bg-accent flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors"
           >
-            <Pencil className="h-4 w-4 text-white/60" />
+            <Pencil className="text-muted-foreground h-4 w-4" />
             수정
           </button>
           <button
             type="button"
             onClick={onStartConnect}
-            className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium text-white transition-colors hover:bg-white/10"
+            className="text-foreground hover:bg-accent flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors"
           >
             <Zap className="h-4 w-4 text-violet-300" />
             다음 작업으로 잇기
@@ -1482,11 +1475,11 @@ function CardActionSheet({
             삭제
           </button>
         </div>
-        <div className="border-t border-white/10 p-2">
+        <div className="border-border border-t p-2">
           <button
             type="button"
             onClick={onCancel}
-            className="w-full rounded-xl px-3 py-2 text-sm text-white/60 transition-colors hover:bg-white/5 hover:text-white"
+            className="text-muted-foreground hover:bg-muted hover:text-foreground w-full rounded-xl px-3 py-2 text-sm transition-colors"
           >
             취소
           </button>
@@ -1503,30 +1496,30 @@ function EdgeDeleteSheet({ onCancel, onConfirm }: { onCancel: () => void; onConf
       onClick={onCancel}
     >
       <div
-        className="w-[320px] max-w-full overflow-hidden rounded-2xl border border-white/10 bg-[#14102c]/95 shadow-2xl backdrop-blur-xl"
+        className="border-border bg-popover text-popover-foreground w-[320px] max-w-full overflow-hidden rounded-xl border shadow-lg"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="p-5 text-center">
           <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-red-500/20">
             <Trash2 className="h-6 w-6 text-red-400" />
           </div>
-          <div className="text-base font-semibold text-white">화살표를 삭제할까요?</div>
-          <div className="mt-1 text-xs text-white/60">작업 순서 관계가 해제됩니다.</div>
+          <div className="text-foreground text-base font-semibold">화살표를 삭제할까요?</div>
+          <div className="text-muted-foreground mt-1 text-xs">작업 순서 관계가 해제됩니다.</div>
         </div>
-        <div className="grid grid-cols-2 gap-2 border-t border-white/10 p-3">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition-colors hover:bg-white/10 hover:text-white"
-          >
-            취소
-          </button>
+        <div className="border-border grid grid-cols-2 gap-2 border-t p-3">
           <button
             type="button"
             onClick={onConfirm}
             className="rounded-xl bg-red-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-600"
           >
             삭제
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="text-foreground/80 hover:bg-accent hover:text-foreground rounded-xl px-3 py-2 text-sm font-medium transition-colors"
+          >
+            취소
           </button>
         </div>
       </div>
@@ -1553,9 +1546,9 @@ function LeaderEditSheet({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-      <div className="w-[480px] max-w-full overflow-hidden rounded-2xl border border-white/10 bg-[#14102c]/95 shadow-2xl backdrop-blur-xl">
-        <div className="flex items-center gap-3 border-b border-white/10 px-5 py-3">
-          <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-amber-50/10 ring-2 ring-amber-300/40">
+      <div className="border-border bg-popover text-popover-foreground w-[480px] max-w-full overflow-hidden rounded-xl border shadow-lg">
+        <div className="border-border flex items-center gap-3 border-b px-5 py-3">
+          <div className="bg-muted ring-border h-10 w-10 shrink-0 overflow-hidden rounded-full ring-2">
             <img
               src={CEO_PROFILE_IMAGE}
               alt=""
@@ -1564,19 +1557,19 @@ function LeaderEditSheet({
             />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-[10px] font-semibold tracking-wider text-amber-300 uppercase">
+            <div className="text-foreground/70 text-[10px] font-semibold tracking-wider uppercase">
               팀장 에이전트
             </div>
-            <div className="text-base font-semibold text-white">
-              {initializing ? '새 그림 시작' : '그림 정보 수정'}
+            <div className="text-foreground text-base font-semibold">
+              {initializing ? '새 작업 만들기' : '작업 정보 수정'}
             </div>
           </div>
         </div>
 
         <div className="space-y-4 p-5">
           <div>
-            <label className="mb-2 block text-[11px] font-semibold tracking-wider text-white/50 uppercase">
-              그림 이름
+            <label className="text-muted-foreground mb-2 block text-[11px] font-semibold tracking-wider uppercase">
+              작업명
             </label>
             <input
               autoFocus
@@ -1584,31 +1577,31 @@ function LeaderEditSheet({
               value={name}
               onChange={(event) => onChangeName(event.target.value)}
               placeholder="예: 분기 보고서 만들기"
-              className="h-10 w-full rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white outline-none placeholder:text-white/30 focus-visible:ring-2 focus-visible:ring-amber-400/40"
+              className="border-border bg-muted text-foreground placeholder:text-muted-foreground/70 focus-visible:ring-foreground/30 h-10 w-full rounded-lg border px-3 text-sm outline-none focus-visible:ring-2"
             />
           </div>
           <div>
-            <label className="mb-2 block text-[11px] font-semibold tracking-wider text-white/50 uppercase">
+            <label className="text-muted-foreground mb-2 block text-[11px] font-semibold tracking-wider uppercase">
               팀장 지시사항
             </label>
             <Textarea
               value={description}
               onChange={(event) => onChangeDescription(event.target.value)}
               placeholder="팀장 에이전트가 받을 전반 지시. 자식 작업들의 맥락과 최종 결과물을 설명하세요."
-              className="min-h-32 resize-y rounded-lg border-white/10 bg-white/5 text-white placeholder:text-white/30"
+              className="border-border bg-muted text-foreground placeholder:text-muted-foreground/70 min-h-32 resize-y rounded-lg"
             />
-            <p className="mt-1.5 text-[11px] text-white/40">
+            <p className="text-muted-foreground mt-1.5 text-[11px]">
               실행 시 팀장 에이전트가 이 지시를 받고, 자식 작업들을 위임/종합합니다.
             </p>
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-white/10 px-5 py-3">
+        <div className="border-border flex justify-end gap-2 border-t px-5 py-3">
+          <Button type="button" size="sm" onClick={onConfirm} disabled={!name.trim()}>
+            {initializing ? '워크플로우 시작' : '확인'}
+          </Button>
           <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
             취소
-          </Button>
-          <Button type="button" size="sm" onClick={onConfirm} disabled={!name.trim()}>
-            {initializing ? '그림 시작' : '확인'}
           </Button>
         </div>
       </div>
@@ -1645,15 +1638,15 @@ function NodeComposer({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-      <div className="w-[460px] max-w-full overflow-hidden rounded-2xl border border-white/10 bg-[#14102c]/95 shadow-2xl backdrop-blur-xl">
-        <div className="flex items-center justify-between border-b border-white/10 px-5 py-3">
-          <h3 className="text-base font-semibold text-white">
+      <div className="border-border bg-popover text-popover-foreground w-[460px] max-w-full overflow-hidden rounded-xl border shadow-lg">
+        <div className="border-border flex items-center justify-between border-b px-5 py-3">
+          <h3 className="text-foreground text-base font-semibold">
             {editing ? '작업 수정' : '새 작업'}
           </h3>
           <button
             type="button"
             onClick={onCancel}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+            className="text-muted-foreground hover:bg-accent hover:text-foreground flex h-7 w-7 items-center justify-center rounded-md transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
@@ -1661,22 +1654,22 @@ function NodeComposer({
 
         <div className="space-y-4 p-5">
           <div>
-            <label className="mb-2 block text-[11px] font-semibold tracking-wider text-white/50 uppercase">
+            <label className="text-muted-foreground mb-2 block text-[11px] font-semibold tracking-wider uppercase">
               에이전트
             </label>
             {agent ? (
-              <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
-                <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-white/5 ring-2 ring-white/15">
+              <div className="border-border bg-muted flex items-center gap-3 rounded-xl border px-3 py-2.5">
+                <div className="bg-muted ring-border h-10 w-10 shrink-0 overflow-hidden rounded-full ring-2">
                   {agent.imageUrl ? (
                     <img src={agent.imageUrl} alt="" className="h-full w-full object-cover" />
                   ) : (
-                    <div className="flex h-full w-full items-center justify-center text-sm text-white/70">
+                    <div className="text-foreground/80 flex h-full w-full items-center justify-center text-sm">
                       {agent.name.charAt(0).toUpperCase() || '?'}
                     </div>
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-white">{agent.name}</div>
+                  <div className="text-foreground truncate text-sm font-medium">{agent.name}</div>
                 </div>
                 <Button type="button" variant="ghost" size="sm" onClick={onChangeAgent}>
                   변경
@@ -1690,18 +1683,18 @@ function NodeComposer({
                     type="button"
                     disabled={agentBusy}
                     onClick={() => void onSelectAgent(choice)}
-                    className="flex flex-col items-center gap-2 rounded-xl border border-white/10 bg-white/5 p-3 transition-colors hover:border-white/30 hover:bg-white/10 disabled:opacity-50"
+                    className="border-border bg-muted hover:bg-accent flex flex-col items-center gap-2 rounded-xl border p-3 transition-colors hover:border-white/30 disabled:opacity-50"
                   >
-                    <div className="h-11 w-11 overflow-hidden rounded-full bg-white/5 ring-2 ring-white/15">
+                    <div className="bg-muted ring-border h-11 w-11 overflow-hidden rounded-full ring-2">
                       {choice.imageUrl ? (
                         <img src={choice.imageUrl} alt="" className="h-full w-full object-cover" />
                       ) : (
-                        <div className="flex h-full w-full items-center justify-center text-sm text-white/70">
+                        <div className="text-foreground/80 flex h-full w-full items-center justify-center text-sm">
                           {choice.name.charAt(0).toUpperCase() || '?'}
                         </div>
                       )}
                     </div>
-                    <span className="line-clamp-1 max-w-full text-[11px] font-medium text-white">
+                    <span className="text-foreground line-clamp-1 max-w-full text-[11px] font-medium">
                       {choice.name}
                     </span>
                   </button>
@@ -1713,7 +1706,7 @@ function NodeComposer({
           {agent && (
             <>
               <div>
-                <label className="mb-2 block text-[11px] font-semibold tracking-wider text-white/50 uppercase">
+                <label className="text-muted-foreground mb-2 block text-[11px] font-semibold tracking-wider uppercase">
                   작업 제목
                 </label>
                 <input
@@ -1722,28 +1715,25 @@ function NodeComposer({
                   value={title}
                   onChange={(event) => onChangeTitle(event.target.value)}
                   placeholder="예: 매출 데이터 수집"
-                  className="h-10 w-full rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white outline-none placeholder:text-white/30 focus-visible:ring-2 focus-visible:ring-violet-400/40"
+                  className="border-border bg-muted text-foreground placeholder:text-muted-foreground/70 h-10 w-full rounded-lg border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-violet-400/40"
                 />
               </div>
               <div>
-                <label className="mb-2 block text-[11px] font-semibold tracking-wider text-white/50 uppercase">
+                <label className="text-muted-foreground mb-2 block text-[11px] font-semibold tracking-wider uppercase">
                   세부사항
                 </label>
                 <Textarea
                   value={description}
                   onChange={(event) => onChangeDescription(event.target.value)}
                   placeholder="에이전트에게 전달할 지시사항"
-                  className="min-h-24 resize-y rounded-lg border-white/10 bg-white/5 text-white placeholder:text-white/30"
+                  className="border-border bg-muted text-foreground placeholder:text-muted-foreground/70 min-h-24 resize-y rounded-lg"
                 />
               </div>
             </>
           )}
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-white/10 px-5 py-3">
-          <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-            취소
-          </Button>
+        <div className="border-border flex justify-end gap-2 border-t px-5 py-3">
           <Button
             type="button"
             size="sm"
@@ -1751,6 +1741,9 @@ function NodeComposer({
             disabled={!agent || !title.trim() || agentBusy}
           >
             {editing ? '수정' : '추가'}
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+            취소
           </Button>
         </div>
       </div>
