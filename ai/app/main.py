@@ -50,7 +50,6 @@ from app.storage.postgres import (
     PostgresTaskRepository,
     PostgresWorkRepository,
     PostgresWorkflowTemplateRepository,
-    PooledConnectionFactory,
     apply_configured_postgres_migrations,
     connect_postgres,
 )
@@ -79,15 +78,7 @@ async def lifespan(app: FastAPI):
         dsn=settings.postgres_dsn,
         enabled=settings.postgres_migrations_enabled,
     )
-    try:
-        postgres_connection_factory = PooledConnectionFactory(
-            settings.postgres_dsn,
-            min_size=2,
-            max_size=10,
-        )
-    except RuntimeError:
-        # psycopg-pool 미설치 환경에서는 기존 방식으로 fallback한다.
-        postgres_connection_factory = lambda: connect_postgres(settings.postgres_dsn)
+    postgres_connection_factory = lambda: connect_postgres(settings.postgres_dsn)
     durable_repository = PostgresTaskRepository(postgres_connection_factory)
     task_projection_store = build_task_projection_store(
         redis_url=settings.redis_url,
@@ -110,17 +101,14 @@ async def lifespan(app: FastAPI):
     if hasattr(connection_registry, "ping"):
         await connection_registry.ping()
     session_service = SessionService(session_registry, ws_manager, topic_router)
-    # 별도 async Redis 클라이언트: publish/subscribe는 이벤트 루프를 블로킹하지 않아야 한다.
-    import redis.asyncio as aioredis
-    async_redis = aioredis.from_url(settings.redis_url, decode_responses=False)
-    fanout_publisher = RedisFanoutPublisher(async_redis, topic_router)
+    fanout_publisher = RedisFanoutPublisher(task_projection_store.redis, topic_router)
+    redis_fanout_pubsub = task_projection_store.redis.pubsub()
     # Redis Pub/Sub subscriber가 현재 프로세스의 local WebSocketManager로 live event를 fan-out한다.
-    # async pubsub의 listen()을 사용해 폴링 sleep 없이 메시지 도착 즉시 처리한다.
     redis_fanout_task = asyncio.create_task(
         RedisFanoutSubscriber(
             ws_manager,
             ignored_publisher_id=fanout_publisher.publisher_id,
-        ).run_forever(async_redis)
+        ).run_forever(redis_fanout_pubsub)
     )
     broadcaster = EventBroadcaster(ws_manager, topic_router, fanout_publisher=fanout_publisher)
     backend_auth_client = BackendAuthClient(settings=settings)
@@ -287,11 +275,8 @@ async def lifespan(app: FastAPI):
     await backend_memory_client.aclose()
     await provider_registry.aclose()
     await connection_registry.aclose()
-    await async_redis.aclose()
     task_projection_store.close()
     session_store.close()
-    if isinstance(postgres_connection_factory, PooledConnectionFactory):
-        postgres_connection_factory.close()
 
 
 app = FastAPI(title=router_settings.app_name, lifespan=lifespan)

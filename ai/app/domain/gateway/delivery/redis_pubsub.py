@@ -10,10 +10,7 @@ from app.domain.gateway.routing.topic_router import TopicRouter
 
 
 class RedisFanoutPublisher:
-    """다중 AI 서버 인스턴스에 WebSocket event를 전달하기 위한 Redis Pub/Sub publisher다.
-
-    redis.asyncio 클라이언트를 사용해 await redis.publish()로 이벤트 루프를 블로킹하지 않는다.
-    """
+    """다중 AI 서버 인스턴스에 WebSocket event를 전달하기 위한 Redis Pub/Sub publisher다."""
 
     def __init__(
         self,
@@ -33,13 +30,7 @@ class RedisFanoutPublisher:
             "payload": build_websocket_event(event),
             "publisherId": self.publisher_id,
         }
-        serialized = json.dumps(message, ensure_ascii=False, separators=(",", ":"))
-        channel = self._channel_for_topic(topic)
-        try:
-            await self.redis.publish(channel, serialized)
-        except Exception:
-            # publish 실패가 응답 생성을 막지 않도록 best-effort로 처리한다.
-            pass
+        self.redis.publish(self._channel_for_topic(topic), json.dumps(message, ensure_ascii=False, separators=(",", ":")))
 
     @staticmethod
     def _channel_for_topic(topic: str) -> str:
@@ -47,10 +38,7 @@ class RedisFanoutPublisher:
 
 
 class RedisFanoutSubscriber:
-    """Redis Pub/Sub message를 현재 프로세스의 WebSocketManager로 fan-out한다.
-
-    redis.asyncio의 async pubsub을 사용해 폴링 sleep 없이 메시지 도착 즉시 처리한다.
-    """
+    """Redis Pub/Sub message를 현재 프로세스의 WebSocketManager로 fan-out한다."""
 
     def __init__(self, manager, *, ignored_publisher_id: str | None = None) -> None:
         self.manager = manager
@@ -66,33 +54,39 @@ class RedisFanoutSubscriber:
             return
         topic = str(decoded["topic"])
         payload = decoded["payload"]
+        # Pub/Sub은 replay 저장소가 아니므로, 수신한 payload는 현재 살아 있는 local socket에만 전달한다.
         await self.manager.broadcast(payload, topic)
 
-    async def run_forever(self, async_redis_client: Any, *, pattern: str = "heygent:ai:ws:topic:*") -> None:
-        """앱 lifespan에서 실행할 비동기 Pub/Sub subscriber loop다.
+    async def run_once(self, pubsub) -> bool:
+        """테스트와 lifecycle loop가 공유하는 단일 Pub/Sub poll 단위다."""
 
-        redis.asyncio pubsub의 listen()을 사용해 메시지 도착을 즉시 처리한다.
-        기존 방식의 asyncio.to_thread + sleep(0.1) 패턴 대비 최대 100ms 지연이 제거된다.
-        """
-        pubsub = async_redis_client.pubsub()
+        if not getattr(pubsub, "_heygent_psubscribed", False):
+            pubsub.psubscribe("heygent:ai:ws:topic:*")
+            pubsub._heygent_psubscribed = True
+        message = await asyncio.to_thread(
+            pubsub.get_message,
+            ignore_subscribe_messages=True,
+            timeout=1.0,
+        )
+        if not message:
+            return False
+        if isinstance(message, dict) and message.get("type") not in {None, "message", "pmessage"}:
+            return False
+        await self.handle_message(message)
+        return True
+
+    async def run_forever(self, pubsub, *, poll_interval_seconds: float = 0.1) -> None:
+        """앱 lifespan에서 실행할 Pub/Sub subscriber loop다."""
+
         try:
-            await pubsub.psubscribe(pattern)
-            async for message in pubsub.listen():
-                if message is None:
-                    continue
-                msg_type = message.get("type") if isinstance(message, dict) else None
-                if msg_type not in ("message", "pmessage"):
-                    continue
-                try:
-                    await self.handle_message(message)
-                except Exception:
-                    pass
+            while True:
+                delivered = await self.run_once(pubsub)
+                if not delivered:
+                    await asyncio.sleep(poll_interval_seconds)
         finally:
-            try:
-                await pubsub.punsubscribe(pattern)
-                await pubsub.aclose()
-            except Exception:
-                pass
+            close = getattr(pubsub, "close", None)
+            if callable(close):
+                close()
 
     @staticmethod
     def _decode_message(message: str | bytes | dict) -> dict:
