@@ -23,6 +23,7 @@ export type WorkflowTemplateGraph = {
 export type WorkflowTemplate = {
   templateId: string
   ownerKey: string
+  sessionId: string | null
   name: string
   description: string
   graph: WorkflowTemplateGraph
@@ -35,24 +36,36 @@ export type WorkflowTemplateListResponse = {
   totalCount: number
 }
 
-export async function listWorkflowTemplates(): Promise<WorkflowTemplateListResponse> {
-  const { data } = await aiAxiosInstance.get<WorkflowTemplateListResponse>('/workflow-templates')
+function basePath(sessionId: string): string {
+  return `/sessions/${encodeURIComponent(sessionId)}/workflow-templates`
+}
+
+export async function listWorkflowTemplates(
+  sessionId: string,
+): Promise<WorkflowTemplateListResponse> {
+  const { data } = await aiAxiosInstance.get<WorkflowTemplateListResponse>(basePath(sessionId))
   return data
 }
 
-export async function getWorkflowTemplate(templateId: string): Promise<WorkflowTemplate> {
+export async function getWorkflowTemplate(
+  sessionId: string,
+  templateId: string,
+): Promise<WorkflowTemplate> {
   const { data } = await aiAxiosInstance.get<WorkflowTemplate>(
-    `/workflow-templates/${encodeURIComponent(templateId)}`,
+    `${basePath(sessionId)}/${encodeURIComponent(templateId)}`,
   )
   return data
 }
 
-export async function createWorkflowTemplate(payload: {
-  name: string
-  description?: string
-  graph: WorkflowTemplateGraph
-}): Promise<WorkflowTemplate> {
-  const { data } = await aiAxiosInstance.post<WorkflowTemplate>('/workflow-templates', {
+export async function createWorkflowTemplate(
+  sessionId: string,
+  payload: {
+    name: string
+    description?: string
+    graph: WorkflowTemplateGraph
+  },
+): Promise<WorkflowTemplate> {
+  const { data } = await aiAxiosInstance.post<WorkflowTemplate>(basePath(sessionId), {
     name: payload.name,
     description: payload.description ?? '',
     graph: payload.graph,
@@ -61,27 +74,28 @@ export async function createWorkflowTemplate(payload: {
 }
 
 export async function updateWorkflowTemplate(
+  sessionId: string,
   templateId: string,
   payload: { name?: string; description?: string; graph?: WorkflowTemplateGraph },
 ): Promise<WorkflowTemplate> {
   const { data } = await aiAxiosInstance.put<WorkflowTemplate>(
-    `/workflow-templates/${encodeURIComponent(templateId)}`,
+    `${basePath(sessionId)}/${encodeURIComponent(templateId)}`,
     payload,
   )
   return data
 }
 
-export async function deleteWorkflowTemplate(templateId: string): Promise<void> {
-  await aiAxiosInstance.delete(`/workflow-templates/${encodeURIComponent(templateId)}`)
+export async function deleteWorkflowTemplate(sessionId: string, templateId: string): Promise<void> {
+  await aiAxiosInstance.delete(`${basePath(sessionId)}/${encodeURIComponent(templateId)}`)
 }
 
 export async function instantiateWorkflowTemplate(
-  templateId: string,
   sessionId: string,
+  templateId: string,
 ): Promise<{ workIds: string[] }> {
   const { data } = await aiAxiosInstance.post<{ workIds: string[] }>(
-    `/workflow-templates/${encodeURIComponent(templateId)}/instantiate`,
-    { sessionId },
+    `${basePath(sessionId)}/${encodeURIComponent(templateId)}/instantiate`,
+    {},
   )
   return data
 }
