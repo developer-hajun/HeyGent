@@ -23,9 +23,9 @@ metadata:
 ## How to use
 
 1. `design.list_presets`로 사용 가능한 DESIGN.md 목록을 확인한다.
-2. 사용자 요청과 가장 가까운 DESIGN.md를 고른다.
+2. 사용자 요청과 화면 목적에 맞는 DESIGN.md를 고른다. 내부 지식으로 preset 내용을 추정하지 말고, 실제 목록에서 고른다.
 3. `design.read_preset`으로 선택한 DESIGN.md 내용을 읽는다.
-4. 읽은 DESIGN.md 내용을 디자인 컨텍스트로 삼아 React 컴포넌트 파일 세트를 만든다.
+4. 읽은 DESIGN.md 내용을 디자인 컨텍스트로 삼아 React 컴포넌트 파일 세트를 만든다. preset 내용을 읽지 않은 상태에서 "적합한 스타일"이라고 가정해 구현하지 않는다.
 5. DESIGN.md의 색상, 타이포그래피, spacing, radius, shadow, layout, 컴포넌트 규칙을 `src/styles.css`와 컴포넌트 className에 구체적으로 반영한다.
 6. `write_file`, `terminal.run`, 로컬 브릿지용 파일 도구를 사용하지 않는다. 생성 결과는 반드시 `prototype.create_artifact`로 세션 Artifact에 저장한다.
 7. 사용자 입력이 모호하면 가장 가까운 제품 유형과 화면 목적을 먼저 추론하고, 필요한 경우 화면 가정을 코드에 반영한다.
@@ -39,3 +39,4 @@ metadata:
 - `prototype.create_artifact`의 `files`에는 파일 경로별 코드를 모두 넣고, `framework`는 `react`, `styling`은 `css` 또는 `mixed`, `entryFile`은 `/src/App.tsx`로 둔다.
 - 코드 탭이나 프리뷰에서 다시 사용할 수 있도록 한 세션 안의 생성 코드는 같은 흐름으로 이어간다.
 - 결과를 보고할 때는 실제 `prototype.create_artifact` 결과의 `artifactId`, `versionId`, `designPresetId`를 기준으로 말한다. 도구 호출 여부를 추측하거나, 이미 Artifact가 생성된 뒤에 스킬을 쓰지 않았다고 단정하지 않는다.
+- 사용자가 스킬 사용 여부를 물으면 "맥락상 사용했다"처럼 의도나 분류를 근거로 답하지 않는다. 실제 실행한 `skills.read`, `design.list_presets`, `design.read_preset`, `prototype.create_artifact` 결과를 기준으로 답한다.

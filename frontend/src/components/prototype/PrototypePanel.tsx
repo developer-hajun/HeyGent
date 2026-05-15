@@ -251,7 +251,9 @@ function PrototypeSandpack({
           <TabsContent
             forceMount
             value="preview"
-            className="m-0 min-h-0 flex-1 overflow-hidden data-[state=inactive]:hidden"
+            className={`m-0 min-h-0 flex-1 overflow-hidden ${
+              activeTab === 'preview' ? 'flex' : 'hidden'
+            }`}
           >
             <SandpackLayout className="h-full min-h-0 !rounded-none !border-0">
               <SandpackPreview
@@ -265,7 +267,9 @@ function PrototypeSandpack({
           <TabsContent
             forceMount
             value="code"
-            className="m-0 min-h-0 flex-1 overflow-hidden data-[state=inactive]:hidden"
+            className={`m-0 min-h-0 flex-1 overflow-hidden ${
+              activeTab === 'code' ? 'flex' : 'hidden'
+            }`}
           >
             <SandpackLayout className="h-full min-h-0 !rounded-none !border-0">
               <SandpackFileExplorer className="h-full min-w-48 shrink-0" />

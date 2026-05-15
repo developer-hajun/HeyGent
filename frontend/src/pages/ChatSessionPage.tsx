@@ -80,6 +80,7 @@ export function ChatSessionPage() {
     sessionId === '' ? undefined : state.sessionsById[sessionId],
   )
   const fetchMessages = useChatStore((state) => state.fetchMessages)
+  const addExternalTaskPlaceholder = useChatStore((state) => state.addExternalTaskPlaceholder)
   const sendMessage = useChatStore((state) => state.sendMessage)
   const fetchSessionWork = useWorkStore((state) => state.fetchSessionWork)
   const workItems = useWorkStore((state) =>
@@ -497,8 +498,11 @@ export function ChatSessionPage() {
     selectedWork ?? findWorkByTaskRunId(workItems, visibleTaskRunId) ?? latestLinkedWorkEvent?.work
   const visibleTaskRunSummary =
     visibleTaskRunId === undefined ? undefined : taskRunSummariesById[visibleTaskRunId]
+  const visibleTaskRunStatus =
+    visibleTaskRunId === undefined ? undefined : taskRunsById[visibleTaskRunId]?.status
   const hasActiveChatTurn =
     activeSessionTaskRunId !== undefined ||
+    (visibleTaskRunStatus !== undefined && isLiveTaskRunStatus(visibleTaskRunStatus)) ||
     messages.some(
       (message) =>
         message.status === 'optimistic' ||
@@ -514,6 +518,24 @@ export function ChatSessionPage() {
       setSessionWorkspaceCollapsed(true)
     }
   }, [requestPrototypePanel, sessionId, setSessionWorkspaceCollapsed])
+
+  useEffect(() => {
+    if (
+      !sessionId ||
+      visibleTaskRunId === undefined ||
+      visibleTaskRunStatus === undefined ||
+      !isLiveTaskRunStatus(visibleTaskRunStatus)
+    ) {
+      return
+    }
+    const hasAssistantForTask = messages.some(
+      (message) => message.role === 'assistant' && message.taskRunId === visibleTaskRunId,
+    )
+    if (hasAssistantForTask) {
+      return
+    }
+    addExternalTaskPlaceholder(sessionId, visibleTaskRunId)
+  }, [addExternalTaskPlaceholder, messages, sessionId, visibleTaskRunId, visibleTaskRunStatus])
 
   const isStreaming = messages.some(
     (message) => message.role === 'assistant' && message.status === 'streaming',
