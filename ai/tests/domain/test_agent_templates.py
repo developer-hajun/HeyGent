@@ -33,6 +33,17 @@ def test_main_agent_template_includes_notion_skill():
     assert "notion" in MAIN_AGENT_TEMPLATE.skills
 
 
+def test_main_agent_template_includes_awesome_design_skill():
+    assert "awesome-design" in MAIN_AGENT_TEMPLATE.skills
+
+
+def test_prototype_capable_subagents_include_awesome_design_skill():
+    template_by_key = {template.template_key: template for template in BUILTIN_AGENT_TEMPLATES}
+
+    assert "awesome-design" in template_by_key["coder"].skills
+    assert "awesome-design" in template_by_key["ux_designer"].skills
+
+
 def test_main_agent_template_uses_team_lead_display_copy():
     assert MAIN_AGENT_TEMPLATE.display_name == "팀장"
     assert MAIN_AGENT_TEMPLATE.name == "팀장"

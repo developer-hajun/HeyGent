@@ -44,6 +44,14 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
         description="Notion workspace proxy execution tools.",
         tools=("notion.execute",),
     ),
+    "design": RuntimeToolsetDefinition(
+        description="DESIGN.md preset inspection tools for prototype generation.",
+        tools=("design.list_presets", "design.read_preset"),
+    ),
+    "prototype": RuntimeToolsetDefinition(
+        description="Session-scoped React prototype artifact tools.",
+        tools=("prototype.create_artifact", "prototype.get_active_artifact"),
+    ),
     "browser": RuntimeToolsetDefinition(
         description="Browser automation tools.",
         tools=(
