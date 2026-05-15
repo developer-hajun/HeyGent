@@ -2,12 +2,12 @@ import {
   SandpackCodeEditor,
   SandpackFileExplorer,
   SandpackLayout,
-  SandpackPreview,
   SandpackProvider,
   type SandpackFiles,
   useSandpack,
+  useSandpackClient,
 } from '@codesandbox/sandpack-react'
-import { Code2, Eye, Loader2, RefreshCw, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Code2, Eye, Loader2, RefreshCw, X } from 'lucide-react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { getActivePrototypeArtifact, type PrototypeArtifact } from '@/apis/prototypes'
@@ -286,34 +286,15 @@ function PrototypeSandpack({
   const dependencies = useMemo(() => resolvePrototypeDependencies(artifact), [artifact])
   const files = useMemo(() => buildSandpackFiles(artifact, dependencies), [artifact, dependencies])
   const mountKey = useId()
-  const activeTabRef = useRef(activeTab)
   const previousTabRef = useRef(activeTab)
   const [runtimeKey, setRuntimeKey] = useState(0)
 
   useEffect(() => {
-    activeTabRef.current = activeTab
     if (previousTabRef.current !== activeTab && activeTab === 'preview') {
       setRuntimeKey((value) => value + 1)
     }
     previousTabRef.current = activeTab
   }, [activeTab])
-
-  useEffect(() => {
-    const remountVisiblePreview = () => {
-      if (document.visibilityState === 'hidden' || activeTabRef.current !== 'preview') return
-      setRuntimeKey((value) => value + 1)
-    }
-
-    window.addEventListener('focus', remountVisiblePreview)
-    window.addEventListener('pageshow', remountVisiblePreview)
-    document.addEventListener('visibilitychange', remountVisiblePreview)
-
-    return () => {
-      window.removeEventListener('focus', remountVisiblePreview)
-      window.removeEventListener('pageshow', remountVisiblePreview)
-      document.removeEventListener('visibilitychange', remountVisiblePreview)
-    }
-  }, [])
 
   return (
     <div className="prototype-sandpack flex min-h-0 w-full min-w-0 flex-1 flex-col bg-[#0b1020] [&_.cm-content]:!text-slate-100 [&_.cm-editor]:!h-full [&_.cm-editor]:!w-full [&_.cm-editor]:!bg-[#0b1020] [&_.cm-gutters]:!border-slate-800 [&_.cm-gutters]:!bg-[#0b1020] [&_.cm-gutters]:!text-slate-500 [&_.cm-line]:!text-slate-100 [&_.cm-scroller]:!h-full [&_.cm-scroller]:!w-full [&_.sp-code-editor]:!h-full [&_.sp-code-editor]:!w-full [&_.sp-code-editor]:!bg-[#0b1020] [&_.sp-file-explorer]:!h-full [&_.sp-file-explorer]:!bg-[#0f172a] [&_.sp-file-explorer]:!text-slate-200 [&_.sp-layout]:!h-full [&_.sp-layout]:!w-full [&_.sp-layout]:!max-w-none [&_.sp-layout]:!flex-1 [&_.sp-layout]:!bg-[#0b1020] [&_.sp-preview]:!h-full [&_.sp-preview]:!w-full [&_.sp-preview]:!max-w-none [&_.sp-preview-container]:!h-full [&_.sp-preview-container]:!w-full [&_.sp-preview-container]:!max-w-none [&_.sp-stack]:!h-full [&_.sp-stack]:!w-full [&_.sp-wrapper]:!h-full [&_.sp-wrapper]:!w-full [&_.sp-wrapper]:!max-w-none [&_iframe]:!h-full [&_iframe]:!w-full">
@@ -389,13 +370,7 @@ function PrototypeSandpack({
               className="h-full min-h-0 w-full min-w-0 flex-1 !rounded-none !border-0"
               style={{ flex: '1 1 0%', maxWidth: 'none', minWidth: 0, width: '100%' }}
             >
-              <SandpackPreview
-                className="h-full min-h-0 w-full min-w-0 flex-1"
-                style={{ flex: '1 1 0%', maxWidth: 'none', minWidth: 0, width: '100%' }}
-                showNavigator
-                showOpenInCodeSandbox={false}
-                showRefreshButton
-              />
+              <PrototypePreviewFrame versionId={artifact.versionId} />
             </SandpackLayout>
           </TabsContent>
           <TabsContent
@@ -425,6 +400,97 @@ function PrototypeSandpack({
   )
 }
 
+function PrototypePreviewFrame({ versionId }: { versionId: string }) {
+  const { dispatch, iframe, listen } = useSandpackClient({ startRoute: '/' })
+  const [loadingState, setLoadingState] = useState({ versionId, isLoading: true })
+  const listenRef = useRef(listen)
+  const isLoading = loadingState.versionId !== versionId || loadingState.isLoading
+
+  useEffect(() => {
+    listenRef.current = listen
+  }, [listen])
+
+  useEffect(() => {
+    const unsubscribe = listenRef.current((message) => {
+      if (message.type === 'start') {
+        setLoadingState({ versionId, isLoading: true })
+      }
+
+      if (message.type === 'done') {
+        setLoadingState({ versionId, isLoading: false })
+      }
+    })
+
+    const fallbackId = window.setTimeout(() => {
+      setLoadingState({ versionId, isLoading: false })
+    }, 6000)
+
+    return () => {
+      unsubscribe()
+      window.clearTimeout(fallbackId)
+    }
+  }, [versionId])
+
+  const refreshPreview = useCallback(() => {
+    setLoadingState({ versionId, isLoading: true })
+    dispatch({ type: 'refresh' })
+  }, [dispatch, versionId])
+
+  return (
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col bg-white">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-slate-200 bg-slate-50 px-3">
+        <button
+          type="button"
+          onClick={() => dispatch({ type: 'urlback' })}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900"
+          aria-label="프리뷰 뒤로 가기"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => dispatch({ type: 'urlforward' })}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900"
+          aria-label="프리뷰 앞으로 가기"
+        >
+          <ArrowRight className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={refreshPreview}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-200 hover:text-slate-900"
+          aria-label="프리뷰 새로고침"
+        >
+          <RefreshCw className="h-4 w-4" />
+        </button>
+        <input
+          aria-label="프리뷰 주소"
+          readOnly
+          value="/"
+          className="h-7 min-w-0 flex-1 rounded-full border border-slate-200 bg-white px-3 text-xs text-slate-700 outline-none focus:border-slate-400"
+        />
+      </div>
+      <div className="relative min-h-0 flex-1 bg-white">
+        <iframe
+          ref={iframe}
+          title="Prototype Preview"
+          className="block h-full w-full border-0 bg-white"
+          style={{ colorScheme: 'light' }}
+          onLoad={() => {
+            window.setTimeout(() => setLoadingState({ versionId, isLoading: false }), 300)
+          }}
+        />
+        {isLoading ? (
+          <div className="absolute inset-0 flex items-center justify-center bg-white/90 text-sm text-slate-500">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            프리뷰를 준비하는 중입니다.
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 function SandpackAutoRun({ activeTab, versionId }: { activeTab: PrototypeTab; versionId: string }) {
   const { sandpack } = useSandpack()
   const { runSandpack } = sandpack
@@ -436,7 +502,7 @@ function SandpackAutoRun({ activeTab, versionId }: { activeTab: PrototypeTab; ve
 
   const schedulePreviewRun = useCallback(
     () =>
-      [50, 500, 1500, 3500].map((delay) =>
+      [150].map((delay) =>
         window.setTimeout(() => {
           runSandpackRef.current()
         }, delay),
@@ -451,24 +517,7 @@ function SandpackAutoRun({ activeTab, versionId }: { activeTab: PrototypeTab; ve
     return () => {
       for (const timeoutId of timeoutIds) window.clearTimeout(timeoutId)
     }
-  }, [activeTab, versionId])
-
-  useEffect(() => {
-    const rerunVisiblePreview = () => {
-      if (document.visibilityState === 'hidden') return
-      schedulePreviewRun()
-    }
-
-    window.addEventListener('focus', rerunVisiblePreview)
-    window.addEventListener('pageshow', rerunVisiblePreview)
-    document.addEventListener('visibilitychange', rerunVisiblePreview)
-
-    return () => {
-      window.removeEventListener('focus', rerunVisiblePreview)
-      window.removeEventListener('pageshow', rerunVisiblePreview)
-      document.removeEventListener('visibilitychange', rerunVisiblePreview)
-    }
-  }, [])
+  }, [activeTab, schedulePreviewRun, versionId])
 
   return null
 }
