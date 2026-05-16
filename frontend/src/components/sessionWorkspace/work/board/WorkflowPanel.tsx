@@ -13,7 +13,7 @@ const MAIN_AGENT_ASSIGNEE: BoardAssignee = {
   id: 'CEO',
   name: '팀장 에이전트',
   icon: UserRound,
-  imageUrl: '/assets/agents/ceo/ceo_profile.png',
+  imageUrl: '/assets/agents/ceo/ceo_profile_img.png',
 }
 
 const EMPTY_AGENT_PANELS: ReturnType<

@@ -1,16 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useSearchParams } from 'react-router'
-import {
-  Activity,
-  BarChart3,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  FileText,
-  Loader2,
-  Play,
-} from 'lucide-react'
+import { Activity, BarChart3, Check, FileText, Loader2, Play } from 'lucide-react'
 import { PageTabBar } from '@/components/PageTabBar'
 import { Button } from '@/components/ui/button'
 import { HelpHint } from '@/components/ui/help-hint'
@@ -272,10 +263,6 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     label: model.label,
     description: model.provider ?? effectiveSelectedFamily,
   }))
-  const selectedImageIndex = Math.max(
-    0,
-    CEO_IMAGE_OPTIONS.findIndex((option) => option.src === profileImage),
-  )
   const displayName = agentName.trim() || '팀장 에이전트'
   const displayRole = callName.trim() || '팀장 에이전트'
   const activeTab = getMainAgentTab(searchParams.get('agentTab'))
@@ -802,17 +789,24 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                 <AgentSectionCard title="프로필">
                   <div className="grid gap-4 sm:grid-cols-[14rem_minmax(0,1fr)]">
                     <div aria-label="프로필 이미지">
-                      <AgentImageStepper
-                        profileImage={profileImage}
-                        selectedImageIndex={selectedImageIndex}
-                        onProfileImageChange={(image) => {
-                          setProfileImage(image)
-                          markDirty()
-                        }}
-                      />
+                      <AgentImageStepper profileImage={profileImage} />
                     </div>
                     <div className="space-y-3">
-                      <Field label="이름">
+                      <Field
+                        label="이름"
+                        hint={
+                          <>
+                            <p className="text-foreground font-medium">이름</p>
+                            <p>
+                              사이드바·채팅 화면 등에서{' '}
+                              <span className="text-foreground">에이전트를 부르는 표시명</span>
+                              이에요.
+                            </p>
+                            <p>여기서 바꾸면 모든 화면에 같이 반영됩니다.</p>
+                            <p>예) “기획 팀장”, “마케팅 리더”.</p>
+                          </>
+                        }
+                      >
                         <DraftInput
                           onChange={(value) => {
                             setAgentName(value)
@@ -823,7 +817,23 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                           value={agentName}
                         />
                       </Field>
-                      <Field label="호칭">
+                      <Field
+                        label="호칭"
+                        hint={
+                          <>
+                            <p className="text-foreground font-medium">호칭</p>
+                            <p>
+                              대화에서 사용할 <span className="text-foreground">말투·직함</span>
+                              이에요.
+                            </p>
+                            <p>
+                              에이전트가 자기를 어떻게 불러달라고 할지, 답변할 때 어떤 호칭을 쓸지
+                              정할 때 참고합니다.
+                            </p>
+                            <p>예) “팀장님”, “기획자”, “사용자님”.</p>
+                          </>
+                        }
+                      >
                         <DraftInput
                           onChange={(value) => {
                             setCallName(value)
@@ -833,7 +843,23 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                           value={callName}
                         />
                       </Field>
-                      <Field label="할 수 있는 일">
+                      <Field
+                        label="할 수 있는 일"
+                        hint={
+                          <>
+                            <p className="text-foreground font-medium">할 수 있는 일</p>
+                            <p>
+                              이 에이전트의{' '}
+                              <span className="text-foreground">담당 업무 한 줄 설명</span>이에요.
+                            </p>
+                            <p>
+                              팀원 에이전트들과 시스템이 “이 팀장에게 어떤 일을 맡길 수 있는지”
+                              판단할 때 참고합니다. 너무 길게보단 핵심 업무를 짧고 분명하게.
+                            </p>
+                            <p>예) “회의록 요약, 일정 정리, 신규 기획 초안 작성”.</p>
+                          </>
+                        }
+                      >
                         <textarea
                           value={capabilities}
                           onChange={(event) => {
@@ -1381,9 +1407,7 @@ const inputClass =
   'border-border placeholder:text-muted-foreground/40 focus-visible:ring-ring w-full rounded-md border bg-transparent px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2'
 
 const CEO_IMAGE_OPTIONS = [
-  { id: 'desk', label: '책상', src: '/assets/agents/ceo/ceo_desk.png' },
-  { id: 'explain', label: '설명', src: '/assets/agents/ceo/ceo_explain.png' },
-  { id: 'profile', label: '프로필', src: '/assets/agents/ceo/ceo_profile.png' },
+  { id: 'profile', label: '프로필', src: '/assets/agents/ceo/ceo_profile_img.png' },
 ] as const
 
 function MainAgentHeader({
@@ -1550,56 +1574,15 @@ function getMainAgentTab(value: string | null): MainAgentTab {
   return MAIN_AGENT_TABS.some((tab) => tab.value === value) ? (value as MainAgentTab) : 'dashboard'
 }
 
-function AgentImageStepper({
-  onProfileImageChange,
-  profileImage,
-  selectedImageIndex,
-}: {
-  onProfileImageChange: (image: string) => void
-  profileImage: string
-  selectedImageIndex: number
-}) {
-  const selectedImage = CEO_IMAGE_OPTIONS[selectedImageIndex]
-
+function AgentImageStepper({ profileImage }: { profileImage: string }) {
   return (
     <div
-      className="flex min-h-36 w-full min-w-0 items-center justify-center gap-5 rounded-lg"
+      className="flex min-h-36 w-full min-w-0 items-center justify-center rounded-lg"
       aria-label="에이전트 이미지"
     >
-      <button
-        type="button"
-        onClick={() => {
-          const nextIndex =
-            (selectedImageIndex - 1 + CEO_IMAGE_OPTIONS.length) % CEO_IMAGE_OPTIONS.length
-          onProfileImageChange(CEO_IMAGE_OPTIONS[nextIndex].src)
-        }}
-        className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-10 w-10 shrink-0 items-center justify-center rounded transition-colors"
-        aria-label="이전 에이전트 이미지"
-      >
-        <ChevronLeft className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          const nextIndex = (selectedImageIndex + 1) % CEO_IMAGE_OPTIONS.length
-          onProfileImageChange(CEO_IMAGE_OPTIONS[nextIndex].src)
-        }}
-        className="bg-accent hover:bg-accent/80 flex h-28 w-28 shrink-0 items-center justify-center overflow-hidden rounded-lg transition-colors"
-        aria-label={`${selectedImage?.label ?? '메인 에이전트'} 이미지 변경`}
-      >
+      <div className="bg-accent flex h-28 w-28 shrink-0 items-center justify-center overflow-hidden rounded-lg">
         <img src={profileImage} alt="" className="h-24 w-24 object-contain" draggable={false} />
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          const nextIndex = (selectedImageIndex + 1) % CEO_IMAGE_OPTIONS.length
-          onProfileImageChange(CEO_IMAGE_OPTIONS[nextIndex].src)
-        }}
-        className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-10 w-10 shrink-0 items-center justify-center rounded transition-colors"
-        aria-label="다음 에이전트 이미지"
-      >
-        <ChevronRight className="h-4 w-4" />
-      </button>
+      </div>
     </div>
   )
 }

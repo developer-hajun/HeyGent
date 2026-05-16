@@ -1,7 +1,7 @@
 import { AlertCircle, ListTodo, Loader2, RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useParams } from 'react-router'
-import { ChatComposer } from '@/components/chat/ChatComposer'
+import { ChatComposer, type ChatAttachmentPayload } from '@/components/chat/ChatComposer'
 import { ChatEmptyState } from '@/components/chat/ChatEmptyState'
 import { ChatMessageList } from '@/components/chat/ChatMessageList'
 import type { ChatConnectionState } from '@/components/chat/chatTypes'
@@ -10,13 +10,22 @@ import { StepRunActivityPanel } from '@/components/taskRuns/StepRunActivityPanel
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { issueBoardStatusLabel } from '@/components/sessionWorkspace/work/model'
-import type { AiRealtimeAuthStatus, AiRealtimeConnectionStatus } from '@/realtime/aiRealtimeTypes'
+import type {
+  AiRealtimeAuthStatus,
+  AiRealtimeConnectionStatus,
+  JsonObject,
+} from '@/realtime/aiRealtimeTypes'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import { useSessionStore } from '@/store/useSessionStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useWorkStore } from '@/store/useWorkStore'
+import {
+  getString as getJsonString,
+  toJsonObject,
+} from '@/components/sessionWorkspace/sessionWorkspaceUtils'
 import type { WorkItem, WorkStatus } from '@/types/work'
 import {
   isInternalStepAnchorEvent,
@@ -79,6 +88,21 @@ export function ChatSessionPage() {
   const currentSession = useChatStore((state) =>
     sessionId === '' ? undefined : state.sessionsById[sessionId],
   )
+  const sessionMainAgentDraft = useSessionStore((state) =>
+    sessionId === '' ? undefined : state.mainAgentNameDraftBySessionId[sessionId],
+  )
+  // 어시스턴트 메시지에 표시할 이름 — 세션별 인라인 편집 draft → metadata.ui.agentName → 기본값
+  const mainAgentName = useMemo(() => {
+    const draft = sessionMainAgentDraft?.trim()
+    if (draft) return draft
+    if (currentSession) {
+      const metadata = toJsonObject(currentSession.metadata)
+      const uiMetadata = toJsonObject(metadata.ui)
+      const stored = getJsonString(uiMetadata, 'agentName')
+      if (stored && stored.trim() !== '') return stored
+    }
+    return '팀장 에이전트'
+  }, [currentSession, sessionMainAgentDraft])
   const fetchMessages = useChatStore((state) => state.fetchMessages)
   const addExternalTaskPlaceholder = useChatStore((state) => state.addExternalTaskPlaceholder)
   const sendMessage = useChatStore((state) => state.sendMessage)
@@ -368,7 +392,7 @@ export function ChatSessionPage() {
     taskRunsById,
   ])
 
-  const handleSend = async (content: string) => {
+  const handleSend = async (content: string, attachments: ChatAttachmentPayload[] = []) => {
     if (!sessionId || isSending) return
     setComposerDraft(null)
 
@@ -406,17 +430,26 @@ export function ChatSessionPage() {
           setSelectedWorkId(selectedWork.workId)
         }
       }
+      const workPayload: JsonObject | undefined = selectedWork
+        ? {
+            workId: selectedWork.workId,
+            workIdentifier: selectedWork.identifier,
+            workTitle: selectedWork.title,
+            workAssigneeAgentId: selectedWork.assigneeAgentId ?? 'CEO',
+          }
+        : undefined
+      const attachmentPayload = buildAttachmentInputPayload(attachments)
+
       await sendMessage({
         sessionId,
-        content,
-        inputPayload: selectedWork
-          ? {
-              workId: selectedWork.workId,
-              workIdentifier: selectedWork.identifier,
-              workTitle: selectedWork.title,
-              workAssigneeAgentId: selectedWork.assigneeAgentId ?? 'CEO',
-            }
-          : undefined,
+        content: formatMessageWithAttachmentSummary(content, attachments),
+        inputPayload:
+          workPayload || attachmentPayload
+            ? {
+                ...(workPayload ?? {}),
+                ...(attachmentPayload ?? {}),
+              }
+            : undefined,
       })
       setLoadState('ready')
       if (selectedWork) {
@@ -605,6 +638,7 @@ export function ChatSessionPage() {
             taskRunSummariesById={taskRunSummariesById}
             onOpenTaskRun={handleOpenTaskRun}
             focusedTaskRunTarget={focusedTaskRunTarget}
+            assistantName={mainAgentName}
           />
         )}
         <ChatComposer
@@ -908,6 +942,31 @@ function extractWorkIdentifier(content: string) {
 function normalizeWorkIdentifier(identifier: string) {
   const match = identifier.match(/\btask\s*[-#]?\s*(\d+)\b/i)
   return match ? `TASK-${match[1]}` : identifier.trim().toUpperCase()
+}
+
+function buildAttachmentInputPayload(attachments: ChatAttachmentPayload[]): JsonObject | undefined {
+  if (attachments.length === 0) return undefined
+  return {
+    sessionAttachments: attachments,
+    attachmentSummary: attachments.map(({ error, name, size, type }) => ({
+      name,
+      type,
+      size,
+      error,
+    })),
+  }
+}
+
+function formatMessageWithAttachmentSummary(content: string, attachments: ChatAttachmentPayload[]) {
+  if (attachments.length === 0) return content
+  const summary = attachments
+    .map((attachment) => {
+      const sizeKb = Math.max(1, Math.round(attachment.size / 1024))
+      const state = attachment.error ? `, ${attachment.error}` : ''
+      return `- ${attachment.name} (${attachment.type || 'application/octet-stream'}, ${sizeKb}KB${state})`
+    })
+    .join('\n')
+  return `${content.trim()}\n\n[첨부 파일]\n${summary}`.trim()
 }
 
 function toChatConnectionState(
