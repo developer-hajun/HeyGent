@@ -242,6 +242,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     getModelOptions(cachedModelOptions?.models),
   )
   const [selectedFamily, setSelectedFamily] = useState<ModelFamily>(inferModelFamily(currentModel))
+  const [providerBaseline, setProviderBaseline] = useState<SubAgentAdapterType>(currentProvider)
   const [modelBaseline, setModelBaseline] = useState(currentModel)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -300,7 +301,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     !shallowStringRecordEqual(instructionsFiles, currentInstructionsFiles) ||
     instructionsMode !== currentInstructionsMode ||
     instructionsRootPath.trim() !== currentInstructionsRootPath ||
-    selectedProvider !== currentProvider ||
+    selectedProvider !== providerBaseline ||
     selectedModel !== modelBaseline ||
     profileImage !== currentProfileImage ||
     canDelegate !== currentCanDelegate
@@ -397,6 +398,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
           getString(config, 'adapterType'),
         )
         setSelectedProvider(profileProvider)
+        setProviderBaseline(profileProvider)
         setSelectedModel(profileModel)
         setModelBaseline(profileModel)
         setSelectedFamily(inferModelFamily(profileModel))
@@ -478,6 +480,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
         setModelOptionsLoading(false)
         if (currentModel === '' && typeof options.model === 'string' && options.model.trim()) {
           setSelectedProvider(inferProviderFromModel(options.model))
+          setProviderBaseline(inferProviderFromModel(options.model))
           setSelectedModel(options.model)
           setModelBaseline(options.model)
           setSelectedFamily(inferModelFamily(options.model))
@@ -540,7 +543,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     setInstructionsFiles(currentInstructionsFiles)
     setInstructionsMode(currentInstructionsMode)
     setInstructionsRootPath(currentInstructionsRootPath)
-    setSelectedProvider(currentProvider)
+    setSelectedProvider(providerBaseline)
     setSelectedModel(modelBaseline)
     setSelectedFamily(inferModelFamily(modelBaseline))
     setCanDelegate(currentCanDelegate)
@@ -587,9 +590,6 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     if (mainAgentProfile === null && nextPersona !== currentPersona) {
       settingsPatch.systemPrompt = nextPersona
     }
-    if (mainAgentProfile === null && selectedProvider !== currentProvider) {
-      settingsPatch.provider = selectedProvider
-    }
     if (mainAgentProfile === null && selectedModel !== '' && selectedModel !== modelBaseline) {
       settingsPatch.model = selectedModel
     }
@@ -627,6 +627,14 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
           instructionsFiles: nextInstructionsFiles,
         })
         setMainAgentProfile(profile)
+        const savedProvider = inferProviderFromModel(
+          profile.model,
+          profile.adapterType ?? getString(toJsonObject(profile.configSnapshot), 'adapterType'),
+        )
+        setSelectedProvider(savedProvider)
+        setProviderBaseline(savedProvider)
+      } else {
+        setProviderBaseline(selectedProvider)
       }
       if (settingsPatch.model !== undefined || mainAgentProfile !== null) {
         setModelBaseline(selectedModel)
