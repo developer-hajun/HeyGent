@@ -23,10 +23,15 @@ class ProviderMemoryRecallPlannerClient:
         query: str,
         workspace_key: str | None,
         rule_plan: MemoryRecallPlan,
+        model: str | None = None,
     ) -> dict[str, Any]:
         provider = self._provider_registry.preferred_model_provider()
         _ensure_live_provider(provider)
-        model = self._model or str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
+        selected_model = (
+            str(self._model or "").strip()
+            or str(model or "").strip()
+            or str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
+        )
         payload = {
             "query": query,
             "workspaceKey": workspace_key,
@@ -43,7 +48,7 @@ class ProviderMemoryRecallPlannerClient:
                 AgentMessage(role="user", content=json.dumps(payload, ensure_ascii=False)),
             ],
             tools=None,
-            model=model,
+            model=selected_model,
             tool_choice=None,
         )
         return _parse_json_object(response.output_text)

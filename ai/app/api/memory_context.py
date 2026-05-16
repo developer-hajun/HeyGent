@@ -81,6 +81,7 @@ class MemoryRecallPlannerProvider(Protocol):
         query: str,
         workspace_key: str | None,
         rule_plan: MemoryRecallPlan,
+        model: str | None = None,
     ) -> dict[str, Any]:
         """Return the model-produced memory recall planning JSON."""
 
@@ -105,6 +106,7 @@ class LlmMemoryRecallPlanner:
         *,
         workspace_key: str | None = None,
         limit: int = DEFAULT_MEMORY_RECALL_LIMIT,
+        model: str | None = None,
     ) -> MemoryRecallPlan:
         rule_plan = plan_memory_recall(query, workspace_key=workspace_key, limit=limit)
         if not rule_plan.query:
@@ -117,6 +119,7 @@ class LlmMemoryRecallPlanner:
                     query=rule_plan.query,
                     workspace_key=workspace_key,
                     rule_plan=rule_plan,
+                    model=str(model or "").strip() or None,
                 ),
                 timeout=self._timeout_seconds,
             )
@@ -289,7 +292,12 @@ async def attach_persistent_memory_context(
     clear_client_memory_context(task_input)
     recall_planner = getattr(app_state, "memory_recall_planner", None)
     if recall_planner is not None:
-        recall_plan = await recall_planner.plan_recall(query, workspace_key=workspace_key, limit=limit)
+        recall_plan = await recall_planner.plan_recall(
+            query,
+            workspace_key=workspace_key,
+            limit=limit,
+            model=_memory_provider_model(task_input),
+        )
     else:
         recall_plan = plan_memory_recall(query, workspace_key=workspace_key, limit=limit)
     if force_workspace_key and workspace_key and recall_plan.workspace_key is None:
@@ -717,6 +725,11 @@ def _contains_any(text: str, hints: tuple[str, ...]) -> bool:
 def _put_if_present(payload: dict[str, Any], key: str, value: str | None) -> None:
     if value:
         payload[key] = value
+
+
+def _memory_provider_model(task_input: dict[str, Any]) -> str | None:
+    model = task_input.get("model") or task_input.get("provider_model") or task_input.get("providerModel")
+    return str(model or "").strip() or None
 
 
 def _elapsed_ms(started_at: float) -> int:
