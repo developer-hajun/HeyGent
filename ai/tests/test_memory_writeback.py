@@ -89,11 +89,13 @@ async def test_writeback_extracts_and_posts_candidates_to_backend():
         user_message_id="msg_1",
         assistant_message_id="msg_2",
         model="gpt-current",
+        request_date="2026-05-16",
     )
 
     assert len(extractor.calls) == 1
     assert extractor.calls[0]["context"].workspace_key == "workspace-a"
     assert extractor.calls[0]["context"].model == "gpt-current"
+    assert extractor.calls[0]["context"].request_date == "2026-05-16"
     assert memory_client.recall_calls == [
         {
             "user_id": "1",

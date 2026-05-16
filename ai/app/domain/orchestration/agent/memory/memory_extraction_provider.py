@@ -41,6 +41,7 @@ class ProviderMemoryExtractionClient:
                 "sessionId": context.session_id,
                 "workspaceKey": context.workspace_key,
                 "taskRunId": context.task_run_id,
+                "requestDate": context.request_date,
             },
         }
         response = await respond_provider_with_retry(
