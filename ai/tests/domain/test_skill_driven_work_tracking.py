@@ -209,6 +209,39 @@ def test_session_agent_child_input_includes_profile_skill_names():
     )
 
 
+def test_session_agent_child_input_keeps_parent_prototype_session_binding():
+    engine = _engine(
+        task_repository=InMemoryTaskRepository(),
+        work_repository=FakeWorkRepository(),
+    )
+    work = WorkItem(
+        work_id="work-design",
+        identifier="TASK-1",
+        session_id="session-ui",
+        owner_key="7",
+        owner_user_id=7,
+        title="날씨 화면 제작",
+        description="부산 날씨 화면을 만든다.",
+        status="in_progress",
+        execution_instruction="부산 날씨 화면을 React 프로토타입으로 만들어줘.",
+    )
+    engine.work_repository.create_work(work)
+
+    child_input = engine._build_session_agent_work_input(
+        parent_task=_task(
+            input_payload={
+                "model": "gpt-5.4",
+                "sessionId": "session-ui",
+                "promptMessageId": "msg-user",
+            }
+        ),
+        work=work,
+    )
+
+    assert child_input["sessionId"] == "session-ui"
+    assert child_input["promptMessageId"] == "msg-user"
+
+
 def test_session_agent_parent_update_exposes_materialized_child_task_run():
     task_repository = InMemoryTaskRepository()
     work_repository = FakeWorkRepository()

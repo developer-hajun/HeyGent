@@ -114,6 +114,8 @@ def _skill_required_toolsets(skill_names: list[str], *, skill_registry: Any | No
             continue
         for toolset in _metadata_toolsets(skill):
             _append_unique(required, toolset)
+        for toolset in _body_toolsets(str(skill.get("description") or "")):
+            _append_unique(required, toolset)
         for toolset in _body_toolsets(str(skill.get("body") or "")):
             _append_unique(required, toolset)
     return required
