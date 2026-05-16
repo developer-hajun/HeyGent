@@ -5,7 +5,7 @@ from typing import Any
 
 from app.api.memory_context import MemoryRecallPlan
 from app.domain.orchestration.agent.memory.provider_retry import respond_provider_with_retry
-from app.domain.orchestration.agent.memory.runtime_context import build_memory_provider_runtime_context
+from app.domain.orchestration.agent.memory.runtime_context import build_memory_provider_runtime_context, resolve_memory_provider_name
 from app.domain.providers.model.base import AgentMessage
 from app.domain.providers.registry import ProviderRegistry
 
@@ -28,12 +28,19 @@ class ProviderMemoryRecallPlannerClient:
         model: str | None = None,
         runtime_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        provider = self._provider_registry.preferred_model_provider()
         selected_model = (
             str(self._model or "").strip()
             or str(model or "").strip()
-            or str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
+            or str((runtime_context or {}).get("model") or "").strip()
+            or str((runtime_context or {}).get("providerModel") or "").strip()
         )
+        provider_name = resolve_memory_provider_name(
+            (runtime_context or {}).get("provider_name") or (runtime_context or {}).get("providerName"),
+            selected_model,
+        )
+        provider = self._provider_registry.model_provider_for(provider_name)
+        if not selected_model:
+            selected_model = _default_model_for(provider)
         provider_runtime_context = _runtime_context_with_model(runtime_context, selected_model)
         _ensure_live_provider(provider, runtime_context=provider_runtime_context)
         self.last_memory_provider_meta = {
@@ -84,6 +91,12 @@ def _ensure_live_provider(provider, *, runtime_context: dict[str, Any] | None = 
         return
     if not bool(getattr(health, "connected", False)):
         raise RuntimeError("memory provider requires a connected model provider")
+
+
+def _default_model_for(provider) -> str:
+    if str(getattr(provider, "name", "") or "") == "gemini_api":
+        return "gemini-2.5-pro"
+    return str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
 
 
 def _runtime_context_with_model(runtime_context: dict[str, Any] | None, model: str) -> dict[str, str] | None:
