@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
 from app.api.memory_context import MemoryRecallPlan
+from app.domain.orchestration.agent.memory.provider_retry import respond_provider_with_retry
 from app.domain.providers.model.base import AgentMessage
 from app.domain.providers.registry import ProviderRegistry
 
@@ -15,6 +15,7 @@ class ProviderMemoryRecallPlannerClient:
     def __init__(self, *, provider_registry: ProviderRegistry, model: str | None = None) -> None:
         self._provider_registry = provider_registry
         self._model = model
+        self.last_memory_provider_meta: dict[str, Any] = {}
 
     async def plan_memory_recall_json(
         self,
@@ -23,10 +24,19 @@ class ProviderMemoryRecallPlannerClient:
         query: str,
         workspace_key: str | None,
         rule_plan: MemoryRecallPlan,
+        model: str | None = None,
     ) -> dict[str, Any]:
         provider = self._provider_registry.preferred_model_provider()
         _ensure_live_provider(provider)
-        model = self._model or str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
+        selected_model = (
+            str(self._model or "").strip()
+            or str(model or "").strip()
+            or str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
+        )
+        self.last_memory_provider_meta = {
+            "provider_name": str(getattr(provider, "name", None) or provider.__class__.__name__),
+            "selected_model": selected_model,
+        }
         payload = {
             "query": query,
             "workspaceKey": workspace_key,
@@ -36,14 +46,14 @@ class ProviderMemoryRecallPlannerClient:
                 "filters": rule_plan.filters(),
             },
         }
-        response = await _respond_provider_async(
+        response = await respond_provider_with_retry(
             provider,
             messages=[
                 AgentMessage(role="system", content=system_prompt),
                 AgentMessage(role="user", content=json.dumps(payload, ensure_ascii=False)),
             ],
             tools=None,
-            model=model,
+            model=selected_model,
             tool_choice=None,
         )
         return _parse_json_object(response.output_text)
@@ -62,13 +72,6 @@ def _parse_json_object(text: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("memory recall planner response must be a JSON object")
     return parsed
-
-
-async def _respond_provider_async(provider, **kwargs):
-    respond_async = getattr(provider, "respond_async", None)
-    if callable(respond_async):
-        return await respond_async(**kwargs)
-    return await asyncio.to_thread(provider.respond, **kwargs)
 
 
 def _ensure_live_provider(provider) -> None:

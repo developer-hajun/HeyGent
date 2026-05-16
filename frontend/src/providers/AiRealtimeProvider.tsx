@@ -491,6 +491,11 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
 
       void useTaskRunStore
         .getState()
+        .fetchSnapshot(childTaskRunId)
+        .catch(() => {})
+
+      void useTaskRunStore
+        .getState()
         .recoverTaskRun(childTaskRunId)
         .then(() => {
           if (socketRef.current !== socketClient || !socketClient.isAuthenticated()) {
