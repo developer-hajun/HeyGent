@@ -7,6 +7,7 @@ import pytest
 
 from app.api.memory_writeback import writeback_persistent_memory_candidates
 from app.clients.backend_memory import BackendMemoryClientError
+from app.domain.orchestration.agent.memory.memory_extractor import LlmMemoryExtractor
 
 
 class FakeMemoryClient:
@@ -136,6 +137,35 @@ async def test_writeback_is_nonfatal_when_extractor_fails():
     assert memory_client.calls == []
     assert observation["status"] == "extract_failed"
     assert observation["failed"] is True
+
+
+@pytest.mark.asyncio
+async def test_writeback_uses_extractor_rule_fallback_for_simple_preference_when_provider_fails():
+    class FailingProvider:
+        async def extract_memory_json(self, **kwargs):
+            raise RuntimeError("provider failed")
+
+    memory_client = FakeMemoryClient()
+    extractor = LlmMemoryExtractor(FailingProvider())
+    app_state = SimpleNamespace(backend_memory_client=memory_client, memory_extractor=extractor)
+
+    observation = await writeback_persistent_memory_candidates(
+        app_state=app_state,
+        user_id="1",
+        user_message="나 국수 좋아해",
+        assistant_message="국수도 좋죠.",
+        session_id="session_1",
+        task_run_id="task_1",
+        assistant_message_id="msg_2",
+    )
+
+    assert observation["status"] == "succeeded"
+    assert observation["attempted"] is True
+    assert observation["failed"] is False
+    assert observation["candidate_count"] == 1
+    assert memory_client.calls[0]["candidates"][0]["content"] == "사용자는 국수를 좋아한다."
+    assert memory_client.calls[0]["candidates"][0]["memoryType"] == "PREFERENCE"
+    assert memory_client.calls[0]["candidates"][0]["storeType"] == "USER_PROFILE"
 
 
 @pytest.mark.asyncio
