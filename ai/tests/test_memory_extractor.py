@@ -173,15 +173,39 @@ def test_memory_extractor_prompt_distinguishes_current_task_from_completed_event
     assert "assistant or tool result confirms" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "metadata.eventTime" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "metadata.sourceTimestamp" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "one-off research, summarization" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "durable preference or profile fact" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "future-facing assistant instructions" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "reusable multi-step workflows" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "A task request can contain a separable user fact" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "context.requestDate" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "나 오늘 어디 가는 기차 예약해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "이 문서 요약해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "나는 짧은 답변 좋아하니까 이 문서 요약해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "부산 가는 KTX 예약해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "오늘 이 부분 코드 개발해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "The user's request alone is not enough" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "해당 프로젝트의 코드 개발 작업이 완료됐다." in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "오늘 부산 가는 KTX 예약했어" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "나 백엔드 면접 준비중인데 면접 준비 계획서 만들어줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "앞으로 MR 정리할 때 테스트 결과 먼저 써줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "이 프로젝트에서는 항상 기능별 브랜치로 나눠서 작업해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "우리 프로젝트 API 명세서 계속 Notion에 정리해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "지난번처럼 docs/logs 작업하고 커밋해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_keeps_one_off_document_summary_request_empty():
+    provider = FakeStructuredProvider({"candidates": []})
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="이 문서 요약해줘",
+        assistant_message="문서를 요약해드릴게요.",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1"),
+    )
+
+    assert candidates == []
 
 
 @pytest.mark.asyncio
@@ -197,6 +221,54 @@ async def test_memory_extractor_keeps_uncompleted_booking_request_empty():
 
     assert candidates == []
     assert provider.calls[0]["user_message"] == "부산 가는 KTX 예약해줘"
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_normalizes_preference_embedded_in_task_request_only():
+    provider = FakeStructuredProvider(
+        {
+            "candidates": [
+                {
+                    "memoryType": "PREFERENCE",
+                    "scopeType": "GLOBAL",
+                    "content": "사용자는 짧은 답변을 선호한다.",
+                    "summary": "짧은 답변 선호",
+                    "metadata": {"category": "preference", "tags": ["style", "brevity"]},
+                    "importance": 0.8,
+                    "confidence": 0.9,
+                    "evidence": "나는 짧은 답변 좋아하니까 이 문서 요약해줘",
+                }
+            ]
+        }
+    )
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="나는 짧은 답변 좋아하니까 이 문서 요약해줘",
+        assistant_message="짧게 요약해드릴게요.",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1"),
+    )
+
+    assert candidates == [
+        {
+            "memoryType": "PREFERENCE",
+            "storeType": "USER_PROFILE",
+            "scopeType": "GLOBAL",
+            "operationType": "ADD",
+            "content": "사용자는 짧은 답변을 선호한다.",
+            "metadata": {
+                "source": "ai.writeback",
+                "category": "preference",
+                "sensitivity": "low",
+                "ttl": "long",
+                "tags": ["style", "brevity"],
+            },
+            "importance": 0.8,
+            "confidence": 0.9,
+            "summary": "짧은 답변 선호",
+            "evidence": "나는 짧은 답변 좋아하니까 이 문서 요약해줘",
+        }
+    ]
 
 
 @pytest.mark.asyncio

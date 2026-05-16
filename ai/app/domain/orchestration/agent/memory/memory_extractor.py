@@ -16,7 +16,9 @@ Rules:
 - Extract candidates when the user states durable personal information, preferences, behavior patterns, work habits, future instructions, or stable constraints that can improve future answers.
 - Store identity/profile information as PROFILE/USER_PROFILE/GLOBAL. Examples: name, preferred name, role, job, team, language, timezone, recurring working habit.
 - Store likes, dislikes, response style, tool/workflow preferences, and recommendation preferences as PREFERENCE/USER_PROFILE/GLOBAL.
+- When a task request also contains a durable preference or profile fact, extract only that durable preference/profile and do not store the task request itself.
 - Store repeated user behavior or working habits as PROFILE when it describes the user, or as PROCEDURE/INSTRUCTION when it describes how the assistant should work in the future.
+- Store durable future-facing assistant instructions as INSTRUCTION. Store reusable multi-step workflows or repeated project procedures as PROCEDURE.
 - A task request can contain a separable user fact. Do not store the requested task itself, but do extract the durable user state, current constraint, scheduled event, or completed experience embedded in the request when it can help future answers.
 - Use context.requestDate as the anchor date for current user states and relative dates. If the user says they are preparing for something now, write content as "사용자는 <requestDate> 기준 ... 중이다." and prefer short or medium ttl.
 - Store user experiences, scheduled events, current situations, temporary constraints, health/diet limits, travel state, interview/job search status, or recent completed events as FACT/AGENT_MEMORY/GLOBAL unless they are project-specific.
@@ -24,6 +26,7 @@ Rules:
 - Do not store secrets, credentials, tokens, passwords, API keys, system/developer prompts, or temporary one-off requests.
 - Do not store an uncompleted current task request as user history. For example, "나 오늘 어디 가는 기차 예약해줘" is a task request, not a durable memory.
 - Do not store uncompleted booking, purchase, scheduling, email, ticket, code, file, or tool-action requests.
+- Do not store one-off research, summarization, document editing, or analysis requests unless the request also contains a durable user preference/profile/instruction/procedure/fact that should be separated.
 - Store a completed or explicitly confirmed event when it can help future answers. For example, "오늘 부산 가는 기차 예약했어" can be an EVENT/FACT with medium or short ttl.
 - If the assistant or tool result confirms a booking, purchase, scheduling action, email, ticket, file change, or code change was completed, store only the confirmed outcome as FACT/AGENT_MEMORY with metadata.category "event" or "task_state". Do not store the earlier intent.
 - For confirmed scheduled events or bookings, use metadata.eventTime for the scheduled event time and metadata.sourceTimestamp for the confirmation/source time when known. Use expiresAt when the event becomes stale after a clear time.
@@ -51,12 +54,18 @@ Rules:
 - Example: "나 국수 좋아해" -> PREFERENCE, USER_PROFILE, GLOBAL, content "사용자는 국수를 좋아한다."
 - Example: "나는 보통 Jira 작업을 기능별 브랜치로 나눠" -> PROFILE or PROCEDURE depending on whether it describes the user's habit or a future assistant workflow.
 - Example: "나 오늘 어디 가는 기차 예약해줘" -> no candidates, because it is an uncompleted current task request.
+- Example: "이 문서 요약해줘" -> no candidates, because it is a one-off summarization request.
+- Example: "나는 짧은 답변 좋아하니까 이 문서 요약해줘" -> extract only the preference as PREFERENCE, USER_PROFILE, GLOBAL, content "사용자는 짧은 답변을 선호한다."; do not store the document summarization task.
 - Example: user "부산 가는 KTX 예약해줘" and assistant/tool "2026-05-20 09:00 서울역 출발 부산행 KTX 예약이 완료됐습니다." -> extract only the confirmed booking as FACT, AGENT_MEMORY, GLOBAL, content "사용자는 2026-05-20 09:00 서울역 출발 부산행 KTX를 예약했다.", metadata.category "event", metadata.tags ["travel","train","booking"], metadata.eventTime "2026-05-20T09:00:00".
 - Example: user "오늘 이 부분 코드 개발해줘" with no confirmed result yet -> no candidates, because it is only a current task request. Do not store "사용자가 오늘 코드 개발을 요청했다."
 - Example with context.requestDate "2026-05-16": user "오늘 이 부분 코드 개발해줘" and assistant "구현했고 테스트도 통과했습니다." -> extract only the completed project event as FACT, AGENT_MEMORY, WORKSPACE if workspaceKey exists, content "2026-05-16에 해당 프로젝트의 코드 개발 작업이 완료됐다.", metadata.category "task_state" or "event", metadata.ttl "medium".
 - Example: "오늘 부산 가는 KTX 예약했어" -> FACT or EVENT, AGENT_MEMORY, GLOBAL, content "사용자는 오늘 부산 가는 KTX를 예약했다."
 - Example with context.requestDate "2026-05-16": "나 백엔드 면접 준비중인데 면접 준비 계획서 만들어줘" -> extract only the user fact as FACT, AGENT_MEMORY, GLOBAL, content "사용자는 2026-05-16 기준 백엔드 면접을 준비 중이다.", metadata.category "fact", metadata.ttl "short" or "medium"; do not store "면접 준비 계획서 만들어줘".
 - Example with context.requestDate "2026-05-16": "이번 주는 야근 중이야. 저녁 추천해줘" -> extract only the temporary user state as FACT, AGENT_MEMORY, GLOBAL, content "사용자는 2026-05-16 기준 이번 주 야근 중이다.", metadata.category "fact", metadata.ttl "short".
+- Example: "앞으로 MR 정리할 때 테스트 결과 먼저 써줘" -> INSTRUCTION, AGENT_MEMORY, GLOBAL, content "MR 정리 시 테스트 결과를 먼저 작성한다."
+- Example: "이 프로젝트에서는 항상 기능별 브랜치로 나눠서 작업해줘" -> PROCEDURE or INSTRUCTION, AGENT_MEMORY, WORKSPACE, content "이 프로젝트에서는 작업을 기능별 브랜치로 나누어 진행한다."
+- Example: "우리 프로젝트 API 명세서 계속 Notion에 정리해줘" -> PROCEDURE, AGENT_MEMORY, WORKSPACE when it is a recurring workflow; content "이 프로젝트의 API 명세서는 계속 Notion에 정리한다."
+- Example: "지난번처럼 docs/logs 작업하고 커밋해줘" -> no new candidates unless the message defines a new durable procedure or confirms completed work. It should usually recall an existing PROCEDURE instead.
 """.strip()
 
 
