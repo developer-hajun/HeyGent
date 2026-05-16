@@ -132,7 +132,9 @@ export function SubAgentDraftForm({
     void fetchModelOptions()
       .then((options) => {
         if (!active) return
-        const nextModels = getModelOptions(options.models)
+        const providerModels =
+          options.providers?.flatMap((provider) => provider.models) ?? options.models
+        const nextModels = getModelOptions(providerModels)
         setModelOptions(nextModels)
         setModelOptionsLoading(false)
       })

@@ -1248,6 +1248,9 @@ class TaskEngine:
     @staticmethod
     def _profile_provider_name(profile: dict) -> str | None:
         config = profile.get("config_snapshot") if isinstance(profile.get("config_snapshot"), dict) else {}
+        model = str(config.get("model") or profile.get("model_name") or "").strip()
+        if model.lower().startswith("gemini-"):
+            return "gemini_api_key"
         value = config.get("providerName") or config.get("provider_name") or config.get("adapterType") or profile.get("provider_name")
         text = str(value or "").strip()
         if text == "openai":

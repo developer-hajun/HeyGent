@@ -892,7 +892,7 @@ class WebSocketCommandRouter:
                 "health": {"provider_name": "gemini_api_key", "configured": True, "connected": True},
             }
         )
-        return ("model.options.result", {"model": default_model, "providers": providers, "models": [model for provider in providers for model in provider["models"]]})
+        return ("model.options.result", {"model": default_model, "providers": providers, "models": provider_models})
 
     async def _task_runs_active_list(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
         session_id = _optional_str(payload.get("sessionId", payload.get("session_id")))
