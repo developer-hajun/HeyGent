@@ -90,12 +90,16 @@ async def test_writeback_extracts_and_posts_candidates_to_backend():
         assistant_message_id="msg_2",
         model="gpt-current",
         request_date="2026-05-16",
+        provider_name="openai_api_key",
     )
 
     assert len(extractor.calls) == 1
     assert extractor.calls[0]["context"].workspace_key == "workspace-a"
     assert extractor.calls[0]["context"].model == "gpt-current"
     assert extractor.calls[0]["context"].request_date == "2026-05-16"
+    assert extractor.calls[0]["context"].provider_name == "openai_api_key"
+    assert extractor.calls[0]["context"].task_run_id == "task_1"
+    assert extractor.calls[0]["context"].session_id == "session_1"
     assert memory_client.recall_calls == [
         {
             "user_id": "1",

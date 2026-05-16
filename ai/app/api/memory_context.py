@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from app.api.memory_observation import MEMORY_CONTEXT_META_KEY, build_recall_observation
 from app.clients.backend_memory import BackendMemoryClientError
 from app.domain.orchestration.agent.memory.provider_retry import memory_provider_error_details
+from app.domain.orchestration.agent.memory.runtime_context import memory_provider_runtime_context_from_task_input
 from app.domain.orchestration.prompts.persistent_memory_prompt import build_persistent_memory_prompt
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,7 @@ class MemoryRecallPlannerProvider(Protocol):
         workspace_key: str | None,
         rule_plan: MemoryRecallPlan,
         model: str | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Return the model-produced memory recall planning JSON."""
 
@@ -115,6 +117,7 @@ class LlmMemoryRecallPlanner:
         workspace_key: str | None = None,
         limit: int = DEFAULT_MEMORY_RECALL_LIMIT,
         model: str | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> MemoryRecallPlan:
         rule_plan = plan_memory_recall(query, workspace_key=workspace_key, limit=limit)
         if not rule_plan.query:
@@ -128,6 +131,7 @@ class LlmMemoryRecallPlanner:
                     workspace_key=workspace_key,
                     rule_plan=rule_plan,
                     model=str(model or "").strip() or None,
+                    runtime_context=runtime_context,
                 ),
                 timeout=self._timeout_seconds,
             )
@@ -310,6 +314,12 @@ async def attach_persistent_memory_context(
             workspace_key=workspace_key,
             limit=limit,
             model=_memory_provider_model(task_input),
+            runtime_context=memory_provider_runtime_context_from_task_input(
+                task_input,
+                user_id=user_id,
+                session_id=task_input.get("session_id") or task_input.get("sessionId"),
+                model=_memory_provider_model(task_input),
+            ),
         )
     else:
         recall_plan = plan_memory_recall(query, workspace_key=workspace_key, limit=limit)

@@ -30,6 +30,8 @@ async def writeback_persistent_memory_candidates(
     assistant_message_id: str | None = None,
     model: str | None = None,
     request_date: str | None = None,
+    provider_name: str | None = None,
+    step_run_id: str | None = None,
 ) -> dict[str, Any]:
     """대화 완료 후 장기기억 후보를 추출해 backend에 저장 요청한다.
 
@@ -60,6 +62,8 @@ async def writeback_persistent_memory_candidates(
         assistant_message_id=assistant_message_id,
         model=str(model or "").strip() or None,
         request_date=_request_date(request_date),
+        provider_name=str(provider_name or "").strip() or "openai_api_key",
+        step_run_id=str(step_run_id or "").strip() or None,
     )
     try:
         candidates = await memory_extractor.extract_candidates(
@@ -95,6 +99,11 @@ async def writeback_persistent_memory_candidates(
             user_id=user_id,
             user_message=user_message,
             workspace_key=workspace_key,
+            session_id=session_id,
+            task_run_id=task_run_id,
+            step_run_id=step_run_id,
+            provider_name=str(provider_name or "").strip() or "openai_api_key",
+            model=str(model or "").strip() or None,
         ),
     )
     original_candidate_count = len(candidates)
