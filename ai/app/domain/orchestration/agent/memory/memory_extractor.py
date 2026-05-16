@@ -79,6 +79,8 @@ class MemoryExtractionContext:
     assistant_message_id: str | None = None
     model: str | None = None
     request_date: str | None = None
+    provider_name: str | None = None
+    step_run_id: str | None = None
 
 
 class StructuredModelProvider(Protocol):

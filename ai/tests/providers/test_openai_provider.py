@@ -215,6 +215,69 @@ async def test_openai_api_provider_uses_backend_credential_and_records_usage_asy
     assert response.output_text == "ok"
 
 
+@pytest.mark.asyncio
+async def test_openai_api_provider_uses_backend_credential_without_task_run_id_and_skips_usage_async():
+    settings = Settings(
+        openai_api_key="",
+        openai_rest_api_base_url="https://api.openai.test/v1",
+        openai_response_model="gpt-fallback",
+    )
+    issued: list[dict] = []
+    recorded: list[dict] = []
+    captured: dict = {}
+
+    class FakeBackendAiClient:
+        async def issue_credential(self, **kwargs):
+            issued.append(kwargs)
+
+            class Credential:
+                provider_name = "openai_api_key"
+                model = "gpt-agent"
+                credential = "sk-issued"
+
+            return Credential()
+
+        async def record_command_usage(self, **kwargs):
+            recorded.append(kwargs)
+
+    class FakeOpenAIHttpClient:
+        async def post(self, url, headers=None, json=None, timeout=None, data=None):
+            captured["headers"] = headers
+            captured["json"] = json
+            return DummyHTTPResponse(
+                {
+                    "id": "resp_memory",
+                    "model": "gpt-agent",
+                    "status": "completed",
+                    "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
+                    "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+                }
+            )
+
+    provider = OpenAIAPIProvider(
+        settings,
+        http_client=FakeOpenAIHttpClient(),
+        backend_ai_client=FakeBackendAiClient(),
+    )
+
+    response = await provider.respond_async(
+        messages=[{"role": "user", "content": "hello"}],
+        tools=[],
+        model="gpt-agent",
+        runtime_context={
+            "user_id": "10",
+            "provider_name": "openai_api_key",
+            "session_id": "session-1",
+        },
+    )
+
+    assert issued == [{"user_id": "10", "provider_name": "openai_api_key", "model": "gpt-agent"}]
+    assert captured["headers"]["Authorization"] == "Bearer sk-issued"
+    assert captured["json"]["model"] == "gpt-agent"
+    assert recorded == []
+    assert response.output_text == "ok"
+
+
 def test_provider_registry_returns_health_list():
     registry = ProviderRegistry([OpenAIAPIProvider(Settings(openai_api_key=""))])
 

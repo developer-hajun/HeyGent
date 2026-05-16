@@ -10,6 +10,7 @@ from typing import Any, Protocol
 from app.api.memory_observation import MEMORY_CONTEXT_META_KEY
 from app.clients.backend_memory import BackendMemoryClientError
 from app.domain.orchestration.agent.memory.provider_retry import memory_provider_error_details
+from app.domain.orchestration.agent.memory.runtime_context import memory_provider_runtime_context_from_task_input
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ class MemoryUsageAttributionProvider(Protocol):
         user_query: str,
         assistant_message: str,
         recalled_memories: list[dict[str, Any]],
+        runtime_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Return model-produced memory usage attribution JSON."""
 
@@ -102,6 +104,7 @@ class LlmMemoryUsageAttributionVerifier:
         user_query: str,
         assistant_message: str,
         recalled_memories: list[_RecalledMemoryText],
+        runtime_context: dict[str, Any] | None = None,
     ) -> _AttributionResult:
         started_at = time.perf_counter()
         try:
@@ -111,6 +114,7 @@ class LlmMemoryUsageAttributionVerifier:
                     user_query=user_query,
                     assistant_message=assistant_message,
                     recalled_memories=[_memory_text_payload(memory) for memory in recalled_memories],
+                    runtime_context=runtime_context,
                 ),
                 timeout=self._timeout_seconds,
             )
@@ -181,6 +185,8 @@ async def mark_used_recalled_memories(
     llm_result = await _verify_used_memories_with_llm(
         app_state=app_state,
         input_payload=input_payload,
+        user_id=user_id,
+        task_run_id=task_run_id,
         assistant_message=answer,
         recalled_ids=recalled_ids,
         memory_texts=memory_texts,
@@ -277,6 +283,8 @@ async def _verify_used_memories_with_llm(
     *,
     app_state: Any,
     input_payload: dict[str, Any],
+    user_id: str,
+    task_run_id: str | None,
     assistant_message: str,
     recalled_ids: list[int],
     memory_texts: dict[int, _RecalledMemoryText],
@@ -294,6 +302,11 @@ async def _verify_used_memories_with_llm(
         user_query=user_query,
         assistant_message=assistant_message,
         recalled_memories=recalled_memories,
+        runtime_context=memory_provider_runtime_context_from_task_input(
+            input_payload,
+            user_id=user_id,
+            task_run_id=task_run_id,
+        ),
     )
 
 

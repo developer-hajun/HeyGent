@@ -506,7 +506,12 @@ async def test_attach_persistent_memory_context_uses_llm_planner_when_available(
         }
     )
     planner = LlmMemoryRecallPlanner(provider=provider)
-    task_input = {"prompt": "MR 작업내용 정리해줘", "model": "gpt-current"}
+    task_input = {
+        "prompt": "MR 작업내용 정리해줘",
+        "model": "gpt-current",
+        "provider_name": "openai_api_key",
+        "session_id": "session_1",
+    }
 
     await attach_persistent_memory_context(
         app_state=SimpleNamespace(backend_memory_client=memory_client, memory_recall_planner=planner),
@@ -529,6 +534,12 @@ async def test_attach_persistent_memory_context_uses_llm_planner_when_available(
         }
     ]
     assert provider.calls[0]["model"] == "gpt-current"
+    assert provider.calls[0]["runtime_context"] == {
+        "user_id": "7",
+        "provider_name": "openai_api_key",
+        "session_id": "session_1",
+        "model": "gpt-current",
+    }
     planner_meta = task_input["memory_context_meta"]["recall"]["planner"]
     assert planner_meta["should_recall"] is True
     assert planner_meta["reason"] == "사용자 MR 작성 선호 필요"
