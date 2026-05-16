@@ -48,8 +48,9 @@ async def test_gemini_api_provider_uses_backend_credential_and_records_usage_asy
             recorded.append(kwargs)
 
     class FakeGeminiHttpClient:
-        async def post(self, url, params=None, json=None, timeout=None):
+        async def post(self, url, headers=None, params=None, json=None, timeout=None):
             captured["url"] = url
+            captured["headers"] = headers
             captured["params"] = params
             captured["json"] = json
             captured["timeout"] = timeout
@@ -94,7 +95,8 @@ async def test_gemini_api_provider_uses_backend_credential_and_records_usage_asy
 
     assert issued == [{"user_id": "10", "provider_name": "gemini_api_key", "model": "gemini-2.5-pro"}]
     assert captured["url"] == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
-    assert captured["params"] == {"key": "gemini-issued"}
+    assert captured["headers"] == {"x-goog-api-key": "gemini-issued"}
+    assert captured["params"] is None
     assert captured["json"]["contents"] == [{"role": "user", "parts": [{"text": "hello"}]}]
     assert captured["timeout"] == 9
     assert recorded == [
@@ -137,7 +139,7 @@ async def test_gemini_api_provider_preserves_function_call_async():
             raise AssertionError("usage should not be recorded without task_run_id")
 
     class FakeGeminiHttpClient:
-        async def post(self, url, params=None, json=None, timeout=None):
+        async def post(self, url, headers=None, params=None, json=None, timeout=None):
             captured["json"] = json
             return DummyHTTPResponse(
                 {
@@ -173,7 +175,24 @@ async def test_gemini_api_provider_preserves_function_call_async():
                 "function": {
                     "name": "todo",
                     "description": "todo list 관리",
-                    "parameters": {"type": "object", "properties": {"todos": {"type": "array"}}},
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "todos": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "content": {"type": "string", "default": ""},
+                                        "status": {"type": "string", "additionalProperties": False},
+                                    },
+                                    "additionalProperties": False,
+                                },
+                            },
+                            "meta": {"type": "object", "additionalProperties": True},
+                        },
+                        "additionalProperties": False,
+                    },
                 },
             }
         ],
@@ -182,6 +201,21 @@ async def test_gemini_api_provider_preserves_function_call_async():
     )
 
     assert captured["json"]["tools"][0]["functionDeclarations"][0]["name"] == "todo"
+    assert captured["json"]["tools"][0]["functionDeclarations"][0]["parameters"] == {
+        "type": "object",
+        "properties": {
+            "todos": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "status": {"type": "string"},
+                    },
+                },
+            }
+        },
+    }
     assert response.finish_reason == "function_call"
     assert response.tool_calls[0].name == "todo"
     assert response.tool_calls[0].arguments["todos"][0]["content"] == "정리"
@@ -194,3 +228,50 @@ def test_provider_registry_maps_gemini_backend_provider_to_gemini_runtime_provid
     provider = registry.model_provider_for("gemini_api_key")
 
     assert provider.name == "gemini_api"
+
+
+@pytest.mark.asyncio
+async def test_gemini_api_provider_surfaces_error_body_without_api_key():
+    settings = Settings()
+
+    class FakeBackendAiClient:
+        async def issue_credential(self, **kwargs):
+            class Credential:
+                provider_name = "gemini_api_key"
+                model = "gemini-2.5-pro"
+                credential_type = "api_key"
+                credential = "AIzaSySensitiveSecretShouldNotLeak"
+
+            return Credential()
+
+    class FakeGeminiHttpClient:
+        async def post(self, url, headers=None, params=None, json=None, timeout=None):
+            return DummyHTTPResponse(
+                {
+                    "error": {
+                        "code": 400,
+                        "status": "INVALID_ARGUMENT",
+                        "message": "GenerateContentRequest.tools[0] is invalid for key AIzaSySensitiveSecretShouldNotLeak",
+                    }
+                },
+                status_code=400,
+            )
+
+    provider = GeminiAPIProvider(
+        settings,
+        http_client=FakeGeminiHttpClient(),
+        backend_ai_client=FakeBackendAiClient(),
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        await provider.respond_async(
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[],
+            model="gemini-2.5-pro",
+            runtime_context={"user_id": "10", "provider_name": "gemini_api_key"},
+        )
+
+    message = str(error.value)
+    assert "INVALID_ARGUMENT" in message
+    assert "GenerateContentRequest.tools[0]" in message
+    assert "AIza" not in message

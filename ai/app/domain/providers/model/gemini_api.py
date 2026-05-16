@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import re
 from typing import Any
 
 import httpx
@@ -140,11 +141,11 @@ class GeminiAPIProvider(BaseProvider):
         )
         response = await self._http_client.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/{credential.model}:generateContent",
-            params={"key": credential.credential},
+            headers={"x-goog-api-key": credential.credential},
             json=request_body,
             timeout=self.settings.agent_model_request_timeout_seconds,
         )
-        response.raise_for_status()
+        self._raise_for_gemini_error(response)
         agent_response = self._build_agent_model_response(
             provider_name=credential.provider_name,
             requested_model=credential.model,
@@ -291,13 +292,83 @@ class GeminiAPIProvider(BaseProvider):
             name = self._optional_text(function.get("name"))
             if name is None:
                 continue
+            parameters = self._sanitize_schema(function.get("parameters") or {})
             declaration = {
                 "name": name,
                 "description": str(function.get("description") or ""),
-                "parameters": function.get("parameters") or {},
             }
+            if parameters is not None:
+                declaration["parameters"] = parameters
             declarations.append(declaration)
         return declarations
+
+    @classmethod
+    def _sanitize_schema(cls, schema: Any) -> dict[str, Any] | None:
+        if not isinstance(schema, dict):
+            return None
+
+        sanitized: dict[str, Any] = {}
+        schema_type = cls._optional_text(schema.get("type"))
+        if schema_type is not None:
+            sanitized["type"] = schema_type
+        for key in ("description", "format", "title", "nullable"):
+            value = schema.get(key)
+            if isinstance(value, (str, bool)) and not (isinstance(value, str) and not value.strip()):
+                sanitized[key] = value
+        enum_values = schema.get("enum")
+        if isinstance(enum_values, list) and enum_values:
+            sanitized["enum"] = [value for value in enum_values if isinstance(value, (str, int, float, bool))]
+        required = schema.get("required")
+        if isinstance(required, list):
+            sanitized["required"] = [value for value in required if isinstance(value, str) and value.strip()]
+        items = cls._sanitize_schema(schema.get("items"))
+        if items is not None:
+            sanitized["items"] = items
+        properties = schema.get("properties")
+        if isinstance(properties, dict):
+            sanitized_properties = {
+                str(name): property_schema
+                for name, raw_property_schema in properties.items()
+                if (property_schema := cls._sanitize_schema(raw_property_schema)) is not None
+            }
+            if sanitized_properties:
+                sanitized["properties"] = sanitized_properties
+
+        if sanitized.get("type") == "object" and "properties" not in sanitized:
+            return None
+        if sanitized.get("type") == "array" and "items" not in sanitized:
+            sanitized["items"] = {"type": "string"}
+        return sanitized or None
+
+    @classmethod
+    def _raise_for_gemini_error(cls, response: httpx.Response) -> None:
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as error:
+            detail = cls._gemini_error_detail(response)
+            raise RuntimeError(f"Gemini API 요청 실패: HTTP {response.status_code} - {detail}") from error
+
+    @classmethod
+    def _gemini_error_detail(cls, response: httpx.Response) -> str:
+        try:
+            payload = response.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if isinstance(error, dict):
+                message = cls._optional_text(error.get("message"))
+                status = cls._optional_text(error.get("status"))
+                if message and status:
+                    return cls._redact_api_keys(f"{status}: {message}")
+                if message:
+                    return cls._redact_api_keys(message)
+            return cls._redact_api_keys(json.dumps(payload, ensure_ascii=False)[:1000])
+        return cls._redact_api_keys(response.text[:1000] or "응답 본문 없음")
+
+    @staticmethod
+    def _redact_api_keys(text: str) -> str:
+        return re.sub(r"AIza[0-9A-Za-z_-]{20,}", "[REDACTED_GEMINI_API_KEY]", text)
 
     def _build_agent_model_response(
         self,
