@@ -76,7 +76,7 @@ export function AgentSprite({
   // useLayoutEffect로 동기 처리 — walk 스프라이트가 한 프레임도 노출되지 않도록 한다.
   const [standingUp, setStandingUp] = useState(false)
   const prevStateRef = useRef(agent.state)
-  const standingUpTimerRef = useRef<ReturnType<typeof setTimeout>>()
+  const standingUpTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   useLayoutEffect(() => {
     const prevState = prevStateRef.current

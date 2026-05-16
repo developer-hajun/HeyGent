@@ -36,7 +36,11 @@ import {
 import { SettingsDialog } from '@/components/settings/SettingsDialog'
 import { NewSessionModal, type CustomAgentConfig } from '@/components/session/NewSessionModal'
 import { defaultAgentSessionConfig } from '@/components/session/defaultAgentSession'
-import { getCurrentWorkspaceSessionId } from '@/components/sessionWorkspace/sessionWorkspaceUtils'
+import {
+  getCurrentWorkspaceSessionId,
+  getString,
+  toJsonObject,
+} from '@/components/sessionWorkspace/sessionWorkspaceUtils'
 import { getSessionTime, isRemovedSidebarSession } from './sessionListUtils'
 import { DEFAULT_SIDEBAR_COLLAPSED_WIDTH, useUIStore } from '@/store/useUIStore'
 import { useSessionStore } from '@/store/useSessionStore'
@@ -644,7 +648,12 @@ function toSidebarSession(
   messages: ChatMessageView[],
   taskRunsById: Record<string, RawTaskRun>,
 ): SidebarSession {
+  // 세션 워크스페이스 메뉴에서 이름을 수정하면 metadata.ui.sessionName에 저장되므로,
+  // 사이드바도 동일한 우선순위(metadata.ui.sessionName → session.title → session_key)로 표시한다.
+  const metadata = toJsonObject(session.metadata)
+  const uiMetadata = toJsonObject(metadata.ui)
   const title =
+    getString(uiMetadata, 'sessionName') ??
     getStringValue(session.title) ??
     getStringValue(session.session_key) ??
     `세션 ${session.session_id}`
