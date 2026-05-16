@@ -125,7 +125,9 @@ function OnboardingOverlays() {
 
   const showApiCard =
     isAuthenticated && !apiDismissedSession && !apiDismissedDaily && apiKeyMissing && !settingsOpen
+  // API 카드가 떠 있는 동안은 브릿지 카드를 띄우지 않는다 — 한 번에 하나씩만 보여줌
   const showBridgeCard =
+    !showApiCard &&
     isAuthenticated &&
     bridgeStatusPhase === 'loaded' &&
     !bridgeDismissedSession &&
