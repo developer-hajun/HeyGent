@@ -326,6 +326,152 @@ async def test_memory_extractor_normalizes_user_fact_embedded_in_task_request():
 
 
 @pytest.mark.asyncio
+async def test_memory_extractor_normalizes_future_instruction_for_mr_summary():
+    provider = FakeStructuredProvider(
+        {
+            "candidates": [
+                {
+                    "memoryType": "INSTRUCTION",
+                    "scopeType": "GLOBAL",
+                    "content": "MR 정리 시 테스트 결과를 먼저 작성한다.",
+                    "summary": "MR 정리 테스트 결과 우선",
+                    "metadata": {"category": "instruction", "tags": ["mr", "test_result"]},
+                    "importance": 0.75,
+                    "confidence": 0.9,
+                    "evidence": "앞으로 MR 정리할 때 테스트 결과 먼저 써줘",
+                }
+            ]
+        }
+    )
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="앞으로 MR 정리할 때 테스트 결과 먼저 써줘",
+        assistant_message="앞으로 MR 정리에는 테스트 결과를 먼저 쓰겠습니다.",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1"),
+    )
+
+    assert candidates == [
+        {
+            "memoryType": "INSTRUCTION",
+            "storeType": "AGENT_MEMORY",
+            "scopeType": "GLOBAL",
+            "operationType": "ADD",
+            "content": "MR 정리 시 테스트 결과를 먼저 작성한다.",
+            "metadata": {
+                "source": "ai.writeback",
+                "category": "instruction",
+                "sensitivity": "low",
+                "ttl": "long",
+                "tags": ["mr", "test_result"],
+            },
+            "importance": 0.75,
+            "confidence": 0.9,
+            "summary": "MR 정리 테스트 결과 우선",
+            "evidence": "앞으로 MR 정리할 때 테스트 결과 먼저 써줘",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_normalizes_workspace_branching_procedure():
+    provider = FakeStructuredProvider(
+        {
+            "candidates": [
+                {
+                    "memoryType": "PROCEDURE",
+                    "scopeType": "WORKSPACE",
+                    "content": "이 프로젝트에서는 작업을 기능별 브랜치로 나누어 진행한다.",
+                    "summary": "기능별 브랜치 작업 절차",
+                    "metadata": {"category": "procedure", "tags": ["branch", "workflow"]},
+                    "importance": 0.8,
+                    "confidence": 0.9,
+                    "evidence": "이 프로젝트에서는 항상 기능별 브랜치로 나눠서 작업해줘",
+                }
+            ]
+        }
+    )
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="이 프로젝트에서는 항상 기능별 브랜치로 나눠서 작업해줘",
+        assistant_message="이 프로젝트에서는 기능별 브랜치로 나눠서 작업하겠습니다.",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1", workspace_key="workspace-a"),
+    )
+
+    assert candidates == [
+        {
+            "memoryType": "PROCEDURE",
+            "storeType": "AGENT_MEMORY",
+            "scopeType": "WORKSPACE",
+            "operationType": "ADD",
+            "content": "이 프로젝트에서는 작업을 기능별 브랜치로 나누어 진행한다.",
+            "metadata": {
+                "source": "ai.writeback",
+                "category": "procedure",
+                "sensitivity": "low",
+                "ttl": "long",
+                "workspaceKey": "workspace-a",
+                "tags": ["branch", "workflow"],
+            },
+            "importance": 0.8,
+            "confidence": 0.9,
+            "summary": "기능별 브랜치 작업 절차",
+            "evidence": "이 프로젝트에서는 항상 기능별 브랜치로 나눠서 작업해줘",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_normalizes_recurring_notion_api_spec_procedure():
+    provider = FakeStructuredProvider(
+        {
+            "candidates": [
+                {
+                    "memoryType": "PROCEDURE",
+                    "scopeType": "WORKSPACE",
+                    "content": "이 프로젝트의 API 명세서는 계속 Notion에 정리한다.",
+                    "summary": "API 명세서 Notion 정리 절차",
+                    "metadata": {"category": "procedure", "tags": ["api_spec", "notion", "documentation"]},
+                    "importance": 0.8,
+                    "confidence": 0.9,
+                    "evidence": "우리 프로젝트 API 명세서 계속 Notion에 정리해줘",
+                }
+            ]
+        }
+    )
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="우리 프로젝트 API 명세서 계속 Notion에 정리해줘",
+        assistant_message="앞으로 이 프로젝트 API 명세서는 Notion에 계속 정리하겠습니다.",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1", workspace_key="workspace-a"),
+    )
+
+    assert candidates[0]["memoryType"] == "PROCEDURE"
+    assert candidates[0]["storeType"] == "AGENT_MEMORY"
+    assert candidates[0]["scopeType"] == "WORKSPACE"
+    assert candidates[0]["metadata"]["category"] == "procedure"
+    assert candidates[0]["metadata"]["workspaceKey"] == "workspace-a"
+    assert candidates[0]["metadata"]["tags"] == ["api_spec", "notion", "documentation"]
+    assert candidates[0]["content"] == "이 프로젝트의 API 명세서는 계속 Notion에 정리한다."
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_keeps_repeat_docs_logs_task_empty_without_new_procedure():
+    provider = FakeStructuredProvider({"candidates": []})
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="지난번처럼 docs/logs 작업하고 커밋해줘",
+        assistant_message="기존 절차대로 작업하겠습니다.",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1", workspace_key="workspace-a"),
+    )
+
+    assert candidates == []
+
+
+@pytest.mark.asyncio
 async def test_memory_extractor_normalizes_completed_user_event():
     provider = FakeStructuredProvider(
         {

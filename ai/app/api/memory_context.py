@@ -39,6 +39,7 @@ Rules:
 - Use reason/event categories when the user asks why, history, records, schedule, or previous event context.
 - If multiple memory classes could materially affect the answer, keep the primary plan narrow and add additionalRecallPlans for the other classes. For example, retrieve durable user preferences separately from reusable assistant instructions or procedures when both could matter.
 - When the user asks the assistant to perform a task and a saved response workflow could control the answer structure, include an additional AGENT_MEMORY recall plan with memoryType INSTRUCTION or PROCEDURE and metadataCategories instruction,procedure.
+- For repeated agent workflows such as "지난번처럼 docs/logs 작업하고 커밋해줘", recall reusable PROCEDURE/INSTRUCTION memories instead of treating the request itself as new memory.
 - When both instruction and procedure memories could apply, avoid narrowing memoryType to only one of them; let metadataCategories instruction,procedure retrieve both.
 - If a request may need both user preference and project state, or both user preference and reusable instructions, avoid over-narrowing; use additionalRecallPlans or omit uncertain filters.
 - Do not use tags, sessionKey, or resourceId in this first implementation.
