@@ -47,22 +47,13 @@ public class OpenAiCredentialIssueService {
         OpenAiProviderName providerName,
         String model
     ) {
-        try {
-            return response(
-                providerName,
-                model,
-                "api_key",
-                openAiApiKeyService.resolveApiKey(request.getUserId(), providerName),
-                null
-            );
-        } catch (CustomException exception) {
-            if (providerName == OpenAiProviderName.OPENAI_API_KEY
-                && exception.getErrorCode() == ErrorCode.OPENAI_PROVIDER_NOT_CONNECTED
-                && runtimePolicyService.isDevFallbackAvailable()) {
-                return response(OpenAiProviderName.OPENAI_DEV_FALLBACK, model, "api_key", properties.getApiKey(), null);
-            }
-            throw exception;
-        }
+        return response(
+            providerName,
+            model,
+            "api_key",
+            openAiApiKeyService.resolveApiKey(request.getUserId(), providerName),
+            null
+        );
     }
 
     private OpenAiCredentialIssueResponse response(
