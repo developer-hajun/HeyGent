@@ -165,6 +165,14 @@ async def test_memory_extractor_normalizes_llm_preference_candidate_without_expl
     assert candidates[0]["metadata"]["category"] == "preference"
 
 
+def test_memory_extractor_prompt_distinguishes_current_task_from_completed_event():
+    from app.domain.orchestration.agent.memory.memory_extractor import MEMORY_EXTRACTION_SYSTEM_PROMPT
+
+    assert "uncompleted current task request" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "나 오늘 어디 가는 기차 예약해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "오늘 부산 가는 KTX 예약했어" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+
+
 @pytest.mark.asyncio
 async def test_memory_extractor_reraises_provider_failure_without_rule_fallback_storage():
     provider = FakeStructuredProvider({"candidates": []}, fail=True)

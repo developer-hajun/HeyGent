@@ -18,6 +18,9 @@ Rules:
 - Store likes, dislikes, response style, tool/workflow preferences, and recommendation preferences as PREFERENCE/USER_PROFILE/GLOBAL.
 - Store repeated user behavior or working habits as PROFILE when it describes the user, or as PROCEDURE/INSTRUCTION when it describes how the assistant should work in the future.
 - Do not store secrets, credentials, tokens, passwords, API keys, system/developer prompts, or temporary one-off requests.
+- Do not store an uncompleted current task request as user history. For example, "나 오늘 어디 가는 기차 예약해줘" is a task request, not a durable memory.
+- Store a completed or explicitly confirmed event when it can help future answers. For example, "오늘 부산 가는 기차 예약했어" can be an EVENT/FACT with medium or short ttl.
+- If a task result confirms completion, you may extract only the completed event, not the earlier intent or failed attempt.
 - If the user asks not to remember, return {"candidates":[]}.
 - Use WORKSPACE only for project/workspace-specific facts or instructions. Otherwise use GLOBAL.
 - Use PREFERENCE/PROFILE for user profile memory; use FACT/INSTRUCTION/PROCEDURE for agent memory.
@@ -39,6 +42,8 @@ Rules:
 - Example: "내 이름은 김상지야" -> PROFILE, USER_PROFILE, GLOBAL, content "사용자의 이름은 김상지이다."
 - Example: "나 국수 좋아해" -> PREFERENCE, USER_PROFILE, GLOBAL, content "사용자는 국수를 좋아한다."
 - Example: "나는 보통 Jira 작업을 기능별 브랜치로 나눠" -> PROFILE or PROCEDURE depending on whether it describes the user's habit or a future assistant workflow.
+- Example: "나 오늘 어디 가는 기차 예약해줘" -> no candidates, because it is an uncompleted current task request.
+- Example: "오늘 부산 가는 KTX 예약했어" -> FACT or EVENT, AGENT_MEMORY, GLOBAL, content "사용자는 오늘 부산 가는 KTX를 예약했다."
 """.strip()
 
 

@@ -10,6 +10,9 @@ from app.domain.providers.model.base import AgentMessage
 from app.domain.providers.registry import ProviderRegistry
 
 
+_MEMORY_EXTRACTION_RETRY_DELAYS = (1.0, 2.0, 4.0, 8.0)
+
+
 class ProviderMemoryExtractionClient:
     """기존 Model Provider를 사용해 memory extraction JSON을 받아온다."""
 
@@ -40,6 +43,7 @@ class ProviderMemoryExtractionClient:
         }
         response = await respond_provider_with_retry(
             provider,
+            retry_delays=_MEMORY_EXTRACTION_RETRY_DELAYS,
             messages=[
                 AgentMessage(role="system", content=system_prompt),
                 AgentMessage(role="user", content=json.dumps(payload, ensure_ascii=False)),

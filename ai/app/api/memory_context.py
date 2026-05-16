@@ -193,18 +193,6 @@ def plan_memory_recall(
     wants_reason = _contains_any(compact, _REASON_HINTS)
     wants_event = _contains_any(compact, _EVENT_HINTS)
 
-    if wants_preference and not (wants_workspace or wants_procedure or wants_reason or wants_event):
-        return MemoryRecallPlan(
-            should_recall=True,
-            query=normalized_query,
-            reason="user_preference_needed",
-            limit=limit,
-            store_type="USER_PROFILE",
-            memory_type="PREFERENCE",
-            scope_type="GLOBAL",
-            metadata_categories=("preference",),
-        )
-
     if wants_profile and not (wants_workspace or wants_procedure or wants_reason or wants_event):
         return MemoryRecallPlan(
             should_recall=True,
@@ -215,6 +203,18 @@ def plan_memory_recall(
             memory_type="PROFILE",
             scope_type="GLOBAL",
             metadata_categories=("profile",),
+        )
+
+    if wants_preference and not (wants_workspace or wants_procedure or wants_reason or wants_event):
+        return MemoryRecallPlan(
+            should_recall=True,
+            query=normalized_query,
+            reason="user_preference_needed",
+            limit=limit,
+            store_type="USER_PROFILE",
+            memory_type="PREFERENCE",
+            scope_type="GLOBAL",
+            metadata_categories=("preference",),
         )
 
     if wants_workspace:
@@ -789,7 +789,18 @@ _PREFERENCE_HINTS = (
     "지라",
     "mr",
 )
-_PROFILE_HINTS = ("내 담당", "내 역할", "프로필", "나는 ", "제가 ")
+_PROFILE_HINTS = (
+    "내 담당",
+    "내 역할",
+    "내 이름",
+    "이름은",
+    "이름이",
+    "호칭",
+    "불러",
+    "프로필",
+    "나는 ",
+    "제가 ",
+)
 _WORKSPACE_HINTS = (
     "이어서",
     "아까",
