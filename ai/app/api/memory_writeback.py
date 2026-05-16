@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 from typing import Any
 
 from app.api.memory_observation import build_writeback_observation
@@ -28,6 +29,7 @@ async def writeback_persistent_memory_candidates(
     user_message_id: str | None = None,
     assistant_message_id: str | None = None,
     model: str | None = None,
+    request_date: str | None = None,
 ) -> dict[str, Any]:
     """대화 완료 후 장기기억 후보를 추출해 backend에 저장 요청한다.
 
@@ -57,6 +59,7 @@ async def writeback_persistent_memory_candidates(
         user_message_id=user_message_id,
         assistant_message_id=assistant_message_id,
         model=str(model or "").strip() or None,
+        request_date=_request_date(request_date),
     )
     try:
         candidates = await memory_extractor.extract_candidates(
@@ -205,3 +208,8 @@ def _memory_extractor_error_reason(error_details: dict[str, Any]) -> str:
     if error_details.get("provider_status_code") is not None:
         return "memory_extractor_http_error"
     return "memory_extractor_error"
+
+
+def _request_date(value: str | None) -> str:
+    normalized = str(value or "").strip()
+    return normalized or date.today().isoformat()
