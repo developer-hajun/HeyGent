@@ -19,6 +19,7 @@ class ProviderMemoryExtractionClient:
     def __init__(self, *, provider_registry: ProviderRegistry, model: str | None = None) -> None:
         self._provider_registry = provider_registry
         self._model = model
+        self.last_memory_provider_meta: dict[str, Any] = {}
 
     async def extract_memory_json(
         self,
@@ -31,6 +32,7 @@ class ProviderMemoryExtractionClient:
         provider = self._provider_registry.preferred_model_provider()
         _ensure_live_provider(provider)
         model = _select_model(provider, configured_model=self._model, requested_model=context.model)
+        self.last_memory_provider_meta = _provider_meta(provider, model=model, retry_delays=_MEMORY_EXTRACTION_RETRY_DELAYS)
         payload = {
             "userMessage": user_message,
             "assistantMessage": assistant_message,
@@ -66,6 +68,7 @@ class ProviderMemoryExtractionClient:
         provider = self._provider_registry.preferred_model_provider()
         _ensure_live_provider(provider)
         model = _select_model(provider, configured_model=self._model, requested_model=None)
+        self.last_memory_provider_meta = _provider_meta(provider, model=model)
         payload = {
             "userMessage": user_message,
             "candidate": candidate,
@@ -115,3 +118,11 @@ def _ensure_live_provider(provider) -> None:
     health = provider.health()
     if not bool(getattr(health, "connected", False)):
         raise RuntimeError("memory provider requires a connected model provider")
+
+
+def _provider_meta(provider, *, model: str, retry_delays: tuple[float, ...] = (0.5, 1.0)) -> dict[str, Any]:
+    return {
+        "provider_name": str(getattr(provider, "name", None) or provider.__class__.__name__),
+        "selected_model": model,
+        "max_attempts": len(retry_delays) + 1,
+    }

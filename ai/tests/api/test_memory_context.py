@@ -68,9 +68,15 @@ class FakeRecallPlannerProvider:
         self.fail_error = fail_error
         self.delay_seconds = delay_seconds
         self.calls = []
+        self.last_memory_provider_meta = {}
 
     async def plan_memory_recall_json(self, **kwargs):
         self.calls.append(kwargs)
+        self.last_memory_provider_meta = {
+            "provider_name": "fake_memory_provider",
+            "selected_model": kwargs.get("model") or "fake-default",
+            "max_attempts": 3,
+        }
         if self.delay_seconds:
             await asyncio.sleep(self.delay_seconds)
         if self.fail:
@@ -322,10 +328,15 @@ async def test_llm_memory_recall_planner_falls_back_to_rules_on_error():
 async def test_llm_memory_recall_planner_records_http_error_fallback_details():
     request = httpx.Request("POST", "https://api.openai.com/v1/responses")
     response = httpx.Response(429, request=request, text="rate limited")
+    error = httpx.HTTPStatusError("rate limited", request=request, response=response)
+    setattr(error, "memory_selected_model", "gpt-memory-debug")
+    setattr(error, "memory_provider_name", "fake_memory_provider")
+    setattr(error, "memory_retry_attempts", 3)
+    setattr(error, "memory_max_attempts", 3)
     planner = LlmMemoryRecallPlanner(
         provider=FakeRecallPlannerProvider(
             fail=True,
-            fail_error=httpx.HTTPStatusError("rate limited", request=request, response=response),
+            fail_error=error,
         )
     )
 
@@ -336,6 +347,11 @@ async def test_llm_memory_recall_planner_records_http_error_fallback_details():
     assert plan.fallback_reason == "llm_planner_http_error:429"
     assert plan.fallback_error_type == "HTTPStatusError"
     assert plan.fallback_status_code == 429
+    assert plan.fallback_selected_model == "gpt-memory-debug"
+    assert plan.fallback_provider_name == "fake_memory_provider"
+    assert plan.fallback_retry_attempts == 3
+    assert plan.fallback_max_attempts == 3
+    assert plan.fallback_provider_error_message == "rate limited"
     assert plan.planner_latency_ms is not None
 
 
@@ -351,6 +367,9 @@ async def test_llm_memory_recall_planner_times_out_to_rule_fallback():
     assert plan.reason == "workspace_memory_needed"
     assert plan.planner_source == "rule_fallback"
     assert plan.fallback_reason == "llm_planner_timeout"
+    assert plan.fallback_selected_model == "fake-default"
+    assert plan.fallback_provider_name == "fake_memory_provider"
+    assert plan.fallback_max_attempts == 3
     assert plan.planner_latency_ms is not None
 
 

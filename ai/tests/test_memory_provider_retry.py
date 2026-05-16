@@ -53,6 +53,33 @@ async def test_respond_provider_with_retry_retries_retryable_http_status(monkeyp
     assert response.output_text == '{"ok":true}'
 
 
+@pytest.mark.asyncio
+async def test_respond_provider_with_retry_attaches_debug_metadata_on_final_failure(monkeypatch):
+    async def fake_sleep(delay: float) -> None:
+        return None
+
+    monkeypatch.setattr("app.domain.orchestration.agent.memory.provider_retry.asyncio.sleep", fake_sleep)
+    provider = FlakyProvider(fail_count=3)
+
+    with pytest.raises(httpx.HTTPStatusError) as error:
+        await respond_provider_with_retry(
+            provider,
+            retry_delays=(0.01, 0.02),
+            messages=[],
+            tools=None,
+            model="gpt-memory-debug",
+            tool_choice=None,
+        )
+
+    details = memory_provider_error_details(error.value)
+    assert provider.calls == 3
+    assert details["selected_model"] == "gpt-memory-debug"
+    assert details["provider_name"] == "FlakyProvider"
+    assert details["retry_attempts"] == 3
+    assert details["max_attempts"] == 3
+    assert details["provider_error_message"] == "rate limited"
+
+
 def test_memory_provider_error_details_extracts_http_status():
     request = httpx.Request("POST", "https://api.openai.com/v1/responses")
     response = httpx.Response(429, request=request, text="rate limited")

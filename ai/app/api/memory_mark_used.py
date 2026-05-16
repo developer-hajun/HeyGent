@@ -81,6 +81,7 @@ class _AttributionResult:
     failed: bool = False
     fallback_reason: str | None = None
     latency_ms: int | None = None
+    error_details: dict[str, Any] | None = None
 
 
 class LlmMemoryUsageAttributionVerifier:
@@ -123,6 +124,7 @@ class LlmMemoryUsageAttributionVerifier:
                 failed=True,
                 fallback_reason="llm_attribution_timeout",
                 latency_ms=latency_ms,
+                error_details=_memory_provider_meta(self._provider),
             )
         except Exception as exc:
             latency_ms = _elapsed_ms(started_at)
@@ -135,6 +137,7 @@ class LlmMemoryUsageAttributionVerifier:
                 failed=True,
                 fallback_reason=_llm_attribution_fallback_reason(exc, error_details),
                 latency_ms=latency_ms,
+                error_details=error_details,
             )
         return _normalize_llm_attribution(
             raw,
@@ -364,6 +367,8 @@ def _put_attribution_meta(
         observation["attribution"]["llm_fallback_reason"] = llm_result.fallback_reason
     if llm_result.latency_ms is not None:
         observation["attribution"]["llm_latency_ms"] = llm_result.latency_ms
+    if llm_result.error_details:
+        observation["attribution"]["llm_error_details"] = dict(llm_result.error_details)
 
 
 def _recalled_memory_ids(input_payload: dict[str, Any]) -> list[int]:
@@ -466,6 +471,11 @@ def _llm_attribution_fallback_reason(exc: BaseException, error_details: dict[str
     if isinstance(status_code, int):
         return f"llm_attribution_http_error:{status_code}"
     return f"llm_attribution_error:{type(exc).__name__}"
+
+
+def _memory_provider_meta(provider: Any) -> dict[str, Any]:
+    meta = getattr(provider, "last_memory_provider_meta", None)
+    return dict(meta) if isinstance(meta, dict) else {}
 
 
 def _skipped(reason: str, *, task_run_id: str | None, recalled_ids: list[int] | None = None) -> dict[str, Any]:

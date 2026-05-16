@@ -60,6 +60,11 @@ class MemoryRecallPlan:
     planner_latency_ms: int | None = None
     fallback_error_type: str | None = None
     fallback_status_code: int | None = None
+    fallback_provider_name: str | None = None
+    fallback_selected_model: str | None = None
+    fallback_retry_attempts: int | None = None
+    fallback_max_attempts: int | None = None
+    fallback_provider_error_message: str | None = None
     additional_plans: tuple["MemoryRecallPlan", ...] = ()
 
     def filters(self) -> dict[str, Any]:
@@ -136,7 +141,12 @@ class LlmMemoryRecallPlanner:
                 raise
             latency_ms = _elapsed_ms(started_at)
             logger.warning("LLM memory recall planner timed out; falling back to rule planner", exc_info=True)
-            return _fallback_rule_plan(rule_plan, reason="llm_planner_timeout", latency_ms=latency_ms)
+            return _fallback_rule_plan(
+                rule_plan,
+                reason="llm_planner_timeout",
+                latency_ms=latency_ms,
+                error_details=_memory_provider_meta(self._provider),
+            )
         except Exception as exc:
             if not self._fallback_to_rules:
                 raise
@@ -493,6 +503,16 @@ def _with_recall_plan(recall_meta: dict[str, Any], recall_plan: MemoryRecallPlan
         enriched["planner"]["fallback_error_type"] = recall_plan.fallback_error_type
     if recall_plan.fallback_status_code is not None:
         enriched["planner"]["fallback_status_code"] = recall_plan.fallback_status_code
+    if recall_plan.fallback_provider_name:
+        enriched["planner"]["fallback_provider_name"] = recall_plan.fallback_provider_name
+    if recall_plan.fallback_selected_model:
+        enriched["planner"]["fallback_selected_model"] = recall_plan.fallback_selected_model
+    if recall_plan.fallback_retry_attempts is not None:
+        enriched["planner"]["fallback_retry_attempts"] = recall_plan.fallback_retry_attempts
+    if recall_plan.fallback_max_attempts is not None:
+        enriched["planner"]["fallback_max_attempts"] = recall_plan.fallback_max_attempts
+    if recall_plan.fallback_provider_error_message:
+        enriched["planner"]["fallback_provider_error_message"] = recall_plan.fallback_provider_error_message
     if recall_plan.additional_plans:
         enriched["planner"]["additional_plans"] = [
             {
@@ -651,6 +671,11 @@ def _fallback_rule_plan(
         planner_latency_ms=latency_ms,
         fallback_error_type=details.get("error_type") if isinstance(details.get("error_type"), str) else None,
         fallback_status_code=details.get("provider_status_code") if isinstance(details.get("provider_status_code"), int) else None,
+        fallback_provider_name=details.get("provider_name") if isinstance(details.get("provider_name"), str) else None,
+        fallback_selected_model=details.get("selected_model") if isinstance(details.get("selected_model"), str) else None,
+        fallback_retry_attempts=details.get("retry_attempts") if isinstance(details.get("retry_attempts"), int) else None,
+        fallback_max_attempts=details.get("max_attempts") if isinstance(details.get("max_attempts"), int) else None,
+        fallback_provider_error_message=details.get("provider_error_message") if isinstance(details.get("provider_error_message"), str) else None,
     )
 
 
@@ -660,6 +685,11 @@ def _planner_fallback_reason(exc: BaseException) -> str:
     if isinstance(status_code, int):
         return f"llm_planner_http_error:{status_code}"
     return f"llm_planner_error:{type(exc).__name__}"
+
+
+def _memory_provider_meta(provider: Any) -> dict[str, Any]:
+    meta = getattr(provider, "last_memory_provider_meta", None)
+    return dict(meta) if isinstance(meta, dict) else {}
 
 
 def _align_store_and_memory_type(store_type: str | None, memory_type: str | None) -> tuple[str | None, str | None]:

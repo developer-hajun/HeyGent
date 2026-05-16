@@ -23,6 +23,11 @@ class FakeUsageAttributionVerifier:
         self.scores = scores or {}
         self.fail = fail
         self.calls = []
+        self.last_memory_provider_meta = {
+            "provider_name": "fake_memory_provider",
+            "selected_model": "gpt-memory-debug",
+            "max_attempts": 3,
+        }
 
     async def verify_usage(self, **kwargs):
         self.calls.append(kwargs)
@@ -35,6 +40,7 @@ class FakeUsageAttributionVerifier:
             failed=False,
             fallback_reason=None,
             latency_ms=1,
+            error_details=None,
         )
 
 

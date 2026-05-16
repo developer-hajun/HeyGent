@@ -15,6 +15,7 @@ class ProviderMemoryRecallPlannerClient:
     def __init__(self, *, provider_registry: ProviderRegistry, model: str | None = None) -> None:
         self._provider_registry = provider_registry
         self._model = model
+        self.last_memory_provider_meta: dict[str, Any] = {}
 
     async def plan_memory_recall_json(
         self,
@@ -32,6 +33,10 @@ class ProviderMemoryRecallPlannerClient:
             or str(model or "").strip()
             or str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
         )
+        self.last_memory_provider_meta = {
+            "provider_name": str(getattr(provider, "name", None) or provider.__class__.__name__),
+            "selected_model": selected_model,
+        }
         payload = {
             "query": query,
             "workspaceKey": workspace_key,
