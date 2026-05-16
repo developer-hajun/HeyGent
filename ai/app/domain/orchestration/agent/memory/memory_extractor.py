@@ -23,7 +23,10 @@ Rules:
 - Store completed project or code work as FACT/AGENT_MEMORY/WORKSPACE with metadata.category "task_state" or "event" when the assistant response confirms files changed, tests passed, a commit was created, or a concrete implementation result was completed. The user's request alone is not enough; the assistant result must confirm completion.
 - Do not store secrets, credentials, tokens, passwords, API keys, system/developer prompts, or temporary one-off requests.
 - Do not store an uncompleted current task request as user history. For example, "나 오늘 어디 가는 기차 예약해줘" is a task request, not a durable memory.
+- Do not store uncompleted booking, purchase, scheduling, email, ticket, code, file, or tool-action requests.
 - Store a completed or explicitly confirmed event when it can help future answers. For example, "오늘 부산 가는 기차 예약했어" can be an EVENT/FACT with medium or short ttl.
+- If the assistant or tool result confirms a booking, purchase, scheduling action, email, ticket, file change, or code change was completed, store only the confirmed outcome as FACT/AGENT_MEMORY with metadata.category "event" or "task_state". Do not store the earlier intent.
+- For confirmed scheduled events or bookings, use metadata.eventTime for the scheduled event time and metadata.sourceTimestamp for the confirmation/source time when known. Use expiresAt when the event becomes stale after a clear time.
 - If a task result confirms completion, you may extract only the completed event, not the earlier intent or failed attempt.
 - If the user asks not to remember, return {"candidates":[]}.
 - Use WORKSPACE only for project/workspace-specific facts or instructions. Otherwise use GLOBAL.
@@ -48,6 +51,7 @@ Rules:
 - Example: "나 국수 좋아해" -> PREFERENCE, USER_PROFILE, GLOBAL, content "사용자는 국수를 좋아한다."
 - Example: "나는 보통 Jira 작업을 기능별 브랜치로 나눠" -> PROFILE or PROCEDURE depending on whether it describes the user's habit or a future assistant workflow.
 - Example: "나 오늘 어디 가는 기차 예약해줘" -> no candidates, because it is an uncompleted current task request.
+- Example: user "부산 가는 KTX 예약해줘" and assistant/tool "2026-05-20 09:00 서울역 출발 부산행 KTX 예약이 완료됐습니다." -> extract only the confirmed booking as FACT, AGENT_MEMORY, GLOBAL, content "사용자는 2026-05-20 09:00 서울역 출발 부산행 KTX를 예약했다.", metadata.category "event", metadata.tags ["travel","train","booking"], metadata.eventTime "2026-05-20T09:00:00".
 - Example: user "오늘 이 부분 코드 개발해줘" with no confirmed result yet -> no candidates, because it is only a current task request. Do not store "사용자가 오늘 코드 개발을 요청했다."
 - Example with context.requestDate "2026-05-16": user "오늘 이 부분 코드 개발해줘" and assistant "구현했고 테스트도 통과했습니다." -> extract only the completed project event as FACT, AGENT_MEMORY, WORKSPACE if workspaceKey exists, content "2026-05-16에 해당 프로젝트의 코드 개발 작업이 완료됐다.", metadata.category "task_state" or "event", metadata.ttl "medium".
 - Example: "오늘 부산 가는 KTX 예약했어" -> FACT or EVENT, AGENT_MEMORY, GLOBAL, content "사용자는 오늘 부산 가는 KTX를 예약했다."

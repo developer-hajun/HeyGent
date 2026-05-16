@@ -169,14 +169,34 @@ def test_memory_extractor_prompt_distinguishes_current_task_from_completed_event
     from app.domain.orchestration.agent.memory.memory_extractor import MEMORY_EXTRACTION_SYSTEM_PROMPT
 
     assert "uncompleted current task request" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "booking, purchase, scheduling" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "assistant or tool result confirms" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "metadata.eventTime" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "metadata.sourceTimestamp" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "A task request can contain a separable user fact" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "context.requestDate" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "나 오늘 어디 가는 기차 예약해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "부산 가는 KTX 예약해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "오늘 이 부분 코드 개발해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "The user's request alone is not enough" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "해당 프로젝트의 코드 개발 작업이 완료됐다." in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "오늘 부산 가는 KTX 예약했어" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "나 백엔드 면접 준비중인데 면접 준비 계획서 만들어줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_keeps_uncompleted_booking_request_empty():
+    provider = FakeStructuredProvider({"candidates": []})
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="부산 가는 KTX 예약해줘",
+        assistant_message="출발일과 시간을 알려주세요.",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1", request_date="2026-05-16"),
+    )
+
+    assert candidates == []
+    assert provider.calls[0]["user_message"] == "부산 가는 KTX 예약해줘"
 
 
 @pytest.mark.asyncio
@@ -270,6 +290,64 @@ async def test_memory_extractor_normalizes_completed_user_event():
     assert candidates[0]["metadata"]["ttl"] == "medium"
     assert candidates[0]["metadata"]["eventTime"] == "2026-05-16T00:00:00"
     assert candidates[0]["metadata"]["tags"] == ["travel", "train"]
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_normalizes_confirmed_booking_tool_result_as_event():
+    provider = FakeStructuredProvider(
+        {
+            "candidates": [
+                {
+                    "memoryType": "FACT",
+                    "scopeType": "GLOBAL",
+                    "content": "사용자는 2026-05-20 09:00 서울역 출발 부산행 KTX를 예약했다.",
+                    "summary": "부산행 KTX 예약 완료",
+                    "metadata": {
+                        "category": "event",
+                        "ttl": "short",
+                        "tags": ["travel", "train", "booking"],
+                        "eventTime": "2026-05-20T09:00:00",
+                        "sourceTimestamp": "2026-05-16T15:30:00",
+                    },
+                    "expiresAt": "2026-05-20T12:00:00",
+                    "importance": 0.75,
+                    "confidence": 0.92,
+                    "evidence": "2026-05-20 09:00 서울역 출발 부산행 KTX 예약이 완료됐습니다.",
+                }
+            ]
+        }
+    )
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="부산 가는 KTX 예약해줘",
+        assistant_message="2026-05-20 09:00 서울역 출발 부산행 KTX 예약이 완료됐습니다.",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1", request_date="2026-05-16"),
+    )
+
+    assert candidates == [
+        {
+            "memoryType": "FACT",
+            "storeType": "AGENT_MEMORY",
+            "scopeType": "GLOBAL",
+            "operationType": "ADD",
+            "content": "사용자는 2026-05-20 09:00 서울역 출발 부산행 KTX를 예약했다.",
+            "metadata": {
+                "source": "ai.writeback",
+                "category": "event",
+                "sensitivity": "low",
+                "ttl": "short",
+                "tags": ["travel", "train", "booking"],
+                "sourceTimestamp": "2026-05-16T15:30:00",
+                "eventTime": "2026-05-20T09:00:00",
+            },
+            "importance": 0.75,
+            "confidence": 0.92,
+            "summary": "부산행 KTX 예약 완료",
+            "evidence": "2026-05-20 09:00 서울역 출발 부산행 KTX 예약이 완료됐습니다.",
+            "expiresAt": "2026-05-20T12:00:00",
+        }
+    ]
 
 
 @pytest.mark.asyncio
