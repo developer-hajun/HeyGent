@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
 from app.api.memory_context import MemoryRecallPlan
+from app.domain.orchestration.agent.memory.provider_retry import respond_provider_with_retry
 from app.domain.providers.model.base import AgentMessage
 from app.domain.providers.registry import ProviderRegistry
 
@@ -36,7 +36,7 @@ class ProviderMemoryRecallPlannerClient:
                 "filters": rule_plan.filters(),
             },
         }
-        response = await _respond_provider_async(
+        response = await respond_provider_with_retry(
             provider,
             messages=[
                 AgentMessage(role="system", content=system_prompt),
@@ -62,13 +62,6 @@ def _parse_json_object(text: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("memory recall planner response must be a JSON object")
     return parsed
-
-
-async def _respond_provider_async(provider, **kwargs):
-    respond_async = getattr(provider, "respond_async", None)
-    if callable(respond_async):
-        return await respond_async(**kwargs)
-    return await asyncio.to_thread(provider.respond, **kwargs)
 
 
 def _ensure_live_provider(provider) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.api.memory_writeback import writeback_persistent_memory_candidates
@@ -38,15 +39,16 @@ class FakeMemoryClient:
 
 
 class FakeExtractor:
-    def __init__(self, candidates=None, *, fail: bool = False) -> None:
+    def __init__(self, candidates=None, *, fail: bool = False, fail_error: Exception | None = None) -> None:
         self.calls = []
         self.candidates = candidates or []
         self.fail = fail
+        self.fail_error = fail_error
 
     async def extract_candidates(self, **kwargs):
         self.calls.append(kwargs)
         if self.fail:
-            raise RuntimeError("extract failed")
+            raise self.fail_error or RuntimeError("extract failed")
         return list(self.candidates)
 
 
@@ -134,6 +136,34 @@ async def test_writeback_is_nonfatal_when_extractor_fails():
     assert memory_client.calls == []
     assert observation["status"] == "extract_failed"
     assert observation["failed"] is True
+
+
+@pytest.mark.asyncio
+async def test_writeback_records_http_error_details_when_extractor_fails():
+    request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+    response = httpx.Response(429, request=request, text="rate limited")
+    memory_client = FakeMemoryClient()
+    extractor = FakeExtractor(
+        fail=True,
+        fail_error=httpx.HTTPStatusError("rate limited", request=request, response=response),
+    )
+    app_state = SimpleNamespace(backend_memory_client=memory_client, memory_extractor=extractor)
+
+    observation = await writeback_persistent_memory_candidates(
+        app_state=app_state,
+        user_id="1",
+        user_message="나 국수 좋아해.",
+        assistant_message="국수도 좋죠.",
+        session_id="session_1",
+    )
+
+    assert memory_client.calls == []
+    assert observation["status"] == "extract_failed"
+    assert observation["reason"] == "memory_extractor_http_error"
+    assert observation["error_type"] == "HTTPStatusError"
+    assert observation["provider_status_code"] == 429
+    assert observation["retryable"] is True
+    assert observation["provider_error_message"] == "rate limited"
 
 
 @pytest.mark.asyncio

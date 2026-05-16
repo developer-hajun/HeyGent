@@ -9,6 +9,7 @@ from typing import Any, Protocol
 
 from app.api.memory_observation import MEMORY_CONTEXT_META_KEY
 from app.clients.backend_memory import BackendMemoryClientError
+from app.domain.orchestration.agent.memory.provider_retry import memory_provider_error_details
 
 logger = logging.getLogger(__name__)
 
@@ -126,12 +127,13 @@ class LlmMemoryUsageAttributionVerifier:
         except Exception as exc:
             latency_ms = _elapsed_ms(started_at)
             logger.warning("LLM memory usage attribution failed; falling back to heuristic", exc_info=True)
+            error_details = memory_provider_error_details(exc)
             return _AttributionResult(
                 scores={},
                 reasons={},
                 source="llm",
                 failed=True,
-                fallback_reason=f"llm_attribution_error:{type(exc).__name__}",
+                fallback_reason=_llm_attribution_fallback_reason(exc, error_details),
                 latency_ms=latency_ms,
             )
         return _normalize_llm_attribution(
@@ -457,6 +459,13 @@ def _has_direct_phrase(source_text: str, assistant_message: str) -> bool:
 
 def _elapsed_ms(started_at: float) -> int:
     return max(0, round((time.perf_counter() - started_at) * 1000))
+
+
+def _llm_attribution_fallback_reason(exc: BaseException, error_details: dict[str, Any]) -> str:
+    status_code = error_details.get("provider_status_code")
+    if isinstance(status_code, int):
+        return f"llm_attribution_http_error:{status_code}"
+    return f"llm_attribution_error:{type(exc).__name__}"
 
 
 def _skipped(reason: str, *, task_run_id: str | None, recalled_ids: list[int] | None = None) -> dict[str, Any]:

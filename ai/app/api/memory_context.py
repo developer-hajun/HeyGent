@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from app.api.memory_observation import MEMORY_CONTEXT_META_KEY, build_recall_observation
 from app.clients.backend_memory import BackendMemoryClientError
+from app.domain.orchestration.agent.memory.provider_retry import memory_provider_error_details
 from app.domain.orchestration.prompts.persistent_memory_prompt import build_persistent_memory_prompt
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,8 @@ class MemoryRecallPlan:
     planner_source: str = "rule"
     fallback_reason: str | None = None
     planner_latency_ms: int | None = None
+    fallback_error_type: str | None = None
+    fallback_status_code: int | None = None
     additional_plans: tuple["MemoryRecallPlan", ...] = ()
 
     def filters(self) -> dict[str, Any]:
@@ -138,8 +141,9 @@ class LlmMemoryRecallPlanner:
             logger.warning("LLM memory recall planner failed; falling back to rule planner", exc_info=True)
             return _fallback_rule_plan(
                 rule_plan,
-                reason=f"llm_planner_error:{type(exc).__name__}",
+                reason=_planner_fallback_reason(exc),
                 latency_ms=latency_ms,
+                error_details=memory_provider_error_details(exc),
             )
 
 
@@ -477,6 +481,10 @@ def _with_recall_plan(recall_meta: dict[str, Any], recall_plan: MemoryRecallPlan
         enriched["planner"]["fallback_reason"] = recall_plan.fallback_reason
     if recall_plan.planner_latency_ms is not None:
         enriched["planner"]["latency_ms"] = recall_plan.planner_latency_ms
+    if recall_plan.fallback_error_type:
+        enriched["planner"]["fallback_error_type"] = recall_plan.fallback_error_type
+    if recall_plan.fallback_status_code is not None:
+        enriched["planner"]["fallback_status_code"] = recall_plan.fallback_status_code
     if recall_plan.additional_plans:
         enriched["planner"]["additional_plans"] = [
             {
@@ -620,13 +628,30 @@ def _normalize_additional_llm_recall_plans(
     return tuple(plans)
 
 
-def _fallback_rule_plan(rule_plan: MemoryRecallPlan, *, reason: str, latency_ms: int) -> MemoryRecallPlan:
+def _fallback_rule_plan(
+    rule_plan: MemoryRecallPlan,
+    *,
+    reason: str,
+    latency_ms: int,
+    error_details: dict[str, Any] | None = None,
+) -> MemoryRecallPlan:
+    details = dict(error_details or {})
     return replace(
         rule_plan,
         planner_source="rule_fallback",
         fallback_reason=reason,
         planner_latency_ms=latency_ms,
+        fallback_error_type=details.get("error_type") if isinstance(details.get("error_type"), str) else None,
+        fallback_status_code=details.get("provider_status_code") if isinstance(details.get("provider_status_code"), int) else None,
     )
+
+
+def _planner_fallback_reason(exc: BaseException) -> str:
+    details = memory_provider_error_details(exc)
+    status_code = details.get("provider_status_code")
+    if isinstance(status_code, int):
+        return f"llm_planner_http_error:{status_code}"
+    return f"llm_planner_error:{type(exc).__name__}"
 
 
 def _align_store_and_memory_type(store_type: str | None, memory_type: str | None) -> tuple[str | None, str | None]:

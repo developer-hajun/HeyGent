@@ -1250,6 +1250,12 @@ class WebSocketCommandRouter:
                 writeback=writeback_observation,
                 mark_used=mark_used_observation,
             )
+            await context.send_json(
+                _event_frame(
+                    "taskRun.snapshot.result",
+                    _task_snapshot_payload(completed_task),
+                )
+            )
 
     async def _run_resume_task(self, *, context: WebSocketBackgroundContext, task_run_id: str, approval_id: str, payload: dict[str, Any]) -> None:
         try:

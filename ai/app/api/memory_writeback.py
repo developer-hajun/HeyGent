@@ -10,6 +10,7 @@ from app.domain.orchestration.agent.memory.memory_reconciler import (
     MemoryOperationReconciler,
     MemoryReconciliationContext,
 )
+from app.domain.orchestration.agent.memory.provider_retry import memory_provider_error_details
 
 
 logger = logging.getLogger(__name__)
@@ -61,13 +62,15 @@ async def writeback_persistent_memory_candidates(
             assistant_message=assistant_message,
             context=context,
         )
-    except Exception:
+    except Exception as exc:
         logger.warning("장기기억 후보 추출에 실패했습니다.", exc_info=True)
+        error_details = memory_provider_error_details(exc)
         return build_writeback_observation(
             status="extract_failed",
             attempted=False,
-            reason="memory_extractor_error",
+            reason=_memory_extractor_error_reason(error_details),
             failed=True,
+            extra=error_details,
         )
     if not candidates:
         return build_writeback_observation(
@@ -194,3 +197,9 @@ def _backend_error_observation(exc: BackendMemoryClientError) -> dict[str, Any]:
     if exc.response_message:
         observation["backend_error_message"] = exc.response_message
     return observation
+
+
+def _memory_extractor_error_reason(error_details: dict[str, Any]) -> str:
+    if error_details.get("provider_status_code") is not None:
+        return "memory_extractor_http_error"
+    return "memory_extractor_error"

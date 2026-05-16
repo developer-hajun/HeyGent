@@ -1,6 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.api.memory_context import (
@@ -54,9 +55,17 @@ class QueryAwareFilteredMemoryClient(FilteredMemoryClient):
 
 
 class FakeRecallPlannerProvider:
-    def __init__(self, payload=None, *, fail: bool = False, delay_seconds: float = 0.0) -> None:
+    def __init__(
+        self,
+        payload=None,
+        *,
+        fail: bool = False,
+        fail_error: Exception | None = None,
+        delay_seconds: float = 0.0,
+    ) -> None:
         self.payload = payload or {}
         self.fail = fail
+        self.fail_error = fail_error
         self.delay_seconds = delay_seconds
         self.calls = []
 
@@ -65,7 +74,7 @@ class FakeRecallPlannerProvider:
         if self.delay_seconds:
             await asyncio.sleep(self.delay_seconds)
         if self.fail:
-            raise RuntimeError("planner failed")
+            raise self.fail_error or RuntimeError("planner failed")
         return self.payload
 
 
@@ -307,6 +316,27 @@ async def test_llm_memory_recall_planner_falls_back_to_rules_on_error():
     assert plan.fallback_reason == "llm_planner_error:RuntimeError"
     assert plan.planner_latency_ms is not None
     assert plan.filters()["metadata_categories"] == ["task_state", "fact"]
+
+
+@pytest.mark.asyncio
+async def test_llm_memory_recall_planner_records_http_error_fallback_details():
+    request = httpx.Request("POST", "https://api.openai.com/v1/responses")
+    response = httpx.Response(429, request=request, text="rate limited")
+    planner = LlmMemoryRecallPlanner(
+        provider=FakeRecallPlannerProvider(
+            fail=True,
+            fail_error=httpx.HTTPStatusError("rate limited", request=request, response=response),
+        )
+    )
+
+    plan = await planner.plan_recall("나 국수 좋아해", workspace_key="team-a")
+
+    assert plan.reason == "general_semantic_recall"
+    assert plan.planner_source == "rule_fallback"
+    assert plan.fallback_reason == "llm_planner_http_error:429"
+    assert plan.fallback_error_type == "HTTPStatusError"
+    assert plan.fallback_status_code == 429
+    assert plan.planner_latency_ms is not None
 
 
 @pytest.mark.asyncio
