@@ -169,8 +169,104 @@ def test_memory_extractor_prompt_distinguishes_current_task_from_completed_event
     from app.domain.orchestration.agent.memory.memory_extractor import MEMORY_EXTRACTION_SYSTEM_PROMPT
 
     assert "uncompleted current task request" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "A task request can contain a separable user fact" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "context.requestDate" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "나 오늘 어디 가는 기차 예약해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "오늘 부산 가는 KTX 예약했어" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "나 백엔드 면접 준비중인데 면접 준비 계획서 만들어줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_normalizes_user_fact_embedded_in_task_request():
+    provider = FakeStructuredProvider(
+        {
+            "candidates": [
+                {
+                    "memoryType": "FACT",
+                    "scopeType": "GLOBAL",
+                    "content": "사용자는 2026-05-16 기준 백엔드 면접을 준비 중이다.",
+                    "summary": "백엔드 면접 준비 중",
+                    "metadata": {
+                        "category": "fact",
+                        "ttl": "short",
+                        "tags": ["interview", "current_state"],
+                        "sourceTimestamp": "2026-05-16",
+                    },
+                    "importance": 0.75,
+                    "confidence": 0.9,
+                    "evidence": "나 백엔드 면접 준비중인데 면접 준비 계획서 만들어줘",
+                }
+            ]
+        }
+    )
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="나 백엔드 면접 준비중인데 면접 준비 계획서 만들어줘",
+        assistant_message="면접 준비 계획을 세워드릴게요.",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1", request_date="2026-05-16"),
+    )
+
+    assert candidates == [
+        {
+            "memoryType": "FACT",
+            "storeType": "AGENT_MEMORY",
+            "scopeType": "GLOBAL",
+            "operationType": "ADD",
+            "content": "사용자는 2026-05-16 기준 백엔드 면접을 준비 중이다.",
+            "metadata": {
+                "source": "ai.writeback",
+                "category": "fact",
+                "sensitivity": "low",
+                "ttl": "short",
+                "tags": ["interview", "current_state"],
+                "sourceTimestamp": "2026-05-16T00:00:00",
+            },
+            "importance": 0.75,
+            "confidence": 0.9,
+            "summary": "백엔드 면접 준비 중",
+            "evidence": "나 백엔드 면접 준비중인데 면접 준비 계획서 만들어줘",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_normalizes_completed_user_event():
+    provider = FakeStructuredProvider(
+        {
+            "candidates": [
+                {
+                    "memoryType": "FACT",
+                    "scopeType": "GLOBAL",
+                    "content": "사용자는 2026-05-16에 부산 가는 KTX를 예약했다.",
+                    "summary": "부산 KTX 예약",
+                    "metadata": {
+                        "category": "event",
+                        "ttl": "medium",
+                        "tags": ["travel", "train"],
+                        "eventTime": "2026-05-16",
+                    },
+                    "importance": 0.7,
+                    "confidence": 0.9,
+                    "evidence": "오늘 부산 가는 KTX 예약했어",
+                }
+            ]
+        }
+    )
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="오늘 부산 가는 KTX 예약했어",
+        assistant_message="예약해두셨군요.",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1", request_date="2026-05-16"),
+    )
+
+    assert candidates[0]["memoryType"] == "FACT"
+    assert candidates[0]["storeType"] == "AGENT_MEMORY"
+    assert candidates[0]["metadata"]["category"] == "event"
+    assert candidates[0]["metadata"]["ttl"] == "medium"
+    assert candidates[0]["metadata"]["eventTime"] == "2026-05-16T00:00:00"
+    assert candidates[0]["metadata"]["tags"] == ["travel", "train"]
 
 
 @pytest.mark.asyncio

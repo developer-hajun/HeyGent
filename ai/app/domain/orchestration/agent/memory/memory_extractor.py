@@ -17,6 +17,9 @@ Rules:
 - Store identity/profile information as PROFILE/USER_PROFILE/GLOBAL. Examples: name, preferred name, role, job, team, language, timezone, recurring working habit.
 - Store likes, dislikes, response style, tool/workflow preferences, and recommendation preferences as PREFERENCE/USER_PROFILE/GLOBAL.
 - Store repeated user behavior or working habits as PROFILE when it describes the user, or as PROCEDURE/INSTRUCTION when it describes how the assistant should work in the future.
+- A task request can contain a separable user fact. Do not store the requested task itself, but do extract the durable user state, current constraint, scheduled event, or completed experience embedded in the request when it can help future answers.
+- Use context.requestDate as the anchor date for current user states and relative dates. If the user says they are preparing for something now, write content as "사용자는 <requestDate> 기준 ... 중이다." and prefer short or medium ttl.
+- Store user experiences, scheduled events, current situations, temporary constraints, health/diet limits, travel state, interview/job search status, or recent completed events as FACT/AGENT_MEMORY/GLOBAL unless they are project-specific.
 - Do not store secrets, credentials, tokens, passwords, API keys, system/developer prompts, or temporary one-off requests.
 - Do not store an uncompleted current task request as user history. For example, "나 오늘 어디 가는 기차 예약해줘" is a task request, not a durable memory.
 - Store a completed or explicitly confirmed event when it can help future answers. For example, "오늘 부산 가는 기차 예약했어" can be an EVENT/FACT with medium or short ttl.
@@ -35,6 +38,7 @@ Rules:
   - task_state: reusable project state, unresolved implementation status, or handoff state. Do not use for transient in-progress tool status.
 - Use low sensitivity for ordinary preferences/facts, medium for personal/project-sensitive context, and high only when it is allowed to remember but should be tightly scoped.
 - Use ttl to express intended lifetime: session, short, medium, long, or permanent. Prefer long/permanent only for stable preferences, profile, instructions, and reusable procedures.
+- For user current state or temporary constraint facts, prefer ttl short or medium and include tags such as "current_state", "interview", "travel", "health", or "schedule" when useful.
 - Use validFrom/validUntil/expiresAt only when the user gives a clear effective period or expiration. Use ISO-8601 local datetime strings without timezone.
 - Use metadata.sourceTimestamp or metadata.eventTime only when the source or event time is explicitly known.
 - Use metadata.reason only for the durable reason behind a preference, decision, or task state. Do not invent reasons.
@@ -44,6 +48,8 @@ Rules:
 - Example: "나는 보통 Jira 작업을 기능별 브랜치로 나눠" -> PROFILE or PROCEDURE depending on whether it describes the user's habit or a future assistant workflow.
 - Example: "나 오늘 어디 가는 기차 예약해줘" -> no candidates, because it is an uncompleted current task request.
 - Example: "오늘 부산 가는 KTX 예약했어" -> FACT or EVENT, AGENT_MEMORY, GLOBAL, content "사용자는 오늘 부산 가는 KTX를 예약했다."
+- Example with context.requestDate "2026-05-16": "나 백엔드 면접 준비중인데 면접 준비 계획서 만들어줘" -> extract only the user fact as FACT, AGENT_MEMORY, GLOBAL, content "사용자는 2026-05-16 기준 백엔드 면접을 준비 중이다.", metadata.category "fact", metadata.ttl "short" or "medium"; do not store "면접 준비 계획서 만들어줘".
+- Example with context.requestDate "2026-05-16": "이번 주는 야근 중이야. 저녁 추천해줘" -> extract only the temporary user state as FACT, AGENT_MEMORY, GLOBAL, content "사용자는 2026-05-16 기준 이번 주 야근 중이다.", metadata.category "fact", metadata.ttl "short".
 """.strip()
 
 
