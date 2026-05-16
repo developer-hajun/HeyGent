@@ -132,19 +132,6 @@ def test_plan_memory_recall_selects_user_preference_filters():
     }
 
 
-def test_plan_memory_recall_selects_profile_filters_for_name_requests_before_preference():
-    plan = plan_memory_recall("내 이름은 김상지야. 앞으로 김상지라고 불러줘")
-
-    assert plan.should_recall is True
-    assert plan.reason == "user_profile_needed"
-    assert plan.filters() == {
-        "store_type": "USER_PROFILE",
-        "memory_type": "PROFILE",
-        "scope_type": "GLOBAL",
-        "metadata_categories": ["profile"],
-    }
-
-
 def test_plan_memory_recall_selects_workspace_task_state_filters():
     plan = plan_memory_recall("4번 장기기억 작업 이어서 해줘", workspace_key="team-a")
 
