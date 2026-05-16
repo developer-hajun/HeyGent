@@ -6,6 +6,20 @@ from typing import Any
 DEFAULT_MEMORY_PROVIDER_NAME = "openai_api_key"
 
 
+def resolve_memory_provider_name(provider_name: Any = None, model: Any = None) -> str:
+    text = _text(provider_name)
+    if text:
+        if text == "openai":
+            return "openai_api_key"
+        if text == "gemini":
+            return "gemini_api_key"
+        return text
+    model_text = (_text(model) or "").lower()
+    if model_text.startswith("gemini-"):
+        return "gemini_api_key"
+    return DEFAULT_MEMORY_PROVIDER_NAME
+
+
 def build_memory_provider_runtime_context(
     *,
     user_id: Any,
@@ -20,7 +34,7 @@ def build_memory_provider_runtime_context(
         return None
     context: dict[str, str] = {
         "user_id": normalized_user_id,
-        "provider_name": _text(provider_name) or DEFAULT_MEMORY_PROVIDER_NAME,
+        "provider_name": resolve_memory_provider_name(provider_name, model),
     }
     _put_if_present(context, "task_run_id", _text(task_run_id))
     _put_if_present(context, "step_run_id", _text(step_run_id))

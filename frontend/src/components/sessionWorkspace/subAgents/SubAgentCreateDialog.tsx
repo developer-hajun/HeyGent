@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, Bot } from 'lucide-react'
+import { ArrowLeft, Bot, Sparkles, type LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { HelpHint } from '@/components/ui/help-hint'
@@ -7,8 +7,9 @@ import { cn } from '@/components/ui/utils'
 import type { AgentTemplate } from '@/apis/agents'
 import { SUB_AGENT_ADAPTER_OPTIONS, type SubAgentAdapterType } from './subAgentConfigOptions'
 
-const ADAPTER_ICONS: Record<SubAgentAdapterType, typeof Bot> = {
-  openai: Bot,
+const ADAPTER_ICONS: Record<SubAgentAdapterType, LucideIcon> = {
+  openai_api_key: Bot,
+  gemini_api_key: Sparkles,
 }
 
 export function SubAgentCreateDialog({
@@ -141,7 +142,7 @@ export function SubAgentCreateDialog({
                   뒤로
                 </button>
                 <p className="text-muted-foreground text-sm">
-                  OpenAI 모델로 세부 설정을 시작합니다.
+                  사용할 모델 공급자를 고르고 세부 설정을 시작합니다.
                 </p>
               </div>
 
@@ -172,7 +173,7 @@ export function SubAgentCreateDialog({
                         </span>
                       )}
                       <Icon className="h-4 w-4" />
-                      <span className="font-medium">직접 만들기</span>
+                      <span className="font-medium">{option.label}</span>
                     </button>
                   )
                 })}
