@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
+from app.domain.orchestration.agent.memory.provider_retry import respond_provider_with_retry
 from app.domain.providers.model.base import AgentMessage
 from app.domain.providers.registry import ProviderRegistry
 
@@ -14,6 +14,7 @@ class ProviderMemoryUsageAttributionClient:
     def __init__(self, *, provider_registry: ProviderRegistry, model: str | None = None) -> None:
         self._provider_registry = provider_registry
         self._model = model
+        self.last_memory_provider_meta: dict[str, Any] = {}
 
     async def verify_memory_usage_json(
         self,
@@ -27,12 +28,16 @@ class ProviderMemoryUsageAttributionClient:
         _ensure_live_provider(provider)
         provider_settings = getattr(provider, "settings", None)
         model = self._model or str(getattr(provider_settings, "openai_response_model", "") or "gpt-5.4")
+        self.last_memory_provider_meta = {
+            "provider_name": str(getattr(provider, "name", None) or provider.__class__.__name__),
+            "selected_model": model,
+        }
         payload = {
             "userQuery": user_query,
             "assistantMessage": assistant_message,
             "recalledMemories": recalled_memories,
         }
-        response = await _respond_provider_async(
+        response = await respond_provider_with_retry(
             provider,
             messages=[
                 AgentMessage(role="system", content=system_prompt),
@@ -58,13 +63,6 @@ def _parse_json_object(text: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("memory usage attribution response must be a JSON object")
     return parsed
-
-
-async def _respond_provider_async(provider, **kwargs):
-    respond_async = getattr(provider, "respond_async", None)
-    if callable(respond_async):
-        return await respond_async(**kwargs)
-    return await asyncio.to_thread(provider.respond, **kwargs)
 
 
 def _ensure_live_provider(provider) -> None:

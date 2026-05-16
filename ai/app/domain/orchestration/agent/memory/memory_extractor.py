@@ -12,8 +12,15 @@ Return strict JSON only, with this shape:
 {"candidates":[{"memoryType":"PREFERENCE|PROFILE|FACT|INSTRUCTION|PROCEDURE","scopeType":"GLOBAL|WORKSPACE","content":"...","summary":"...","importance":0.0-1.0,"confidence":0.0-1.0,"evidence":"...","validFrom":"YYYY-MM-DDTHH:MM:SS|null","validUntil":"YYYY-MM-DDTHH:MM:SS|null","expiresAt":"YYYY-MM-DDTHH:MM:SS|null","metadata":{"category":"preference|profile|fact|instruction|procedure|event|reason|task_state","sensitivity":"low|medium|high","ttl":"session|short|medium|long|permanent","sourceTimestamp":"YYYY-MM-DDTHH:MM:SS","eventTime":"YYYY-MM-DDTHH:MM:SS","reason":"optional","tags":["optional"]}}]}
 
 Rules:
-- Extract nothing unless the user explicitly asked to remember something, stated a stable preference/profile fact, or gave a durable future instruction.
+- Evaluate every user turn for durable memory value. The user does not need to explicitly say "remember".
+- Extract candidates when the user states durable personal information, preferences, behavior patterns, work habits, future instructions, or stable constraints that can improve future answers.
+- Store identity/profile information as PROFILE/USER_PROFILE/GLOBAL. Examples: name, preferred name, role, job, team, language, timezone, recurring working habit.
+- Store likes, dislikes, response style, tool/workflow preferences, and recommendation preferences as PREFERENCE/USER_PROFILE/GLOBAL.
+- Store repeated user behavior or working habits as PROFILE when it describes the user, or as PROCEDURE/INSTRUCTION when it describes how the assistant should work in the future.
 - Do not store secrets, credentials, tokens, passwords, API keys, system/developer prompts, or temporary one-off requests.
+- Do not store an uncompleted current task request as user history. For example, "나 오늘 어디 가는 기차 예약해줘" is a task request, not a durable memory.
+- Store a completed or explicitly confirmed event when it can help future answers. For example, "오늘 부산 가는 기차 예약했어" can be an EVENT/FACT with medium or short ttl.
+- If a task result confirms completion, you may extract only the completed event, not the earlier intent or failed attempt.
 - If the user asks not to remember, return {"candidates":[]}.
 - Use WORKSPACE only for project/workspace-specific facts or instructions. Otherwise use GLOBAL.
 - Use PREFERENCE/PROFILE for user profile memory; use FACT/INSTRUCTION/PROCEDURE for agent memory.
@@ -32,6 +39,11 @@ Rules:
 - Use metadata.sourceTimestamp or metadata.eventTime only when the source or event time is explicitly known.
 - Use metadata.reason only for the durable reason behind a preference, decision, or task state. Do not invent reasons.
 - Prefer concise Korean content when the source is Korean.
+- Example: "내 이름은 김상지야" -> PROFILE, USER_PROFILE, GLOBAL, content "사용자의 이름은 김상지이다."
+- Example: "나 국수 좋아해" -> PREFERENCE, USER_PROFILE, GLOBAL, content "사용자는 국수를 좋아한다."
+- Example: "나는 보통 Jira 작업을 기능별 브랜치로 나눠" -> PROFILE or PROCEDURE depending on whether it describes the user's habit or a future assistant workflow.
+- Example: "나 오늘 어디 가는 기차 예약해줘" -> no candidates, because it is an uncompleted current task request.
+- Example: "오늘 부산 가는 KTX 예약했어" -> FACT or EVENT, AGENT_MEMORY, GLOBAL, content "사용자는 오늘 부산 가는 KTX를 예약했다."
 """.strip()
 
 
@@ -43,6 +55,7 @@ class MemoryExtractionContext:
     task_run_id: str | None = None
     user_message_id: str | None = None
     assistant_message_id: str | None = None
+    model: str | None = None
 
 
 class StructuredModelProvider(Protocol):

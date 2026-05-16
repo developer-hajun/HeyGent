@@ -40,6 +40,7 @@ def test_prompt_builder_includes_native_tool_call_and_termination_guidance():
     assert "수행할 수 있는 세션 에이전트가 없으면 임의로 배정하지 말고" in prompt
     assert "requiredSkillNames에 필요한 skill 이름을 담으세요." in prompt
     assert "폴더 경로 자체를 파일명으로 바꾸지 말고 폴더 안에 의미 있는 파일명을 만들어 저장하세요." in prompt
+    assert "사용자가 자신의 이름, 호칭, 프로필, 선호, 비선호, 반복 행동, 작업 습관 같은 지속 정보를 알려주면" in prompt
     assert "근거/자료를 찾아 이해하는 단계와, 그 근거로 파일/문서/코드를 작성해 저장하는 단계는 서로 다른 단계입니다." in prompt
     assert "앞 단계는 completed 로 닫고 뒤 단계를 in_progress 로 전환하세요." in prompt
     assert "단계 이름은 반드시 대상/주제/산출물과 작업 행위를 함께 포함하세요." in prompt

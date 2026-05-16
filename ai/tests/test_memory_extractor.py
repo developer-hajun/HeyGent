@@ -6,12 +6,15 @@ from app.domain.orchestration.agent.memory.memory_extractor import LlmMemoryExtr
 
 
 class FakeStructuredProvider:
-    def __init__(self, payload):
+    def __init__(self, payload, *, fail: bool = False):
         self.payload = payload
+        self.fail = fail
         self.calls = []
 
     async def extract_memory_json(self, **kwargs):
         self.calls.append(kwargs)
+        if self.fail:
+            raise RuntimeError("provider failed")
         return self.payload
 
 
@@ -83,6 +86,104 @@ async def test_memory_extractor_drops_low_score_candidates():
     )
 
     assert candidates == []
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_normalizes_llm_profile_candidate_without_explicit_remember_request():
+    provider = FakeStructuredProvider(
+        {
+            "candidates": [
+                {
+                    "memoryType": "profile",
+                    "scopeType": "global",
+                    "content": "사용자의 이름은 김상지이다.",
+                    "summary": "사용자 이름",
+                    "metadata": {"category": "profile", "tags": ["name"]},
+                    "importance": 0.9,
+                    "confidence": 0.95,
+                    "evidence": "내 이름은 김상지야",
+                }
+            ]
+        }
+    )
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="내 이름은 김상지야",
+        assistant_message="알겠습니다. 앞으로 김상지님이라고 불러드릴까요?",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1", task_run_id="task_1", assistant_message_id="msg_2"),
+    )
+
+    assert candidates == [
+        {
+            "memoryType": "PROFILE",
+            "storeType": "USER_PROFILE",
+            "scopeType": "GLOBAL",
+            "operationType": "ADD",
+            "content": "사용자의 이름은 김상지이다.",
+            "metadata": {"source": "ai.writeback", "category": "profile", "sensitivity": "low", "ttl": "long", "tags": ["name"]},
+            "importance": 0.9,
+            "confidence": 0.95,
+            "summary": "사용자 이름",
+            "evidence": "내 이름은 김상지야",
+            "sourceTaskRunId": "task_1",
+            "sourceMessageId": "msg_2",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_normalizes_llm_preference_candidate_without_explicit_remember_request():
+    provider = FakeStructuredProvider(
+        {
+            "candidates": [
+                {
+                    "memoryType": "preference",
+                    "scopeType": "global",
+                    "content": "사용자는 국수를 좋아한다.",
+                    "summary": "국수 선호",
+                    "metadata": {"category": "preference", "tags": ["food"]},
+                    "importance": 0.8,
+                    "confidence": 0.9,
+                    "evidence": "나 국수 좋아해",
+                }
+            ]
+        }
+    )
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="나 국수 좋아해",
+        assistant_message="국수도 좋죠.",
+        context=MemoryExtractionContext(user_id="1", session_id="session_1"),
+    )
+
+    assert candidates[0]["memoryType"] == "PREFERENCE"
+    assert candidates[0]["storeType"] == "USER_PROFILE"
+    assert candidates[0]["scopeType"] == "GLOBAL"
+    assert candidates[0]["content"] == "사용자는 국수를 좋아한다."
+    assert candidates[0]["metadata"]["category"] == "preference"
+
+
+def test_memory_extractor_prompt_distinguishes_current_task_from_completed_event():
+    from app.domain.orchestration.agent.memory.memory_extractor import MEMORY_EXTRACTION_SYSTEM_PROMPT
+
+    assert "uncompleted current task request" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "나 오늘 어디 가는 기차 예약해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "오늘 부산 가는 KTX 예약했어" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_reraises_provider_failure_without_rule_fallback_storage():
+    provider = FakeStructuredProvider({"candidates": []}, fail=True)
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        await extractor.extract_candidates(
+            user_message="나 국수 좋아해",
+            assistant_message="답변입니다.",
+            context=MemoryExtractionContext(user_id="1", session_id="session_1"),
+        )
 
 
 @pytest.mark.asyncio
