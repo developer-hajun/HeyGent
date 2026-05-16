@@ -6,6 +6,7 @@ from typing import Any
 from app.domain.orchestration.agent.memory.memory_extractor import MemoryExtractionContext
 from app.domain.orchestration.agent.memory.memory_reconciler import MemoryReconciliationContext
 from app.domain.orchestration.agent.memory.provider_retry import respond_provider_with_retry
+from app.domain.orchestration.agent.memory.runtime_context import build_memory_provider_runtime_context
 from app.domain.providers.model.base import AgentMessage
 from app.domain.providers.registry import ProviderRegistry
 
@@ -30,8 +31,16 @@ class ProviderMemoryExtractionClient:
         context: MemoryExtractionContext,
     ) -> dict[str, Any]:
         provider = self._provider_registry.preferred_model_provider()
-        _ensure_live_provider(provider)
         model = _select_model(provider, configured_model=self._model, requested_model=context.model)
+        runtime_context = build_memory_provider_runtime_context(
+            user_id=context.user_id,
+            provider_name=context.provider_name,
+            task_run_id=context.task_run_id,
+            step_run_id=context.step_run_id,
+            session_id=context.session_id,
+            model=model,
+        )
+        _ensure_live_provider(provider, runtime_context=runtime_context)
         self.last_memory_provider_meta = _provider_meta(provider, model=model, retry_delays=_MEMORY_EXTRACTION_RETRY_DELAYS)
         payload = {
             "userMessage": user_message,
@@ -54,6 +63,7 @@ class ProviderMemoryExtractionClient:
             tools=None,
             model=model,
             tool_choice=None,
+            runtime_context=runtime_context,
         )
         return _parse_json_object(response.output_text)
 
@@ -67,8 +77,16 @@ class ProviderMemoryExtractionClient:
         context: MemoryReconciliationContext,
     ) -> dict[str, Any]:
         provider = self._provider_registry.preferred_model_provider()
-        _ensure_live_provider(provider)
-        model = _select_model(provider, configured_model=self._model, requested_model=None)
+        model = _select_model(provider, configured_model=self._model, requested_model=context.model)
+        runtime_context = build_memory_provider_runtime_context(
+            user_id=context.user_id,
+            provider_name=context.provider_name,
+            task_run_id=context.task_run_id,
+            step_run_id=context.step_run_id,
+            session_id=context.session_id,
+            model=model,
+        )
+        _ensure_live_provider(provider, runtime_context=runtime_context)
         self.last_memory_provider_meta = _provider_meta(provider, model=model)
         payload = {
             "userMessage": user_message,
@@ -88,6 +106,7 @@ class ProviderMemoryExtractionClient:
             tools=None,
             model=model,
             tool_choice=None,
+            runtime_context=runtime_context,
         )
         return _parse_json_object(response.output_text)
 
@@ -115,8 +134,10 @@ def _select_model(provider, *, configured_model: str | None, requested_model: st
     )
 
 
-def _ensure_live_provider(provider) -> None:
+def _ensure_live_provider(provider, *, runtime_context: dict[str, Any] | None = None) -> None:
     health = provider.health()
+    if runtime_context and getattr(provider, "auth_type", None) == "api_key":
+        return
     if not bool(getattr(health, "connected", False)):
         raise RuntimeError("memory provider requires a connected model provider")
 

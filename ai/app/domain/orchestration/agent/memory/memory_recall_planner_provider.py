@@ -5,6 +5,7 @@ from typing import Any
 
 from app.api.memory_context import MemoryRecallPlan
 from app.domain.orchestration.agent.memory.provider_retry import respond_provider_with_retry
+from app.domain.orchestration.agent.memory.runtime_context import build_memory_provider_runtime_context
 from app.domain.providers.model.base import AgentMessage
 from app.domain.providers.registry import ProviderRegistry
 
@@ -25,14 +26,16 @@ class ProviderMemoryRecallPlannerClient:
         workspace_key: str | None,
         rule_plan: MemoryRecallPlan,
         model: str | None = None,
+        runtime_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         provider = self._provider_registry.preferred_model_provider()
-        _ensure_live_provider(provider)
         selected_model = (
             str(self._model or "").strip()
             or str(model or "").strip()
             or str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
         )
+        provider_runtime_context = _runtime_context_with_model(runtime_context, selected_model)
+        _ensure_live_provider(provider, runtime_context=provider_runtime_context)
         self.last_memory_provider_meta = {
             "provider_name": str(getattr(provider, "name", None) or provider.__class__.__name__),
             "selected_model": selected_model,
@@ -55,6 +58,7 @@ class ProviderMemoryRecallPlannerClient:
             tools=None,
             model=selected_model,
             tool_choice=None,
+            runtime_context=provider_runtime_context,
         )
         return _parse_json_object(response.output_text)
 
@@ -74,7 +78,22 @@ def _parse_json_object(text: str) -> dict[str, Any]:
     return parsed
 
 
-def _ensure_live_provider(provider) -> None:
+def _ensure_live_provider(provider, *, runtime_context: dict[str, Any] | None = None) -> None:
     health = provider.health()
+    if runtime_context and getattr(provider, "auth_type", None) == "api_key":
+        return
     if not bool(getattr(health, "connected", False)):
         raise RuntimeError("memory provider requires a connected model provider")
+
+
+def _runtime_context_with_model(runtime_context: dict[str, Any] | None, model: str) -> dict[str, str] | None:
+    if not runtime_context:
+        return None
+    return build_memory_provider_runtime_context(
+        user_id=runtime_context.get("user_id") or runtime_context.get("userId"),
+        provider_name=runtime_context.get("provider_name") or runtime_context.get("providerName"),
+        task_run_id=runtime_context.get("task_run_id") or runtime_context.get("taskRunId"),
+        step_run_id=runtime_context.get("step_run_id") or runtime_context.get("stepRunId"),
+        session_id=runtime_context.get("session_id") or runtime_context.get("sessionId"),
+        model=model,
+    )
