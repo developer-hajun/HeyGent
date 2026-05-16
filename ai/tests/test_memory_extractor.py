@@ -173,7 +173,8 @@ def test_memory_extractor_prompt_distinguishes_current_task_from_completed_event
     assert "context.requestDate" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "나 오늘 어디 가는 기차 예약해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "오늘 이 부분 코드 개발해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
-    assert "Do not store \"사용자가 오늘 코드 개발을 요청했다.\"" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "The user's request alone is not enough" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "해당 프로젝트의 코드 개발 작업이 완료됐다." in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "오늘 부산 가는 KTX 예약했어" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "나 백엔드 면접 준비중인데 면접 준비 계획서 만들어줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
 
@@ -269,6 +270,66 @@ async def test_memory_extractor_normalizes_completed_user_event():
     assert candidates[0]["metadata"]["ttl"] == "medium"
     assert candidates[0]["metadata"]["eventTime"] == "2026-05-16T00:00:00"
     assert candidates[0]["metadata"]["tags"] == ["travel", "train"]
+
+
+@pytest.mark.asyncio
+async def test_memory_extractor_normalizes_completed_project_code_work():
+    provider = FakeStructuredProvider(
+        {
+            "candidates": [
+                {
+                    "memoryType": "FACT",
+                    "scopeType": "WORKSPACE",
+                    "content": "2026-05-16에 장기기억 fact/event 저장 고도화 코드 개발 작업이 완료됐다.",
+                    "summary": "장기기억 fact/event 저장 고도화 완료",
+                    "metadata": {
+                        "category": "task_state",
+                        "ttl": "medium",
+                        "tags": ["memory", "fact_event", "implementation"],
+                        "eventTime": "2026-05-16",
+                    },
+                    "importance": 0.8,
+                    "confidence": 0.9,
+                    "evidence": "구현했고 테스트도 통과했습니다.",
+                }
+            ]
+        }
+    )
+    extractor = LlmMemoryExtractor(provider=provider)
+
+    candidates = await extractor.extract_candidates(
+        user_message="오늘 이 부분 코드 개발해줘",
+        assistant_message="구현했고 테스트도 통과했습니다.",
+        context=MemoryExtractionContext(
+            user_id="1",
+            session_id="session_1",
+            workspace_key="workspace-a",
+            request_date="2026-05-16",
+        ),
+    )
+
+    assert candidates == [
+        {
+            "memoryType": "FACT",
+            "storeType": "AGENT_MEMORY",
+            "scopeType": "WORKSPACE",
+            "operationType": "ADD",
+            "content": "2026-05-16에 장기기억 fact/event 저장 고도화 코드 개발 작업이 완료됐다.",
+            "metadata": {
+                "source": "ai.writeback",
+                "category": "task_state",
+                "sensitivity": "low",
+                "ttl": "medium",
+                "workspaceKey": "workspace-a",
+                "tags": ["memory", "fact_event", "implementation"],
+                "eventTime": "2026-05-16T00:00:00",
+            },
+            "importance": 0.8,
+            "confidence": 0.9,
+            "summary": "장기기억 fact/event 저장 고도화 완료",
+            "evidence": "구현했고 테스트도 통과했습니다.",
+        }
+    ]
 
 
 @pytest.mark.asyncio

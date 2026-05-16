@@ -20,6 +20,7 @@ Rules:
 - A task request can contain a separable user fact. Do not store the requested task itself, but do extract the durable user state, current constraint, scheduled event, or completed experience embedded in the request when it can help future answers.
 - Use context.requestDate as the anchor date for current user states and relative dates. If the user says they are preparing for something now, write content as "사용자는 <requestDate> 기준 ... 중이다." and prefer short or medium ttl.
 - Store user experiences, scheduled events, current situations, temporary constraints, health/diet limits, travel state, interview/job search status, or recent completed events as FACT/AGENT_MEMORY/GLOBAL unless they are project-specific.
+- Store completed project or code work as FACT/AGENT_MEMORY/WORKSPACE with metadata.category "task_state" or "event" when the assistant response confirms files changed, tests passed, a commit was created, or a concrete implementation result was completed. The user's request alone is not enough; the assistant result must confirm completion.
 - Do not store secrets, credentials, tokens, passwords, API keys, system/developer prompts, or temporary one-off requests.
 - Do not store an uncompleted current task request as user history. For example, "나 오늘 어디 가는 기차 예약해줘" is a task request, not a durable memory.
 - Store a completed or explicitly confirmed event when it can help future answers. For example, "오늘 부산 가는 기차 예약했어" can be an EVENT/FACT with medium or short ttl.
@@ -47,7 +48,8 @@ Rules:
 - Example: "나 국수 좋아해" -> PREFERENCE, USER_PROFILE, GLOBAL, content "사용자는 국수를 좋아한다."
 - Example: "나는 보통 Jira 작업을 기능별 브랜치로 나눠" -> PROFILE or PROCEDURE depending on whether it describes the user's habit or a future assistant workflow.
 - Example: "나 오늘 어디 가는 기차 예약해줘" -> no candidates, because it is an uncompleted current task request.
-- Example: "오늘 이 부분 코드 개발해줘" -> no candidates, because it is only a current task request. Do not store "사용자가 오늘 코드 개발을 요청했다."
+- Example: user "오늘 이 부분 코드 개발해줘" with no confirmed result yet -> no candidates, because it is only a current task request. Do not store "사용자가 오늘 코드 개발을 요청했다."
+- Example with context.requestDate "2026-05-16": user "오늘 이 부분 코드 개발해줘" and assistant "구현했고 테스트도 통과했습니다." -> extract only the completed project event as FACT, AGENT_MEMORY, WORKSPACE if workspaceKey exists, content "2026-05-16에 해당 프로젝트의 코드 개발 작업이 완료됐다.", metadata.category "task_state" or "event", metadata.ttl "medium".
 - Example: "오늘 부산 가는 KTX 예약했어" -> FACT or EVENT, AGENT_MEMORY, GLOBAL, content "사용자는 오늘 부산 가는 KTX를 예약했다."
 - Example with context.requestDate "2026-05-16": "나 백엔드 면접 준비중인데 면접 준비 계획서 만들어줘" -> extract only the user fact as FACT, AGENT_MEMORY, GLOBAL, content "사용자는 2026-05-16 기준 백엔드 면접을 준비 중이다.", metadata.category "fact", metadata.ttl "short" or "medium"; do not store "면접 준비 계획서 만들어줘".
 - Example with context.requestDate "2026-05-16": "이번 주는 야근 중이야. 저녁 추천해줘" -> extract only the temporary user state as FACT, AGENT_MEMORY, GLOBAL, content "사용자는 2026-05-16 기준 이번 주 야근 중이다.", metadata.category "fact", metadata.ttl "short".
