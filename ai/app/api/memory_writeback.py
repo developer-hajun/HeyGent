@@ -89,10 +89,12 @@ async def writeback_persistent_memory_candidates(
             workspace_key=workspace_key,
         ),
     )
+    original_candidate_count = len(candidates)
+    candidates, deconflict_meta = _deconflict_target_changing_candidates(candidates)
 
     try:
         await memory_client.create_candidates(user_id=user_id, candidates=candidates)
-    except BackendMemoryClientError:
+    except BackendMemoryClientError as exc:
         logger.warning("backend 장기기억 후보 저장 요청에 실패했습니다.", exc_info=True)
         return build_writeback_observation(
             status="store_failed",
@@ -100,6 +102,12 @@ async def writeback_persistent_memory_candidates(
             candidates=candidates,
             reason="backend_memory_client_error",
             failed=True,
+            extra={
+                **deconflict_meta,
+                "original_candidate_count": original_candidate_count,
+                "final_candidate_count": len(candidates),
+                **_backend_error_observation(exc),
+            },
         )
     except Exception:
         logger.warning("장기기억 후보 저장 중 예기치 않은 예외가 발생했습니다.", exc_info=True)
@@ -109,9 +117,80 @@ async def writeback_persistent_memory_candidates(
             candidates=candidates,
             reason="unexpected_store_error",
             failed=True,
+            extra={
+                **deconflict_meta,
+                "original_candidate_count": original_candidate_count,
+                "final_candidate_count": len(candidates),
+            },
         )
     return build_writeback_observation(
         status="succeeded",
         attempted=True,
         candidates=candidates,
+        extra={
+            **deconflict_meta,
+            "original_candidate_count": original_candidate_count,
+            "final_candidate_count": len(candidates),
+        },
     )
+
+
+def _deconflict_target_changing_candidates(
+    candidates: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    kept: list[dict[str, Any]] = []
+    touched_target_ids: set[int] = set()
+    skipped_target_ids: list[int] = []
+    skipped_candidate_count = 0
+
+    for candidate in candidates:
+        target_ids = _candidate_target_ids(candidate)
+        if target_ids and touched_target_ids.intersection(target_ids):
+            skipped_candidate_count += 1
+            for target_id in sorted(target_ids):
+                if target_id not in skipped_target_ids:
+                    skipped_target_ids.append(target_id)
+            continue
+        kept.append(candidate)
+        touched_target_ids.update(target_ids)
+
+    return kept, {
+        "skipped_candidate_count": skipped_candidate_count,
+        "skipped_target_memory_ids": skipped_target_ids,
+    }
+
+
+def _candidate_target_ids(candidate: dict[str, Any]) -> set[int]:
+    operation_type = str(candidate.get("operationType") or "ADD").strip().upper()
+    if operation_type not in {"UPDATE", "MERGE", "INVALIDATE"}:
+        return set()
+
+    target_ids: set[int] = set()
+    _add_positive_int(target_ids, candidate.get("targetMemoryId"))
+    additional_target_ids = candidate.get("additionalTargetMemoryIds")
+    if isinstance(additional_target_ids, list):
+        for value in additional_target_ids:
+            _add_positive_int(target_ids, value)
+    return target_ids
+
+
+def _add_positive_int(target_ids: set[int], value: Any) -> None:
+    if isinstance(value, bool):
+        return
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return
+    if parsed > 0:
+        target_ids.add(parsed)
+
+
+def _backend_error_observation(exc: BackendMemoryClientError) -> dict[str, Any]:
+    observation: dict[str, Any] = {}
+    if exc.status_code is not None:
+        observation["backend_status"] = exc.status_code
+    if exc.error_code:
+        observation["backend_error_code"] = exc.error_code
+    if exc.response_message:
+        observation["backend_error_message"] = exc.response_message
+    return observation

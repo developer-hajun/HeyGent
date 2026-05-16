@@ -9,11 +9,19 @@ from app.clients.backend_memory import BackendMemoryClientError
 
 
 class FakeMemoryClient:
-    def __init__(self, *, fail: bool = False, fail_recall: bool = False, memories=None) -> None:
+    def __init__(
+        self,
+        *,
+        fail: bool = False,
+        fail_recall: bool = False,
+        fail_error: BackendMemoryClientError | None = None,
+        memories=None,
+    ) -> None:
         self.calls = []
         self.recall_calls = []
         self.fail = fail
         self.fail_recall = fail_recall
+        self.fail_error = fail_error
         self.memories = list(memories or [])
 
     async def recall(self, **kwargs):
@@ -25,7 +33,7 @@ class FakeMemoryClient:
     async def create_candidates(self, **kwargs):
         self.calls.append(kwargs)
         if self.fail:
-            raise BackendMemoryClientError("backend failed")
+            raise self.fail_error or BackendMemoryClientError("backend failed")
         return []
 
 
@@ -95,16 +103,18 @@ async def test_writeback_extracts_and_posts_candidates_to_backend():
         }
     ]
     assert memory_client.calls == [{"user_id": "1", "candidates": [candidate]}]
-    assert observation == {
-        "status": "succeeded",
-        "attempted": True,
-        "candidate_count": 1,
-        "memory_types": ["PREFERENCE"],
-        "store_types": ["USER_PROFILE"],
-        "scope_types": ["GLOBAL"],
-        "operation_types": ["ADD"],
-        "failed": False,
-    }
+    assert observation["status"] == "succeeded"
+    assert observation["attempted"] is True
+    assert observation["candidate_count"] == 1
+    assert observation["memory_types"] == ["PREFERENCE"]
+    assert observation["store_types"] == ["USER_PROFILE"]
+    assert observation["scope_types"] == ["GLOBAL"]
+    assert observation["operation_types"] == ["ADD"]
+    assert observation["failed"] is False
+    assert observation["original_candidate_count"] == 1
+    assert observation["final_candidate_count"] == 1
+    assert observation["skipped_candidate_count"] == 0
+    assert observation["skipped_target_memory_ids"] == []
 
 
 @pytest.mark.asyncio
@@ -128,7 +138,15 @@ async def test_writeback_is_nonfatal_when_extractor_fails():
 
 @pytest.mark.asyncio
 async def test_writeback_is_nonfatal_when_backend_fails():
-    memory_client = FakeMemoryClient(fail=True)
+    memory_client = FakeMemoryClient(
+        fail=True,
+        fail_error=BackendMemoryClientError(
+            "backend failed",
+            status_code=409,
+            error_code="MEMORY_TARGET_INACTIVE",
+            response_message="target memory is inactive",
+        ),
+    )
     extractor = FakeExtractor(
         [
             {
@@ -157,6 +175,9 @@ async def test_writeback_is_nonfatal_when_backend_fails():
     assert observation["status"] == "store_failed"
     assert observation["attempted"] is True
     assert observation["candidate_count"] == 1
+    assert observation["backend_status"] == 409
+    assert observation["backend_error_code"] == "MEMORY_TARGET_INACTIVE"
+    assert observation["backend_error_message"] == "target memory is inactive"
 
 
 @pytest.mark.asyncio
@@ -395,3 +416,103 @@ async def test_writeback_keeps_add_when_reconciliation_recall_fails():
     assert memory_client.calls == [{"user_id": "1", "candidates": [candidate]}]
     assert observation["status"] == "succeeded"
     assert observation["operation_types"] == ["ADD"]
+
+
+@pytest.mark.asyncio
+async def test_writeback_skips_later_update_candidate_with_same_target_memory():
+    first_update = {
+        "memoryType": "PREFERENCE",
+        "storeType": "USER_PROFILE",
+        "scopeType": "GLOBAL",
+        "operationType": "UPDATE",
+        "targetMemoryId": 10,
+        "content": "사용자는 점심으로 샐러드를 선호한다.",
+        "metadata": {"source": "ai.writeback"},
+        "importance": 0.8,
+        "confidence": 0.9,
+    }
+    second_update = {
+        "memoryType": "PREFERENCE",
+        "storeType": "USER_PROFILE",
+        "scopeType": "GLOBAL",
+        "operationType": "UPDATE",
+        "targetMemoryId": 10,
+        "content": "사용자는 점심으로 생선을 선호한다.",
+        "metadata": {"source": "ai.writeback"},
+        "importance": 0.8,
+        "confidence": 0.9,
+    }
+    add_candidate = {
+        "memoryType": "FACT",
+        "storeType": "AGENT_MEMORY",
+        "scopeType": "GLOBAL",
+        "operationType": "ADD",
+        "content": "프로젝트는 장기기억 writeback을 사용한다.",
+        "metadata": {"source": "ai.writeback"},
+        "importance": 0.7,
+        "confidence": 0.9,
+    }
+    memory_client = FakeMemoryClient()
+    extractor = FakeExtractor([first_update, second_update, add_candidate])
+    app_state = SimpleNamespace(backend_memory_client=memory_client, memory_extractor=extractor)
+
+    observation = await writeback_persistent_memory_candidates(
+        app_state=app_state,
+        user_id="1",
+        user_message="점심 선호를 바꿔줘.",
+        assistant_message="알겠습니다.",
+        session_id="session_1",
+    )
+
+    assert memory_client.calls[0]["candidates"] == [first_update, add_candidate]
+    assert observation["status"] == "succeeded"
+    assert observation["candidate_count"] == 2
+    assert observation["original_candidate_count"] == 3
+    assert observation["final_candidate_count"] == 2
+    assert observation["skipped_candidate_count"] == 1
+    assert observation["skipped_target_memory_ids"] == [10]
+    assert observation["operation_types"] == ["ADD", "UPDATE"]
+
+
+@pytest.mark.asyncio
+async def test_writeback_skips_later_candidate_overlapping_additional_target_memory():
+    first_update = {
+        "memoryType": "PREFERENCE",
+        "storeType": "USER_PROFILE",
+        "scopeType": "GLOBAL",
+        "operationType": "UPDATE",
+        "targetMemoryId": 10,
+        "additionalTargetMemoryIds": [11],
+        "content": "사용자는 점심으로 샐러드를 선호한다.",
+        "metadata": {"source": "ai.writeback"},
+        "importance": 0.8,
+        "confidence": 0.9,
+    }
+    second_update = {
+        "memoryType": "PREFERENCE",
+        "storeType": "USER_PROFILE",
+        "scopeType": "GLOBAL",
+        "operationType": "UPDATE",
+        "targetMemoryId": 11,
+        "content": "사용자는 점심으로 생선을 선호한다.",
+        "metadata": {"source": "ai.writeback"},
+        "importance": 0.8,
+        "confidence": 0.9,
+    }
+    memory_client = FakeMemoryClient()
+    extractor = FakeExtractor([first_update, second_update])
+    app_state = SimpleNamespace(backend_memory_client=memory_client, memory_extractor=extractor)
+
+    observation = await writeback_persistent_memory_candidates(
+        app_state=app_state,
+        user_id="1",
+        user_message="점심 선호를 바꿔줘.",
+        assistant_message="알겠습니다.",
+        session_id="session_1",
+    )
+
+    assert memory_client.calls[0]["candidates"] == [first_update]
+    assert observation["original_candidate_count"] == 2
+    assert observation["final_candidate_count"] == 1
+    assert observation["skipped_candidate_count"] == 1
+    assert observation["skipped_target_memory_ids"] == [11]
