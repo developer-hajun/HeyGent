@@ -1236,6 +1236,7 @@ class WebSocketCommandRouter:
                 task_run_id=completed_task.task_run_id,
                 user_message_id=str(user_message_id),
                 assistant_message_id=str(assistant_append["message_id"]),
+                model=str((completed_task.input_payload or {}).get("model") or "") or None,
             )
             mark_used_observation = await mark_used_recalled_memories(
                 app_state=context.websocket.app.state,

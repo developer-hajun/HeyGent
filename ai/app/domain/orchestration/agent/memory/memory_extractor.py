@@ -55,6 +55,7 @@ class MemoryExtractionContext:
     task_run_id: str | None = None
     user_message_id: str | None = None
     assistant_message_id: str | None = None
+    model: str | None = None
 
 
 class StructuredModelProvider(Protocol):

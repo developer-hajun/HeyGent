@@ -30,7 +30,7 @@ class ProviderMemoryExtractionClient:
     ) -> dict[str, Any]:
         provider = self._provider_registry.preferred_model_provider()
         _ensure_live_provider(provider)
-        model = self._model or str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
+        model = _select_model(provider, configured_model=self._model, requested_model=context.model)
         payload = {
             "userMessage": user_message,
             "assistantMessage": assistant_message,
@@ -65,7 +65,7 @@ class ProviderMemoryExtractionClient:
     ) -> dict[str, Any]:
         provider = self._provider_registry.preferred_model_provider()
         _ensure_live_provider(provider)
-        model = self._model or str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
+        model = _select_model(provider, configured_model=self._model, requested_model=None)
         payload = {
             "userMessage": user_message,
             "candidate": candidate,
@@ -101,6 +101,14 @@ def _parse_json_object(text: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("memory extraction response must be a JSON object")
     return parsed
+
+
+def _select_model(provider, *, configured_model: str | None, requested_model: str | None) -> str:
+    return (
+        str(configured_model or "").strip()
+        or str(requested_model or "").strip()
+        or str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
+    )
 
 
 def _ensure_live_provider(provider) -> None:

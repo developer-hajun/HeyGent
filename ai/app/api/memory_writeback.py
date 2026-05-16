@@ -27,6 +27,7 @@ async def writeback_persistent_memory_candidates(
     task_run_id: str | None = None,
     user_message_id: str | None = None,
     assistant_message_id: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """대화 완료 후 장기기억 후보를 추출해 backend에 저장 요청한다.
 
@@ -55,6 +56,7 @@ async def writeback_persistent_memory_candidates(
         task_run_id=task_run_id,
         user_message_id=user_message_id,
         assistant_message_id=assistant_message_id,
+        model=str(model or "").strip() or None,
     )
     try:
         candidates = await memory_extractor.extract_candidates(
