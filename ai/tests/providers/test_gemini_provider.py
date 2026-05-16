@@ -191,6 +191,7 @@ async def test_gemini_api_provider_preserves_function_call_async():
                             },
                             "meta": {"type": "object", "additionalProperties": True},
                         },
+                        "required": ["todos", "meta", "missing"],
                         "additionalProperties": False,
                     },
                 },
@@ -215,6 +216,7 @@ async def test_gemini_api_provider_preserves_function_call_async():
                 },
             }
         },
+        "required": ["todos"],
     }
     assert response.finish_reason == "function_call"
     assert response.tool_calls[0].name == "todo"

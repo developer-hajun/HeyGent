@@ -318,9 +318,6 @@ class GeminiAPIProvider(BaseProvider):
         enum_values = schema.get("enum")
         if isinstance(enum_values, list) and enum_values:
             sanitized["enum"] = [value for value in enum_values if isinstance(value, (str, int, float, bool))]
-        required = schema.get("required")
-        if isinstance(required, list):
-            sanitized["required"] = [value for value in required if isinstance(value, str) and value.strip()]
         items = cls._sanitize_schema(schema.get("items"))
         if items is not None:
             sanitized["items"] = items
@@ -333,6 +330,14 @@ class GeminiAPIProvider(BaseProvider):
             }
             if sanitized_properties:
                 sanitized["properties"] = sanitized_properties
+        required = schema.get("required")
+        if isinstance(required, list):
+            required_values = [value for value in required if isinstance(value, str) and value.strip()]
+            property_names = set(sanitized.get("properties") or {})
+            if property_names:
+                required_values = [value for value in required_values if value in property_names]
+            if required_values:
+                sanitized["required"] = required_values
 
         if sanitized.get("type") == "object" and "properties" not in sanitized:
             return None
