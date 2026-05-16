@@ -630,6 +630,7 @@ async def _finish_created_session_message(
             task_run_id=task.task_run_id,
             user_message_id=str(user_append["message_id"]),
             assistant_message_id=str(assistant_message_id),
+            model=str((task.input_payload or {}).get("model") or "") or None,
         )
         mark_used_observation = await mark_used_recalled_memories(
             app_state=request.app.state,
