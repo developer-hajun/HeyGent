@@ -172,6 +172,8 @@ def test_memory_extractor_prompt_distinguishes_current_task_from_completed_event
     assert "A task request can contain a separable user fact" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "context.requestDate" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "나 오늘 어디 가는 기차 예약해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "오늘 이 부분 코드 개발해줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "Do not store \"사용자가 오늘 코드 개발을 요청했다.\"" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "오늘 부산 가는 KTX 예약했어" in MEMORY_EXTRACTION_SYSTEM_PROMPT
     assert "나 백엔드 면접 준비중인데 면접 준비 계획서 만들어줘" in MEMORY_EXTRACTION_SYSTEM_PROMPT
 

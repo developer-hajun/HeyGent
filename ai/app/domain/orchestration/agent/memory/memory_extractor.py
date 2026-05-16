@@ -47,6 +47,7 @@ Rules:
 - Example: "나 국수 좋아해" -> PREFERENCE, USER_PROFILE, GLOBAL, content "사용자는 국수를 좋아한다."
 - Example: "나는 보통 Jira 작업을 기능별 브랜치로 나눠" -> PROFILE or PROCEDURE depending on whether it describes the user's habit or a future assistant workflow.
 - Example: "나 오늘 어디 가는 기차 예약해줘" -> no candidates, because it is an uncompleted current task request.
+- Example: "오늘 이 부분 코드 개발해줘" -> no candidates, because it is only a current task request. Do not store "사용자가 오늘 코드 개발을 요청했다."
 - Example: "오늘 부산 가는 KTX 예약했어" -> FACT or EVENT, AGENT_MEMORY, GLOBAL, content "사용자는 오늘 부산 가는 KTX를 예약했다."
 - Example with context.requestDate "2026-05-16": "나 백엔드 면접 준비중인데 면접 준비 계획서 만들어줘" -> extract only the user fact as FACT, AGENT_MEMORY, GLOBAL, content "사용자는 2026-05-16 기준 백엔드 면접을 준비 중이다.", metadata.category "fact", metadata.ttl "short" or "medium"; do not store "면접 준비 계획서 만들어줘".
 - Example with context.requestDate "2026-05-16": "이번 주는 야근 중이야. 저녁 추천해줘" -> extract only the temporary user state as FACT, AGENT_MEMORY, GLOBAL, content "사용자는 2026-05-16 기준 이번 주 야근 중이다.", metadata.category "fact", metadata.ttl "short".
