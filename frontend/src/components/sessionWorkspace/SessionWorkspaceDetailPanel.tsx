@@ -1004,6 +1004,13 @@ function buildSessionRunItems(
     return runItems
   }
 
+  const sessionSettings = toJsonObject(session.settings)
+  const fallbackModel = getString(sessionSettings, 'model') ?? undefined
+  const fallbackProvider =
+    getString(sessionSettings, 'providerName') ??
+    getString(sessionSettings, 'provider') ??
+    getString(sessionSettings, 'provider_name')
+
   return [
     {
       id: session.session_id,
@@ -1013,7 +1020,8 @@ function buildSessionRunItems(
       summary: session.last_message || '아직 요약이 없습니다.',
       tokens: '-',
       cost: '-',
-      adapter: 'openai',
+      adapter: getRunAdapterLabel(fallbackProvider, fallbackModel),
+      model: fallbackModel,
       sortTime: getTime(session.last_message_at),
     },
   ]
@@ -1104,6 +1112,21 @@ function buildSessionRunItem(
     .find((message) => message.role === 'assistant')?.content
   const inputPayload = toJsonObject(taskRun?.input_payload)
   const resultPayload = toJsonObject(taskRun?.result_payload)
+  const resultMetadata = toJsonObject(resultPayload.metadata)
+  const sessionSettings = toJsonObject(session.settings)
+  const model =
+    getFirstString(inputPayload, 'model', 'provider_model', 'providerModel') ??
+    getFirstString(resultPayload, 'model') ??
+    getFirstString(resultMetadata, 'model') ??
+    getString(sessionSettings, 'model') ??
+    undefined
+  const provider =
+    getFirstString(inputPayload, 'provider_name', 'providerName', 'provider') ??
+    getFirstString(resultPayload, 'provider_name', 'providerName', 'provider') ??
+    getString(sessionSettings, 'providerName') ??
+    getString(sessionSettings, 'provider') ??
+    getString(sessionSettings, 'provider_name') ??
+    undefined
   const sortTime = getRunSortTime(taskRun, events, relatedMessages, session)
 
   return {
@@ -1120,8 +1143,8 @@ function buildSessionRunItem(
       '아직 요약이 없습니다.',
     tokens: '-',
     cost: '-',
-    adapter: 'openai',
-    model: getString(toJsonObject(session.settings), 'model') ?? undefined,
+    adapter: getRunAdapterLabel(provider, model),
+    model,
     request:
       prompt ??
       getFirstString(inputPayload, 'prompt', 'content', 'rawUserInput', 'raw_user_input') ??
@@ -1223,6 +1246,14 @@ function getFirstString(source: unknown, ...keys: string[]) {
     if (typeof value === 'string' && value.trim() !== '') return value.trim()
   }
   return null
+}
+
+function getRunAdapterLabel(provider?: string | null, model?: string | null) {
+  const providerText = (provider ?? '').trim().toLowerCase()
+  const modelText = (model ?? '').trim().toLowerCase()
+  if (providerText.includes('gemini') || modelText.startsWith('gemini-')) return 'gemini'
+  if (providerText.includes('openai') || modelText.startsWith('gpt-')) return 'openai'
+  return providerText || undefined
 }
 
 function buildRunDelegationInput(
