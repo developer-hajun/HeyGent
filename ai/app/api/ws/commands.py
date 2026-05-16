@@ -13,6 +13,7 @@ from app.api.session_agent_profiles import (
     agent_profile_prompt_payload as _agent_profile_prompt_payload,
     instruction_bundle_prompt_payload as _instruction_bundle_prompt_payload,
     profile_model as _profile_model,
+    profile_provider_name as _profile_provider_name,
 )
 from app.api.ws.command_types import (
     WebSocketAuthContext,
@@ -350,6 +351,9 @@ class WebSocketCommandRouter:
         effective_model = str(profile_model or settings_snapshot.get("model") or model or "").strip() or None
         if effective_model:
             task_input["model"] = effective_model
+        profile_provider = _profile_provider_name(main_profile) if main_profile is not None else None
+        if profile_provider:
+            task_input["provider_name"] = profile_provider
         transcript_session_id = _create_task_transcript_session(
             session_store,
             session_id=session_id,
@@ -852,7 +856,7 @@ class WebSocketCommandRouter:
             {
                 "id": model_id,
                 "label": model_id,
-                "provider": "OpenAI",
+                "provider": "openai_api_key",
                 "is_current": model_id == current_model or (current_model is None and model_id == default_model),
             }
             for model_id in model_ids
@@ -868,6 +872,26 @@ class WebSocketCommandRouter:
                 "health": {"provider_name": "openai_api_key", "configured": True, "connected": True},
             }
         ]
+        gemini_models = [
+            {
+                "id": model_id,
+                "label": model_id,
+                "provider": "gemini_api_key",
+                "is_current": model_id == current_model,
+            }
+            for model_id in ("gemini-2.5-pro", "gemini-2.5-flash")
+        ]
+        providers.append(
+            {
+                "slug": "gemini_api_key",
+                "provider_name": "gemini_api_key",
+                "models": gemini_models,
+                "is_current": any(model["is_current"] for model in gemini_models),
+                "total_models": len(gemini_models),
+                "warning": None,
+                "health": {"provider_name": "gemini_api_key", "configured": True, "connected": True},
+            }
+        )
         return ("model.options.result", {"model": default_model, "providers": providers, "models": [model for provider in providers for model in provider["models"]]})
 
     async def _task_runs_active_list(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
@@ -1490,6 +1514,9 @@ def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work
     profile_model = _profile_model(profile)
     if profile_model:
         task_input["model"] = profile_model
+    profile_provider = _profile_provider_name(profile)
+    if profile_provider:
+        task_input["provider_name"] = profile_provider
     bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
     if bundle is None:
         return

@@ -33,8 +33,10 @@ class ToolCallingLoopHandler:
         tool_catalog,
         session_store: TranscriptStore | None = None,
         tool_guard=None,
+        provider_registry=None,
     ) -> None:
         self.provider = provider
+        self.provider_registry = provider_registry
         self.prompt_builder = prompt_builder
         self.tool_runtime = tool_runtime
         self.tool_catalog = tool_catalog
@@ -973,16 +975,17 @@ class ToolCallingLoopHandler:
         tool_choice: dict[str, Any] | str | None,
         runtime_context: dict[str, Any],
     ):
-        signature = inspect.signature(self.provider.respond)
+        provider = self._provider_for_runtime_context(runtime_context)
+        signature = inspect.signature(provider.respond)
         if "runtime_context" in signature.parameters:
-            return self.provider.respond(
+            return provider.respond(
                 messages=messages,
                 tools=tools,
                 model=model,
                 tool_choice=tool_choice,
                 runtime_context=runtime_context,
             )
-        return self.provider.respond(
+        return provider.respond(
             messages=messages,
             tools=tools,
             model=model,
@@ -998,7 +1001,8 @@ class ToolCallingLoopHandler:
         tool_choice: dict[str, Any] | str | None,
         runtime_context: dict[str, Any],
     ):
-        respond_async = getattr(self.provider, "respond_async", None)
+        provider = self._provider_for_runtime_context(runtime_context)
+        respond_async = getattr(provider, "respond_async", None)
         if callable(respond_async):
             signature = inspect.signature(respond_async)
             if "runtime_context" in signature.parameters:
@@ -1023,6 +1027,12 @@ class ToolCallingLoopHandler:
             tool_choice=tool_choice,
             runtime_context=runtime_context,
         )
+
+    def _provider_for_runtime_context(self, runtime_context: dict[str, Any]):
+        if self.provider_registry is None:
+            return self.provider
+        provider_name = runtime_context.get("provider_name") or runtime_context.get("providerName")
+        return self.provider_registry.model_provider_for(provider_name)
 
     @staticmethod
     def _model_runtime_context(*, task, step, task_input: dict[str, Any]) -> dict[str, Any]:
