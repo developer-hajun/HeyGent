@@ -13,6 +13,7 @@ from app.api.session_agent_profiles import (
     agent_profile_prompt_payload as _agent_profile_prompt_payload,
     instruction_bundle_prompt_payload as _instruction_bundle_prompt_payload,
     profile_model as _profile_model,
+    profile_provider_name as _profile_provider_name,
 )
 from app.api.deps.http_auth import authenticate_http_user, ensure_owner
 from app.api.deps.openapi_auth import document_bearer_auth
@@ -383,6 +384,9 @@ async def _create_message_in_session(
     effective_model = str(profile_model or settings_snapshot.get("model") or payload.model or "").strip() or None
     if effective_model:
         task_input["model"] = effective_model
+    profile_provider = _profile_provider_name(main_profile) if main_profile is not None else None
+    if profile_provider:
+        task_input["provider_name"] = profile_provider
     task_transcript_session_id = _create_task_transcript_session(
         session_store,
         session_id=sessionId,
@@ -772,6 +776,9 @@ def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work
     profile_model = _profile_model(profile)
     if profile_model:
         task_input["model"] = profile_model
+    profile_provider = _profile_provider_name(profile)
+    if profile_provider:
+        task_input["provider_name"] = profile_provider
     profile_id = str(profile.get("profile_id") or assignee_agent_id)
     _attach_effective_skill_names(
         state,

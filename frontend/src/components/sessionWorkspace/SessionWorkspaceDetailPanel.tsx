@@ -1,16 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useSearchParams } from 'react-router'
-import {
-  Activity,
-  BarChart3,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  FileText,
-  Loader2,
-  Play,
-} from 'lucide-react'
+import { Activity, BarChart3, Check, FileText, Loader2, Play } from 'lucide-react'
 import { PageTabBar } from '@/components/PageTabBar'
 import { Button } from '@/components/ui/button'
 import { HelpHint } from '@/components/ui/help-hint'
@@ -46,6 +37,12 @@ import {
 } from '@/components/sessionWorkspace/agentUsageDisplay'
 import { WorkBoardPanel, WorkflowPanel } from '@/components/sessionWorkspace/work/board'
 import { SubAgentsPanel } from '@/components/sessionWorkspace/subAgents'
+import {
+  SUB_AGENT_ADAPTER_OPTIONS,
+  getDefaultModel,
+  normalizeSubAgentAdapterType,
+  type SubAgentAdapterType,
+} from '@/components/sessionWorkspace/subAgents/subAgentConfigOptions'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { AgentStatusPage } from '@/pages/AgentStatusPage'
 import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
@@ -70,7 +67,12 @@ import { useChatStore } from '@/store/useChatStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import type { JsonObject, RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
-import type { AiSessionSettingsPatch, ChatMessageView, RawAiSession } from '@/types/aiChat'
+import type {
+  AiModelOption,
+  AiSessionSettingsPatch,
+  ChatMessageView,
+  RawAiSession,
+} from '@/types/aiChat'
 import type { RawTaskRun, TaskRunAgentRef } from '@/types/taskRuns'
 import { isInternalStepAnchorEvent, toTaskRunSummaryView } from '@/utils/taskRunStatusView'
 import {
@@ -195,6 +197,12 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     getString(uiMetadata, 'instructionsMode') === 'external' ? 'external' : 'managed'
   const currentInstructionsRootPath = getString(uiMetadata, 'instructionsRootPath') ?? ''
   const currentModel = getString(mainAgentConfig, 'model') ?? getString(settings, 'model') ?? ''
+  const currentProvider = inferProviderFromModel(
+    currentModel,
+    getString(mainAgentConfig, 'adapterType') ??
+      getString(settings, 'provider') ??
+      getString(settings, 'providerName'),
+  )
   const currentDelegationPolicy = toJsonObject(settings.delegationPolicy)
   const currentCanDelegate = currentDelegationPolicy.canDelegate === true
   const currentProfileImage = normalizeAgentProfileImage(
@@ -213,6 +221,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     currentInstructionsMode,
   )
   const [instructionsRootPath, setInstructionsRootPath] = useState(currentInstructionsRootPath)
+  const [selectedProvider, setSelectedProvider] = useState<SubAgentAdapterType>(currentProvider)
   const [selectedModel, setSelectedModel] = useState(currentModel)
   const [canDelegate, setCanDelegate] = useState(currentCanDelegate)
   const [profileImage, setProfileImage] = useState(currentProfileImage)
@@ -224,6 +233,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     getModelOptions(cachedModelOptions?.models),
   )
   const [selectedFamily, setSelectedFamily] = useState<ModelFamily>(inferModelFamily(currentModel))
+  const [providerBaseline, setProviderBaseline] = useState<SubAgentAdapterType>(currentProvider)
   const [modelBaseline, setModelBaseline] = useState(currentModel)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -238,7 +248,11 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const [skillDetailOpen, setSkillDetailOpen] = useState(false)
   const [skillDetailLoading, setSkillDetailLoading] = useState(false)
 
-  const modelGroups = useMemo(() => groupModels(modelOptions), [modelOptions])
+  const providerModelOptions = useMemo(
+    () => getProviderModelOptions(modelOptions, selectedProvider),
+    [modelOptions, selectedProvider],
+  )
+  const modelGroups = useMemo(() => groupModels(providerModelOptions), [providerModelOptions])
   const modelFamilies = useMemo(() => getModelFamilies(modelGroups), [modelGroups])
   const effectiveSelectedFamily = modelFamilies.some((family) => family.id === selectedFamily)
     ? selectedFamily
@@ -249,10 +263,6 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     label: model.label,
     description: model.provider ?? effectiveSelectedFamily,
   }))
-  const selectedImageIndex = Math.max(
-    0,
-    CEO_IMAGE_OPTIONS.findIndex((option) => option.src === profileImage),
-  )
   const displayName = agentName.trim() || '팀장 에이전트'
   const displayRole = callName.trim() || '팀장 에이전트'
   const activeTab = getMainAgentTab(searchParams.get('agentTab'))
@@ -278,6 +288,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     !shallowStringRecordEqual(instructionsFiles, currentInstructionsFiles) ||
     instructionsMode !== currentInstructionsMode ||
     instructionsRootPath.trim() !== currentInstructionsRootPath ||
+    selectedProvider !== providerBaseline ||
     selectedModel !== modelBaseline ||
     profileImage !== currentProfileImage ||
     canDelegate !== currentCanDelegate
@@ -369,6 +380,12 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
         )
         setInstructionsRootPath(getString(uiMetadata, 'instructionsRootPath') ?? '')
         const profileModel = getString(config, 'model') ?? ''
+        const profileProvider = inferProviderFromModel(
+          profileModel,
+          getString(config, 'adapterType'),
+        )
+        setSelectedProvider(profileProvider)
+        setProviderBaseline(profileProvider)
         setSelectedModel(profileModel)
         setModelBaseline(profileModel)
         setSelectedFamily(inferModelFamily(profileModel))
@@ -443,10 +460,14 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     void fetchModelOptions(sessionId)
       .then((options) => {
         if (!active) return
-        const nextModels = getModelOptions(options.models)
+        const providerModels =
+          options.providers?.flatMap((provider) => provider.models) ?? options.models
+        const nextModels = getModelOptions(providerModels)
         setModelOptions(nextModels)
         setModelOptionsLoading(false)
         if (currentModel === '' && typeof options.model === 'string' && options.model.trim()) {
+          setSelectedProvider(inferProviderFromModel(options.model))
+          setProviderBaseline(inferProviderFromModel(options.model))
           setSelectedModel(options.model)
           setModelBaseline(options.model)
           setSelectedFamily(inferModelFamily(options.model))
@@ -509,6 +530,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     setInstructionsFiles(currentInstructionsFiles)
     setInstructionsMode(currentInstructionsMode)
     setInstructionsRootPath(currentInstructionsRootPath)
+    setSelectedProvider(providerBaseline)
     setSelectedModel(modelBaseline)
     setSelectedFamily(inferModelFamily(modelBaseline))
     setCanDelegate(currentCanDelegate)
@@ -584,7 +606,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
           role: 'ceo',
           title: callName.trim() || '팀장 에이전트',
           description: capabilities.trim(),
-          adapterType: 'openai',
+          adapterType: selectedProvider,
           model: selectedModel,
           profileImage,
           skills: selectedKnownSkillIds,
@@ -592,6 +614,14 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
           instructionsFiles: nextInstructionsFiles,
         })
         setMainAgentProfile(profile)
+        const savedProvider = inferProviderFromModel(
+          profile.model,
+          profile.adapterType ?? getString(toJsonObject(profile.configSnapshot), 'adapterType'),
+        )
+        setSelectedProvider(savedProvider)
+        setProviderBaseline(savedProvider)
+      } else {
+        setProviderBaseline(selectedProvider)
       }
       if (settingsPatch.model !== undefined || mainAgentProfile !== null) {
         setModelBaseline(selectedModel)
@@ -759,17 +789,24 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                 <AgentSectionCard title="프로필">
                   <div className="grid gap-4 sm:grid-cols-[14rem_minmax(0,1fr)]">
                     <div aria-label="프로필 이미지">
-                      <AgentImageStepper
-                        profileImage={profileImage}
-                        selectedImageIndex={selectedImageIndex}
-                        onProfileImageChange={(image) => {
-                          setProfileImage(image)
-                          markDirty()
-                        }}
-                      />
+                      <AgentImageStepper profileImage={profileImage} />
                     </div>
                     <div className="space-y-3">
-                      <Field label="이름">
+                      <Field
+                        label="이름"
+                        hint={
+                          <>
+                            <p className="text-foreground font-medium">이름</p>
+                            <p>
+                              사이드바·채팅 화면 등에서{' '}
+                              <span className="text-foreground">에이전트를 부르는 표시명</span>
+                              이에요.
+                            </p>
+                            <p>여기서 바꾸면 모든 화면에 같이 반영됩니다.</p>
+                            <p>예) “기획 팀장”, “마케팅 리더”.</p>
+                          </>
+                        }
+                      >
                         <DraftInput
                           onChange={(value) => {
                             setAgentName(value)
@@ -780,7 +817,23 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                           value={agentName}
                         />
                       </Field>
-                      <Field label="호칭">
+                      <Field
+                        label="호칭"
+                        hint={
+                          <>
+                            <p className="text-foreground font-medium">호칭</p>
+                            <p>
+                              대화에서 사용할 <span className="text-foreground">말투·직함</span>
+                              이에요.
+                            </p>
+                            <p>
+                              에이전트가 자기를 어떻게 불러달라고 할지, 답변할 때 어떤 호칭을 쓸지
+                              정할 때 참고합니다.
+                            </p>
+                            <p>예) “팀장님”, “기획자”, “사용자님”.</p>
+                          </>
+                        }
+                      >
                         <DraftInput
                           onChange={(value) => {
                             setCallName(value)
@@ -790,7 +843,23 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                           value={callName}
                         />
                       </Field>
-                      <Field label="할 수 있는 일">
+                      <Field
+                        label="할 수 있는 일"
+                        hint={
+                          <>
+                            <p className="text-foreground font-medium">할 수 있는 일</p>
+                            <p>
+                              이 에이전트의{' '}
+                              <span className="text-foreground">담당 업무 한 줄 설명</span>이에요.
+                            </p>
+                            <p>
+                              팀원 에이전트들과 시스템이 “이 팀장에게 어떤 일을 맡길 수 있는지”
+                              판단할 때 참고합니다. 너무 길게보단 핵심 업무를 짧고 분명하게.
+                            </p>
+                            <p>예) “회의록 요약, 일정 정리, 신규 기획 초안 작성”.</p>
+                          </>
+                        }
+                      >
                         <textarea
                           value={capabilities}
                           onChange={(event) => {
@@ -810,9 +879,21 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                 <AgentSectionCard title="모델">
                   <Field label="공급자">
                     <AgentAdapterTypeDropdown
-                      value="openai"
-                      options={[{ value: 'openai', label: 'OpenAI' }]}
-                      onChange={() => undefined}
+                      value={selectedProvider}
+                      options={SUB_AGENT_ADAPTER_OPTIONS.map((option) => ({
+                        value: option.id,
+                        label: option.label,
+                        description: option.description,
+                      }))}
+                      onChange={(value) => {
+                        const nextProvider = normalizeSubAgentAdapterType(value)
+                        const nextModels = getProviderModelOptions(modelOptions, nextProvider)
+                        const nextModel = nextModels[0]?.id ?? getDefaultModel(nextProvider)
+                        setSelectedProvider(nextProvider)
+                        setSelectedModel(nextModel)
+                        setSelectedFamily(inferModelFamily(nextModel))
+                        markDirty()
+                      }}
                     />
                   </Field>
                   <Field
@@ -949,6 +1030,13 @@ function buildSessionRunItems(
     return runItems
   }
 
+  const sessionSettings = toJsonObject(session.settings)
+  const fallbackModel = getString(sessionSettings, 'model') ?? undefined
+  const fallbackProvider =
+    getString(sessionSettings, 'providerName') ??
+    getString(sessionSettings, 'provider') ??
+    getString(sessionSettings, 'provider_name')
+
   return [
     {
       id: session.session_id,
@@ -958,7 +1046,8 @@ function buildSessionRunItems(
       summary: session.last_message || '아직 요약이 없습니다.',
       tokens: '-',
       cost: '-',
-      adapter: 'openai',
+      adapter: getRunAdapterLabel(fallbackProvider, fallbackModel),
+      model: fallbackModel,
       sortTime: getTime(session.last_message_at),
     },
   ]
@@ -1010,6 +1099,27 @@ function matchesMainAgentRef(agent: TaskRunAgentRef | undefined, mainProfileId: 
   return agent?.profileId === mainProfileId || agent?.id === mainProfileId || agent?.kind === 'main'
 }
 
+function inferProviderFromModel(
+  model: string | null | undefined,
+  provider?: string | null,
+): SubAgentAdapterType {
+  const modelText = (model ?? '').trim().toLowerCase()
+  if (modelText.startsWith('gemini-')) {
+    return 'gemini_api_key'
+  }
+  return normalizeSubAgentAdapterType(provider ?? undefined)
+}
+
+function getProviderModelOptions(models: AiModelOption[], providerType: SubAgentAdapterType) {
+  return models.filter((model) => {
+    const provider = model.provider?.toLowerCase()
+    if (providerType === 'openai_api_key') {
+      return provider === undefined || provider.includes('openai') || provider === 'openai_api_key'
+    }
+    return provider === providerType || model.id.toLowerCase().startsWith('gemini-')
+  })
+}
+
 function buildSessionRunItem(
   taskRunId: string,
   session: RawAiSession,
@@ -1028,6 +1138,21 @@ function buildSessionRunItem(
     .find((message) => message.role === 'assistant')?.content
   const inputPayload = toJsonObject(taskRun?.input_payload)
   const resultPayload = toJsonObject(taskRun?.result_payload)
+  const resultMetadata = toJsonObject(resultPayload.metadata)
+  const sessionSettings = toJsonObject(session.settings)
+  const model =
+    getFirstString(inputPayload, 'model', 'provider_model', 'providerModel') ??
+    getFirstString(resultPayload, 'model') ??
+    getFirstString(resultMetadata, 'model') ??
+    getString(sessionSettings, 'model') ??
+    undefined
+  const provider =
+    getFirstString(inputPayload, 'provider_name', 'providerName', 'provider') ??
+    getFirstString(resultPayload, 'provider_name', 'providerName', 'provider') ??
+    getString(sessionSettings, 'providerName') ??
+    getString(sessionSettings, 'provider') ??
+    getString(sessionSettings, 'provider_name') ??
+    undefined
   const sortTime = getRunSortTime(taskRun, events, relatedMessages, session)
 
   return {
@@ -1044,8 +1169,8 @@ function buildSessionRunItem(
       '아직 요약이 없습니다.',
     tokens: '-',
     cost: '-',
-    adapter: 'openai',
-    model: getString(toJsonObject(session.settings), 'model') ?? undefined,
+    adapter: getRunAdapterLabel(provider, model),
+    model,
     request:
       prompt ??
       getFirstString(inputPayload, 'prompt', 'content', 'rawUserInput', 'raw_user_input') ??
@@ -1147,6 +1272,14 @@ function getFirstString(source: unknown, ...keys: string[]) {
     if (typeof value === 'string' && value.trim() !== '') return value.trim()
   }
   return null
+}
+
+function getRunAdapterLabel(provider?: string | null, model?: string | null) {
+  const providerText = (provider ?? '').trim().toLowerCase()
+  const modelText = (model ?? '').trim().toLowerCase()
+  if (providerText.includes('gemini') || modelText.startsWith('gemini-')) return 'gemini'
+  if (providerText.includes('openai') || modelText.startsWith('gpt-')) return 'openai'
+  return providerText || undefined
 }
 
 function buildRunDelegationInput(
@@ -1274,9 +1407,7 @@ const inputClass =
   'border-border placeholder:text-muted-foreground/40 focus-visible:ring-ring w-full rounded-md border bg-transparent px-2.5 py-1.5 text-sm outline-none focus-visible:ring-2'
 
 const CEO_IMAGE_OPTIONS = [
-  { id: 'desk', label: '책상', src: '/assets/agents/ceo/ceo_desk.png' },
-  { id: 'explain', label: '설명', src: '/assets/agents/ceo/ceo_explain.png' },
-  { id: 'profile', label: '프로필', src: '/assets/agents/ceo/ceo_profile.png' },
+  { id: 'profile', label: '프로필', src: '/assets/agents/ceo/ceo_profile_img.png' },
 ] as const
 
 function MainAgentHeader({
@@ -1443,56 +1574,15 @@ function getMainAgentTab(value: string | null): MainAgentTab {
   return MAIN_AGENT_TABS.some((tab) => tab.value === value) ? (value as MainAgentTab) : 'dashboard'
 }
 
-function AgentImageStepper({
-  onProfileImageChange,
-  profileImage,
-  selectedImageIndex,
-}: {
-  onProfileImageChange: (image: string) => void
-  profileImage: string
-  selectedImageIndex: number
-}) {
-  const selectedImage = CEO_IMAGE_OPTIONS[selectedImageIndex]
-
+function AgentImageStepper({ profileImage }: { profileImage: string }) {
   return (
     <div
-      className="flex min-h-36 w-full min-w-0 items-center justify-center gap-5 rounded-lg"
+      className="flex min-h-36 w-full min-w-0 items-center justify-center rounded-lg"
       aria-label="에이전트 이미지"
     >
-      <button
-        type="button"
-        onClick={() => {
-          const nextIndex =
-            (selectedImageIndex - 1 + CEO_IMAGE_OPTIONS.length) % CEO_IMAGE_OPTIONS.length
-          onProfileImageChange(CEO_IMAGE_OPTIONS[nextIndex].src)
-        }}
-        className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-10 w-10 shrink-0 items-center justify-center rounded transition-colors"
-        aria-label="이전 에이전트 이미지"
-      >
-        <ChevronLeft className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          const nextIndex = (selectedImageIndex + 1) % CEO_IMAGE_OPTIONS.length
-          onProfileImageChange(CEO_IMAGE_OPTIONS[nextIndex].src)
-        }}
-        className="bg-accent hover:bg-accent/80 flex h-28 w-28 shrink-0 items-center justify-center overflow-hidden rounded-lg transition-colors"
-        aria-label={`${selectedImage?.label ?? '메인 에이전트'} 이미지 변경`}
-      >
+      <div className="bg-accent flex h-28 w-28 shrink-0 items-center justify-center overflow-hidden rounded-lg">
         <img src={profileImage} alt="" className="h-24 w-24 object-contain" draggable={false} />
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          const nextIndex = (selectedImageIndex + 1) % CEO_IMAGE_OPTIONS.length
-          onProfileImageChange(CEO_IMAGE_OPTIONS[nextIndex].src)
-        }}
-        className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-10 w-10 shrink-0 items-center justify-center rounded transition-colors"
-        aria-label="다음 에이전트 이미지"
-      >
-        <ChevronRight className="h-4 w-4" />
-      </button>
+      </div>
     </div>
   )
 }

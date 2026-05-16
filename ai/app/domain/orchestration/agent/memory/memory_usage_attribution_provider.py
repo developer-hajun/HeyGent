@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 from app.domain.orchestration.agent.memory.provider_retry import respond_provider_with_retry
-from app.domain.orchestration.agent.memory.runtime_context import build_memory_provider_runtime_context
+from app.domain.orchestration.agent.memory.runtime_context import build_memory_provider_runtime_context, resolve_memory_provider_name
 from app.domain.providers.model.base import AgentMessage
 from app.domain.providers.registry import ProviderRegistry
 
@@ -26,9 +26,13 @@ class ProviderMemoryUsageAttributionClient:
         recalled_memories: list[dict[str, Any]],
         runtime_context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        provider = self._provider_registry.preferred_model_provider()
-        provider_settings = getattr(provider, "settings", None)
-        model = self._model or str(getattr(provider_settings, "openai_response_model", "") or "gpt-5.4")
+        requested_model = str((runtime_context or {}).get("model") or "").strip() or None
+        provider_name = resolve_memory_provider_name(
+            (runtime_context or {}).get("provider_name") or (runtime_context or {}).get("providerName"),
+            requested_model,
+        )
+        provider = self._provider_registry.model_provider_for(provider_name)
+        model = self._model or requested_model or _default_model_for(provider)
         provider_runtime_context = _runtime_context_with_model(runtime_context, model)
         _ensure_live_provider(provider, runtime_context=provider_runtime_context)
         self.last_memory_provider_meta = {
@@ -75,6 +79,12 @@ def _ensure_live_provider(provider, *, runtime_context: dict[str, Any] | None = 
         return
     if not bool(getattr(health, "connected", False)):
         raise RuntimeError("memory provider requires a connected model provider")
+
+
+def _default_model_for(provider) -> str:
+    if str(getattr(provider, "name", "") or "") == "gemini_api":
+        return "gemini-2.5-pro"
+    return str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
 
 
 def _runtime_context_with_model(runtime_context: dict[str, Any] | None, model: str) -> dict[str, str] | None:

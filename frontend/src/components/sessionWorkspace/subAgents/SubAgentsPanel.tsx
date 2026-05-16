@@ -135,6 +135,10 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
           }}
           onSave={(agent) => {
             const documentKey = agent.instructionsEntryFile ?? 'AGENTS.md'
+            // 옵티미스틱: 사이드바·상세 헤더(이름/호칭 등)가 즉시 새 값으로 보이도록 패치 먼저.
+            const previousAgent = detailItem.agent
+            const optimisticAgent = { ...previousAgent, ...agent }
+            updateAgentPanelInSession(sessionId, detailItem.id, optimisticAgent)
             void updateSessionAgent(sessionId, detailItem.id, {
               name: agent.name,
               role: agent.role ?? 'general',
@@ -150,9 +154,23 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
               },
             })
               .then((profile) => {
-                updateAgentPanelInSession(sessionId, detailItem.id, agentProfileToAgent(profile))
+                // 서버 응답으로 정식 값을 한 번 더 적용한다. 단, 서버가 일부 필드를 null/빈 값으로
+                // 내려주는 경우 사용자가 방금 입력한 옵티미스틱 값(특히 호칭·이름)을 덮어쓰지 않도록
+                // 보호한다.
+                const serverAgent = agentProfileToAgent(profile)
+                updateAgentPanelInSession(sessionId, detailItem.id, {
+                  ...serverAgent,
+                  name: serverAgent.name?.trim() ? serverAgent.name : optimisticAgent.name,
+                  title: serverAgent.title?.trim() ? serverAgent.title : optimisticAgent.title,
+                  description:
+                    serverAgent.description !== undefined && serverAgent.description !== ''
+                      ? serverAgent.description
+                      : optimisticAgent.description,
+                })
               })
               .catch((error) => {
+                // 실패 시 옵티미스틱 패치를 이전 상태로 롤백
+                updateAgentPanelInSession(sessionId, detailItem.id, previousAgent)
                 setLoadError(
                   error instanceof Error ? error.message : '에이전트를 저장하지 못했습니다.',
                 )

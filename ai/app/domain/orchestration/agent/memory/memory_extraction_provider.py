@@ -6,7 +6,7 @@ from typing import Any
 from app.domain.orchestration.agent.memory.memory_extractor import MemoryExtractionContext
 from app.domain.orchestration.agent.memory.memory_reconciler import MemoryReconciliationContext
 from app.domain.orchestration.agent.memory.provider_retry import respond_provider_with_retry
-from app.domain.orchestration.agent.memory.runtime_context import build_memory_provider_runtime_context
+from app.domain.orchestration.agent.memory.runtime_context import build_memory_provider_runtime_context, resolve_memory_provider_name
 from app.domain.providers.model.base import AgentMessage
 from app.domain.providers.registry import ProviderRegistry
 
@@ -30,11 +30,12 @@ class ProviderMemoryExtractionClient:
         assistant_message: str,
         context: MemoryExtractionContext,
     ) -> dict[str, Any]:
-        provider = self._provider_registry.preferred_model_provider()
+        provider_name = resolve_memory_provider_name(context.provider_name, context.model)
+        provider = self._provider_registry.model_provider_for(provider_name)
         model = _select_model(provider, configured_model=self._model, requested_model=context.model)
         runtime_context = build_memory_provider_runtime_context(
             user_id=context.user_id,
-            provider_name=context.provider_name,
+            provider_name=provider_name,
             task_run_id=context.task_run_id,
             step_run_id=context.step_run_id,
             session_id=context.session_id,
@@ -76,11 +77,12 @@ class ProviderMemoryExtractionClient:
         existing_memories: list[dict[str, Any]],
         context: MemoryReconciliationContext,
     ) -> dict[str, Any]:
-        provider = self._provider_registry.preferred_model_provider()
+        provider_name = resolve_memory_provider_name(context.provider_name, context.model)
+        provider = self._provider_registry.model_provider_for(provider_name)
         model = _select_model(provider, configured_model=self._model, requested_model=context.model)
         runtime_context = build_memory_provider_runtime_context(
             user_id=context.user_id,
-            provider_name=context.provider_name,
+            provider_name=provider_name,
             task_run_id=context.task_run_id,
             step_run_id=context.step_run_id,
             session_id=context.session_id,
@@ -130,7 +132,7 @@ def _select_model(provider, *, configured_model: str | None, requested_model: st
     return (
         str(configured_model or "").strip()
         or str(requested_model or "").strip()
-        or str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")
+        or _default_model_for(provider)
     )
 
 
@@ -148,3 +150,9 @@ def _provider_meta(provider, *, model: str, retry_delays: tuple[float, ...] = (0
         "selected_model": model,
         "max_attempts": len(retry_delays) + 1,
     }
+
+
+def _default_model_for(provider) -> str:
+    if str(getattr(provider, "name", "") or "") == "gemini_api":
+        return "gemini-2.5-pro"
+    return str(getattr(getattr(provider, "settings", None), "openai_response_model", "") or "gpt-5.4")

@@ -89,7 +89,7 @@ const MAIN_AGENT_ASSIGNEE = {
   id: 'CEO',
   name: '팀장 에이전트',
   icon: UserRound,
-  imageUrl: '/assets/agents/ceo/ceo_profile.png' as string | null,
+  imageUrl: '/assets/agents/ceo/ceo_profile_img.png' as string | null,
 } as const
 const EMPTY_WORK_ITEMS: WorkItem[] = []
 const EMPTY_WORK_LABELS: WorkLabel[] = []

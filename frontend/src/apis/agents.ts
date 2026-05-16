@@ -251,9 +251,19 @@ export function deriveSpriteId(profileImage: string | null | undefined): string 
 }
 
 function normalizeAgentAdapterType(value: string | null | undefined) {
-  return value === 'openai' || value === undefined || value === null
-    ? (value ?? undefined)
-    : 'openai'
+  if (value === undefined || value === null || value === '') {
+    return undefined
+  }
+  if (value === 'openai') {
+    return 'openai_api_key'
+  }
+  if (value === 'gemini') {
+    return 'gemini_api_key'
+  }
+  if (value === 'openai_api_key' || value === 'gemini_api_key') {
+    return value
+  }
+  return 'openai_api_key'
 }
 
 function getInstructionsFiles(configSnapshot: Record<string, unknown>): Record<string, string> {
