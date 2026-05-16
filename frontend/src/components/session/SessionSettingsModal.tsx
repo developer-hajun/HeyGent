@@ -213,7 +213,7 @@ function SessionSettingsForm({ session, onOpenChange }: SessionSettingsFormProps
             <div className="relative shrink-0">
               <div className="border-border flex h-14 w-14 overflow-hidden rounded-full border-2 sm:h-20 sm:w-20">
                 <img
-                  src="/assets/agents/ceo/ceo_profile.png"
+                  src="/assets/agents/ceo/ceo_profile_img.png"
                   alt="에이전트 프로필"
                   className="h-full w-full object-cover"
                 />

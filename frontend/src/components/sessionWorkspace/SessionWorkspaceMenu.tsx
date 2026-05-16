@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import {
-  AlertTriangle,
   Bot,
   Check,
   ChevronLeft,
@@ -15,7 +14,6 @@ import {
   Plus,
   Target,
   Trash2,
-  Wifi,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -33,14 +31,12 @@ import { useChatStore } from '@/store/useChatStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { DEFAULT_SIDEBAR_COLLAPSED_WIDTH, useUIStore } from '@/store/useUIStore'
 import type { RawAiSession } from '@/types/aiChat'
-import { getString, getWorkspaceConnectionText, toJsonObject } from './sessionWorkspaceUtils'
-import type { WorkspaceConnectionState } from './sessionWorkspaceUtils'
+import { getString, toJsonObject } from './sessionWorkspaceUtils'
 import type { WorkspaceNavId, WorkspacePanelId } from './sessionWorkspaceTypes'
 
 interface SessionWorkspaceMenuProps {
   activePanel: WorkspacePanelId | null
   collapsed: boolean
-  connectionState: WorkspaceConnectionState
   currentRoute: 'chat' | 'visualization'
   session: RawAiSession | null
   sessionId: string
@@ -66,7 +62,6 @@ const MENU_ITEMS: Array<{
 export function SessionWorkspaceMenu({
   activePanel,
   collapsed,
-  connectionState,
   currentRoute,
   session,
   sessionId,
@@ -117,13 +112,26 @@ export function SessionWorkspaceMenu({
 
     const metadata = toJsonObject(session.metadata)
     const uiMetadata = toJsonObject(metadata.ui)
+    const nextUiMetadata = { ...uiMetadata, sessionName: trimmed }
+
+    // 옵티미스틱: UI는 즉시 닫고 사이드바 표시명도 곧바로 새 이름으로 반영.
+    setEditingTitle(false)
+    const previousSession = session
+    patchSessionInStore(session.session_id, {
+      ...session,
+      metadata: { ...metadata, ui: nextUiMetadata },
+    })
+
     setTitleSaving(true)
     try {
       await updateSession({
         sessionId: session.session_id,
-        metadataPatch: { ui: { ...uiMetadata, sessionName: trimmed } },
+        metadataPatch: { ui: nextUiMetadata },
       })
-      setEditingTitle(false)
+    } catch (error) {
+      // 실패하면 이전 세션 상태로 롤백
+      patchSessionInStore(previousSession.session_id, previousSession)
+      console.error('세션 이름 저장에 실패했습니다.', error)
     } finally {
       setTitleSaving(false)
     }
@@ -139,14 +147,31 @@ export function SessionWorkspaceMenu({
 
     const metadata = toJsonObject(session.metadata)
     const uiMetadata = toJsonObject(metadata.ui)
+    const nextUiMetadata = { ...uiMetadata, agentName: trimmed }
+
+    // 옵티미스틱: 편집 모드 즉시 닫고, 사이드바·채팅·시각화 store도 즉시 새 이름으로.
+    setEditingMainAgent(false)
+    const previousSession = session
+    const previousCeoName = useAgentVisualizationStore.getState().agentInfoMap.ceo?.name ?? null
+    patchSessionInStore(session.session_id, {
+      ...session,
+      metadata: { ...metadata, ui: nextUiMetadata },
+    })
+    updateAgentInfo('ceo', { name: trimmed })
+
     setMainAgentSaving(true)
     try {
       await updateSession({
         sessionId: session.session_id,
-        metadataPatch: { ui: { ...uiMetadata, agentName: trimmed } },
+        metadataPatch: { ui: nextUiMetadata },
       })
-      updateAgentInfo('ceo', { name: trimmed })
-      setEditingMainAgent(false)
+    } catch (error) {
+      // 실패하면 이전 상태로 롤백
+      patchSessionInStore(previousSession.session_id, previousSession)
+      if (previousCeoName !== null) {
+        updateAgentInfo('ceo', { name: previousCeoName })
+      }
+      console.error('팀장 에이전트 이름 저장에 실패했습니다.', error)
     } finally {
       setMainAgentSaving(false)
     }
@@ -303,7 +328,6 @@ export function SessionWorkspaceMenu({
 
       <nav className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3 py-3">
         <div>
-          <ConnectionStatusRow state={connectionState} />
           <div className="mt-0.5 flex flex-col gap-0.5">
             {MENU_ITEMS.map((item) => {
               const Icon = item.icon
@@ -558,28 +582,13 @@ function SectionHeader({ label }: { label: string }) {
   )
 }
 
-function ConnectionStatusRow({ state }: { state: WorkspaceConnectionState }) {
-  const isError = state === 'error'
-  const isConnected = state === 'connected'
-  const Icon = isError ? AlertTriangle : Wifi
-  const label = isError
-    ? '서버 연결 확인 필요'
-    : isConnected
-      ? '서버 연결됨'
-      : getWorkspaceConnectionText(state)
-
-  return (
-    <div
-      className={`flex items-center gap-2.5 px-3 py-2 text-[13px] font-medium ${
-        isError ? 'text-destructive' : isConnected ? 'text-emerald-600' : 'text-muted-foreground'
-      }`}
-    >
-      <Icon className="h-4 w-4 shrink-0" />
-      <span className="truncate">{label}</span>
-    </div>
-  )
-}
-
 function getTrimmedString(value: unknown) {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+}
+
+// 옵티미스틱 업데이트용 — 서버 응답을 기다리지 않고 sessionsById를 즉시 패치한다.
+function patchSessionInStore(sessionId: string, nextSession: RawAiSession) {
+  useChatStore.setState((state) => ({
+    sessionsById: { ...state.sessionsById, [sessionId]: nextSession },
+  }))
 }
