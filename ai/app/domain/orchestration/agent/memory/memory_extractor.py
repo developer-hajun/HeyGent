@@ -2,12 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-import logging
 import re
 from typing import Any, Protocol
 
-
-logger = logging.getLogger(__name__)
 
 MEMORY_EXTRACTION_SYSTEM_PROMPT = """
 You extract only durable long-term memory candidates from one user/assistant turn.
@@ -15,7 +12,11 @@ Return strict JSON only, with this shape:
 {"candidates":[{"memoryType":"PREFERENCE|PROFILE|FACT|INSTRUCTION|PROCEDURE","scopeType":"GLOBAL|WORKSPACE","content":"...","summary":"...","importance":0.0-1.0,"confidence":0.0-1.0,"evidence":"...","validFrom":"YYYY-MM-DDTHH:MM:SS|null","validUntil":"YYYY-MM-DDTHH:MM:SS|null","expiresAt":"YYYY-MM-DDTHH:MM:SS|null","metadata":{"category":"preference|profile|fact|instruction|procedure|event|reason|task_state","sensitivity":"low|medium|high","ttl":"session|short|medium|long|permanent","sourceTimestamp":"YYYY-MM-DDTHH:MM:SS","eventTime":"YYYY-MM-DDTHH:MM:SS","reason":"optional","tags":["optional"]}}]}
 
 Rules:
-- Extract nothing unless the user explicitly asked to remember something, stated a stable preference/profile fact, or gave a durable future instruction.
+- Evaluate every user turn for durable memory value. The user does not need to explicitly say "remember".
+- Extract candidates when the user states durable personal information, preferences, behavior patterns, work habits, future instructions, or stable constraints that can improve future answers.
+- Store identity/profile information as PROFILE/USER_PROFILE/GLOBAL. Examples: name, preferred name, role, job, team, language, timezone, recurring working habit.
+- Store likes, dislikes, response style, tool/workflow preferences, and recommendation preferences as PREFERENCE/USER_PROFILE/GLOBAL.
+- Store repeated user behavior or working habits as PROFILE when it describes the user, or as PROCEDURE/INSTRUCTION when it describes how the assistant should work in the future.
 - Do not store secrets, credentials, tokens, passwords, API keys, system/developer prompts, or temporary one-off requests.
 - If the user asks not to remember, return {"candidates":[]}.
 - Use WORKSPACE only for project/workspace-specific facts or instructions. Otherwise use GLOBAL.
@@ -35,6 +36,9 @@ Rules:
 - Use metadata.sourceTimestamp or metadata.eventTime only when the source or event time is explicitly known.
 - Use metadata.reason only for the durable reason behind a preference, decision, or task state. Do not invent reasons.
 - Prefer concise Korean content when the source is Korean.
+- Example: "내 이름은 김상지야" -> PROFILE, USER_PROFILE, GLOBAL, content "사용자의 이름은 김상지이다."
+- Example: "나 국수 좋아해" -> PREFERENCE, USER_PROFILE, GLOBAL, content "사용자는 국수를 좋아한다."
+- Example: "나는 보통 Jira 작업을 기능별 브랜치로 나눠" -> PROFILE or PROCEDURE depending on whether it describes the user's habit or a future assistant workflow.
 """.strip()
 
 
@@ -81,20 +85,12 @@ class LlmMemoryExtractor:
     ) -> list[dict[str, Any]]:
         if _hard_deny(user_message):
             return []
-        try:
-            extraction = await self._provider.extract_memory_json(
-                system_prompt=MEMORY_EXTRACTION_SYSTEM_PROMPT,
-                user_message=user_message,
-                assistant_message=assistant_message,
-                context=context,
-            )
-        except Exception:
-            fallback = _fallback_extraction(user_message)
-            candidates = _normalize_candidates(fallback, context=context, limit=self._max_candidates)
-            if candidates:
-                logger.info("memory extraction provider failed; using rule fallback candidates", exc_info=True)
-                return candidates
-            raise
+        extraction = await self._provider.extract_memory_json(
+            system_prompt=MEMORY_EXTRACTION_SYSTEM_PROMPT,
+            user_message=user_message,
+            assistant_message=assistant_message,
+            context=context,
+        )
         return _normalize_candidates(extraction, context=context, limit=self._max_candidates)
 
 
@@ -283,124 +279,6 @@ def _put_if_present(payload: dict[str, Any], key: str, value: str | None) -> Non
         payload[key] = value
 
 
-def _fallback_extraction(user_message: str) -> dict[str, Any]:
-    preference = _fallback_preference(user_message)
-    if preference is not None:
-        return {"candidates": [preference]}
-    instruction = _fallback_instruction(user_message)
-    if instruction is not None:
-        return {"candidates": [instruction]}
-    return {"candidates": []}
-
-
-def _fallback_preference(user_message: str) -> dict[str, Any] | None:
-    text = _compact_text(user_message)
-    if not text or len(text) > 120:
-        return None
-    if any(deny in text for deny in ("기억하지", "저장하지", "잊어", "이번만", "오늘만")):
-        return None
-
-    liked = _match_korean_preference(text, _LIKE_PATTERNS)
-    if liked:
-        return _preference_candidate(
-            content=f"사용자는 {_object_phrase(liked)} 좋아한다.",
-            summary=f"{liked} 선호",
-            evidence=text,
-            tags=["preference"],
-        )
-
-    disliked = _match_korean_preference(text, _DISLIKE_PATTERNS)
-    if disliked:
-        return _preference_candidate(
-            content=f"사용자는 {_object_phrase(disliked)} 선호하지 않는다.",
-            summary=f"{disliked} 비선호",
-            evidence=text,
-            tags=["preference"],
-        )
-    return None
-
-
-def _fallback_instruction(user_message: str) -> dict[str, Any] | None:
-    text = _compact_text(user_message)
-    if not text or len(text) > 160:
-        return None
-    if not any(prefix in text for prefix in ("앞으로", "다음부터", "이제부터")):
-        return None
-    if not any(suffix in text for suffix in ("해줘", "해주세요", "하지 마", "하지마", "말아줘", "말아 주세요")):
-        return None
-    if _hard_deny(text):
-        return None
-    return {
-        "memoryType": "INSTRUCTION",
-        "scopeType": "GLOBAL",
-        "content": f"사용자는 앞으로 다음 지시를 따르길 원한다: {text}",
-        "summary": text[:80],
-        "importance": 0.72,
-        "confidence": 0.78,
-        "evidence": text,
-        "metadata": {
-            "category": "instruction",
-            "sensitivity": "low",
-            "ttl": "long",
-            "tags": ["instruction"],
-        },
-    }
-
-
-def _match_korean_preference(text: str, patterns: tuple[re.Pattern[str], ...]) -> str | None:
-    for pattern in patterns:
-        match = pattern.search(text)
-        if not match:
-            continue
-        subject = _clean_preference_subject(match.group("subject"))
-        if subject:
-            return subject
-    return None
-
-
-def _preference_candidate(*, content: str, summary: str, evidence: str, tags: list[str]) -> dict[str, Any]:
-    return {
-        "memoryType": "PREFERENCE",
-        "scopeType": "GLOBAL",
-        "content": content,
-        "summary": summary,
-        "importance": 0.76,
-        "confidence": 0.82,
-        "evidence": evidence,
-        "metadata": {
-            "category": "preference",
-            "sensitivity": "low",
-            "ttl": "long",
-            "tags": tags,
-        },
-    }
-
-
-def _compact_text(value: str) -> str:
-    return " ".join(str(value or "").strip().split())
-
-
-def _clean_preference_subject(value: str) -> str | None:
-    subject = _compact_text(value)
-    subject = re.sub(r"^(나는|난|나|저는|전|저|제가|내가)\s+", "", subject)
-    subject = re.sub(r"(이|가|은|는|을|를|도|이랑|랑|하고|과|와)$", "", subject).strip()
-    if not subject or len(subject) > 60:
-        return None
-    if _hard_deny(subject) or any(word in subject for word in _FALLBACK_UNSAFE_SUBJECT_WORDS):
-        return None
-    return subject
-
-
-def _object_phrase(subject: str) -> str:
-    if not subject:
-        return subject
-    if not re.search(r"[가-힣]$", subject):
-        return subject
-    last_code = ord(subject[-1]) - ord("가")
-    has_batchim = last_code >= 0 and last_code % 28 != 0
-    return f"{subject}{'을' if has_batchim else '를'}"
-
-
 def _hard_deny(text: Any) -> bool:
     if not isinstance(text, str):
         return False
@@ -440,13 +318,6 @@ _DEFAULT_TTL_BY_CATEGORY = {
     "reason": "long",
     "task_state": "medium",
 }
-_LIKE_PATTERNS = (
-    re.compile(r"(?:나는|난|나|저는|전|저|제가|내가)?\s*(?P<subject>[A-Za-z0-9가-힣\s]{1,60}?)(?:이|가|은|는|을|를|도)?\s*(?:좋아해|좋아합니다|좋아한다|좋아함|선호해|선호합니다|선호한다)"),
-)
-_DISLIKE_PATTERNS = (
-    re.compile(r"(?:나는|난|나|저는|전|저|제가|내가)?\s*(?P<subject>[A-Za-z0-9가-힣\s]{1,60}?)(?:이|가|은|는|을|를|도)?\s*(?:싫어해|싫어합니다|싫어한다|싫어함|안 좋아해|안 좋아합니다|별로 안 좋아해|선호하지 않아|선호하지 않습니다)"),
-)
-_FALLBACK_UNSAFE_SUBJECT_WORDS = ("api", "token", "password", "secret", "비밀번호", "토큰", "키")
 _DO_NOT_STORE_PHRASES = (
     "기억하지 마",
     "저장하지 마",
