@@ -27,13 +27,7 @@ public class OpenAiCredentialIssueService {
         String model = runtimePolicyService.requireAllowedModel(providerName, request.getModel());
 
         if (providerName.isUserManagedApiKeyProvider()) {
-            return response(
-                providerName,
-                model,
-                "api_key",
-                openAiApiKeyService.resolveApiKey(request.getUserId(), providerName),
-                null
-            );
+            return issueApiKeyCredential(request, providerName, model);
         }
 
         if (providerName.isCodexOAuthProvider()) {
@@ -46,6 +40,29 @@ public class OpenAiCredentialIssueService {
         }
 
         throw new CustomException(ErrorCode.OPENAI_PROVIDER_NOT_SUPPORTED);
+    }
+
+    private OpenAiCredentialIssueResponse issueApiKeyCredential(
+        OpenAiCredentialIssueRequest request,
+        OpenAiProviderName providerName,
+        String model
+    ) {
+        try {
+            return response(
+                providerName,
+                model,
+                "api_key",
+                openAiApiKeyService.resolveApiKey(request.getUserId(), providerName),
+                null
+            );
+        } catch (CustomException exception) {
+            if (providerName == OpenAiProviderName.OPENAI_API_KEY
+                && exception.getErrorCode() == ErrorCode.OPENAI_PROVIDER_NOT_CONNECTED
+                && runtimePolicyService.isDevFallbackAvailable()) {
+                return response(OpenAiProviderName.OPENAI_DEV_FALLBACK, model, "api_key", properties.getApiKey(), null);
+            }
+            throw exception;
+        }
     }
 
     private OpenAiCredentialIssueResponse response(

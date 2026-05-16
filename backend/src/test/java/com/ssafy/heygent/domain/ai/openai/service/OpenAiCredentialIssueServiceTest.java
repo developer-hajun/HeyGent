@@ -18,6 +18,7 @@ import com.ssafy.heygent.domain.ai.dto.request.OpenAiCredentialIssueRequest;
 import com.ssafy.heygent.domain.ai.dto.response.OpenAiCredentialIssueResponse;
 import com.ssafy.heygent.domain.ai.openai.config.OpenAiProperties;
 import com.ssafy.heygent.global.exception.CustomException;
+import com.ssafy.heygent.global.exception.ErrorCode;
 
 @ExtendWith(MockitoExtension.class)
 class OpenAiCredentialIssueServiceTest {
@@ -76,6 +77,23 @@ class OpenAiCredentialIssueServiceTest {
         assertThat(response.getAuthType()).isEqualTo("api_key");
         assertThat(response.getCredentialType()).isEqualTo("api_key");
         assertThat(response.getCredential()).isEqualTo("gemini-key");
+    }
+
+    @Test
+    void issueUsesDevFallbackWhenOpenAiUserApiKeyIsMissingInLocalProfile() throws Exception {
+        OpenAiCredentialIssueRequest request = request("openai_api_key");
+        when(environment.matchesProfiles("dev")).thenReturn(false);
+        when(environment.matchesProfiles("local")).thenReturn(true);
+        when(openAiApiKeyService.resolveApiKey(
+            org.mockito.ArgumentMatchers.eq(1L),
+            org.mockito.ArgumentMatchers.any()
+        )).thenThrow(new CustomException(ErrorCode.OPENAI_PROVIDER_NOT_CONNECTED));
+
+        OpenAiCredentialIssueResponse response = openAiCredentialIssueService.issue(request);
+
+        assertThat(response.getProviderName()).isEqualTo("openai_dev_fallback");
+        assertThat(response.getCredentialType()).isEqualTo("api_key");
+        assertThat(response.getCredential()).isEqualTo("dev-key");
     }
 
     @Test
