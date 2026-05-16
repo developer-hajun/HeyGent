@@ -29,11 +29,13 @@ Rules:
 - Use USER_PROFILE/PROFILE/GLOBAL/profile for user role, identity, or working habit.
 - Do not skip open-ended recommendations, suggestions, choices, or "what should I do/eat/use" questions. These should recall USER_PROFILE/PREFERENCE/GLOBAL/preference because preferences may materially change the answer.
 - Use AGENT_MEMORY/FACT/GLOBAL/event,fact,reason for recent events, temporary constraints, health/diet restrictions, situational limitations, or other non-durable facts that should affect the current recommendation.
+- Use AGENT_MEMORY/FACT/GLOBAL/fact,event for current user situations embedded in task requests, such as interview preparation, job search status, travel plans, health constraints, schedule constraints, or temporary workload. These are not PROFILE unless they describe durable identity or habit.
 - Use AGENT_MEMORY/FACT/WORKSPACE/task_state,fact for continuing project implementation or current project state.
 - Use AGENT_MEMORY/INSTRUCTION/GLOBAL/instruction,procedure for durable user instructions about how the assistant should answer or what process it should follow.
 - Use AGENT_MEMORY/PROCEDURE/procedure,instruction for reusable workflow or repeated project procedure.
 - Do not classify saved answer-format instructions, response workflows, or assistant behavior procedures as FACT/task_state. FACT/task_state is only for factual project/session state, not for how to respond.
 - Do not classify temporary restrictions, recent events, or situational facts as USER_PROFILE/PROFILE. PROFILE is only for durable identity, role, or habit.
+- If the user asks for a plan, recommendation, or advice based on a current situation, recall related FACT/event memories in addition to preference memories when useful.
 - Use reason/event categories when the user asks why, history, records, schedule, or previous event context.
 - If multiple memory classes could materially affect the answer, keep the primary plan narrow and add additionalRecallPlans for the other classes. For example, retrieve durable user preferences separately from reusable assistant instructions or procedures when both could matter.
 - When the user asks the assistant to perform a task and a saved response workflow could control the answer structure, include an additional AGENT_MEMORY recall plan with memoryType INSTRUCTION or PROCEDURE and metadataCategories instruction,procedure.

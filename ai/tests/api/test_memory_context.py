@@ -116,6 +116,8 @@ def test_recall_planner_prompt_separates_instructions_from_task_state():
 
     assert "AGENT_MEMORY/INSTRUCTION/GLOBAL/instruction,procedure" in MEMORY_RECALL_PLANNER_SYSTEM_PROMPT
     assert "Do not classify saved answer-format instructions" in MEMORY_RECALL_PLANNER_SYSTEM_PROMPT
+    assert "current user situations embedded in task requests" in MEMORY_RECALL_PLANNER_SYSTEM_PROMPT
+    assert "interview preparation" in MEMORY_RECALL_PLANNER_SYSTEM_PROMPT
 
 
 def test_plan_memory_recall_skips_low_value_greeting():
@@ -223,6 +225,37 @@ async def test_llm_memory_recall_planner_handles_personalized_recommendation():
         "memory_type": "PREFERENCE",
         "scope_type": "GLOBAL",
         "metadata_categories": ["preference"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_llm_memory_recall_planner_handles_current_user_fact_for_planning():
+    provider = FakeRecallPlannerProvider(
+        {
+            "shouldRecall": True,
+            "query": "사용자 면접 준비 현황",
+            "reason": "면접 준비 계획은 사용자의 현재 준비 상태 fact가 필요함",
+            "filters": {
+                "storeType": "AGENT_MEMORY",
+                "memoryType": "FACT",
+                "scopeType": "GLOBAL",
+                "metadataCategories": ["fact", "event"],
+            },
+        }
+    )
+    planner = LlmMemoryRecallPlanner(provider=provider)
+
+    plan = await planner.plan_recall("면접 준비 계획서 다시 만들어줘", workspace_key="team-a")
+
+    assert plan.should_recall is True
+    assert plan.query == "사용자 면접 준비 현황"
+    assert plan.reason == "면접 준비 계획은 사용자의 현재 준비 상태 fact가 필요함"
+    assert plan.planner_source == "llm"
+    assert plan.filters() == {
+        "store_type": "AGENT_MEMORY",
+        "memory_type": "FACT",
+        "scope_type": "GLOBAL",
+        "metadata_categories": ["fact", "event"],
     }
 
 
