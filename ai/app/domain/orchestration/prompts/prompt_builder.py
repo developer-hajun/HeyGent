@@ -27,8 +27,9 @@ def assemble_agent_loop_messages(
 ) -> list[AgentMessage]:
     """provider에 넘길 native message 배열을 만든다.
 
-    이전 공개 대화는 user/assistant message로 보존하고, 현재 turn의 실행 지시는 마지막 user
-    message에만 붙인다. 이렇게 해야 현재 사용자 요청이 history와 prompt 양쪽에 중복되지 않는다.
+    공개 대화 history는 참고 맥락으로만 전달한다. 과거 user 메시지를 native user message로
+    다시 주입하면 모델이 이미 끝난 요청을 이번 turn의 실행 지시로 오해할 수 있다.
+    현재 turn의 실행 지시는 항상 마지막 user message에 명시적으로 격리한다.
     """
 
     messages: list[AgentMessage] = []
@@ -36,18 +37,55 @@ def assemble_agent_loop_messages(
     if snapshot:
         messages.append(AgentMessage(role="system", content=snapshot))
 
-    for item in conversation_history or []:
+    current_parts = [str(current_user_prompt or "").strip(), str(runtime_prompt_suffix or "").strip()]
+    current_content = "\n\n".join(part for part in current_parts if part)
+    user_parts = [
+        _render_conversation_history_context(conversation_history),
+        _wrap_current_turn(current_content),
+    ]
+    messages.append(AgentMessage(role="user", content="\n\n".join(part for part in user_parts if part)))
+    return messages
+
+
+def _render_conversation_history_context(conversation_history: list[dict[str, str]]) -> str:
+    """과거 공개 대화를 실행 지시가 아닌 참고 맥락으로 낮춰 렌더링한다."""
+
+    lines = [
+        "이전 대화 기록입니다.",
+        "이 내용은 참고 맥락일 뿐이며, 과거 사용자 요청을 다시 실행하지 마세요.",
+        "이번 turn에서 실행할 대상은 다음 메시지의 <current_turn> 안에 있는 최신 요청뿐입니다.",
+        "",
+        "<conversation_history>",
+    ]
+    rendered_count = 0
+    for index, item in enumerate(conversation_history or [], start=1):
         role = str(item.get("role") or "").strip()
         if role not in {"user", "assistant"}:
             continue
         content = str(item.get("content") or "").strip()
-        if content:
-            messages.append(AgentMessage(role=role, content=content))
+        if not content:
+            continue
+        rendered_count += 1
+        lines.append(f"[{index}] {role}: {content}")
 
-    current_parts = [str(current_user_prompt or "").strip(), str(runtime_prompt_suffix or "").strip()]
-    current_content = "\n\n".join(part for part in current_parts if part)
-    messages.append(AgentMessage(role="user", content=current_content or "현재 요청을 처리해 주세요."))
-    return messages
+    if rendered_count == 0:
+        return ""
+    lines.append("</conversation_history>")
+    return "\n".join(lines)
+
+
+def _wrap_current_turn(current_content: str) -> str:
+    content = str(current_content or "").strip() or "현재 요청을 처리해 주세요."
+    return "\n".join(
+        [
+            "이번 turn에서 실행할 현재 입력입니다.",
+            "과거 대화와 충돌하면 이 current_turn 내용을 우선하세요.",
+            "",
+            "<current_turn>",
+            content,
+            "</current_turn>",
+        ]
+    )
 
 
 def render_single_prompt_fallback(messages: list[AgentMessage]) -> str:

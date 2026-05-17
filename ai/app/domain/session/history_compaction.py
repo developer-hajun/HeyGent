@@ -4,7 +4,7 @@ from __future__ import annotations
 def compact_conversation_history(
     history: list[dict[str, str]],
     *,
-    protect_head_n: int = 2,
+    protect_head_n: int = 0,
     protect_tail_n: int = 12,
     max_messages: int = 32,
 ) -> list[dict[str, str]]:
@@ -21,6 +21,8 @@ def compact_conversation_history(
     if len(normalized) <= max_messages:
         return normalized
 
+    # 오래된 첫 user 요청을 기본 보호하면 다음 turn에서 이미 완료된 요청이 계속 살아남는다.
+    # 장기 맥락은 summary나 별도 memory로 승격하고, 실행 history는 최신 tail 중심으로 유지한다.
     head_count = max(0, protect_head_n)
     tail_count = max(0, protect_tail_n)
 

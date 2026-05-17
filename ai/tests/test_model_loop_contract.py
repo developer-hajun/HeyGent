@@ -558,7 +558,7 @@ def test_skill_loader_preserves_nested_runtime_metadata():
     assert metadata["fallback_for_tools"] == ["web_search"]
 
 
-def test_assemble_agent_loop_messages_preserves_history_as_native_messages():
+def test_assemble_agent_loop_messages_wraps_history_as_context_only():
     messages = assemble_agent_loop_messages(
         system_prompt_snapshot="고정 system prompt",
         conversation_history=[
@@ -569,12 +569,16 @@ def test_assemble_agent_loop_messages_preserves_history_as_native_messages():
         runtime_prompt_suffix="도구 사용 지침",
     )
 
-    assert [message.role for message in messages] == ["system", "user", "assistant", "user"]
+    assert [message.role for message in messages] == ["system", "user"]
     assert messages[0].content == "고정 system prompt"
-    assert messages[1].content == "이전 요청"
-    assert messages[2].content == "이전 답변"
-    assert "지금 질문" in str(messages[3].content)
-    assert "도구 사용 지침" in str(messages[3].content)
+    assert "참고 맥락" in str(messages[1].content)
+    assert "과거 사용자 요청을 다시 실행하지 마세요" in str(messages[1].content)
+    assert "[1] user: 이전 요청" in str(messages[1].content)
+    assert "[2] assistant: 이전 답변" in str(messages[1].content)
+    assert "<current_turn>" in str(messages[1].content)
+    assert "지금 질문" in str(messages[1].content)
+    assert "도구 사용 지침" in str(messages[1].content)
+    assert str(messages[1].content).rfind("<conversation_history>") < str(messages[1].content).rfind("<current_turn>")
 
 
 def test_single_prompt_fallback_is_the_only_history_text_renderer():
