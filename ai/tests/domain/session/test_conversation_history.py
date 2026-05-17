@@ -53,7 +53,7 @@ def test_build_conversation_history_truncates_long_content():
     ]
 
 
-def test_compaction_preserves_head_tail_latest_user_and_uses_synthetic_summary():
+def test_compaction_keeps_tail_latest_user_and_uses_synthetic_summary():
     history = [
         {"role": "user" if i % 2 == 0 else "assistant", "content": f"메시지 {i}"}
         for i in range(40)
@@ -61,15 +61,13 @@ def test_compaction_preserves_head_tail_latest_user_and_uses_synthetic_summary()
 
     compacted = compact_conversation_history(
         history,
-        protect_head_n=2,
         protect_tail_n=8,
         max_messages=16,
     )
 
-    assert compacted[0]["content"] == "메시지 0"
-    assert compacted[1]["content"] == "메시지 1"
-    assert compacted[2]["role"] == "assistant"
-    assert "이전 대화 요약" in compacted[2]["content"]
+    assert compacted[0]["role"] == "assistant"
+    assert "이전 대화 요약" in compacted[0]["content"]
+    assert "메시지 0" not in [item["content"] for item in compacted]
     assert compacted[-1]["content"] == "메시지 39"
     assert len(compacted) <= 16
     assert all(item["role"] != "system" for item in compacted)

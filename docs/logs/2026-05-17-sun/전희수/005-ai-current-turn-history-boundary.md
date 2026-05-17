@@ -22,7 +22,7 @@
 
 - 공개 대화 history를 provider native `user` / `assistant` message 배열로 그대로 재주입하던 방식을 중단했습니다.
 - 과거 대화는 단일 user message 안의 `conversation_history` 참고 블록으로 낮추고, 실제 실행 대상은 `current_turn` 블록으로 명시했습니다.
-- 오래된 첫 user 요청이 기본 압축 정책에서 계속 보호되지 않도록 `protect_head_n` 기본값을 0으로 변경했습니다.
+- 오래된 첫 user 요청을 별도 보호하는 압축 경로를 제거하고, history는 요약과 최신 tail 중심으로 유지하도록 정리했습니다.
 - 관련 단위 테스트를 새 정책 기준으로 갱신했습니다.
 
 ## 주요 파일

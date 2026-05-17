@@ -4,7 +4,6 @@ from __future__ import annotations
 def compact_conversation_history(
     history: list[dict[str, str]],
     *,
-    protect_head_n: int = 0,
     protect_tail_n: int = 12,
     max_messages: int = 32,
 ) -> list[dict[str, str]]:
@@ -21,27 +20,23 @@ def compact_conversation_history(
     if len(normalized) <= max_messages:
         return normalized
 
-    # 오래된 첫 user 요청을 기본 보호하면 다음 turn에서 이미 완료된 요청이 계속 살아남는다.
-    # 장기 맥락은 summary나 별도 memory로 승격하고, 실행 history는 최신 tail 중심으로 유지한다.
-    head_count = max(0, protect_head_n)
     tail_count = max(0, protect_tail_n)
 
-    head = normalized[:head_count]
-    protected_tail_start = max(len(normalized) - tail_count, head_count)
+    protected_tail_start = max(len(normalized) - tail_count, 0)
     latest_user_index = _latest_user_index(normalized)
     if latest_user_index is not None:
         protected_tail_start = min(protected_tail_start, latest_user_index)
 
     tail = normalized[protected_tail_start:]
-    available_tail_count = max_messages - len(head) - 1
+    available_tail_count = max_messages - 1
     if available_tail_count <= 0:
         tail = []
     elif len(tail) > available_tail_count:
         tail = tail[-available_tail_count:]
 
-    middle = normalized[len(head) : len(normalized) - len(tail)]
+    middle = normalized[: len(normalized) - len(tail)]
     summary = _build_summary_message(middle)
-    compacted = [*head, summary, *tail]
+    compacted = [summary, *tail]
 
     # 압축이 길이를 줄이지 못하면 요약 메시지만 누적되어 다음 턴의 context 예산을 더 악화시킨다.
     if len(compacted) >= len(normalized):
