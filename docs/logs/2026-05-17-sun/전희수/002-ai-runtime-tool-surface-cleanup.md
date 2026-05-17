@@ -16,16 +16,16 @@
 ## 작업 목적
 
 - 병목 테스트에서 확인된 없는 도구 반복 호출 문제를 줄이기 위해 AI runtime tool surface를 정리한다.
-- Hermes/Paperclip 레퍼런스 기준으로, 실제 실행 가능한 도구만 모델에게 노출하는 정책을 적용한다.
+- 실제 실행 가능한 도구만 모델에게 노출하는 정책을 적용한다.
 
 ## 변경 요약
 
-- Firecrawl, Hermes/Nous tool-gateway, browser runtime 계열 코드를 기본 runtime에서 제거했다.
+- Firecrawl, tool-gateway, browser runtime 계열 코드를 기본 runtime에서 제거했다.
 - `web` toolset은 `web_search`, `http_get`만 남겼다.
 - `browser` toolset과 `browser_*` schema, dispatcher, worker 기본 toolset, DB seed 참조를 제거했다.
 - runtime tool definition에 `check_fn`, `requires_env`, `unavailable_reason`을 추가했다.
 - `web_search`는 검색 백엔드 키가 확인될 때만 모델 tool 목록에 노출되도록 변경했다.
-- 순차 결정 기록은 `tmp/병목TEST/레퍼런스-tool-역할정리/순차-수정-결정-20260517.md`에 남겼다.
+- 순차 결정 기록은 로컬 임시 문서에만 남기고 공용 문서에는 결과만 요약한다.
 
 ## 주요 파일
 

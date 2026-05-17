@@ -15,7 +15,7 @@
 
 ## 작업 목적
 
-- 레퍼런스(Hermes-Agent, Paperclip) 기준으로 runtime tool 노출 정책을 보완한다.
+- runtime tool 노출 정책을 보완한다.
 - 제거된 browser/web 추출 계열 도구가 기존 DB 설정이나 코드 잔재 때문에 다시 모델에게 노출되지 않도록 한다.
 
 ## 변경 요약
@@ -42,8 +42,8 @@
 
 ## 결정 / 이슈
 
-- Hermes-Agent 의 check_fn 기반 노출 필터와 unknown toolset 무시 흐름을 현재 native runtime 구조에 맞춰 반영했다.
-- Paperclip 처럼 선언/등록된 도구와 실제 실행 가능 상태를 분리하기 위해 availability 진단 surface 를 추가했다.
+- 도구별 `check_fn` 결과에 따라 실제 사용 가능한 tool schema만 모델에게 노출한다.
+- 선언된 도구와 실제 실행 가능 상태를 분리해서 확인할 수 있도록 availability 진단 surface 를 추가했다.
 - browser backend 는 현 제품 범위에서 운영하지 않으므로 fallback stub 없이 제거 방향을 유지한다.
 
 ## 다음 단계
