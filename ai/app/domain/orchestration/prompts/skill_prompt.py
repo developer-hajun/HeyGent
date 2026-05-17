@@ -1,6 +1,16 @@
 from __future__ import annotations
 
+from typing import Any
+
 from app.domain.orchestration.prompts.skill_utils import default_skills_root, iter_skill_files, load_skill_document
+
+
+_CONDITION_KEYS = (
+    "fallback_for_toolsets",
+    "requires_toolsets",
+    "fallback_for_tools",
+    "requires_tools",
+)
 
 
 class SkillRegistry:
@@ -40,6 +50,7 @@ class SkillLoader:
                     "description": document.description,
                     "path": str(document.path),
                     "body": document.body,
+                    "metadata": document.metadata,
                 }
             )
         return skills
@@ -51,9 +62,9 @@ class SkillPromptBuilder:
     def __init__(self, registry) -> None:
         self.registry = registry
 
-    def build(self, *, input_payload: dict) -> str:
+    def build(self, *, input_payload: dict, available_tools: list[dict[str, Any]] | None = None) -> str:
         hints = [str(item).strip() for item in input_payload.get("skill_hints") or [] if str(item).strip()]
-        resolved = self.registry.resolve_hints(hints)
+        resolved = self._filter_by_tool_conditions(self.registry.resolve_hints(hints), available_tools=available_tools)
         if not resolved:
             return ""
         lines = ["적용 가능한 작업 힌트:"]
@@ -64,9 +75,17 @@ class SkillPromptBuilder:
                 lines.append(body[:600].rstrip())
         return "\n".join(lines)
 
-    def build_catalog(self, *, input_payload: dict | None = None) -> str:
-        items = self.registry.catalog_items(
-            allowed_names=_allowed_skill_names(input_payload or {})
+    def build_catalog(
+        self,
+        *,
+        input_payload: dict | None = None,
+        available_tools: list[dict[str, Any]] | None = None,
+    ) -> str:
+        items = self._filter_by_tool_conditions(
+            self.registry.catalog_items(
+                allowed_names=_allowed_skill_names(input_payload or {})
+            ),
+            available_tools=available_tools,
         )
         if not items:
             return ""
@@ -91,6 +110,23 @@ class SkillPromptBuilder:
             lines.append(f"- `{name}`: {description}" if description else f"- `{name}`")
         return "\n".join(lines)
 
+    def _filter_by_tool_conditions(
+        self,
+        items: list[dict],
+        *,
+        available_tools: list[dict[str, Any]] | None,
+    ) -> list[dict]:
+        available_tool_names, available_toolsets = _available_tool_surface(available_tools)
+        return [
+            item
+            for item in items
+            if _skill_should_show(
+                _skill_conditions(item),
+                available_tools=available_tool_names,
+                available_toolsets=available_toolsets,
+            )
+        ]
+
 
 def _allowed_skill_names(input_payload: dict) -> set[str] | None:
     if "enabledSkillNames" not in input_payload:
@@ -100,3 +136,66 @@ def _allowed_skill_names(input_payload: dict) -> set[str] | None:
         for item in list(input_payload.get("enabledSkillNames") or [])
         if str(item).strip()
     }
+
+
+def _available_tool_surface(
+    available_tools: list[dict[str, Any]] | None,
+) -> tuple[set[str] | None, set[str] | None]:
+    if available_tools is None:
+        return None, None
+    tool_names: set[str] = set()
+    toolsets: set[str] = set()
+    for tool in available_tools:
+        name = str(tool.get("name") or "").strip()
+        toolset = str(tool.get("toolset") or "").strip()
+        if name:
+            tool_names.add(name)
+        if toolset:
+            toolsets.add(toolset)
+    return tool_names, toolsets
+
+
+def _skill_should_show(
+    conditions: dict[str, list[str]],
+    *,
+    available_tools: set[str] | None,
+    available_toolsets: set[str] | None,
+) -> bool:
+    if available_tools is None and available_toolsets is None:
+        return True
+
+    tool_names = available_tools or set()
+    toolsets = available_toolsets or set()
+    for toolset in conditions.get("fallback_for_toolsets", []):
+        if toolset in toolsets:
+            return False
+    for tool_name in conditions.get("fallback_for_tools", []):
+        if tool_name in tool_names:
+            return False
+    for toolset in conditions.get("requires_toolsets", []):
+        if toolset not in toolsets:
+            return False
+    for tool_name in conditions.get("requires_tools", []):
+        if tool_name not in tool_names:
+            return False
+    return True
+
+
+def _skill_conditions(skill: dict[str, Any]) -> dict[str, list[str]]:
+    metadata = skill.get("metadata") if isinstance(skill.get("metadata"), dict) else {}
+    runtime = metadata.get("runtime") if isinstance(metadata, dict) else {}
+    hermes = metadata.get("hermes") if isinstance(metadata, dict) else {}
+    if not isinstance(runtime, dict):
+        runtime = {}
+    if not isinstance(hermes, dict):
+        hermes = {}
+    return {
+        key: _string_list(runtime.get(key, hermes.get(key, [])))
+        for key in _CONDITION_KEYS
+    }
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [text for item in value if (text := str(item or "").strip())]

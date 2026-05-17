@@ -15,6 +15,11 @@ class DummySkillRegistry:
                 "metadata": {"runtime": {"required_toolsets": ["messaging"]}},
                 "body": "`mattermost.send` runtime tool 로 메시지를 보낸다.",
             },
+            "terminal-skill": {
+                "name": "terminal-skill",
+                "metadata": {"runtime": {"requires_toolsets": ["terminal"]}},
+                "body": "터미널로 로컬 상태를 확인한다.",
+            },
             "notion": {
                 "name": "notion",
                 "body": "`notion.execute` runtime tool 로 Notion 프록시 명령을 실행한다.",
@@ -52,6 +57,19 @@ def test_capability_resolver_uses_skill_metadata_runtime_toolsets():
 
     assert capabilities.enabled_toolsets == ("skills", "messaging")
     assert "mattermost.send" in capabilities.enabled_tool_names
+
+
+def test_capability_resolver_uses_reference_requires_toolsets_metadata():
+    capabilities = resolve_task_capabilities(
+        {
+            "enabled_toolsets": ["skills"],
+            "enabledSkillNames": ["terminal-skill"],
+        },
+        skill_registry=DummySkillRegistry(),
+    )
+
+    assert capabilities.enabled_toolsets == ("skills", "terminal")
+    assert "terminal.run" in capabilities.enabled_tool_names
 
 
 def test_capability_resolver_adds_notion_toolset_from_skill_body():

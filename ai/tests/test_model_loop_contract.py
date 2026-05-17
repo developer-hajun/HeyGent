@@ -497,6 +497,67 @@ def test_prompt_builder_filters_skill_catalog_by_enabled_skill_names():
     assert "`zipcode-search`" not in prompt
 
 
+def test_skill_catalog_filters_optional_tool_conditions_like_reference():
+    registry = SkillRegistry()
+    registry.register_many(
+        [
+            {"name": "general-note", "description": "도구 전제가 없는 일반 지침"},
+            {
+                "name": "browser-only",
+                "description": "브라우저가 있을 때만 보여야 하는 스킬",
+                "metadata": {"runtime": {"requires_tools": ["browser_navigate"]}},
+            },
+            {
+                "name": "web-search-fallback",
+                "description": "web_search가 없을 때만 보여야 하는 대체 검색 스킬",
+                "metadata": {"runtime": {"requires_toolsets": ["terminal"], "fallback_for_tools": ["web_search"]}},
+            },
+        ]
+    )
+    prompt_builder = PromptBuilder(SkillPromptBuilder(registry))
+
+    prompt_without_web_search = prompt_builder.build_agent_loop_prompt(
+        input_payload={"prompt": "검색해줘"},
+        available_tools=[
+            {"name": "terminal.run", "summary": "터미널 실행", "toolset": "terminal"},
+            {"name": "http_get", "summary": "HTTP 조회", "toolset": "web"},
+        ],
+        tool_results=[],
+        task_todo_state=None,
+        resume_payload=None,
+        turn_index=1,
+        max_iterations=4,
+    )
+    prompt_with_web_search = prompt_builder.build_agent_loop_prompt(
+        input_payload={"prompt": "검색해줘"},
+        available_tools=[
+            {"name": "terminal.run", "summary": "터미널 실행", "toolset": "terminal"},
+            {"name": "web_search", "summary": "웹 검색", "toolset": "web"},
+        ],
+        tool_results=[],
+        task_todo_state=None,
+        resume_payload=None,
+        turn_index=1,
+        max_iterations=4,
+    )
+
+    assert "`general-note`" in prompt_without_web_search
+    assert "`web-search-fallback`" in prompt_without_web_search
+    assert "`browser-only`" not in prompt_without_web_search
+    assert "`general-note`" in prompt_with_web_search
+    assert "`web-search-fallback`" not in prompt_with_web_search
+    assert "`browser-only`" not in prompt_with_web_search
+
+
+def test_skill_loader_preserves_nested_runtime_metadata():
+    loaded = {skill["name"]: skill for skill in SkillLoader().load_builtin()}
+
+    metadata = loaded["web-search-fallback"]["metadata"]["runtime"]
+
+    assert metadata["requires_toolsets"] == ["terminal"]
+    assert metadata["fallback_for_tools"] == ["web_search"]
+
+
 def test_assemble_agent_loop_messages_preserves_history_as_native_messages():
     messages = assemble_agent_loop_messages(
         system_prompt_snapshot="고정 system prompt",

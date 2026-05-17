@@ -68,16 +68,16 @@ class PromptBuilder:
     def __init__(self, skill_prompt_builder: SkillPromptBuilder) -> None:
         self.skill_prompt_builder = skill_prompt_builder
 
-    def build_model_prompt(self, *, input_payload: dict) -> str:
+    def build_model_prompt(self, *, input_payload: dict, available_tools: list[dict[str, str]] | None = None) -> str:
         base_prompt = str(input_payload.get("prompt", "")).strip() or "안녕하세요. 현재 연결 상태를 짧게 요약해 주세요."
         parts = compress_prompt_sections(
             [
-                self.skill_prompt_builder.build(input_payload=input_payload),
+                self.skill_prompt_builder.build(input_payload=input_payload, available_tools=available_tools),
                 build_project_context_prompt(input_payload=input_payload),
                 build_gateway_context_prompt(input_payload=input_payload),
                 build_work_context_prompt(input_payload=input_payload),
                 build_attachment_context_prompt(input_payload=input_payload),
-                self.skill_prompt_builder.build_catalog(input_payload=input_payload),
+                self.skill_prompt_builder.build_catalog(input_payload=input_payload, available_tools=available_tools),
                 base_prompt,
                 str(input_payload.get("persistent_memory_context", "")).strip(),
             ]
@@ -107,7 +107,7 @@ class PromptBuilder:
         turn_index: int,
         max_iterations: int,
     ) -> str:
-        base_prompt = self.build_model_prompt(input_payload=input_payload)
+        base_prompt = self.build_model_prompt(input_payload=input_payload, available_tools=available_tools)
         sections = [base_prompt]
         sections.append(
             "\n".join(

@@ -8,7 +8,8 @@ metadata:
   runtime:
     tags: [search, duckduckgo, web-search, free, fallback]
     related_skills: [academic-paper-search]
-    fallback_for_toolsets: [web]
+    requires_toolsets: [terminal]
+    fallback_for_tools: [web_search]
 ---
 
 # DuckDuckGo Search

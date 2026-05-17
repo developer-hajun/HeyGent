@@ -125,7 +125,7 @@ def _metadata_toolsets(skill: dict[str, Any]) -> list[str]:
     runtime = (skill.get("metadata") or {}).get("runtime") if isinstance(skill.get("metadata"), dict) else {}
     if not isinstance(runtime, dict):
         return []
-    values = runtime.get("required_toolsets") or runtime.get("toolsets") or []
+    values = runtime.get("required_toolsets") or runtime.get("requires_toolsets") or runtime.get("toolsets") or []
     if not isinstance(values, list):
         return []
     return [text for item in values if (text := str(item or "").strip()) in RUNTIME_TOOLSETS]
