@@ -178,10 +178,10 @@ export function SubAgentDraftForm({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(22rem,0.82fr)]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(18rem,0.7fr)]">
         <div className="space-y-4">
           <AgentSectionCard title="프로필">
-            <div className="grid gap-4 sm:grid-cols-[14rem_minmax(0,1fr)]">
+            <div className="grid gap-4 sm:grid-cols-[13rem_minmax(0,1fr)]">
               <div aria-label="프로필 이미지">
                 <SubAgentImageStepper
                   profileImage={profileImage}
@@ -358,14 +358,12 @@ export function SubAgentDraftForm({
       </div>
 
       <div className="flex items-center justify-end gap-2 pt-2">
+        <Button type="button" size="sm" onClick={handleSave} disabled={!canSave}>
+          {initialAgent ? '에이전트 저장' : '에이전트 만들기'}
+        </Button>
         <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
           취소
         </Button>
-        <div className="flex items-center gap-2">
-          <Button type="button" size="sm" onClick={handleSave} disabled={!canSave}>
-            {initialAgent ? '에이전트 저장' : '에이전트 만들기'}
-          </Button>
-        </div>
       </div>
     </div>
   )

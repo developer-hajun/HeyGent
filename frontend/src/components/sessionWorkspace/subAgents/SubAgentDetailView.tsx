@@ -520,11 +520,11 @@ export function SubAgentDetailView({
       {tab === 'skills' && skillsDirty && (
         <div className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-sm sm:hidden">
           <div className="flex items-center justify-end gap-2 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
-            <Button variant="ghost" size="sm" onClick={resetSkillDraft} disabled={skillSaving}>
-              취소
-            </Button>
             <Button size="sm" onClick={saveSkillDraft} disabled={skillSaving}>
               {skillSaving ? '저장 중' : '저장'}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={resetSkillDraft} disabled={skillSaving}>
+              취소
             </Button>
           </div>
         </div>
@@ -532,11 +532,11 @@ export function SubAgentDetailView({
       {tab === 'skills' && skillsDirty && (
         <div className="fixed right-6 bottom-6 z-30 hidden sm:block">
           <div className="bg-background/90 border-border flex items-center gap-2 rounded-lg border px-3 py-1.5 shadow-lg backdrop-blur-sm">
-            <Button variant="ghost" size="sm" onClick={resetSkillDraft} disabled={skillSaving}>
-              취소
-            </Button>
             <Button size="sm" onClick={saveSkillDraft} disabled={skillSaving}>
               {skillSaving ? '저장 중' : '저장'}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={resetSkillDraft} disabled={skillSaving}>
+              취소
             </Button>
           </div>
         </div>
@@ -544,11 +544,11 @@ export function SubAgentDetailView({
       {tab === 'instructions' && instructionsDirty && (
         <div className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-sm sm:hidden">
           <div className="flex items-center justify-end gap-2 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
-            <Button variant="ghost" size="sm" onClick={resetInstructionsDraft}>
-              취소
-            </Button>
             <Button size="sm" onClick={saveInstructionsDraft}>
               저장
+            </Button>
+            <Button variant="ghost" size="sm" onClick={resetInstructionsDraft}>
+              취소
             </Button>
           </div>
         </div>
@@ -556,11 +556,11 @@ export function SubAgentDetailView({
       {tab === 'instructions' && instructionsDirty && (
         <div className="fixed right-6 bottom-6 z-30 hidden sm:block">
           <div className="bg-background/90 border-border flex items-center gap-2 rounded-lg border px-3 py-1.5 shadow-lg backdrop-blur-sm">
-            <Button variant="ghost" size="sm" onClick={resetInstructionsDraft}>
-              취소
-            </Button>
             <Button size="sm" onClick={saveInstructionsDraft}>
               저장
+            </Button>
+            <Button variant="ghost" size="sm" onClick={resetInstructionsDraft}>
+              취소
             </Button>
           </div>
         </div>
@@ -582,7 +582,6 @@ export function SubAgentDetailView({
           </AlertDialogHeader>
           {deleteError ? <p className="text-destructive text-sm">{deleteError}</p> : null}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>취소</AlertDialogCancel>
             <Button variant="destructive" onClick={() => void handleDelete()} disabled={deleting}>
               {deleting ? (
                 <>
@@ -593,6 +592,7 @@ export function SubAgentDetailView({
                 '삭제'
               )}
             </Button>
+            <AlertDialogCancel disabled={deleting}>취소</AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

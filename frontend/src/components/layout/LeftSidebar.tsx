@@ -355,16 +355,22 @@ export function LeftSidebar() {
                 disabled={newSessionCreating}
                 className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex h-12 w-12 items-center justify-center rounded-xl transition-colors disabled:opacity-50"
               >
-                {newSessionCreating ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  <Plus className="h-5 w-5" />
-                )}
+                <Plus className="h-5 w-5" />
               </button>
             </CollapsedTooltip>
 
             <div className="min-h-0 w-full flex-1 overflow-x-hidden overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               <div className="flex flex-col items-center gap-1.5">
+                {newSessionCreating && (
+                  <CollapsedTooltip label="새 세션을 만드는 중...">
+                    <div
+                      aria-label="새 세션을 만드는 중"
+                      className="bg-accent/30 text-muted-foreground flex h-12 w-12 items-center justify-center rounded-xl"
+                    >
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    </div>
+                  </CollapsedTooltip>
+                )}
                 {sidebarSessions.map((session) => (
                   <CollapsedTooltip key={session.id} label={session.title}>
                     <button
@@ -498,18 +504,24 @@ export function LeftSidebar() {
                     title="클릭하면 기본 에이전트로 새 세션이 시작됩니다. 길게 누르면 옵션을 선택할 수 있어요."
                     className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm font-medium transition-colors disabled:opacity-50"
                   >
-                    {newSessionCreating ? (
-                      <Loader2 className="text-muted-foreground h-5 w-5 shrink-0 animate-spin" />
-                    ) : (
-                      <Plus className="text-muted-foreground h-5 w-5 shrink-0" />
-                    )}
-                    <span className="text-muted-foreground truncate text-sm">
-                      {newSessionCreating ? '세션을 만드는 중...' : '새 세션'}
-                    </span>
+                    <Plus className="text-muted-foreground h-5 w-5 shrink-0" />
+                    <span className="text-muted-foreground truncate text-sm">새 세션</span>
                   </button>
                 </div>
                 <div className="mt-0.5 min-h-0 flex-1 overflow-x-hidden overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   <div className="flex flex-col gap-0.5">
+                    {newSessionCreating && (
+                      <div
+                        aria-label="새 세션을 만드는 중"
+                        className="text-muted-foreground bg-accent/30 flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-sm"
+                      >
+                        <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          <div className="bg-muted-foreground/20 h-3 w-2/3 animate-pulse rounded" />
+                          <div className="bg-muted-foreground/15 h-2 w-1/2 animate-pulse rounded" />
+                        </div>
+                      </div>
+                    )}
                     {sidebarSessions.map((session) => {
                       const isActive = currentWorkspaceSessionId === session.id
                       const isPinned = pinnedSessionIds.has(session.id)
@@ -972,7 +984,6 @@ function ProfileMenu({
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel disabled={isLoggingOut}>취소</AlertDialogCancel>
               <AlertDialogAction
                 disabled={isLoggingOut}
                 onClick={() => void handleConfirmLogout()}
@@ -980,6 +991,7 @@ function ProfileMenu({
               >
                 {isLoggingOut ? '로그아웃 중...' : '로그아웃'}
               </AlertDialogAction>
+              <AlertDialogCancel disabled={isLoggingOut}>취소</AlertDialogCancel>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>

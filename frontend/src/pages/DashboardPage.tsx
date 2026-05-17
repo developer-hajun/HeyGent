@@ -333,19 +333,19 @@ function DeregisterConfirmModal({ open, onOpenChange, onConfirm }: DeregisterCon
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={() => onOpenChange(false)}
-            disabled={loading}
-            className="border-border text-foreground hover:bg-accent/50 flex-1 rounded-xl border py-2.5 text-sm font-medium transition-colors disabled:opacity-50"
-          >
-            취소
-          </button>
-          <button
-            type="button"
             onClick={handleConfirm}
             disabled={loading}
             className="flex-1 rounded-xl bg-red-500 py-2.5 text-sm font-medium text-white transition-colors hover:bg-red-600 disabled:opacity-50"
           >
             {loading ? '해제 중...' : '등록 해제'}
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenChange(false)}
+            disabled={loading}
+            className="border-border text-foreground hover:bg-accent/50 flex-1 rounded-xl border py-2.5 text-sm font-medium transition-colors disabled:opacity-50"
+          >
+            취소
           </button>
         </div>
       </DialogContent>
@@ -487,19 +487,19 @@ function PairingModal({ open, onOpenChange, onSuccess }: PairingModalProps) {
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={() => onOpenChange(false)}
-            disabled={loading}
-            className="border-border text-foreground hover:bg-accent/50 flex-1 rounded-xl border py-2.5 text-sm font-medium transition-colors disabled:opacity-50"
-          >
-            취소
-          </button>
-          <button
-            type="button"
             onClick={handleSubmit}
             disabled={loading}
             className="bg-foreground text-background hover:bg-foreground/85 flex-1 rounded-xl py-2.5 text-sm font-medium transition-colors disabled:opacity-50"
           >
             {loading ? '등록 중...' : '등록하기'}
+          </button>
+          <button
+            type="button"
+            onClick={() => onOpenChange(false)}
+            disabled={loading}
+            className="border-border text-foreground hover:bg-accent/50 flex-1 rounded-xl border py-2.5 text-sm font-medium transition-colors disabled:opacity-50"
+          >
+            취소
           </button>
         </div>
       </DialogContent>
