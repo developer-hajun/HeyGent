@@ -233,6 +233,65 @@ def test_provider_registry_maps_gemini_backend_provider_to_gemini_runtime_provid
 
 
 @pytest.mark.asyncio
+async def test_gemini_api_provider_extracts_assistant_envelope_async():
+    settings = Settings()
+
+    class FakeBackendAiClient:
+        async def issue_credential(self, **kwargs):
+            class Credential:
+                provider_name = "gemini_api_key"
+                model = "gemini-2.5-pro"
+                credential_type = "api_key"
+                credential = "gemini-issued"
+
+            return Credential()
+
+        async def record_command_usage(self, **kwargs):
+            return None
+
+    class FakeGeminiHttpClient:
+        async def post(self, url, headers=None, params=None, json=None, timeout=None):
+            return DummyHTTPResponse(
+                {
+                    "responseId": "gemini-contract-1",
+                    "candidates": [
+                        {
+                            "finishReason": "STOP",
+                            "content": {
+                                "parts": [
+                                    {
+                                        "text": (
+                                            '{"text":"정리 완료","progressUpdate":{"title":"자료 정리","summary":"정리 중"},'
+                                            '"workDisposition":{"status":"done","summary":"완료"}}'
+                                        )
+                                    }
+                                ],
+                            },
+                        }
+                    ],
+                }
+            )
+
+    provider = GeminiAPIProvider(
+        settings,
+        http_client=FakeGeminiHttpClient(),
+        backend_ai_client=FakeBackendAiClient(),
+    )
+
+    response = await provider.respond_async(
+        messages=[{"role": "user", "content": "정리해줘"}],
+        tools=[],
+        model="gemini-2.5-pro",
+        runtime_context={"user_id": "10", "provider_name": "gemini_api_key"},
+    )
+
+    assert response.visible_text == "정리 완료"
+    assert response.progress_update == {"title": "자료 정리", "summary": "정리 중"}
+    assert response.work_disposition == {"status": "done", "summary": "완료"}
+    assert response.metadata["response_contract"]["workDisposition"]["status"] == "done"
+
+
+@pytest.mark.asyncio
 async def test_gemini_api_provider_surfaces_error_body_without_api_key():
     settings = Settings()
 

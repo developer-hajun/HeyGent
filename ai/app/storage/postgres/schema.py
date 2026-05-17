@@ -667,7 +667,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
             'main.default',
             1,
             'main',
-            '{"promptRole":"main","toolsets":["skills","session","planning","terminal","file","web","browser","delegation"]}'::jsonb,
+            '{"promptRole":"main","toolsets":["skills","session","planning","terminal","file","web","delegation"]}'::jsonb,
             '{"canDelegate":true,"maxWorkerDepth":1,"maxConcurrentWorkers":3}'::jsonb
         ),
         (
@@ -676,7 +676,7 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
             'worker.default',
             1,
             'worker',
-            '{"promptRole":"worker","toolsets":["skills","terminal","file","web","browser"]}'::jsonb,
+            '{"promptRole":"worker","toolsets":["skills","terminal","file","web"]}'::jsonb,
             '{"canDelegate":false,"maxWorkerDepth":0,"hardTimeoutSeconds":900,"maxIterations":80}'::jsonb
         )
     ON CONFLICT (owner_key, profile_key, profile_version) DO UPDATE

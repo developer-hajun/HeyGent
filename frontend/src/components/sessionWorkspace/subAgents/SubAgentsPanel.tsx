@@ -7,11 +7,10 @@ import {
   createSessionAgentFromTemplate,
   deleteSessionAgent,
   updateSessionAgent,
-  listAgentTemplates,
-  listSessionAgents,
   type AgentTemplate,
   agentProfileToAgent,
 } from '@/apis/agents'
+import { useAgentCacheStore } from '@/store/useAgentCacheStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { SubAgentCreateDialog } from './SubAgentCreateDialog'
 import { SubAgentDraftForm } from './SubAgentDraftForm'
@@ -42,7 +41,8 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     let alive = true
-    void Promise.all([listAgentTemplates(), listSessionAgents(sessionId)])
+    const cache = useAgentCacheStore.getState()
+    void Promise.all([cache.fetchAgentTemplates(), cache.fetchSessionAgents(sessionId)])
       .then(([nextTemplates, profiles]) => {
         if (!alive) return
         setTemplates(nextTemplates)
@@ -101,7 +101,11 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
                 [agent.instructionsEntryFile ?? 'AGENTS.md']: agent.instructions ?? '',
               },
             })
-              .then(() => listSessionAgents(sessionId))
+              .then(() => {
+                // 신규 서브에이전트가 생성되었으므로 캐시 무효화 후 다시 받는다.
+                useAgentCacheStore.getState().invalidateSessionAgents(sessionId)
+                return useAgentCacheStore.getState().fetchSessionAgents(sessionId)
+              })
               .then((profiles) => {
                 setAgentPanelsForSession(sessionId, agentProfilesToPanelItems(profiles))
                 resetDraft()
@@ -130,6 +134,8 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
           item={detailItem}
           onDelete={async () => {
             await deleteSessionAgent(sessionId, detailItem.id)
+            // 서브에이전트가 삭제됐으므로 캐시 무효화 — 다른 패널에서 stale 목록 안 보이도록.
+            useAgentCacheStore.getState().invalidateSessionAgents(sessionId)
             removeAgentPanelFromSession(sessionId, detailItem.id)
             resetDraft()
           }}
@@ -154,6 +160,8 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
               },
             })
               .then((profile) => {
+                // 서브에이전트 설정이 수정됐으므로 캐시 무효화 — 다음 패널 진입 때 fresh 받음.
+                useAgentCacheStore.getState().invalidateSessionAgents(sessionId)
                 // 서버 응답으로 정식 값을 한 번 더 적용한다. 단, 서버가 일부 필드를 null/빈 값으로
                 // 내려주는 경우 사용자가 방금 입력한 옵티미스틱 값(특히 호칭·이름)을 덮어쓰지 않도록
                 // 보호한다.
@@ -207,6 +215,8 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
         onAskCeo={() => {
           void createDefaultSessionAgents(sessionId)
             .then((profiles) => {
+              // 기본 에이전트들이 새로 생성됐으므로 캐시 무효화.
+              useAgentCacheStore.getState().invalidateSessionAgents(sessionId)
               setAgentPanelsForSession(sessionId, agentProfilesToPanelItems(profiles))
               resetDraft()
             })
@@ -221,7 +231,11 @@ export function SubAgentsPanel({ sessionId }: { sessionId: string }) {
         }}
         onPickTemplate={(templateId) => {
           void createSessionAgentFromTemplate(sessionId, templateId)
-            .then(() => listSessionAgents(sessionId))
+            .then(() => {
+              // 템플릿 기반 에이전트가 생성됐으므로 캐시 무효화 후 다시 받는다.
+              useAgentCacheStore.getState().invalidateSessionAgents(sessionId)
+              return useAgentCacheStore.getState().fetchSessionAgents(sessionId)
+            })
             .then((profiles) => {
               setAgentPanelsForSession(sessionId, agentProfilesToPanelItems(profiles))
               resetDraft()

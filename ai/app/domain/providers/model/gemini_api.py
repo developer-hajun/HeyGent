@@ -19,6 +19,7 @@ from app.domain.providers.model.base import (
     ToolResultMessage,
     coerce_agent_message,
     coerce_assistant_tool_call,
+    parse_assistant_response_contract,
 )
 
 
@@ -386,16 +387,18 @@ class GeminiAPIProvider(BaseProvider):
         candidate = self._first_candidate(response_json)
         parts = self._candidate_parts(candidate)
         output_text = "\n".join(part["text"] for part in parts if isinstance(part.get("text"), str))
+        response_contract = parse_assistant_response_contract(output_text)
         tool_calls = self._extract_tool_calls(parts)
         finish_reason = str(candidate.get("finishReason") or ("tool_calls" if tool_calls else "stop")).lower()
         usage = self._usage(response_json)
         message = AgentMessage(
             role="assistant",
-            content=output_text,
+            content=response_contract.get("raw_text") or output_text,
             tool_calls=tool_calls,
             metadata={
                 "response_id": response_json.get("responseId"),
                 "model": requested_model,
+                "response_contract": response_contract.get("contract") or {},
             },
         )
         return AgentModelResponse(
@@ -407,9 +410,13 @@ class GeminiAPIProvider(BaseProvider):
             finish_reason=finish_reason,
             usage=usage,
             raw_response=response_json,
+            progress_update=response_contract.get("progressUpdate"),
+            work_disposition=response_contract.get("workDisposition"),
+            visible_text=response_contract.get("text"),
             metadata={
                 "response_id": response_json.get("responseId"),
                 "model": requested_model,
+                "response_contract": response_contract.get("contract") or {},
                 **(metadata or {}),
             },
         )

@@ -44,17 +44,15 @@ import {
   type SubAgentAdapterType,
 } from '@/components/sessionWorkspace/subAgents/subAgentConfigOptions'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
-import { AgentStatusPage } from '@/pages/AgentStatusPage'
 import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
 import {
-  getSessionMainAgent,
   getUserSkillDetail,
-  listUserSkills,
   updateSessionAgent,
   type AgentProfile,
   type SkillCatalogDetail,
   type SkillCatalogItem,
 } from '@/apis/agents'
+import { useAgentCacheStore } from '@/store/useAgentCacheStore'
 import {
   getCachedMainAgentProfile,
   getCachedUsageRecords,
@@ -101,26 +99,21 @@ export function SessionWorkspaceDetailPanel({
   sessionId,
   session,
 }: SessionWorkspaceDetailPanelProps) {
-  if (activePanel === null) {
+  // 시각화 패널은 SessionShell 이 항상 백그라운드로 마운트한다.
+  // 여기서는 시각화 이외 패널만 렌더한다.
+  if (activePanel === null || activePanel === 'visualization') {
     return null
   }
 
   if (activePanel === 'subAgents') {
     return <SubAgentsPanel sessionId={sessionId} />
   }
-
-  if (activePanel === 'visualization') {
-    return <AgentStatusPage />
-  }
-
   if (activePanel === 'issueBoard') {
     return <WorkBoardPanel sessionId={sessionId} />
   }
-
   if (activePanel === 'workflow') {
     return <WorkflowPanel sessionId={sessionId} />
   }
-
   if (session === null) {
     const title = activePanel === 'ceo' ? '팀장 에이전트' : '세션'
     return (
@@ -129,11 +122,9 @@ export function SessionWorkspaceDetailPanel({
       </WorkspacePageShell>
     )
   }
-
   if (activePanel === 'ceo') {
     return <MainAgentPage key={session.session_id} session={session} />
   }
-
   return null
 }
 
@@ -345,7 +336,9 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     }
 
     let cancelled = false
-    void getSessionMainAgent(sessionId)
+    void useAgentCacheStore
+      .getState()
+      .fetchSessionMainAgent(sessionId)
       .then((profile) => {
         if (cancelled) return
         setMainAgentProfile(profile)
@@ -412,7 +405,9 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     }
 
     let cancelled = false
-    void listUserSkills()
+    void useAgentCacheStore
+      .getState()
+      .fetchUserSkills()
       .then((items) => {
         if (cancelled) return
         setSkillCatalog(items)
@@ -614,6 +609,10 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
           instructionsFiles: nextInstructionsFiles,
         })
         setMainAgentProfile(profile)
+        // 메인 에이전트 정보가 수정되었으므로 캐시 무효화.
+        // 시각화/사이드바 등에서 stale 정보 표시되는 것을 막는다.
+        useAgentCacheStore.getState().invalidateSessionMainAgent(sessionId)
+        useAgentCacheStore.getState().invalidateSessionAgents(sessionId)
         const savedProvider = inferProviderFromModel(
           profile.model,
           profile.adapterType ?? getString(toJsonObject(profile.configSnapshot), 'adapterType'),
@@ -961,11 +960,11 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
         {showConfigActionBar && (
           <div className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-sm sm:hidden">
             <div className="flex items-center justify-end gap-2 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
-              <Button variant="ghost" size="sm" onClick={resetDraft} disabled={saving}>
-                취소
-              </Button>
               <Button size="sm" onClick={() => void handleSave()} disabled={saving || !isDirty}>
                 {saving ? '저장 중' : '저장'}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={resetDraft} disabled={saving}>
+                취소
               </Button>
             </div>
           </div>
@@ -973,11 +972,11 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
         {showConfigActionBar && (
           <div className="fixed right-6 bottom-6 z-30 hidden sm:block">
             <div className="bg-background/90 border-border flex items-center gap-2 rounded-lg border px-3 py-1.5 shadow-lg backdrop-blur-sm">
-              <Button variant="ghost" size="sm" onClick={resetDraft} disabled={saving}>
-                취소
-              </Button>
               <Button size="sm" onClick={() => void handleSave()} disabled={saving || !isDirty}>
                 {saving ? '저장 중' : '저장'}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={resetDraft} disabled={saving}>
+                취소
               </Button>
             </div>
           </div>
