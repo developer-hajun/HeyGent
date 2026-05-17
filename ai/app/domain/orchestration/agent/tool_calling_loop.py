@@ -361,7 +361,8 @@ class ToolCallingLoopHandler:
         """새 user turn에 필요한 provider message를 만든다.
 
         transcript replay가 이미 있으면 approval 재개나 tool_call continuation 상태이므로 공개 대화
-        history를 다시 섞지 않는다. 새 공개 대화 턴에서만 product history를 native message로 앞에 붙인다.
+        history를 다시 섞지 않는다. 새 공개 대화 턴에서는 product history를 참고 블록으로 낮추고,
+        현재 turn 실행 지시는 별도 current_turn 블록으로 격리한다.
         """
 
         if replay_messages:
