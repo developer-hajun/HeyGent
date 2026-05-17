@@ -28,6 +28,19 @@ logger = logging.getLogger(__name__)
 
 # ─── Backend Selection ────────────────────────────────────────────────────────
 
+def tool_error(message, **extra) -> str:
+    """Return a JSON error string for legacy web helper internals.
+
+    native runtime registry 는 `app.tools.runtime` 한 곳만 사용한다. 이 helper 는
+    web_search_tool 이 문자열 JSON 을 반환하던 기존 함수 계약만 유지하기 위한
+    로컬 직렬화 함수다.
+    """
+    result = {"error": str(message)}
+    if extra:
+        result.update(extra)
+    return json.dumps(result, ensure_ascii=False)
+
+
 def _has_env(name: str) -> bool:
     val = os.getenv(name)
     return bool(val and val.strip())
@@ -69,8 +82,7 @@ def _get_backend() -> str:
     configured = (_load_web_config().get("backend") or "").lower().strip()
     if configured in ("parallel", "tavily", "exa", "openai"):
         return configured
-    if configured == "firecrawl":
-        logger.warning("Unsupported web backend configured: firecrawl")
+    if configured:
         return "unconfigured"
 
     # Fallback for manual / legacy config — pick the highest-priority
@@ -279,10 +291,10 @@ def _is_nous_auxiliary_client(client: Any) -> bool:
     return host == "nousresearch.com" or host.endswith(".nousresearch.com")
 
 
-def _resolve_web_extract_auxiliary(model: Optional[str] = None) -> tuple[Optional[Any], Optional[str], Dict[str, Any]]:
-    """Resolve the current web-extract auxiliary client, model, and extra body."""
-    client, default_model = get_async_text_auxiliary_client("web_extract")
-    configured_model = os.getenv("AUXILIARY_WEB_EXTRACT_MODEL", "").strip()
+def _resolve_web_content_auxiliary(model: Optional[str] = None) -> tuple[Optional[Any], Optional[str], Dict[str, Any]]:
+    """Resolve the current web-content auxiliary client, model, and extra body."""
+    client, default_model = get_async_text_auxiliary_client("web_content")
+    configured_model = os.getenv("AUXILIARY_WEB_CONTENT_MODEL", "").strip()
     effective_model = model or configured_model or default_model
 
     extra_body: Dict[str, Any] = {}
@@ -295,7 +307,7 @@ def _resolve_web_extract_auxiliary(model: Optional[str] = None) -> tuple[Optiona
 
 def _get_default_summarizer_model() -> Optional[str]:
     """Return the current default model for web extraction summarization."""
-    _, model, _ = _resolve_web_extract_auxiliary()
+    _, model, _ = _resolve_web_content_auxiliary()
     return model
 
 _debug = DebugSession("web_tools", env_var="WEB_TOOLS_DEBUG")
@@ -341,7 +353,7 @@ async def process_content_with_llm(
         if content_len > MAX_CONTENT_SIZE:
             size_mb = content_len / 1_000_000
             logger.warning("Content too large (%.1fMB > 2MB limit). Refusing to process.", size_mb)
-            return f"[Content too large to process: {size_mb:.1f}MB. Try using web_crawl with specific extraction instructions, or search for a more focused source.]"
+            return f"[Content too large to process: {size_mb:.1f}MB. Search for a more focused source.]"
         
         # Skip processing if content is too short
         if content_len < min_length:
@@ -382,8 +394,8 @@ async def process_content_with_llm(
         
     except Exception as e:
         logger.warning(
-            "web_extract LLM summarization failed (%s). "
-            "Tip: increase auxiliary.web_extract.timeout in config.yaml "
+            "web content LLM summarization failed (%s). "
+            "Tip: increase auxiliary web-content timeout in config.yaml "
             "or switch to a faster auxiliary model.",
             str(e)[:120],
         )
@@ -395,7 +407,7 @@ async def process_content_with_llm(
             truncated += (
                 f"\n\n[Content truncated — showing first {MAX_OUTPUT_SIZE:,} of "
                 f"{len(content):,} chars. LLM summarization timed out. "
-                f"To fix: increase auxiliary.web_extract.timeout in config.yaml, "
+                f"To fix: increase auxiliary web-content timeout in config.yaml, "
                 f"or use a faster auxiliary model.]"
             )
         return truncated
@@ -471,12 +483,12 @@ Create a markdown summary that captures all key information in a well-organized,
 
     for attempt in range(max_retries):
         try:
-            aux_client, effective_model, extra_body = _resolve_web_extract_auxiliary(model)
+            aux_client, effective_model, extra_body = _resolve_web_content_auxiliary(model)
             if aux_client is None or not effective_model:
                 logger.warning("No auxiliary model available for web content processing")
                 return None
             call_kwargs = {
-                "task": "web_extract",
+                "task": "web_content",
                 "model": effective_model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
@@ -484,9 +496,8 @@ Create a markdown summary that captures all key information in a well-organized,
                 ],
                 "temperature": 0.1,
                 "max_tokens": max_tokens,
-                # No explicit timeout — async_call_llm reads auxiliary.web_extract.timeout
-                # from config (default 360s / 6min).  Users with slow local models can
-                # increase it in config.yaml.
+                # No explicit timeout here. The auxiliary client owns request timeout
+                # policy so slow local models can tune it centrally.
             }
             if extra_body:
                 call_kwargs["extra_body"] = extra_body
@@ -607,7 +618,7 @@ Synthesize these into ONE cohesive, comprehensive summary that:
 Create a single, unified markdown summary."""
 
     try:
-        aux_client, effective_model, extra_body = _resolve_web_extract_auxiliary(model)
+        aux_client, effective_model, extra_body = _resolve_web_content_auxiliary(model)
         if aux_client is None or not effective_model:
             logger.warning("No auxiliary model for synthesis, concatenating summaries")
             fallback = "\n\n".join(summaries)
@@ -616,7 +627,7 @@ Create a single, unified markdown summary."""
             return fallback
 
         call_kwargs = {
-            "task": "web_extract",
+            "task": "web_content",
             "model": effective_model,
             "messages": [
                 {"role": "system", "content": "You synthesize multiple summaries into one cohesive, comprehensive summary. Be thorough but concise."},
@@ -1036,7 +1047,7 @@ def check_web_api_key() -> bool:
 
 def check_auxiliary_model() -> bool:
     """Check if an auxiliary text model is available for LLM content processing."""
-    client, _, _ = _resolve_web_extract_auxiliary()
+    client, _, _ = _resolve_web_content_auxiliary()
     return client is not None
 
 
@@ -1113,35 +1124,3 @@ if __name__ == "__main__":
     print("  # Logs saved to: ./logs/web_tools_debug_UUID.json")
     
     print("\n📝 Run 'python test_web_tools_llm.py' to test LLM processing capabilities")
-
-
-# ---------------------------------------------------------------------------
-# Registry
-# ---------------------------------------------------------------------------
-from app.tools.web_runtime.registry import registry, tool_error
-
-WEB_SEARCH_SCHEMA = {
-    "name": "web_search",
-    "description": "Search the web for information on any topic. Returns up to 5 relevant results with titles, URLs, and descriptions.",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "The search query to look up on the web"
-            }
-        },
-        "required": ["query"]
-    }
-}
-
-registry.register(
-    name="web_search",
-    toolset="web",
-    schema=WEB_SEARCH_SCHEMA,
-    handler=lambda args, **kw: web_search_tool(args.get("query", ""), limit=5),
-    check_fn=check_web_api_key,
-    requires_env=_web_requires_env(),
-    emoji="🔍",
-    max_result_size_chars=100_000,
-)

@@ -308,6 +308,33 @@ def test_web_is_available_in_local_core_and_safe_without_removed_extract_or_brow
     assert "browser_navigate" not in resolve_runtime_tool_names(("safe",))
 
 
+def test_runtime_ignores_stale_or_unknown_toolsets():
+    resolved = resolve_runtime_tool_names(("web", "browser", "unknown-toolset", ""))
+
+    assert {"web_search", "http_get"} <= resolved
+    assert "browser_navigate" not in resolved
+
+
+def test_runtime_tool_availability_reports_hidden_search_backend(monkeypatch):
+    for key in ("EXA_API_KEY", "PARALLEL_API_KEY", "TAVILY_API_KEY", "OPENAI_API_KEY", "HEYGENT_OPENAI_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    availability = {item["name"]: item for item in runtime.list_tool_availability(enabled_toolsets=("web", "browser"))}
+
+    assert availability["http_get"]["available"] is True
+    assert availability["web_search"]["available"] is False
+    assert availability["web_search"]["requires_env"] == [
+        "EXA_API_KEY",
+        "PARALLEL_API_KEY",
+        "TAVILY_API_KEY",
+        "OPENAI_API_KEY",
+        "HEYGENT_OPENAI_API_KEY",
+    ]
+    assert availability["web_search"]["unavailable_reason"] == "No configured web search backend key is available."
+    assert "browser_navigate" not in availability
+
+
 def test_web_runtime_invokes_heygent_web_tool(monkeypatch):
     fake_module = types.ModuleType("app.tools.web_runtime.web_tools")
 

@@ -325,6 +325,18 @@ def test_postgres_migrations_refresh_existing_builtin_agent_profiles():
     assert '"hardTimeoutSeconds":900' in migration_sql
 
 
+def test_postgres_migrations_scrub_removed_browser_toolset_from_stored_settings():
+    migration_ids = [migration.migration_id for migration in POSTGRES_MIGRATIONS]
+    cleanup_migration = POSTGRES_MIGRATIONS[migration_ids.index("0019_remove_removed_browser_toolset")]
+    migration_sql = "\n".join(cleanup_migration.statements)
+
+    assert "UPDATE ai_agent_profiles" in migration_sql
+    assert "UPDATE agent_sessions" in migration_sql
+    assert "to_jsonb('browser'::text)" in migration_sql
+    assert "config_snapshot->'toolsets' @> '[\"browser\"]'::jsonb" in migration_sql
+    assert "settings->'toolsets' @> '[\"browser\"]'::jsonb" in migration_sql
+
+
 class _FakeCursor:
     def __init__(self, rows=None):
         self._rows = rows or []

@@ -10,7 +10,11 @@ from typing import Any
 from app.core.utils.ids import new_id
 from app.domain.work import WorkComment, WorkService
 from app.domain.session.sessions.transcript_store import TranscriptStore
-from app.tools.runtime.registry import build_runtime_tool_entries, list_runtime_tool_definitions
+from app.tools.runtime.registry import (
+    build_runtime_tool_entries,
+    list_runtime_tool_availability,
+    list_runtime_tool_definitions,
+)
 from app.tools.runtime.toolsets import resolve_runtime_tool_names
 
 
@@ -95,6 +99,15 @@ class LocalToolRuntime:
         if allowed_tool_names is None:
             return definitions
         return [item for item in definitions if item["name"] in allowed_tool_names]
+
+    def list_tool_availability(self, *, enabled_toolsets: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+        availability = list_runtime_tool_availability(
+            {name: entry.handler for name, entry in self._tool_entries.items()}
+        )
+        allowed_tool_names = resolve_runtime_tool_names(enabled_toolsets)
+        if allowed_tool_names is None:
+            return availability
+        return [item for item in availability if item["name"] in allowed_tool_names]
 
     def bind_workspace_root(self, workspace_root: str | os.PathLike[str] | None) -> "LocalToolRuntime":
         if workspace_root is None or str(workspace_root).strip() == "":

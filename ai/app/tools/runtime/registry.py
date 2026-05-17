@@ -31,6 +31,7 @@ def build_runtime_tool_entries(handler_by_name: dict[str, Callable]) -> dict[str
 
 def list_runtime_tool_definitions(handler_by_name: dict[str, Callable]) -> list[dict[str, Any]]:
     entries = build_runtime_tool_entries(handler_by_name)
+    check_results: dict[Callable, bool] = {}
     return [
         {
             "name": entry.definition.name,
@@ -43,30 +44,61 @@ def list_runtime_tool_definitions(handler_by_name: dict[str, Callable]) -> list[
             "unavailable_reason": entry.definition.unavailable_reason,
         }
         for _, entry in sorted(entries.items())
-        if _definition_is_available(entry.definition)
+        if _definition_is_available(entry.definition, check_results=check_results)
     ]
 
 
 def list_runtime_tool_schemas(handler_by_name: dict[str, Callable]) -> list[dict[str, Any]]:
     entries = build_runtime_tool_entries(handler_by_name)
+    check_results: dict[Callable, bool] = {}
     return [
         {"type": "function", "function": entry.definition.schema}
         for _, entry in sorted(entries.items())
-        if _definition_is_available(entry.definition)
+        if _definition_is_available(entry.definition, check_results=check_results)
     ]
 
 
-def _definition_is_available(definition: RuntimeToolDefinition) -> bool:
+def list_runtime_tool_availability(handler_by_name: dict[str, Callable]) -> list[dict[str, Any]]:
+    entries = build_runtime_tool_entries(handler_by_name)
+    check_results: dict[Callable, bool] = {}
+    availability: list[dict[str, Any]] = []
+    for _, entry in sorted(entries.items()):
+        available = _definition_is_available(entry.definition, check_results=check_results)
+        availability.append(
+            {
+                "name": entry.definition.name,
+                "toolset": entry.definition.toolset,
+                "summary": entry.definition.summary,
+                "module": entry.definition.module,
+                "available": available,
+                "enabled": entry.definition.enabled,
+                "requires_env": list(entry.definition.requires_env),
+                "unavailable_reason": None if available else entry.definition.unavailable_reason,
+            }
+        )
+    return availability
+
+
+def _definition_is_available(
+    definition: RuntimeToolDefinition,
+    *,
+    check_results: dict[Callable, bool] | None = None,
+) -> bool:
     if not definition.enabled:
         return False
     if definition.check_fn is None:
         return True
+    if check_results is not None and definition.check_fn in check_results:
+        return check_results[definition.check_fn]
     try:
-        return bool(definition.check_fn())
+        available = bool(definition.check_fn())
     except Exception:
         # check_fn은 도구 노출 여부만 판단한다. 검사 자체가 실패하면 모델에게
         # "쓸 수 있는 도구"처럼 보여 반복 실패를 만들지 않도록 숨긴다.
-        return False
+        available = False
+    if check_results is not None:
+        check_results[definition.check_fn] = available
+    return available
 
 
 def _discover_runtime_tool_modules() -> None:

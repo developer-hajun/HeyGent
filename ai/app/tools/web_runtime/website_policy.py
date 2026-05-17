@@ -25,7 +25,7 @@ _DEFAULT_WEBSITE_BLOCKLIST = {
 }
 
 # Cache: parsed policy + timestamp.  Avoids re-reading config.yaml on every
-# URL check (a web_crawl with 50 pages would otherwise mean 51 YAML parses).
+# URL check cache prevents repeated YAML parses during multi-page fetch flows.
 _CACHE_TTL_SECONDS = 30.0
 _cache_lock = threading.Lock()
 _cached_policy: Optional[Dict[str, Any]] = None

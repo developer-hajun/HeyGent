@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Iterable
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,11 +97,14 @@ def resolve_runtime_tool_names(enabled_toolsets: Iterable[str] | None) -> set[st
 
     resolved: set[str] = set()
     for name in enabled_toolsets:
-        if name in {"all", "*"}:
+        normalized_name = str(name or "").strip()
+        if not normalized_name:
+            continue
+        if normalized_name in {"all", "*"}:
             for toolset_name in list_runtime_toolsets():
                 resolved.update(_resolve_runtime_toolset(toolset_name, seen=set()))
             continue
-        resolved.update(_resolve_runtime_toolset(str(name), seen=set()))
+        resolved.update(_resolve_runtime_toolset(normalized_name, seen=set()))
     return resolved
 
 
@@ -119,10 +126,14 @@ def get_runtime_toolset_info(name: str) -> dict[str, object] | None:
 def _resolve_runtime_toolset(name: str, *, seen: set[str]) -> set[str]:
     if name in seen:
         return set()
-    try:
-        definition = RUNTIME_TOOLSETS[name]
-    except KeyError as error:
-        raise KeyError(str(name)) from error
+    definition = RUNTIME_TOOLSETS.get(name)
+    if definition is None:
+        # DB/settings 에 남은 과거 toolset(browser 등)이나 잘못 저장된 toolset 이
+        # 한 번 들어왔다고 실행 전체를 죽이면, 모델은 실제 사용 가능한 도구도
+        # 받지 못한다. Hermes 레퍼런스처럼 알 수 없는 toolset 은 빈 목록으로
+        # 처리하고, 공개 설정 저장 단계에서만 allowlist 로 막는다.
+        logger.warning("Ignoring unknown runtime toolset: %s", name)
+        return set()
 
     seen.add(name)
     resolved = set(definition.tools)

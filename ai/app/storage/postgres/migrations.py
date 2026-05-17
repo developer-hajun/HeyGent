@@ -793,6 +793,47 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """,
         ),
     ),
+    PostgresMigration(
+        migration_id="0019_remove_removed_browser_toolset",
+        statements=(
+            """
+            UPDATE ai_agent_profiles
+            SET config_snapshot = jsonb_set(
+                config_snapshot,
+                '{toolsets}',
+                COALESCE(
+                    (
+                        SELECT jsonb_agg(toolset_name)
+                        FROM jsonb_array_elements(config_snapshot->'toolsets') AS toolset_name
+                        WHERE toolset_name <> to_jsonb('browser'::text)
+                    ),
+                    '[]'::jsonb
+                ),
+                true
+            )
+            WHERE config_snapshot ? 'toolsets'
+              AND config_snapshot->'toolsets' @> '["browser"]'::jsonb;
+            """,
+            """
+            UPDATE agent_sessions
+            SET settings = jsonb_set(
+                settings,
+                '{toolsets}',
+                COALESCE(
+                    (
+                        SELECT jsonb_agg(toolset_name)
+                        FROM jsonb_array_elements(settings->'toolsets') AS toolset_name
+                        WHERE toolset_name <> to_jsonb('browser'::text)
+                    ),
+                    '[]'::jsonb
+                ),
+                true
+            )
+            WHERE settings ? 'toolsets'
+              AND settings->'toolsets' @> '["browser"]'::jsonb;
+            """,
+        ),
+    ),
 )
 
 
