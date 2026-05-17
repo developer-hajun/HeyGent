@@ -155,6 +155,16 @@ class RecordingRuntime:
         return {"ok": True, "content": "executed"}
 
 
+class SequenceRuntime(RecordingRuntime):
+    def __init__(self, results: list[dict]) -> None:
+        super().__init__()
+        self.results = iter(results)
+
+    def run_call(self, *, name, args, enabled_toolsets=None):
+        self.calls.append({"name": name, "args": args, "enabled_toolsets": enabled_toolsets})
+        return next(self.results)
+
+
 class DelegationRuntime(RecordingRuntime):
     def run_call(self, *, name, args, enabled_toolsets=None):
         self.calls.append({"name": name, "args": args, "enabled_toolsets": enabled_toolsets})
@@ -186,6 +196,10 @@ class StaticGuard:
             }
         )
         return self.result
+
+
+class ProviderRateLimitError(Exception):
+    status_code = 429
 
 
 def test_worker_transcript_session_id_is_reused_without_collapsing_into_parent_session():
@@ -434,6 +448,131 @@ def test_agent_loop_fails_when_max_iterations_are_exhausted_without_final_answer
     assert outcome["error_message"] == "작업 반복 한도(2)에 도달했습니다."
     assert len(provider.calls) == 2
     assert len(runtime.calls) == 2
+
+
+def test_repeated_rate_limited_tool_call_is_blocked_with_synthetic_result():
+    provider = FakeProvider(
+        [
+            _response(tool_calls=[_tool_call("call_1", "terminal_run", {"argv": ["curl", "weather"]})]),
+            _response(tool_calls=[_tool_call("call_2", "terminal_run", {"argv": ["curl", "weather"]})]),
+            _response(text="BLOCK_OBSERVED"),
+        ]
+    )
+    runtime = SequenceRuntime(
+        [
+            {
+                "ok": False,
+                "error": {
+                    "code": "upstream_rate_limit",
+                    "message": "HTTP 429 Too Many Requests",
+                    "status_code": 429,
+                    "retryable": True,
+                },
+                "content": '{"error":{"code":"upstream_rate_limit"}}',
+            }
+        ]
+    )
+    guard = StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW))
+
+    outcome = _handler(provider, runtime, guard).execute(
+        task=_task({"prompt": "run", "max_iterations": 5}),
+        step=_step(),
+    )
+
+    assert outcome["task_status"] == TaskStatus.COMPLETED
+    assert len(runtime.calls) == 1
+    assert [item["tool_call_id"] for item in outcome["result_payload"]["tool_results"]] == ["call_1", "call_2"]
+    blocked_result = outcome["result_payload"]["tool_results"][1]["result"]
+    assert blocked_result["error"]["code"] == "tool_circuit_open"
+    assert blocked_result["error"]["type"] == "rate_limited"
+    replayed_tool_messages = [message for message in provider.calls[2]["messages"] if isinstance(message, ToolResultMessage)]
+    assert [message.tool_call_id for message in replayed_tool_messages] == ["call_1", "call_2"]
+
+
+def test_repeated_circuit_open_call_fails_without_waiting_for_max_iterations():
+    provider = FakeProvider(
+        [
+            _response(tool_calls=[_tool_call("call_1", "terminal_run", {"argv": ["curl", "weather"]})]),
+            _response(tool_calls=[_tool_call("call_2", "terminal_run", {"argv": ["curl", "weather"]})]),
+            _response(tool_calls=[_tool_call("call_3", "terminal_run", {"argv": ["curl", "weather"]})]),
+        ]
+    )
+    runtime = SequenceRuntime(
+        [
+            {
+                "ok": False,
+                "error": {"code": "upstream_rate_limit", "message": "HTTP 429", "status_code": 429},
+                "content": '{"error":{"code":"upstream_rate_limit"}}',
+            }
+        ]
+    )
+    guard = StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW))
+
+    outcome = _handler(provider, runtime, guard).execute(
+        task=_task({"prompt": "run", "max_iterations": 10}),
+        step=_step(),
+    )
+
+    assert outcome["task_status"] == TaskStatus.FAILED
+    assert outcome["result_payload"]["error"]["code"] == "rate_limited_blocked"
+    assert outcome["result_payload"]["error"]["type"] == "rate_limited"
+    assert len(provider.calls) == 3
+    assert len(runtime.calls) == 1
+
+
+def test_unavailable_tool_name_streak_blocks_even_when_args_change():
+    provider = FakeProvider(
+        [
+            _response(tool_calls=[_tool_call("call_1", "terminal_run", {"argv": ["missing", "one"]})]),
+            _response(tool_calls=[_tool_call("call_2", "terminal_run", {"argv": ["missing", "two"]})]),
+            _response(text="UNAVAILABLE_BLOCK_OBSERVED"),
+        ]
+    )
+    runtime = SequenceRuntime(
+        [
+            {
+                "ok": False,
+                "error": {
+                    "code": "tool_unavailable",
+                    "message": "unknown or disabled runtime tool: terminal.run",
+                    "tool_name": "terminal.run",
+                },
+                "content": '{"error":{"code":"tool_unavailable"}}',
+            }
+        ]
+    )
+    guard = StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW))
+
+    outcome = _handler(provider, runtime, guard).execute(
+        task=_task({"prompt": "run", "max_iterations": 5}),
+        step=_step(),
+    )
+
+    assert outcome["task_status"] == TaskStatus.COMPLETED
+    assert len(runtime.calls) == 1
+    blocked_result = outcome["result_payload"]["tool_results"][1]["result"]
+    assert blocked_result["error"]["code"] == "tool_circuit_open"
+    assert blocked_result["error"]["type"] == "tool_unavailable"
+
+
+def test_provider_rate_limit_failure_is_not_recorded_as_tool_result():
+    provider = FakeProvider([])
+
+    def raise_rate_limit(*args, **kwargs):
+        raise ProviderRateLimitError("HTTP 429 Too Many Requests")
+
+    provider.respond = raise_rate_limit
+    runtime = RecordingRuntime()
+
+    outcome = _handler(provider, runtime, StaticGuard(ToolGuardResult(decision=ToolGuardDecision.ALLOW))).execute(
+        task=_task({"prompt": "run", "max_iterations": 5}),
+        step=_step(),
+    )
+
+    assert outcome["task_status"] == TaskStatus.FAILED
+    assert outcome["result_payload"]["error"]["code"] == "provider_rate_limited"
+    assert outcome["result_payload"]["tool_results"] == []
+    assert runtime.calls == []
 
 
 def test_agent_loop_worker_payload_uses_worker_default_when_max_iterations_is_absent():

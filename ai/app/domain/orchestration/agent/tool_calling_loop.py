@@ -10,6 +10,11 @@ from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.core.utils.ids import new_id
 from app.domain.orchestration.capabilities import apply_task_capabilities
+from app.domain.orchestration.agent.tool_failure_circuit import (
+    RunLocalToolFailureCircuit,
+    build_provider_failure_payload,
+    classify_provider_failure,
+)
 from app.domain.orchestration.agent.tool_guard import ToolGuard, ToolGuardDecision, ToolGuardResult
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse, ToolResultMessage
 from app.domain.orchestration.prompts.prompt_builder import assemble_agent_loop_messages
@@ -112,6 +117,7 @@ class ToolCallingLoopHandler:
 
         all_tool_results: list[dict[str, Any]] = []
         operations: list[dict[str, Any]] = []
+        failure_circuit = RunLocalToolFailureCircuit()
         max_iterations = self._max_iterations(task_input)
         model = self._optional_text(task_input.get("model")) or self._provider_default_model()
         transcript_session_id = self._ensure_transcript_session(task=task, task_input=task_input, model=model)
@@ -145,6 +151,11 @@ class ToolCallingLoopHandler:
                     operations=operations,
                     operation_counters=operation_counters,
                 )
+                failure_circuit.record_result(
+                    tool_name=str(resumed_tool_result.get("name") or ""),
+                    args=dict(resumed_tool_result.get("args") or {}),
+                    result=resumed_tool_result.get("result"),
+                )
                 messages = self._order_tool_results_for_replay(messages)
                 current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
         new_turn_messages = self._new_turn_messages(task_input=task_input, prompt=prompt, replay_messages=messages)
@@ -155,13 +166,28 @@ class ToolCallingLoopHandler:
         llm_call_count = 0
 
         for turn_index in range(1, max_iterations + 1):
-            generated = await self._respond_with_runtime_context_async(
-                messages=messages,
-                tools=provider_tools,
-                model=model,
-                tool_choice=None,
-                runtime_context=self._model_runtime_context(task=task, step=step, task_input=task_input),
-            )
+            try:
+                generated = await self._respond_with_runtime_context_async(
+                    messages=messages,
+                    tools=provider_tools,
+                    model=model,
+                    tool_choice=None,
+                    runtime_context=self._model_runtime_context(task=task, step=step, task_input=task_input),
+                )
+            except Exception as exc:
+                provider_failure = classify_provider_failure(exc)
+                if provider_failure is None:
+                    raise
+                return self._build_provider_failure_outcome(
+                    task_input=task_input,
+                    prompt=prompt,
+                    failure_payload=build_provider_failure_payload(provider_failure),
+                    tool_results=all_tool_results,
+                    operations=operations,
+                    llm_call_count=llm_call_count,
+                    todo_state=current_todo_state,
+                    operation_counters=operation_counters,
+                )
             llm_call_count += 1
             messages.append(generated.message)
             self._append_transcript_message(transcript_session_id, generated.message, finish_reason=generated.finish_reason)
@@ -197,6 +223,7 @@ class ToolCallingLoopHandler:
             delegate_boundary_started = False
             for tool_call_index, tool_call in enumerate(generated.tool_calls):
                 runtime_tool_name = self._runtime_tool_name(tool_call.name, provider_tool_name_map)
+                circuit_decision = None
                 if delegate_boundary_started and runtime_tool_name != "delegate_task":
                     # worker 결과가 돌아온 뒤 같은 assistant 응답 안의 후속 실행 도구를 바로 돌리면
                     # "조사 worker 진행 중 -> 문서 작성" 순서가 뒤섞인다. provider tool_call 불변식은
@@ -278,38 +305,51 @@ class ToolCallingLoopHandler:
                     # BLOCK도 전체 실패가 아니라 막힌 tool result로 transcript에 남겨 LLM이 다음 행동을 정한다.
                     result = self._blocked_tool_result(guard_result)
                 else:
-                    await self._emit_tool_progress(
-                        progress_sink=progress_sink,
-                        event_type="tool.started",
-                        tool_call_id=tool_call.id,
+                    circuit_decision = failure_circuit.pre_call_decision(
                         tool_name=runtime_tool_name,
                         args=tool_call.arguments,
-                        result=None,
                     )
-                    # PoC 단계 2: run_call이 동기 함수인데 내부에서 브릿지 위임 시
-                    # 메인 이벤트 루프에 코루틴을 던지고 동기 차단으로 결과 대기 → 데드락.
-                    # to_thread로 별도 스레드에 옮겨 메인 루프가 자유롭게 굴러가게 한다.
-                    result = await asyncio.to_thread(
-                        self._run_native_tool_call,
-                        name=runtime_tool_name,
-                        args=tool_call.arguments,
-                        requested_toolsets=requested_toolsets,
-                        tool_runtime=tool_runtime,
-                    )
-                    if runtime_tool_name == "delegate_task" and delegate_executor is not None:
-                        result = await self._execute_delegate_tool_result(
-                            delegate_executor=delegate_executor,
+                    if circuit_decision.action == "block_with_synthetic_result" and circuit_decision.record is not None:
+                        result = failure_circuit.build_blocked_result(record=circuit_decision.record)
+                        failure_circuit.record_block(circuit_decision.record)
+                    else:
+                        await self._emit_tool_progress(
+                            progress_sink=progress_sink,
+                            event_type="tool.started",
                             tool_call_id=tool_call.id,
+                            tool_name=runtime_tool_name,
                             args=tool_call.arguments,
-                            accepted_result=result,
+                            result=None,
                         )
-                        delegate_boundary_started = True
-                    if runtime_tool_name == "session_agent_task" and session_agent_executor is not None:
-                        result = await self._execute_session_agent_tool_result(
-                            session_agent_executor=session_agent_executor,
-                            tool_call_id=tool_call.id,
+                        # PoC 단계 2: run_call이 동기 함수인데 내부에서 브릿지 위임 시
+                        # 메인 이벤트 루프에 코루틴을 던지고 동기 차단으로 결과 대기 → 데드락.
+                        # to_thread로 별도 스레드에 옮겨 메인 루프가 자유롭게 굴러가게 한다.
+                        result = await asyncio.to_thread(
+                            self._run_native_tool_call,
+                            name=runtime_tool_name,
                             args=tool_call.arguments,
-                            accepted_result=result,
+                            requested_toolsets=requested_toolsets,
+                            tool_runtime=tool_runtime,
+                        )
+                        if runtime_tool_name == "delegate_task" and delegate_executor is not None:
+                            result = await self._execute_delegate_tool_result(
+                                delegate_executor=delegate_executor,
+                                tool_call_id=tool_call.id,
+                                args=tool_call.arguments,
+                                accepted_result=result,
+                            )
+                            delegate_boundary_started = True
+                        if runtime_tool_name == "session_agent_task" and session_agent_executor is not None:
+                            result = await self._execute_session_agent_tool_result(
+                                session_agent_executor=session_agent_executor,
+                                tool_call_id=tool_call.id,
+                                args=tool_call.arguments,
+                                accepted_result=result,
+                            )
+                        failure_circuit.record_result(
+                            tool_name=runtime_tool_name,
+                            args=tool_call.arguments,
+                            result=result,
                         )
                 tool_result = {
                     "tool_call_id": tool_call.id,
@@ -338,6 +378,33 @@ class ToolCallingLoopHandler:
                     task_input=task_input,
                     tool_runtime=tool_runtime,
                 )
+                if (
+                    decision != ToolGuardDecision.BLOCK
+                    and circuit_decision is not None
+                    and circuit_decision.action == "block_with_synthetic_result"
+                    and circuit_decision.should_abort
+                ):
+                    self._append_circuit_deferred_siblings(
+                        generated_tool_calls=generated.tool_calls,
+                        start_index=tool_call_index + 1,
+                        provider_tool_name_map=provider_tool_name_map,
+                        all_tool_results=all_tool_results,
+                        messages=messages,
+                        transcript_session_id=transcript_session_id,
+                        operations=operations,
+                        operation_counters=operation_counters,
+                    )
+                    current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
+                    return self._build_circuit_blocked_outcome(
+                        task_input=task_input,
+                        generated=generated,
+                        tool_results=all_tool_results,
+                        operations=operations,
+                        llm_call_count=llm_call_count,
+                        todo_state=current_todo_state,
+                        operation_counters=operation_counters,
+                        result=result,
+                    )
             current_todo_state = self._next_todo_state(current_todo_state, all_tool_results)
 
         return self._build_failed_outcome(
@@ -1115,6 +1182,54 @@ class ToolCallingLoopHandler:
         }
 
     @staticmethod
+    def _deferred_tool_result_by_circuit(*, deferred_tool_name: str) -> dict[str, Any]:
+        message = f"{deferred_tool_name} 실행은 같은 assistant 응답에서 이전 도구가 circuit breaker로 중단되어 보류됐습니다."
+        payload = {"error": {"code": "tool_deferred_by_circuit_breaker", "message": message}}
+        return {
+            "ok": False,
+            "content": json.dumps(payload, ensure_ascii=False),
+            "error": {
+                "code": "tool_deferred_by_circuit_breaker",
+                "message": message,
+                "tool_name": deferred_tool_name,
+                "retryable": False,
+            },
+            "circuit_breaker": {
+                "scope": "run",
+                "blocked": True,
+            },
+        }
+
+    def _append_circuit_deferred_siblings(
+        self,
+        *,
+        generated_tool_calls,
+        start_index: int,
+        provider_tool_name_map: dict[str, str],
+        all_tool_results: list[dict[str, Any]],
+        messages: list[AgentMessage | ToolResultMessage],
+        transcript_session_id: str | None,
+        operations: list[dict[str, Any]],
+        operation_counters: dict[str, int],
+    ) -> None:
+        for sibling_call in generated_tool_calls[start_index:]:
+            sibling_runtime_name = self._runtime_tool_name(sibling_call.name, provider_tool_name_map)
+            sibling_result = {
+                "tool_call_id": sibling_call.id,
+                "name": sibling_runtime_name,
+                "args": sibling_call.arguments,
+                "result": self._deferred_tool_result_by_circuit(deferred_tool_name=sibling_runtime_name),
+            }
+            self._append_tool_result_observation(
+                tool_result=sibling_result,
+                all_tool_results=all_tool_results,
+                messages=messages,
+                transcript_session_id=transcript_session_id,
+                operations=operations,
+                operation_counters=operation_counters,
+            )
+
+    @staticmethod
     def _tool_result_content(result: dict[str, Any]) -> str:
         if isinstance(result, dict) and isinstance(result.get("content"), str):
             return str(result["content"])
@@ -1315,6 +1430,121 @@ class ToolCallingLoopHandler:
                     "kind": "system",
                     "status": "failed",
                     "summary": message,
+                },
+            ],
+        }
+
+    def _build_circuit_blocked_outcome(
+        self,
+        *,
+        task_input: dict[str, Any],
+        generated: AgentModelResponse | None,
+        tool_results: list[dict[str, Any]],
+        operations: list[dict[str, Any]],
+        llm_call_count: int,
+        todo_state: dict[str, Any],
+        operation_counters: dict[str, int],
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        tool_names = [str(item["name"]) for item in tool_results]
+        observed_steps = self._observed_semantic_steps(tool_results)
+        step_summary = self._observed_step_summary(observed_steps)
+        operation_error = self._tool_operation_error(result) or {
+            "code": "tool_failure_blocked",
+            "message": "반복 도구 실패가 차단되었습니다.",
+        }
+        failure_type = str(operation_error.get("type") or "")
+        code = "rate_limited_blocked" if failure_type == "rate_limited" else "tool_failure_blocked"
+        message = str(operation_error.get("message") or "반복 도구 실패가 차단되었습니다.")
+        result_error = {**operation_error, "code": code}
+        return {
+            "task_status": TaskStatus.FAILED,
+            "step_status": StepStatus.FAILED,
+            "result_payload": {
+                "text": generated.output_text if generated is not None and generated.output_text else message,
+                "tool_results": tool_results,
+                "error": result_error,
+            },
+            "output_payload": {
+                "tool_results": tool_results,
+            },
+            "detail_json": self._build_detail_json(
+                tool_names=tool_names,
+                llm_call_count=llm_call_count,
+                model_name=self._model_name(generated, task_input) if generated is not None else None,
+                todo_state=todo_state,
+            ),
+            "todo_state": todo_state,
+            "observed_steps": observed_steps,
+            "summary_message": step_summary or message,
+            "error_message": message,
+            "operations": [
+                *operations,
+                {
+                    "key": self._next_operation_key(
+                        operation_counters,
+                        namespace="loop",
+                        base_key="tool_circuit",
+                    ),
+                    "title": "반복 도구 실패 차단",
+                    "kind": "system",
+                    "status": "failed",
+                    "summary": message,
+                    "error": result_error,
+                },
+            ],
+        }
+
+    def _build_provider_failure_outcome(
+        self,
+        *,
+        task_input: dict[str, Any],
+        prompt: str,
+        failure_payload: dict[str, Any],
+        tool_results: list[dict[str, Any]],
+        operations: list[dict[str, Any]],
+        llm_call_count: int,
+        todo_state: dict[str, Any],
+        operation_counters: dict[str, int],
+    ) -> dict[str, Any]:
+        message = str(failure_payload.get("message") or "모델 provider 호출이 실패했습니다.")
+        code = str(failure_payload.get("code") or "provider_call_failed")
+        observed_steps = self._observed_semantic_steps(tool_results)
+        return {
+            "task_status": TaskStatus.FAILED,
+            "step_status": StepStatus.FAILED,
+            "result_payload": {
+                "text": message,
+                "tool_results": tool_results,
+                "error": failure_payload,
+            },
+            "output_payload": {
+                "prompt": prompt,
+                "tool_results": tool_results,
+            },
+            "detail_json": self._build_detail_json(
+                tool_names=[str(item["name"]) for item in tool_results],
+                llm_call_count=llm_call_count,
+                model_name=None,
+                todo_state=todo_state,
+            ),
+            "todo_state": todo_state,
+            "observed_steps": observed_steps,
+            "summary_message": message,
+            "error_message": message,
+            "operations": [
+                *operations,
+                {
+                    "key": self._next_operation_key(
+                        operation_counters,
+                        namespace="provider",
+                        base_key=code,
+                    ),
+                    "title": "모델 provider 호출 실패",
+                    "kind": "llm",
+                    "status": "failed",
+                    "summary": message,
+                    "error": failure_payload,
                 },
             ],
         }
