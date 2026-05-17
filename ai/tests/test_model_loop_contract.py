@@ -38,6 +38,8 @@ def test_prompt_builder_includes_native_tool_call_and_termination_guidance():
     assert "독립 산출물이나 책임 분리가 자연스러울 때 세션 에이전트 작업으로 분리하세요." in prompt
     assert "분리할 실익이 낮은 작업은 팀장이 직접 처리해도 됩니다." in prompt
     assert "수행할 수 있는 세션 에이전트가 없으면 임의로 배정하지 말고" in prompt
+    assert "세션 에이전트 후보의 skill 설명은 위임 판단용입니다." in prompt
+    assert "현재 실행 에이전트가 직접 보유한 skill이 아니면 `skills.read`로 읽지 마세요." in prompt
     assert "requiredSkillNames에 필요한 skill 이름을 담으세요." in prompt
     assert "폴더 경로 자체를 파일명으로 바꾸지 말고 폴더 안에 의미 있는 파일명을 만들어 저장하세요." in prompt
     assert "사용자가 자신의 이름, 호칭, 프로필, 선호, 비선호, 반복 행동, 작업 습관 같은 지속 정보를 알려주면" in prompt
@@ -335,6 +337,34 @@ def test_work_context_prompt_deduplicates_shared_session_agent_skill_description
     assert "agent-general: 이름=기본 에이전트 / 스킬=subway-lost-property" in prompt
 
 
+def test_work_context_prompt_truncates_session_agent_skill_descriptions_for_routing():
+    prompt = build_work_context_prompt(
+        input_payload={
+            "sessionAgentProfiles": [
+                {
+                    "profileId": "agent-k",
+                    "configSnapshot": {"name": "K-에이전트", "skills": ["korea-weather"]},
+                    "skillDescriptions": [
+                        {
+                            "name": "korea-weather",
+                            "description": (
+                                "한국 날씨를 기상청 단기예보 조회서비스와 프록시 경유로 조회해 요약하고, "
+                                "지역 좌표와 날짜 기준을 바탕으로 사용자가 바로 이해할 수 있게 설명한다."
+                            ),
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+
+    assert (
+        "korea-weather: 한국 날씨를 기상청 단기예보 조회서비스와 프록시 경유로 조회해 요약하고, "
+        "지역 좌표와 날짜 기준을 바탕으로 사용자가 바로 이해할 수 있게..."
+    ) in prompt
+    assert "설명한다" not in prompt
+
+
 def test_persistent_memory_prompt_sanitizes_metadata():
     prompt = build_persistent_memory_prompt(
         [
@@ -416,8 +446,10 @@ def test_prompt_builder_includes_skill_description_catalog_without_reader_tool_p
 
     assert "사용 가능한 skill 설명" in prompt
     assert "현재 실행 에이전트가 직접 사용할 수 있는 skill의 이름과 설명입니다." in prompt
+    assert "작업을 시작할 때 먼저 아래 목록에서 사용자 요청을 처리할 수 있는 skill 후보가 있는지 확인하세요." in prompt
     assert "세션 에이전트 후보가 더 직접적으로 맞으면 이 목록에 억지로 맞추지 말고 세션 에이전트 배정을 검토하세요." in prompt
-    assert "사용자 입력을 직접 수행할 수 있는 skill이 있으면 해당 skill을 활용하는 방향으로 진행하세요." in prompt
+    assert "사용자 입력을 직접 수행할 수 있는 skill이 있으면 일반 도구를 바로 호출하기보다 해당 skill을 최대한 우선 후보로 삼으세요." in prompt
+    assert "관련 skill 후보를 선택했다면 `skills.read` 또는 `skill.execute`로 본문을 먼저 확인한 뒤" in prompt
     assert "전혀 관련 있는 skill이 없을 때만 skill 없이 진행하고, skill 본문에 제한이나 우선 절차가 있으면 그 절차를 우선하세요." in prompt
     assert "skills.read" in prompt
     assert "skills.read_file" not in prompt

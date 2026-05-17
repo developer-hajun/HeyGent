@@ -159,6 +159,7 @@ class PromptBuilder:
                     "후보가 요청의 핵심 부분을 수행할 수 있고, 독립 산출물이나 책임 분리가 자연스러울 때 세션 에이전트 작업으로 분리하세요.",
                     "단순 응답, 맥락 정리, 최종 종합, 또는 분리할 실익이 낮은 작업은 팀장이 직접 처리해도 됩니다.",
                     "수행할 수 있는 세션 에이전트가 없으면 임의로 배정하지 말고 팀장이 직접 진행하거나 필요한 정보와 사용자 결정 지점을 남기세요.",
+                    "세션 에이전트 후보의 skill 설명은 위임 판단용입니다. 현재 실행 에이전트가 직접 보유한 skill이 아니면 `skills.read`로 읽지 마세요.",
                     "특정 skill 절차가 필요한 하위 작업이면 session_agent_task 입력의 requiredSkillNames에 필요한 skill 이름을 담으세요.",
                     "session_agent_task 입력에는 담당자가 다시 묻지 않아도 실행할 수 있도록 제목, 지시, 기대 산출물, 완료 기준, 제약을 구체적으로 담으세요.",
                 ]
@@ -435,8 +436,8 @@ def _skill_description_lines(value: object) -> list[str]:
         description = str(item.get("description") or "").strip()
         if not name:
             continue
-        if len(description) > 120:
-            description = description[:117].rstrip() + "..."
+        if len(description) > 80:
+            description = description[:77].rstrip() + "..."
         detail_parts = [part for part in [description] if part]
         lines.append(f"{name}: " + " / ".join(detail_parts) if detail_parts else name)
     return lines
