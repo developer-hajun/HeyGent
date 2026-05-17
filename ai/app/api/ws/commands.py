@@ -1,14 +1,26 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 import json
 import logging
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from pydantic import BaseModel
 
+from app.api.session_agent_profiles import (
+    agent_profile_prompt_payload as _agent_profile_prompt_payload,
+    instruction_bundle_prompt_payload as _instruction_bundle_prompt_payload,
+    profile_model as _profile_model,
+    profile_provider_name as _profile_provider_name,
+)
+from app.api.ws.command_types import (
+    WebSocketAuthContext,
+    WebSocketBackgroundContext,
+    WebSocketCommandContext,
+    WebSocketCommandError,
+)
 from app.api.memory_context import attach_persistent_memory_context
 from app.api.memory_mark_used import mark_used_recalled_memories
 from app.api.memory_observation import attach_memory_observation_to_task
@@ -16,10 +28,13 @@ from app.api.memory_writeback import writeback_persistent_memory_candidates
 from app.contracts.task.task_status import TaskStatus
 from app.core.time import utc_now
 from app.core.utils.ids import new_id
+from app.domain.orchestration.capabilities import apply_task_capabilities
 from app.domain.orchestration.contracts import OrchestrationRequest
+from app.domain.orchestration.run_lifecycle import classify_task_run_liveness
 from app.domain.session.conversation_history import build_conversation_history
 from app.domain.session.history_compaction import compact_conversation_history
 from app.domain.session.session_runtime_state import get_system_prompt_snapshot
+from app.domain.tasks.activity_transcript import build_activity_transcript
 from app.domain.tasks.display_context import build_task_display_context
 from app.domain.work import WorkService
 logger = logging.getLogger(__name__)
@@ -72,54 +87,6 @@ _OPENAI_MODEL_FALLBACKS = (
     "gpt-4o",
     "gpt-4o-mini",
 )
-
-
-class WebSocketCommandError(Exception):
-    """command.error frame으로 변환할 수 있는 WebSocket protocol 오류다."""
-
-    def __init__(self, code: str, message: str, *, retryable: bool = False) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.retryable = retryable
-
-
-@dataclass(slots=True)
-class WebSocketAuthContext:
-    """인증된 WebSocket 연결이 살아 있는 동안만 유지되는 메모리 컨텍스트다.
-
-    access_token은 backend 호출이 필요한 후속 command에서만 메모리로 참조할 수 있다.
-    DB, event, projection, detail_json에는 절대 넣지 않는다.
-    """
-
-    user_id: str
-    access_token: str
-    workspace_key: str | None = None
-    scopes: list[str] | None = None
-    token_expires_at: str | None = None
-    scope_expires_at: str | None = None
-
-
-@dataclass(slots=True)
-class WebSocketCommandContext:
-    websocket: Any
-    auth: WebSocketAuthContext
-    gateway_session_id: str
-    session_service: Any
-    send_json: Callable[[dict[str, Any]], Awaitable[None]]
-    background_tasks: set[asyncio.Task]
-    after_response_callbacks: list[Callable[[], None]]
-
-
-@dataclass(slots=True)
-class WebSocketBackgroundContext:
-    """연결 종료 뒤에도 실행될 수 있는 작업용 컨텍스트다.
-
-    background task는 WebSocket close 이후까지 남을 수 있으므로 accessToken을 참조하지 않는다.
-    """
-
-    websocket: Any
-    send_json: Callable[[dict[str, Any]], Awaitable[None]]
 
 
 class WebSocketCommandRouter:
@@ -384,6 +351,9 @@ class WebSocketCommandRouter:
         effective_model = str(profile_model or settings_snapshot.get("model") or model or "").strip() or None
         if effective_model:
             task_input["model"] = effective_model
+        profile_provider = _profile_provider_name(main_profile) if main_profile is not None else None
+        if profile_provider:
+            task_input["provider_name"] = profile_provider
         transcript_session_id = _create_task_transcript_session(
             session_store,
             session_id=session_id,
@@ -413,6 +383,11 @@ class WebSocketCommandRouter:
                 "work_title": work.title,
                 "work_assignee_agent_id": work.assignee_agent_id,
             }
+        apply_task_capabilities(
+            task_input,
+            skill_registry=getattr(context.websocket.app.state, "skill_registry", None),
+            default_toolsets=_default_agent_loop_toolsets(context.websocket.app.state),
+        )
         # token memory context는 durable payload에 넣지 않는다. backend 호출이 필요해지면
         # context.auth.access_token에서만 꺼내 쓰도록 경계를 고정한다.
         await attach_persistent_memory_context(
@@ -881,7 +856,7 @@ class WebSocketCommandRouter:
             {
                 "id": model_id,
                 "label": model_id,
-                "provider": "OpenAI",
+                "provider": "openai_api_key",
                 "is_current": model_id == current_model or (current_model is None and model_id == default_model),
             }
             for model_id in model_ids
@@ -897,7 +872,27 @@ class WebSocketCommandRouter:
                 "health": {"provider_name": "openai_api_key", "configured": True, "connected": True},
             }
         ]
-        return ("model.options.result", {"model": default_model, "providers": providers, "models": [model for provider in providers for model in provider["models"]]})
+        gemini_models = [
+            {
+                "id": model_id,
+                "label": model_id,
+                "provider": "gemini_api_key",
+                "is_current": model_id == current_model,
+            }
+            for model_id in ("gemini-2.5-pro", "gemini-2.5-flash")
+        ]
+        providers.append(
+            {
+                "slug": "gemini_api_key",
+                "provider_name": "gemini_api_key",
+                "models": gemini_models,
+                "is_current": any(model["is_current"] for model in gemini_models),
+                "total_models": len(gemini_models),
+                "warning": None,
+                "health": {"provider_name": "gemini_api_key", "configured": True, "connected": True},
+            }
+        )
+        return ("model.options.result", {"model": default_model, "providers": providers, "models": provider_models})
 
     async def _task_runs_active_list(self, payload: dict[str, Any], context: WebSocketCommandContext) -> tuple[str, dict[str, Any]]:
         session_id = _optional_str(payload.get("sessionId", payload.get("session_id")))
@@ -908,14 +903,24 @@ class WebSocketCommandRouter:
         if projection is not None and session_id:
             for task_run_id in projection.list_active_task_ids(session_key=session_id):
                 task = projection.get_task_snapshot(task_run_id)
-                if task is None or str(task.owner_key) != str(context.auth.user_id):
+                canonical_task = repository.get_task(task_run_id)
+                if canonical_task is None or str(canonical_task.owner_key) != str(context.auth.user_id):
                     continue
-                steps = _projection_steps(projection, task.task_run_id)
-                items_by_task_run_id[task.task_run_id] = _active_task_payload(task, steps, source="active", repository=repository)
+                if not _is_live_active_task(repository, canonical_task):
+                    continue
+                steps = _projection_steps(projection, canonical_task.task_run_id)
+                items_by_task_run_id[canonical_task.task_run_id] = _active_task_payload(
+                    canonical_task,
+                    steps,
+                    source="active",
+                    repository=repository,
+                )
 
         total = repository.count_tasks_by_statuses(_ACTIVE_TASK_STATUSES, session_key=session_id)
         for task in repository.list_tasks_by_statuses(_ACTIVE_TASK_STATUSES, session_key=session_id, limit=max(total, 1), offset=0):
             if task.task_run_id in items_by_task_run_id or str(task.owner_key) != str(context.auth.user_id):
+                continue
+            if not _is_live_active_task(repository, task):
                 continue
             items_by_task_run_id[task.task_run_id] = _active_task_payload(
                 task,
@@ -963,6 +968,8 @@ class WebSocketCommandRouter:
             "pending_approval": pending_approval,
             "approvals": [pending_approval] if pending_approval is not None else [],
             "events": events,
+            "activity_items": build_activity_transcript(events),
+            "activityItems": build_activity_transcript(events),
         }
         if include_steps:
             step_payloads = [_step_payload_with_display_context(task, step) for step in steps]
@@ -1019,11 +1026,14 @@ class WebSocketCommandRouter:
                 events = durable_events
 
         latest_sequence = max((int(event.get("sequence") or 0) for event in events), default=None)
+        activity_items = build_activity_transcript(events)
         return (
             "taskRun.events.replay.result",
             {
                 "task_run_id": task_run_id,
                 "events": events,
+                "activity_items": activity_items,
+                "activityItems": activity_items,
                 "latest_sequence": latest_sequence,
                 "retention_exceeded": retention_exceeded,
             },
@@ -1250,6 +1260,12 @@ class WebSocketCommandRouter:
                 task_run_id=completed_task.task_run_id,
                 user_message_id=str(user_message_id),
                 assistant_message_id=str(assistant_append["message_id"]),
+                model=str((completed_task.input_payload or {}).get("model") or "") or None,
+                provider_name=str(
+                    (completed_task.input_payload or {}).get("provider_name")
+                    or (completed_task.input_payload or {}).get("providerName")
+                    or ""
+                ) or None,
             )
             mark_used_observation = await mark_used_recalled_memories(
                 app_state=context.websocket.app.state,
@@ -1263,6 +1279,12 @@ class WebSocketCommandRouter:
                 repository=context.websocket.app.state.repository,
                 writeback=writeback_observation,
                 mark_used=mark_used_observation,
+            )
+            await context.send_json(
+                _event_frame(
+                    "taskRun.snapshot.result",
+                    _task_snapshot_payload(completed_task),
+                )
             )
 
     async def _run_resume_task(self, *, context: WebSocketBackgroundContext, task_run_id: str, approval_id: str, payload: dict[str, Any]) -> None:
@@ -1475,7 +1497,10 @@ def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work
         profile = agent_repository.get_session_agent(profile_id=assignee_agent_id, owner_key=str(work.owner_key))
     if profile is None:
         return
-    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
+    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(
+        profile,
+        skill_registry=getattr(state, "skill_registry", None),
+    )
     profile_id = str(profile.get("profile_id") or assignee_agent_id)
     _attach_effective_skill_names(
         state,
@@ -1489,6 +1514,9 @@ def _attach_target_agent_context(state: Any, *, task_input: dict[str, Any], work
     profile_model = _profile_model(profile)
     if profile_model:
         task_input["model"] = profile_model
+    profile_provider = _profile_provider_name(profile)
+    if profile_provider:
+        task_input["provider_name"] = profile_provider
     bundle = agent_repository.get_instruction_bundle(profile_id=profile_id, owner_key=str(work.owner_key))
     if bundle is None:
         return
@@ -1512,7 +1540,10 @@ def _attach_main_agent_context(
     )
     if profile is None:
         return None
-    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(profile)
+    task_input["targetAgentProfile"] = _agent_profile_prompt_payload(
+        profile,
+        skill_registry=getattr(state, "skill_registry", None),
+    )
     profile_id = str(profile.get("profile_id") or "").strip()
     _attach_effective_skill_names(
         state,
@@ -1590,8 +1621,10 @@ def _refresh_stale_running_guard(context: WebSocketCommandContext, session: dict
     if not task_run_id:
         return session
     task = context.websocket.app.state.repository.get_task(str(task_run_id))
-    if task is not None and str(task.status) in _ACTIVE_TASK_STATUSES:
+    liveness = classify_task_run_liveness(task)
+    if liveness.blocks_session:
         return session
+    _recover_stale_task_if_needed(context.websocket.app.state.repository, task, liveness=liveness)
     # Postgres의 running_task_run_id는 재시작 뒤에도 남는 영속 guard다.
     # TaskRun이 이미 terminal이거나 projection/task row를 잃은 경우에는 다음 명령을 막지 않도록
     # 같은 task_run_id 소유 guard만 정리한다.
@@ -1984,6 +2017,18 @@ def _apply_session_settings_snapshot(task_input: dict[str, Any], settings: dict[
     task_input["system_prompt_snapshot"] = get_system_prompt_snapshot(session)
 
 
+def _default_agent_loop_toolsets(state: Any) -> tuple[str, ...]:
+    tool_catalog = getattr(state, "tool_catalog", None)
+    default_toolsets = getattr(tool_catalog, "default_toolsets", None)
+    if isinstance(default_toolsets, tuple):
+        return default_toolsets
+    if isinstance(default_toolsets, list):
+        return tuple(str(item) for item in default_toolsets if str(item).strip())
+    # 세션 설정 allowlist는 사용자가 저장할 수 있는 안전한 설정 범위이고,
+    # 기본 실행 권한은 실제 agent.loop 런타임 조립값을 우선 신뢰한다.
+    return tuple(sorted(_PUBLIC_SESSION_TOOLSETS))
+
+
 async def _list_openai_models_for_user(state: Any, *, user_id: str, fallback_model: str) -> list[str]:
     models: list[str] = []
     registry = getattr(state, "provider_registry", None)
@@ -2094,15 +2139,45 @@ def _session_list_preview_payload(context: WebSocketCommandContext, *, session_i
         result["last_message_at"] = last_message.get("timestamp")
 
     tasks = context.websocket.app.state.repository.list_tasks(session_key=session_id, limit=50, offset=0)
+    tasks = [task for task in tasks if not _is_expired_running_task(task)]
     if not tasks:
         return result
 
-    active_task = next((task for task in tasks if task.status in _ACTIVE_TASK_STATUSES), None)
+    active_task = next((task for task in tasks if _is_sidebar_active_task(task)), None)
     latest_task = active_task or tasks[0]
     result["last_task_run_status"] = latest_task.status
     if active_task is not None:
         result["active_task_run_id"] = active_task.task_run_id
     return result
+
+
+def _is_sidebar_active_task(task: Any) -> bool:
+    return classify_task_run_liveness(task).blocks_session
+
+
+def _is_live_active_task(repository: Any, task: Any) -> bool:
+    liveness = classify_task_run_liveness(task)
+    if liveness.blocks_session:
+        return True
+    _recover_stale_task_if_needed(repository, task, liveness=liveness)
+    return False
+
+
+def _recover_stale_task_if_needed(repository: Any, task: Any, *, liveness: Any | None = None) -> None:
+    if task is None:
+        return
+    current_liveness = liveness or classify_task_run_liveness(task)
+    if not current_liveness.should_recover:
+        return
+    recover = getattr(repository, "recover_stale_task_run", None)
+    if recover is None:
+        return
+    recover(str(task.task_run_id), reason=str(current_liveness.reason))
+
+
+def _is_expired_running_task(task: Any) -> bool:
+    liveness = classify_task_run_liveness(task)
+    return liveness.should_recover and not liveness.blocks_session
 
 
 def _message_payload(message: dict[str, Any]) -> dict[str, Any]:
@@ -2239,7 +2314,10 @@ def _attach_session_agent_candidates(
     if agent_repository is None:
         return []
     profiles = [
-        _agent_profile_prompt_payload(item)
+        _agent_profile_prompt_payload(
+            item,
+            skill_registry=getattr(state, "skill_registry", None),
+        )
         for item in agent_repository.list_session_agents(session_id=session_id, owner_key=str(owner_key))
     ]
     if profiles:
@@ -2265,41 +2343,6 @@ def _attach_effective_skill_names(
         requested_skill_names=[str(skill) for skill in list(config.get("skills") or [])],
         explicit_agent_selection=config.get("skillSelectionMode") == "explicit",
     )
-
-
-def _agent_profile_prompt_payload(profile: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "profileId": profile.get("profile_id"),
-        "profileKey": profile.get("profile_key"),
-        "agentType": profile.get("agent_type"),
-        "templateKey": profile.get("template_key"),
-        "configSnapshot": profile.get("config_snapshot") or {},
-    }
-
-
-def _instruction_bundle_prompt_payload(bundle: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "bundleId": bundle.get("bundle_id"),
-        "entryDocumentKey": bundle.get("entry_document_key") or "AGENTS.md",
-        "documents": [
-            {
-                "documentKey": document.get("document_key") or document.get("documentKey"),
-                "displayName": document.get("display_name") or document.get("displayName"),
-                "content": document.get("content") or "",
-            }
-            for document in list(bundle.get("documents") or [])
-            if isinstance(document, dict)
-        ],
-    }
-
-
-def _profile_model(profile: dict[str, Any] | None) -> str | None:
-    if profile is None:
-        return None
-    config = profile.get("config_snapshot") if isinstance(profile.get("config_snapshot"), dict) else {}
-    value = config.get("model") or profile.get("model_name")
-    text = str(value or "").strip()
-    return text or None
 
 
 def _step_payload_with_display_context(task: Any, step: Any) -> dict[str, Any]:

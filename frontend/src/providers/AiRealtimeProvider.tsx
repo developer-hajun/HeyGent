@@ -32,8 +32,9 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
   const setLastError = useAiRealtimeStore((state) => state.setLastError)
   const socketRef = useRef<TaskRunSocketClient | null>(null)
   const commandClientRef = useRef<AiCommandClient | null>(null)
-  const pingIntervalRef = useRef<ReturnType<typeof window.setInterval> | null>(null)
-  const reconnectTimeoutRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
+  const pingIntervalRef = useRef<number | null>(null)
+  const activeTaskPollIntervalRef = useRef<number | null>(null)
+  const reconnectTimeoutRef = useRef<number | null>(null)
   const reconnectAttemptRef = useRef(0)
   const clientGenerationRef = useRef(0)
   const suppressedCloseGenerationsRef = useRef<Set<number>>(new Set())
@@ -41,12 +42,21 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
   const activeRecoveryInFlightRef = useRef(false)
   const pendingRecoveryClientRef = useRef<TaskRunSocketClient | null>(null)
   const snapshotFetchedTaskRunsRef = useRef<Set<string>>(new Set())
+  const autoSubscribedChildTaskRunsRef = useRef<Set<string>>(new Set())
+  const externalTaskSessionMapRef = useRef<Map<string, string>>(new Map())
 
   useEffect(() => {
     const clearPingInterval = () => {
       if (pingIntervalRef.current !== null) {
         window.clearInterval(pingIntervalRef.current)
         pingIntervalRef.current = null
+      }
+    }
+
+    const clearActiveTaskPollInterval = () => {
+      if (activeTaskPollIntervalRef.current !== null) {
+        window.clearInterval(activeTaskPollIntervalRef.current)
+        activeTaskPollIntervalRef.current = null
       }
     }
 
@@ -77,6 +87,7 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
       const generation = clientGenerationRef.current
 
       clearPingInterval()
+      clearActiveTaskPollInterval()
       commandClient?.destroy()
 
       if (commandClientRef.current === commandClient) {
@@ -130,6 +141,40 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         useTaskRunStore.getState().handleRealtimeFrame(frame)
         useWorkStore.getState().handleRealtimeFrame(frame)
         recoverTaskRunAfterGap(frame)
+        subscribeChildTaskRunFromParentEvent(socketClient, frame)
+        if (frame.type === 'task.new') {
+          const typedFrame = frame as { type: string; taskRunId?: string; sessionId?: string }
+          const taskRunId = typedFrame.taskRunId
+          const sessionId = typedFrame.sessionId
+          if (taskRunId && !useAiRealtimeStore.getState().subscriptionsByTaskRunId[taskRunId]) {
+            useAiRealtimeStore.getState().subscribeTask(taskRunId, undefined)
+          }
+          if (sessionId && taskRunId) {
+            externalTaskSessionMapRef.current.set(taskRunId, sessionId)
+            useChatStore.getState().addExternalTaskPlaceholder(sessionId, taskRunId)
+            void useChatStore.getState().fetchMessages(sessionId)
+            void useTaskRunStore.getState().fetchSnapshot(taskRunId)
+          }
+        }
+        if (frame.type === 'task.event') {
+          const payload = getFramePayload(frame)
+          if (isJsonObject(payload)) {
+            const eventType = getStringField(payload, 'event_type', 'eventType')
+            const taskRunId = getStringField(payload, 'task_run_id', 'taskRunId')
+            if (
+              taskRunId &&
+              (eventType === 'task.completed' ||
+                eventType === 'task.failed' ||
+                eventType === 'task.canceled')
+            ) {
+              const sessionId = externalTaskSessionMapRef.current.get(taskRunId)
+              if (sessionId) {
+                externalTaskSessionMapRef.current.delete(taskRunId)
+                void useChatStore.getState().fetchMessages(sessionId)
+              }
+            }
+          }
+        }
       })
 
       socketClient.onMessage((event) => {
@@ -153,6 +198,29 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
               )
             })
           void recoverAndResubscribeTasks(socketClient)
+          clearActiveTaskPollInterval()
+          activeTaskPollIntervalRef.current = window.setInterval(() => {
+            if (socketRef.current !== socketClient || !socketClient.isAuthenticated()) {
+              return
+            }
+            void useTaskRunStore
+              .getState()
+              .fetchActiveTaskRuns()
+              .then((taskRuns) => {
+                const subscriptions = useAiRealtimeStore.getState().subscriptionsByTaskRunId
+                for (const taskRun of taskRuns) {
+                  if (!subscriptions[taskRun.task_run_id]) {
+                    useAiRealtimeStore
+                      .getState()
+                      .subscribeTask(
+                        taskRun.task_run_id,
+                        getRecoveryLastSequence(taskRun.task_run_id),
+                      )
+                  }
+                }
+              })
+              .catch(() => {})
+          }, 10_000)
           return
         }
 
@@ -370,6 +438,76 @@ export function AiRealtimeProvider({ children }: AiRealtimeProviderProps) {
         .catch((error) => {
           setLastError(
             error instanceof Error ? error.message : 'TaskRun 이벤트 복구에 실패했습니다.',
+          )
+        })
+    }
+
+    const subscribeChildTaskRunFromParentEvent = (
+      socketClient: TaskRunSocketClient,
+      frame: { type: string; payload?: unknown; data?: unknown },
+    ) => {
+      if (frame.type !== 'task.event') {
+        return
+      }
+
+      const taskEvent = getFramePayload(frame)
+      if (!isJsonObject(taskEvent)) {
+        return
+      }
+
+      const eventPayload = taskEvent.payload
+      if (!isJsonObject(eventPayload)) {
+        return
+      }
+
+      const reason = getStringField(eventPayload, 'reason')
+      if (reason === undefined || !reason.startsWith('session_agent_work.')) {
+        return
+      }
+
+      const parentTaskRunId = getStringField(taskEvent, 'task_run_id', 'taskRunId')
+      const childTaskRunId =
+        getStringField(eventPayload, 'childTaskRunId', 'child_task_run_id') ??
+        getStringField(eventPayload, 'taskRunId', 'task_run_id')
+
+      if (
+        childTaskRunId === undefined ||
+        childTaskRunId === parentTaskRunId ||
+        autoSubscribedChildTaskRunsRef.current.has(childTaskRunId)
+      ) {
+        return
+      }
+
+      autoSubscribedChildTaskRunsRef.current.add(childTaskRunId)
+
+      try {
+        useAiRealtimeStore
+          .getState()
+          .subscribeTask(childTaskRunId, getRecoveryLastSequence(childTaskRunId))
+      } catch (error) {
+        setLastError(error instanceof Error ? error.message : 'child TaskRun 구독에 실패했습니다.')
+        return
+      }
+
+      void useTaskRunStore
+        .getState()
+        .fetchSnapshot(childTaskRunId)
+        .catch(() => {})
+
+      void useTaskRunStore
+        .getState()
+        .recoverTaskRun(childTaskRunId)
+        .then(() => {
+          if (socketRef.current !== socketClient || !socketClient.isAuthenticated()) {
+            return
+          }
+          useAiRealtimeStore
+            .getState()
+            .subscribeTask(childTaskRunId, getRecoveryLastSequence(childTaskRunId), { force: true })
+        })
+        .catch((error) => {
+          setLastError(
+            error instanceof Error ? error.message : 'child TaskRun 이벤트 복구에 실패했습니다.',
           )
         })
     }

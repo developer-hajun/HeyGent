@@ -7,6 +7,7 @@ import type {
   TaskRunStatusTone,
 } from '@/types/taskRuns'
 import { toTaskRunStatusTone } from '@/utils/taskRunStatusView'
+import { shouldShowAssistantTaskRunProgress } from '@/utils/taskRunDisplayStatus'
 import {
   toStepProgressSentence,
   toUserFacingTaskTitle,
@@ -20,6 +21,7 @@ type ChatMessageItemProps = {
   stepRuns?: RawStepRun[]
   taskRunSummary?: TaskRunSummaryView
   onOpenTaskRun?: (taskRunId: string) => void
+  assistantName?: string
 }
 
 export function ChatMessageItem({
@@ -28,47 +30,66 @@ export function ChatMessageItem({
   stepRuns = [],
   taskRunSummary,
   onOpenTaskRun,
+  assistantName,
 }: ChatMessageItemProps) {
   const isUser = message.role === 'user'
-  const taskRunChip = isUser ? undefined : getAssistantTaskRunChip(activities, taskRunSummary)
-  const taskRunProgress = isUser ? undefined : getAssistantTaskRunProgress(stepRuns, taskRunSummary)
   const taskStatus =
     typeof taskRunSummary?.raw?.status === 'string' ? taskRunSummary.raw.status : undefined
+  const showTaskRunProgress =
+    !isUser &&
+    shouldShowAssistantTaskRunProgress({
+      messageStatus: message.status,
+      taskStatus,
+      stepRunCount: stepRuns.length,
+    })
+  const taskRunChip = isUser
+    ? undefined
+    : getAssistantTaskRunChip(activities, taskRunSummary, message.status)
+  const taskRunProgress = showTaskRunProgress
+    ? getAssistantTaskRunProgress(stepRuns, taskRunSummary)
+    : undefined
+  // 메시지 본문이 비어 있고 어시스턴트의 진행 표시(progress 또는 chip)가 있을 땐
+  // 본문 자리의 단순 로딩 스피너를 숨기고, 진행 상태 자체가 그 자리에 보이도록 한다.
+  const hasAssistantProgressIndicator = !isUser && (taskRunProgress || taskRunChip)
   const shouldShowMessageBody =
     message.content.trim() !== '' ||
     isUser ||
-    (!isTerminalTaskStatus(taskStatus) && !taskRunProgress)
+    (!isTerminalTaskStatus(taskStatus) && !hasAssistantProgressIndicator)
 
   return (
     <article className={`flex gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
       {!isUser && (
         <div className="mt-1 h-8 w-8 shrink-0 overflow-hidden rounded-full">
           <img
-            src="/assets/agents/ceo/ceo_profile.png"
-            alt="AI 어시스턴트"
+            src="/assets/agents/ceo/ceo_profile_img.png"
+            alt={assistantName?.trim() || '팀장 에이전트'}
             className="h-full w-full object-cover"
           />
         </div>
       )}
       <div className={`max-w-[78%] space-y-1 ${isUser ? 'items-end' : 'items-start'}`}>
-        {!isUser && <p className="text-muted-foreground px-1 text-xs font-medium">AI 어시스턴트</p>}
+        {!isUser && (
+          <p className="text-muted-foreground px-1 text-xs font-medium">
+            {assistantName?.trim() || '팀장 에이전트'}
+          </p>
+        )}
         {shouldShowMessageBody && (
           <div
             className={
               isUser
                 ? 'rounded-2xl border [border-color:var(--chat-user-border)] px-4 py-3 text-sm leading-6 wrap-anywhere [color:var(--chat-user-foreground)] shadow-sm [background:var(--chat-user-bubble)] dark:shadow-black/10'
-                : 'text-foreground rounded-2xl py-2 text-sm leading-7 [overflow-wrap:anywhere] break-words'
+                : 'selectable-text text-foreground rounded-2xl py-2 text-base leading-7 wrap-anywhere'
             }
           >
             {message.content.trim() !== '' ? (
               <div className="space-y-2">
                 {isUser && message.work && <WorkContextBadge work={message.work} />}
                 {isUser ? (
-                  <p className="[overflow-wrap:anywhere] break-words whitespace-pre-wrap">
+                  <p className="selectable-text [overflow-wrap:anywhere] break-words whitespace-pre-wrap">
                     {message.content}
                   </p>
                 ) : (
-                  <div className="[overflow-wrap:anywhere] break-words">
+                  <div className="selectable-text [overflow-wrap:anywhere] break-words">
                     <ChatMarkdown content={message.content} />
                   </div>
                 )}
@@ -184,11 +205,27 @@ function getAssistantTaskRunProgress(
 function getAssistantTaskRunChip(
   activities: ActivityItemView[],
   taskRunSummary?: TaskRunSummaryView,
+  messageStatus?: ChatMessageView['status'],
 ): { text: string; tone: TaskRunStatusTone } | undefined {
   const latestActivity = activities.at(-1)
   const taskStatus =
     typeof taskRunSummary?.raw?.status === 'string' ? taskRunSummary.raw.status : undefined
   const latestEventType = latestActivity?.raw.event_type
+
+  if (messageStatus === 'streaming') {
+    if (
+      latestActivity !== undefined &&
+      latestActivity.tone !== 'completed' &&
+      !isAnswerCompletionEvent(latestEventType)
+    ) {
+      return { text: latestActivity.statusText, tone: latestActivity.tone }
+    }
+    return { text: '답변 진행 중', tone: 'running' }
+  }
+
+  if (messageStatus === 'completed') {
+    return { text: '답변 완료', tone: 'completed' }
+  }
 
   if (taskStatus === 'COMPLETED' || isAnswerCompletionEvent(latestEventType)) {
     return { text: '답변 완료', tone: 'completed' }

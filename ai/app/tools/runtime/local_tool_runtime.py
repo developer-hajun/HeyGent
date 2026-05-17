@@ -44,6 +44,7 @@ class LocalToolRuntime:
         owner_key: str | None = None,
         work_repository=None,
         agent_repository=None,
+        prototype_repository=None,
         runtime_context: dict[str, Any] | None = None,
     ) -> None:
         self.skill_registry = skill_registry
@@ -52,12 +53,16 @@ class LocalToolRuntime:
         self.owner_key = str(owner_key) if owner_key else None
         self.work_repository = work_repository
         self.agent_repository = agent_repository
+        self.prototype_repository = prototype_repository
         self.runtime_context = dict(runtime_context or {})
         self.workspace_root = self._resolve_workspace_root(workspace_root)
         self._step_items: list[dict[str, str]] = []
         self._todo_items: list[dict[str, str]] = []
         self._tool_entries = build_runtime_tool_entries(
             {
+                "skills.list": self._list_skills,
+                "skills.read": self._read_skill,
+                "skills.read_file": self._read_skill_file,
                 "skill.execute": self._execute_skill,
                 "session.record": self._record_session_message,
                 "session.search": self._search_sessions,
@@ -67,6 +72,11 @@ class LocalToolRuntime:
                 "session_agent_task": self._session_agent_task,
                 "work_disposition": self._work_disposition,
                 "mattermost.send": self._send_mattermost_message,
+                "notion.execute": self._execute_notion,
+                "design.list_presets": self._list_design_presets,
+                "design.read_preset": self._read_design_preset,
+                "prototype.get_active_artifact": self._get_active_prototype_artifact,
+                "prototype.create_artifact": self._create_prototype_artifact,
                 "terminal.run": self._run_terminal_command,
                 "web_search": self._run_web_search,
                 "web_extract": self._run_web_extract,
@@ -111,6 +121,7 @@ class LocalToolRuntime:
             owner_key=self.owner_key,
             work_repository=self.work_repository,
             agent_repository=self.agent_repository,
+            prototype_repository=self.prototype_repository,
             runtime_context=self.runtime_context,
         )
         bound._step_items = [dict(item) for item in self._step_items]
@@ -132,6 +143,7 @@ class LocalToolRuntime:
             owner_key=owner_key or self.owner_key,
             work_repository=self.work_repository,
             agent_repository=self.agent_repository,
+            prototype_repository=self.prototype_repository,
             runtime_context=runtime_context if runtime_context is not None else self.runtime_context,
         )
         bound._step_items = [dict(item) for item in self._step_items]
@@ -491,6 +503,154 @@ class LocalToolRuntime:
             args,
         )
 
+    def _execute_notion(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler(
+            "app.tools.notion.notion_tool",
+            "execute_notion_handler",
+            args,
+        )
+
+    def _list_design_presets(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler(
+            "app.tools.design.design_tool",
+            "list_design_presets_handler",
+            args,
+        )
+
+    def _read_design_preset(self, args: dict[str, Any]) -> dict[str, Any]:
+        return self._run_external_tool_handler(
+            "app.tools.design.design_tool",
+            "read_design_preset_handler",
+            args,
+        )
+
+    def _create_prototype_artifact(self, args: dict[str, Any]) -> dict[str, Any]:
+        from app.tools.prototype.prototype_tool import normalize_prototype_files, prototype_tool_error
+
+        if self.prototype_repository is None:
+            return prototype_tool_error("prototype_repository_unavailable", "prototype artifact storage is not configured.")
+
+        session_id = self._optional_text(
+            args.get("_trusted_session_id")
+            or self.runtime_context.get("sessionId")
+            or self.runtime_context.get("session_id")
+        )
+        owner_key = self._optional_text(args.get("_trusted_owner_key") or self.owner_key)
+        if not session_id or not owner_key:
+            return prototype_tool_error(
+                "prototype_context_required",
+                "prototype artifact creation requires a bound session and owner.",
+            )
+
+        files = normalize_prototype_files(args.get("files"))
+        if not files:
+            return prototype_tool_error("prototype_files_required", "prototype files are required.")
+
+        title = self._optional_text(args.get("title")) or "프로토타입"
+        framework = self._optional_text(args.get("framework")) or "react"
+        styling = self._optional_text(args.get("styling")) or "css"
+        entry_file = self._optional_text(args.get("entryFile") or args.get("entry_file")) or _default_entry_file(files)
+        design_preset_id = self._optional_text(args.get("designPresetId") or args.get("design_preset_id"))
+        if not design_preset_id:
+            active_record = self.prototype_repository.get_active_artifact(session_id=session_id, owner_key=owner_key)
+            if active_record is not None:
+                design_preset_id = self._optional_text(active_record.get("design_preset_id"))
+        if not design_preset_id:
+            return prototype_tool_error(
+                "design_preset_required",
+                "DESIGN.md prototype creation requires designPresetId. Call design.list_presets, "
+                "read one preset with design.read_preset, then retry with that exact preset_id.",
+            )
+        summary = self._optional_text(args.get("summary")) or "프로토타입 버전을 생성했습니다."
+        metadata = args.get("metadata") if isinstance(args.get("metadata"), dict) else {}
+        task_run_id = self._optional_text(self.runtime_context.get("taskRunId") or self.runtime_context.get("task_run_id"))
+        prompt_message_id = self._optional_text(
+            self.runtime_context.get("promptMessageId") or self.runtime_context.get("prompt_message_id")
+        )
+
+        saved = self.prototype_repository.create_artifact_version(
+            session_id=session_id,
+            owner_key=owner_key,
+            title=title,
+            framework=framework,
+            styling=styling,
+            design_preset_id=design_preset_id,
+            entry_file=entry_file,
+            files=files,
+            summary=summary,
+            task_run_id=task_run_id,
+            prompt_message_id=prompt_message_id,
+            metadata=metadata,
+        )
+        return {
+            "ok": True,
+            "activeArtifactId": saved["artifact_id"],
+            "activeArtifactVersionId": saved["version_id"],
+            "artifactId": saved["artifact_id"],
+            "versionId": saved["version_id"],
+            "versionNumber": saved["version_number"],
+            "framework": saved["framework"],
+            "styling": saved["styling"],
+            "designPresetId": saved.get("design_preset_id"),
+            "entryFile": saved["entry_file"],
+            "previewMode": "sandpack" if saved["framework"] == "react" else "iframe",
+            "fileCount": len(saved["files"]),
+            "summary": saved.get("summary") or "",
+        }
+
+    def _get_active_prototype_artifact(self, args: dict[str, Any]) -> dict[str, Any]:
+        from app.tools.prototype.prototype_tool import prototype_tool_error
+
+        _ = args
+        if self.prototype_repository is None:
+            return prototype_tool_error("prototype_repository_unavailable", "prototype artifact storage is not configured.")
+
+        session_id = self._optional_text(
+            self.runtime_context.get("sessionId") or self.runtime_context.get("session_id")
+        )
+        owner_key = self._optional_text(self.owner_key)
+        if not session_id or not owner_key:
+            return prototype_tool_error(
+                "prototype_context_required",
+                "prototype artifact lookup requires a bound session and owner.",
+            )
+
+        record = self.prototype_repository.get_active_artifact(session_id=session_id, owner_key=owner_key)
+        if record is None:
+            return {
+                "ok": True,
+                "artifact": None,
+                "content": json.dumps({"ok": True, "artifact": None}, ensure_ascii=False),
+            }
+
+        artifact = {
+            "artifactId": str(record["artifact_id"]),
+            "versionId": str(record["version_id"]),
+            "sessionId": str(record["session_id"]),
+            "title": str(record.get("title") or "프로토타입"),
+            "framework": str(record.get("framework") or "react"),
+            "styling": str(record.get("styling") or "css"),
+            "designPresetId": record.get("design_preset_id"),
+            "entryFile": str(record.get("entry_file") or "/src/App.tsx"),
+            "versionNumber": int(record.get("version_number") or 1),
+            "summary": str(record.get("summary") or ""),
+            "files": record.get("files") if isinstance(record.get("files"), dict) else {},
+        }
+        return {
+            "ok": True,
+            "artifact": artifact,
+            "content": json.dumps(
+                {
+                    "ok": True,
+                    "artifactId": artifact["artifactId"],
+                    "versionId": artifact["versionId"],
+                    "title": artifact["title"],
+                    "fileCount": len(artifact["files"]),
+                },
+                ensure_ascii=False,
+            ),
+        }
+
     def _run_browser_navigate(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.browser.browser_tool", "browser_navigate_handler", args)
 
@@ -658,7 +818,7 @@ class LocalToolRuntime:
                 if parent is None:
                     return self._tool_error(
                         code="work_context_required",
-                        message="session_agent_task requires a connected CEO work item",
+                        message="session_agent_task requires a connected team lead work item",
                         tool_name="session_agent_task",
                     )
                 self.runtime_context["workId"] = parent.work_id
@@ -668,7 +828,7 @@ class LocalToolRuntime:
             else:
                 return self._tool_error(
                     code="work_context_required",
-                    message="session_agent_task requires a connected CEO work item",
+                    message="session_agent_task requires a connected team lead work item",
                     tool_name="session_agent_task",
                 )
         else:
@@ -682,15 +842,29 @@ class LocalToolRuntime:
         if str(parent.assignee_agent_id or "CEO") != "CEO":
             return self._tool_error(
                 code="ceo_work_required",
-                message="only CEO-owned work can create child work for session agents",
+                message="only team-lead-owned work can create child work for session agents",
                 tool_name="session_agent_task",
             )
 
+        title = str(args.get("title") or "").strip()
+        instruction = str(args.get("instruction") or "").strip()
+        description = str(args.get("description") or instruction or title).strip()
+        required_skill_names = self._required_session_agent_skill_names(
+            args=args,
+            context=context,
+            text_parts=[
+                title,
+                instruction,
+                description,
+                self._optional_text(args.get("expectedDeliverable") or args.get("expected_deliverable")) or "",
+            ],
+        )
         profile = self._resolve_session_agent_profile(
             session_id=parent.session_id,
             owner_key=parent.owner_key,
             assignee_agent_id=self._optional_text(args.get("assigneeAgentId") or args.get("assignee_agent_id")),
             assignee_hint=self._optional_text(args.get("assigneeHint") or args.get("assignee_hint")),
+            required_skill_names=required_skill_names,
         )
         if profile is None:
             return self._tool_error(
@@ -698,10 +872,27 @@ class LocalToolRuntime:
                 message="no available session agent was found for this work",
                 tool_name="session_agent_task",
             )
+        missing_skill_names = self._missing_profile_skills(profile, required_skill_names)
+        if missing_skill_names:
+            config = dict(profile.get("config_snapshot") or {})
+            profile_name = str(config.get("name") or profile.get("profile_key") or profile.get("profile_id") or "session agent")
+            profile_id = str(profile.get("profile_id") or "").strip()
+            return self._tool_error(
+                code="session_agent_capability_mismatch",
+                message=f"{profile_name} does not have required skills: {', '.join(missing_skill_names)}",
+                tool_name="session_agent_task",
+                details={
+                    "recoverable": True,
+                    "requiredSkillNames": required_skill_names,
+                    "missingSkillNames": missing_skill_names,
+                    "agent": {
+                        "profileId": profile_id,
+                        "name": profile_name,
+                        "skills": self._profile_skill_names(profile),
+                    },
+                },
+            )
 
-        title = str(args.get("title") or "").strip()
-        instruction = str(args.get("instruction") or "").strip()
-        description = str(args.get("description") or instruction or title).strip()
         profile_id = str(profile.get("profile_id") or "").strip()
         child = WorkService(self.work_repository).create_from_payload(
             session_id=parent.session_id,
@@ -862,6 +1053,16 @@ class LocalToolRuntime:
         if tool_name == "mattermost.send":
             # 사용자 식별자는 모델 인자가 아니라 서버가 바인딩한 owner_key만 신뢰한다.
             trusted_args["_trusted_user_id"] = self.owner_key
+        if tool_name == "notion.execute":
+            # 사용자 식별자는 모델 인자가 아니라 서버가 바인딩한 owner_key만 신뢰한다.
+            trusted_args.pop("userId", None)
+            trusted_args.pop("user_id", None)
+            trusted_args["_trusted_user_id"] = self.owner_key
+        if tool_name == "prototype.create_artifact":
+            trusted_args["_trusted_owner_key"] = self.owner_key
+            trusted_args["_trusted_session_id"] = self._optional_text(
+                self.runtime_context.get("sessionId") or self.runtime_context.get("session_id")
+            )
         return trusted_args
 
     def _resolve_terminal_cwd(self, value: Any) -> str:
@@ -1107,6 +1308,7 @@ class LocalToolRuntime:
         owner_key: str,
         assignee_agent_id: str | None,
         assignee_hint: str | None,
+        required_skill_names: list[str] | None = None,
     ) -> dict[str, Any] | None:
         if self.agent_repository is None:
             return None
@@ -1125,7 +1327,58 @@ class LocalToolRuntime:
             for profile in profiles:
                 if self._profile_matches_hint(profile, normalized_hint):
                     return profile
+        if required_skill_names:
+            for profile in profiles:
+                if not self._missing_profile_skills(profile, required_skill_names):
+                    return profile
         return profiles[0]
+
+    def _required_session_agent_skill_names(
+        self,
+        *,
+        args: dict[str, Any],
+        context: dict[str, Any],
+        text_parts: list[str],
+    ) -> list[str]:
+        explicit = self._string_list(args.get("requiredSkillNames") or args.get("required_skill_names"))
+        required: list[str] = list(explicit)
+
+        parent_skill_names = self._string_list(
+            context.get("enabledSkillNames")
+            or context.get("enabled_skill_names")
+            or context.get("skillNames")
+            or context.get("skill_names")
+        )
+        if not parent_skill_names:
+            target_profile = context.get("targetAgentProfile") or context.get("target_agent_profile")
+            config = target_profile.get("configSnapshot") if isinstance(target_profile, dict) else {}
+            if isinstance(config, dict):
+                parent_skill_names = self._string_list(config.get("skills"))
+        if not parent_skill_names:
+            return required
+
+        haystack = self._normalize_match_text(" ".join(text_parts))
+        for skill_name in parent_skill_names:
+            if self._normalize_match_text(skill_name) in haystack:
+                self._append_unique(required, skill_name)
+        return required
+
+    def _missing_profile_skills(self, profile: dict[str, Any], required_skill_names: list[str] | None) -> list[str]:
+        if not required_skill_names:
+            return []
+        profile_skill_names = {
+            self._normalize_match_text(skill_name)
+            for skill_name in self._profile_skill_names(profile)
+        }
+        return [
+            skill_name
+            for skill_name in required_skill_names
+            if self._normalize_match_text(skill_name) not in profile_skill_names
+        ]
+
+    def _profile_skill_names(self, profile: dict[str, Any]) -> list[str]:
+        config = dict(profile.get("config_snapshot") or {})
+        return self._string_list(config.get("skills") or profile.get("skills"))
 
     @classmethod
     def _profile_matches_hint(cls, profile: dict[str, Any], normalized_hint: str) -> bool:
@@ -1148,6 +1401,11 @@ class LocalToolRuntime:
     @staticmethod
     def _normalize_match_text(value: Any) -> str:
         return re.sub(r"\s+", "", str(value or "").strip().lower())
+
+    @staticmethod
+    def _append_unique(values: list[str], item: str) -> None:
+        if item not in values:
+            values.append(item)
 
     @staticmethod
     def _work_tool_payload(work) -> dict[str, Any]:
@@ -1202,13 +1460,16 @@ class LocalToolRuntime:
         }
 
     @staticmethod
-    def _tool_error(*, code: str, message: str, tool_name: str) -> dict[str, Any]:
+    def _tool_error(*, code: str, message: str, tool_name: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
+        error = {
+            "code": code,
+            "message": message,
+            "tool_name": tool_name,
+        }
+        if details:
+            error.update(details)
         payload = {
-            "error": {
-                "code": code,
-                "message": message,
-                "tool_name": tool_name,
-            }
+            "error": error
         }
         return {
             "ok": False,
@@ -1286,3 +1547,10 @@ class LocalToolRuntime:
         if isinstance(allowed_values, list) and value not in allowed_values:
             return f"{path} must be one of: {', '.join(str(item) for item in allowed_values)}"
         return None
+
+
+def _default_entry_file(files: dict[str, Any]) -> str:
+    for candidate in ("/src/App.tsx", "/src/App.jsx", "/src/main.tsx", "/src/main.jsx", "/index.html"):
+        if candidate in files:
+            return candidate
+    return next(iter(files))

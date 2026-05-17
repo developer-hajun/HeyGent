@@ -17,33 +17,32 @@ const DEST_PRIORITY: Record<UIDestination, number> = {
 // step.started 계열 — 에이전트가 실제로 무언가 시작했음을 나타내는 event_type
 const RUNNING_EVENT_TYPES = new Set(['step.started', 'tool.started', 'search.started'])
 
-// actorAgent.profileKey가 없을 때 kind/id로 AGENT_CONFIGS id를 유추한다.
-// 백엔드가 main 에이전트(CEO)의 profileKey를 내려주지 않아 kind 기반 매핑이 필요하다.
-// profileIdMap: 세션 에이전트 패널의 profileId → spriteId(agentXX) 매핑 — 서브에이전트 연동용
+// MD 명세: profileKey는 백엔드 profile key이며 sprite key로 추론하지 않는다.
+// spriteId는 profileIdMap[agent.profileId] → visualKey 경로로만 결정한다.
+// profileIdMap: 세션 에이전트 패널의 profileId → visualKey(agentXX) 매핑 — 서브에이전트 연동용
 function resolveProfileKey(
   agent?: TaskRunAgentRef | null,
   profileIdMap?: Record<string, string>,
 ): string | undefined {
   if (!agent) return undefined
   if (agent.kind === 'main') return 'ceo'
-  const mappedKey = agent.profileId ?? agent.id
-  const fromMap = mappedKey != null ? profileIdMap?.[mappedKey] : undefined
-  if (fromMap) return fromMap
-  if (agent.profileKey) return agent.profileKey
-  if (agent.id) return agent.id
+  if (agent.profileId != null) return profileIdMap?.[agent.profileId]
   return undefined
 }
 
-// step 단위 종료 event_type — 태스크 전체가 끝난 건 아님 (다음 step이 올 수 있음)
+// 자식 단위 종료 event_type — 태스크 전체가 끝난 건 아님 (다음 step/tool이 올 수 있음)
+// useTaskRunStore의 isChildTerminalEvent와 동일 집합을 유지한다.
 const STEP_TERMINAL_EVENT_TYPES = new Set([
   'step.completed',
   'step.failed',
   'step.canceled',
   'step.cancelled',
+  'tool.completed',
+  'search.completed',
 ])
 
-const TASK_COMPLETED_EVENT_TYPES = new Set(['task.completed', 'session.message.completed'])
-const TASK_FAILED_EVENT_TYPES = new Set(['task.failed', 'session.message.failed'])
+const TASK_COMPLETED_EVENT_TYPES = new Set(['task.completed'])
+const TASK_FAILED_EVENT_TYPES = new Set(['task.failed'])
 const TASK_CANCELED_EVENT_TYPES = new Set(['task.canceled', 'task.cancelled'])
 
 function getTimestamp(value: unknown): number {
@@ -70,10 +69,27 @@ function resolveDestination(
   taskRun: RawTaskRun,
   latestEvent?: RawTaskEventPayload,
 ): UIDestination | null {
+  // taskRun 자체가 terminal 이면 latestEvent 의 step.started 같은 비-terminal event 에 휘둘리지 말고
+  // taskRun.status 를 기준으로 즉시 결정한다 — task 가 끝났는데 가장 마지막 step event 가
+  // step.started 같은 거여서 'desk' 가 잘못 발사되어 캐릭터가 책상에 박히는 사고를 막는다.
+  const taskStatus = taskRun.status?.toUpperCase()
+  if (taskStatus === 'COMPLETED' || taskStatus === 'CANCELED' || taskStatus === 'CANCELLED') {
+    return 'rest'
+  }
+  if (taskStatus === 'FAILED') {
+    return 'calling'
+  }
+
   if (latestEvent !== undefined) {
     if (TASK_COMPLETED_EVENT_TYPES.has(latestEvent.event_type)) return 'rest'
     if (TASK_FAILED_EVENT_TYPES.has(latestEvent.event_type)) return 'calling'
     if (TASK_CANCELED_EVENT_TYPES.has(latestEvent.event_type)) return 'rest'
+    // step 단위 종료 이벤트는 task 전체 완료가 아님 — taskRun.status가 RUNNING이면 desk 유지
+    if (STEP_TERMINAL_EVENT_TYPES.has(latestEvent.event_type)) {
+      const s = taskRun.status?.toUpperCase()
+      if (s === 'RUNNING' || s === 'WAITING' || s === 'BLOCKED') return 'desk'
+      return null
+    }
   }
 
   // step 단위 종료 이벤트(step.completed 등)의 status는 task 완료를 의미하지 않음
@@ -122,16 +138,20 @@ export function useVisualizationSync(
     const pendingMoves: Record<string, { destination: UIDestination; sortTime: number }> = {}
 
     for (const taskRun of Object.values(taskRunsById)) {
+      const profileKey = resolveProfileKey(taskRun.displayContext?.actorAgent, profileIdMap)
+      if (!profileKey) continue
+
+      // CEO 세션 필터: 다른 세션의 CEO task run 제외
+      // 서브에이전트는 sub-session ID를 가지므로 세션 필터를 적용하지 않고
+      // profileIdMap 귀속으로 현재 세션 범위를 보장한다
       if (
+        profileKey === 'ceo' &&
         sessionId !== undefined &&
         taskRun.session_id !== undefined &&
         taskRun.session_id !== sessionId
       ) {
         continue
       }
-
-      const profileKey = resolveProfileKey(taskRun.displayContext?.actorAgent, profileIdMap)
-      if (!profileKey) continue
 
       // 해당 task run의 최신 이벤트 (sequence 순 정렬된 배열의 마지막)
       const events = eventsByTaskRunId[taskRun.task_run_id] ?? []

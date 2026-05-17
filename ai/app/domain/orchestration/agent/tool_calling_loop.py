@@ -9,6 +9,7 @@ from typing import Any
 from app.contracts.task.step_status import StepStatus
 from app.contracts.task.task_status import TaskStatus
 from app.core.utils.ids import new_id
+from app.domain.orchestration.capabilities import apply_task_capabilities
 from app.domain.orchestration.agent.tool_guard import ToolGuard, ToolGuardDecision, ToolGuardResult
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse, ToolResultMessage
 from app.domain.orchestration.prompts.prompt_builder import assemble_agent_loop_messages
@@ -32,8 +33,10 @@ class ToolCallingLoopHandler:
         tool_catalog,
         session_store: TranscriptStore | None = None,
         tool_guard=None,
+        provider_registry=None,
     ) -> None:
         self.provider = provider
+        self.provider_registry = provider_registry
         self.prompt_builder = prompt_builder
         self.tool_runtime = tool_runtime
         self.tool_catalog = tool_catalog
@@ -54,6 +57,11 @@ class ToolCallingLoopHandler:
         session_agent_executor=None,
     ) -> dict[str, Any]:
         task_input = dict(task.input_payload or {})
+        apply_task_capabilities(
+            task_input,
+            skill_registry=getattr(self.tool_runtime, "skill_registry", None),
+            default_toolsets=getattr(self.tool_catalog, "default_toolsets", None),
+        )
         # 요청 payload의 workspace_root는 API 호출자가 선택한 이번 실행 root로 바인딩한다.
         request_tool_runtime = self._bind_request_tool_runtime(
             workspace_root=task_input.get("workspace_root"),
@@ -967,16 +975,17 @@ class ToolCallingLoopHandler:
         tool_choice: dict[str, Any] | str | None,
         runtime_context: dict[str, Any],
     ):
-        signature = inspect.signature(self.provider.respond)
+        provider = self._provider_for_runtime_context(runtime_context)
+        signature = inspect.signature(provider.respond)
         if "runtime_context" in signature.parameters:
-            return self.provider.respond(
+            return provider.respond(
                 messages=messages,
                 tools=tools,
                 model=model,
                 tool_choice=tool_choice,
                 runtime_context=runtime_context,
             )
-        return self.provider.respond(
+        return provider.respond(
             messages=messages,
             tools=tools,
             model=model,
@@ -992,7 +1001,8 @@ class ToolCallingLoopHandler:
         tool_choice: dict[str, Any] | str | None,
         runtime_context: dict[str, Any],
     ):
-        respond_async = getattr(self.provider, "respond_async", None)
+        provider = self._provider_for_runtime_context(runtime_context)
+        respond_async = getattr(provider, "respond_async", None)
         if callable(respond_async):
             signature = inspect.signature(respond_async)
             if "runtime_context" in signature.parameters:
@@ -1017,6 +1027,12 @@ class ToolCallingLoopHandler:
             tool_choice=tool_choice,
             runtime_context=runtime_context,
         )
+
+    def _provider_for_runtime_context(self, runtime_context: dict[str, Any]):
+        if self.provider_registry is None:
+            return self.provider
+        provider_name = runtime_context.get("provider_name") or runtime_context.get("providerName")
+        return self.provider_registry.model_provider_for(provider_name)
 
     @staticmethod
     def _model_runtime_context(*, task, step, task_input: dict[str, Any]) -> dict[str, Any]:

@@ -104,11 +104,11 @@ async def list_session_agents(
 @router.get(
     "/sessions/{sessionId}/agents/main",
     response_model=AgentProfileResponse,
-    summary="세션 CEO 에이전트 조회",
+    summary="세션 팀장 에이전트 조회",
 )
 async def get_session_main_agent(
     request: Request,
-    sessionId: str = Path(..., description="CEO 에이전트를 조회할 AI 세션 ID입니다."),
+    sessionId: str = Path(..., description="팀장 에이전트를 조회할 AI 세션 ID입니다."),
 ) -> AgentProfileResponse:
     user = await authenticate_http_user(request)
     session = _session_or_404(request, sessionId)
@@ -415,7 +415,8 @@ def _template_response(item: dict[str, Any]) -> AgentTemplateResponse:
         description=str(config.get("description") or ""),
         adapterType=str(config.get("adapterType") or ""),
         model=str(config.get("model") or "") or None,
-        profileImage=str(config.get("profileImage") or "") or None,
+        profileImage=_normalize_agent_profile_image(str(config.get("profileImage") or "") or None),
+        visualKey=_agent_visual_key(config),
         skills=[str(skill) for skill in list(config.get("skills") or [])],
         entryDocumentKey=str(config.get("entryDocumentKey") or "AGENTS.md"),
         documents=documents,
@@ -434,12 +435,14 @@ def _custom_agent_config_snapshot(payload: CreateSessionAgentRequest) -> dict[st
     }
     if entry_document_key not in instructions_files:
         instructions_files[entry_document_key] = ""
+    adapter_type = (payload.adapter_type or "").strip()
     return {
         "name": payload.name.strip(),
         "role": payload.role.strip() or "general",
         "title": (payload.title or "").strip(),
         "description": (payload.description or "").strip(),
-        "adapterType": (payload.adapter_type or "").strip(),
+        "adapterType": adapter_type,
+        "providerName": adapter_type,
         "model": (payload.model or "").strip(),
         "profileImage": (payload.profile_image or "").strip(),
         "skills": [str(skill).strip() for skill in payload.skills if str(skill).strip()],
@@ -470,7 +473,9 @@ def _updated_agent_config_snapshot(
     if payload.description is not None:
         next_config["description"] = payload.description.strip()
     if payload.adapter_type is not None:
-        next_config["adapterType"] = payload.adapter_type.strip()
+        adapter_type = payload.adapter_type.strip()
+        next_config["adapterType"] = adapter_type
+        next_config["providerName"] = adapter_type
     if payload.model is not None:
         next_config["model"] = payload.model.strip()
     if payload.profile_image is not None:
@@ -521,7 +526,8 @@ def _profile_response(item: dict[str, Any]) -> AgentProfileResponse:
         description=str(config.get("description") or "") or None,
         adapterType=str(config.get("adapterType") or item.get("provider_name") or "") or None,
         model=str(config.get("model") or item.get("model_name") or "") or None,
-        profileImage=str(config.get("profileImage") or "") or None,
+        profileImage=_normalize_agent_profile_image(str(config.get("profileImage") or "") or None),
+        visualKey=_agent_visual_key(config),
         skills=[str(skill) for skill in list(config.get("skills") or [])],
         instructionBundleId=item.get("bundle_id"),
         entryDocumentKey=item.get("entry_document_key"),
@@ -549,7 +555,45 @@ def _skill_detail_response(item: dict[str, Any]) -> SkillCatalogDetailResponse:
         **base,
         body=str(item.get("body") or ""),
         files=[str(file) for file in list(item.get("files") or [])],
+        documents=[
+            {
+                "documentKey": str(document.get("document_key") or document.get("documentKey") or ""),
+                "title": str(document.get("title") or ""),
+                "content": str(document.get("content") or ""),
+                "contentFormat": str(document.get("content_format") or document.get("contentFormat") or "markdown"),
+            }
+            for document in list(item.get("documents") or [])
+        ],
     )
+
+
+def _agent_visual_key(config: dict[str, Any]) -> str | None:
+    image = _normalize_agent_profile_image(str(config.get("profileImage") or "") or None) or ""
+    for part in [part for part in image.split("/") if part]:
+        if part.startswith("agent") and part[5:].isdigit():
+            return part
+    template_key = str(config.get("templateKey") or "").strip()
+    return {
+        "default": "agent01",
+        "security_engineer": "agent02",
+        "coder": "agent03",
+        "qa": "agent04",
+        "ux_designer": "agent05",
+        "k_services": "agent06",
+    }.get(template_key)
+
+
+def _normalize_agent_profile_image(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    prefix = "/assets/agents/sub/"
+    suffix = ".png"
+    if text.startswith(prefix) and text.endswith(suffix):
+        visual_key = text[len(prefix) : -len(suffix)]
+        if visual_key.startswith("agent") and visual_key[5:].isdigit():
+            return f"/assets/agents/{visual_key}/idle_front.png"
+    return text
 
 
 def _bundle_response(item: dict[str, Any]) -> AgentInstructionBundleResponse:

@@ -712,6 +712,87 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """,
         ),
     ),
+    PostgresMigration(
+        migration_id="0017_workflow_templates",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS workflow_templates (
+                template_id TEXT PRIMARY KEY,
+                owner_key TEXT NOT NULL,
+                owner_user_id BIGINT REFERENCES users(id),
+                name TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                graph JSONB NOT NULL DEFAULT '{"nodes":[],"edges":[]}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_workflow_templates_owner
+            ON workflow_templates(owner_key, updated_at DESC);
+            """,
+        ),
+    ),
+    PostgresMigration(
+        migration_id="0018_session_prototype_artifacts",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS session_prototype_artifacts (
+                artifact_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+                owner_key TEXT NOT NULL,
+                title TEXT NOT NULL,
+                framework TEXT NOT NULL DEFAULT 'react' CHECK (framework IN ('react', 'html')),
+                styling TEXT NOT NULL DEFAULT 'css' CHECK (styling IN ('css', 'tailwind', 'mixed')),
+                design_preset_id TEXT,
+                active_version_id TEXT,
+                status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+                is_active BOOLEAN NOT NULL DEFAULT true,
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS session_prototype_artifact_versions (
+                version_id TEXT PRIMARY KEY,
+                artifact_id TEXT NOT NULL REFERENCES session_prototype_artifacts(artifact_id) ON DELETE CASCADE,
+                session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+                owner_key TEXT NOT NULL,
+                version_number INTEGER NOT NULL,
+                prompt_message_id TEXT,
+                task_run_id TEXT,
+                files_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                entry_file TEXT NOT NULL DEFAULT '/src/App.tsx',
+                summary TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE (artifact_id, version_number)
+            );
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_session_prototype_artifacts_active
+            ON session_prototype_artifacts(session_id, owner_key, updated_at DESC)
+            WHERE is_active = true;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_session_prototype_artifact_versions_artifact
+            ON session_prototype_artifact_versions(artifact_id, version_number DESC);
+            """,
+        ),
+    ),
+    PostgresMigration(
+        migration_id="0018_workflow_templates_session_scope",
+        statements=(
+            """
+            ALTER TABLE workflow_templates
+            ADD COLUMN IF NOT EXISTS session_id TEXT REFERENCES agent_sessions(session_id) ON DELETE CASCADE;
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_workflow_templates_session
+            ON workflow_templates(session_id, updated_at DESC);
+            """,
+        ),
+    ),
 )
 
 

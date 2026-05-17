@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.storage.postgres.skill_repository import PostgresSkillRepository
+from app.storage.postgres.skill_repository import PostgresSkillRepository, _read_skill_documents
 
 
 class _Cursor:
@@ -84,3 +84,26 @@ def test_effective_skill_names_without_profile_keeps_user_enabled_fallback():
     )
 
     assert result == ["korea-weather", "zipcode-search"]
+
+
+def test_read_skill_documents_returns_user_facing_titles(tmp_path):
+    skill_dir = tmp_path / "skills" / "integrations" / "notion"
+    references_dir = skill_dir / "references"
+    references_dir.mkdir(parents=True)
+    skill_path = skill_dir / "SKILL.md"
+    skill_path.write_text("---\nname: notion\n---\n\n# Notion Skill\n", encoding="utf-8")
+    (references_dir / "block-types.md").write_text(
+        "---\ntitle: 블록 구성 가이드\n---\n\n# Block Types\n",
+        encoding="utf-8",
+    )
+    (references_dir / ".secret.md").write_text("secret", encoding="utf-8")
+
+    documents = _read_skill_documents(skill_path)
+
+    assert [document["document_key"] for document in documents] == [
+        "SKILL.md",
+        "references/block-types.md",
+    ]
+    assert documents[0]["title"] == "기본 지침"
+    assert documents[1]["title"] == "블록 구성 가이드"
+    assert documents[1]["content"] == "# Block Types"

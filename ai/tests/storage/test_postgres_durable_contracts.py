@@ -1,3 +1,7 @@
+from datetime import timedelta
+import json
+
+from app.core.time import utc_now
 from app.domain.tasks.repository import (
     ApprovalRepository,
     DurableRunAnchorRepository,
@@ -699,6 +703,62 @@ def test_postgres_task_repository_marks_completed_claim_as_terminal():
     assert anchor["lease_expires_at"] is None
     assert anchor["heartbeat_at"] is None
     assert anchor["anchor_payload"]["task"]["queue_status"] == "terminal"
+
+
+def test_postgres_task_repository_recovers_stale_running_task_as_terminal():
+    connection = _FakeDurableConnection()
+    repository = PostgresTaskRepository(lambda: connection)
+    task = TaskRun(
+        task_run_id="task_pg_stale_recover",
+        task_type="agent.loop",
+        owner_key="42",
+        session_key="session_pg_stale",
+        status="RUNNING",
+        queue_status="running",
+        claim_owner=None,
+    )
+    repository.create_task(task)
+    old_updated_at = utc_now() - timedelta(minutes=20)
+    connection.run_anchors["task_pg_stale_recover"]["updated_at"] = old_updated_at
+    payload = json.loads(connection.run_anchors["task_pg_stale_recover"]["anchor_payload"])
+    payload["task"]["updated_at"] = old_updated_at.isoformat()
+    connection.run_anchors["task_pg_stale_recover"]["anchor_payload"] = payload
+
+    recovered = repository.recover_stale_task_run("task_pg_stale_recover", reason="claim_signal_stale")
+
+    assert recovered is not None
+    assert recovered.status == "FAILED"
+    assert recovered.queue_status == "terminal"
+    assert recovered.error_message == "실행 상태가 만료되어 자동 복구되었습니다."
+    anchor = repository.get_run_anchor("task_pg_stale_recover")
+    assert anchor is not None
+    assert anchor["queue_status"] == "terminal"
+    assert anchor["anchor_payload"]["task"]["status"] == "FAILED"
+    assert anchor["anchor_payload"]["task"]["queue_status"] == "terminal"
+
+
+def test_postgres_task_repository_does_not_recover_refreshed_running_task():
+    connection = _FakeDurableConnection()
+    repository = PostgresTaskRepository(lambda: connection)
+    task = TaskRun(
+        task_run_id="task_pg_refreshed_recover",
+        task_type="agent.loop",
+        owner_key="42",
+        session_key="session_pg_refreshed",
+        status="RUNNING",
+        queue_status="running",
+        lease_expires_at=utc_now() + timedelta(minutes=5),
+        heartbeat_at=utc_now(),
+    )
+    repository.create_task(task)
+
+    recovered = repository.recover_stale_task_run("task_pg_refreshed_recover", reason="claim_signal_stale")
+
+    assert recovered is None
+    saved = repository.get_task("task_pg_refreshed_recover")
+    assert saved is not None
+    assert saved.status == "RUNNING"
+    assert saved.queue_status == "running"
 
 
 def test_postgres_task_repository_reads_agent_profile_by_key():

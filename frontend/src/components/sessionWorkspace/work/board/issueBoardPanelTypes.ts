@@ -18,6 +18,7 @@ export type BoardAssignee = {
   name: string
   icon: LucideIcon
   templateKey?: string
+  imageUrl?: string | null
 }
 
 export interface PersistedTodoBoardState {

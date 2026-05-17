@@ -59,14 +59,20 @@ interface UIState {
   sessionWorkspaceCollapsed: boolean
   settingsOpen: boolean
   settingsInitialTab: string
+  settingsSingleTab: boolean
   setSidebarCollapsed: (collapsed: boolean) => void
   setSidebarWidth: (width: number) => void
   setSessionWorkspaceCollapsed: (collapsed: boolean) => void
-  setSettingsOpen: (open: boolean, initialTab?: string) => void
+  setSettingsOpen: (open: boolean, initialTab?: string, options?: { singleTab?: boolean }) => void
 
   // 채팅 활동 패널
   taskActivityPanelOpen: boolean
   setTaskActivityPanelOpen: (open: boolean) => void
+
+  // 프로토타입 프리뷰 패널
+  prototypePanelSessionId: string | null
+  prototypePanelOpenRequest: number
+  requestPrototypePanel: (sessionId: string) => void
 
   // 테마
   theme: 'dark' | 'light'
@@ -81,14 +87,26 @@ export const useUIStore = create<UIState>()(
       sessionWorkspaceCollapsed: false,
       settingsOpen: false,
       settingsInitialTab: 'general',
+      settingsSingleTab: false,
       setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
       setSidebarWidth: (width) =>
         set({ sidebarWidth: Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, width)) }),
       setSessionWorkspaceCollapsed: (collapsed) => set({ sessionWorkspaceCollapsed: collapsed }),
-      setSettingsOpen: (open, initialTab) =>
-        set({ settingsOpen: open, ...(initialTab ? { settingsInitialTab: initialTab } : {}) }),
+      setSettingsOpen: (open, initialTab, options) =>
+        set({
+          settingsOpen: open,
+          ...(initialTab ? { settingsInitialTab: initialTab } : {}),
+          settingsSingleTab: open ? (options?.singleTab ?? false) : false,
+        }),
       taskActivityPanelOpen: false,
       setTaskActivityPanelOpen: (open) => set({ taskActivityPanelOpen: open }),
+      prototypePanelSessionId: null,
+      prototypePanelOpenRequest: 0,
+      requestPrototypePanel: (sessionId) =>
+        set((state) => ({
+          prototypePanelSessionId: sessionId,
+          prototypePanelOpenRequest: state.prototypePanelOpenRequest + 1,
+        })),
       theme: 'dark',
       setTheme: (theme) => {
         document.documentElement.classList.toggle('dark', theme === 'dark')

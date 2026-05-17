@@ -12,18 +12,12 @@ import {
 } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
 import {
-  Zap,
-  Database,
-  Palette,
   Key,
-  MessageSquare,
   Pencil,
   Plus,
   ChevronDown,
   Check,
-  SlidersHorizontal,
   Eye,
-  EyeOff,
   Search,
   Globe,
   Loader2,
@@ -59,11 +53,11 @@ import { saveOpenAiApiKey, deleteOpenAiApiKey, type ProviderName } from '@/apis/
 import { getOpenAiProviders } from '@/apis/openaiProviders'
 import {
   getUserSkillDetail,
-  listUserSkills,
   updateUserSkillSetting,
   type SkillCatalogDetail,
   type SkillCatalogItem,
 } from '@/apis/agents'
+import { useAgentCacheStore } from '@/store/useAgentCacheStore'
 import {
   createMattermostChannel,
   deleteMattermostChannel,
@@ -79,25 +73,31 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void
   sessionId?: string
   initialTab?: SettingsTab
+  /** true이면 좌측 탭 사이드바를 숨기고 initialTab 하나만 단독으로 보여준다. */
+  singleTab?: boolean
 }
 
-type SettingsTab =
-  | 'general'
-  | 'skills'
-  | 'models'
-  | 'personalization'
-  | 'apiKeys'
-  | 'channels'
-  | 'external'
+type SettingsTab = 'general' | 'skills' | 'models' | 'personalization' | 'apiKeys' | 'external'
 
-export function SettingsDialog({ open, onOpenChange, sessionId, initialTab }: SettingsDialogProps) {
+const isVisibleSettingsTab = (tab?: SettingsTab): tab is 'apiKeys' | 'external' =>
+  tab === 'apiKeys' || tab === 'external'
+
+export function SettingsDialog({
+  open,
+  onOpenChange,
+  sessionId,
+  initialTab,
+  singleTab = false,
+}: SettingsDialogProps) {
   const [prevOpen, setPrevOpen] = useState(open)
-  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab ?? 'general')
+  const [activeTab, setActiveTab] = useState<SettingsTab>(
+    isVisibleSettingsTab(initialTab) ? initialTab : 'apiKeys',
+  )
 
   if (prevOpen !== open) {
     setPrevOpen(open)
     if (open && initialTab) {
-      setActiveTab(initialTab)
+      setActiveTab(isVisibleSettingsTab(initialTab) ? initialTab : 'apiKeys')
     }
   }
 
@@ -106,12 +106,7 @@ export function SettingsDialog({ open, onOpenChange, sessionId, initialTab }: Se
   }
 
   const tabs = [
-    { id: 'general' as const, label: '일반', icon: SlidersHorizontal },
-    { id: 'skills' as const, label: '스킬 목록', icon: Zap },
-    { id: 'models' as const, label: '모델', icon: Database },
-    { id: 'personalization' as const, label: '개인 맞춤 설정', icon: Palette },
     { id: 'apiKeys' as const, label: 'API 키', icon: Key },
-    { id: 'channels' as const, label: '채널 연결', icon: MessageSquare },
     { id: 'external' as const, label: '외부 서비스', icon: Globe },
   ]
 
@@ -127,28 +122,30 @@ export function SettingsDialog({ open, onOpenChange, sessionId, initialTab }: Se
         </DialogDescription>
 
         <div className="flex h-full min-w-0 flex-1 overflow-hidden">
-          {/* Left Sidebar */}
-          <div className="border-border bg-muted/30 flex w-52 shrink-0 flex-col border-r p-4">
-            <div className="mb-6">
-              <h2 className="text-foreground text-lg font-semibold">설정</h2>
+          {/* Left Sidebar — singleTab 모드일 땐 숨김 */}
+          {!singleTab && (
+            <div className="border-border bg-muted/30 flex w-52 shrink-0 flex-col border-r p-4">
+              <div className="mb-6">
+                <h2 className="text-foreground text-lg font-semibold">설정</h2>
+              </div>
+              <div className="space-y-1">
+                {tabs.map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-colors ${
+                      activeTab === tab.id
+                        ? 'text-foreground bg-white shadow-sm'
+                        : 'text-muted-foreground hover:bg-muted'
+                    }`}
+                  >
+                    <tab.icon className="h-4 w-4 shrink-0" />
+                    <span className="text-sm font-medium">{tab.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="space-y-1">
-              {tabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 transition-colors ${
-                    activeTab === tab.id
-                      ? 'text-foreground bg-white shadow-sm'
-                      : 'text-muted-foreground hover:bg-muted'
-                  }`}
-                >
-                  <tab.icon className="h-4 w-4 shrink-0" />
-                  <span className="text-sm font-medium">{tab.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+          )}
 
           {/* Right Content */}
           <div className="relative min-h-0 flex-1 overflow-y-auto p-6">
@@ -165,7 +162,6 @@ export function SettingsDialog({ open, onOpenChange, sessionId, initialTab }: Se
                 {activeTab === 'models' && <ModelsContent sessionId={sessionId} />}
                 {activeTab === 'personalization' && <PersonalizationContent />}
                 {activeTab === 'apiKeys' && <ApiKeysContent />}
-                {activeTab === 'channels' && <ChannelsContent />}
                 {activeTab === 'external' && <ExternalServicesContent />}
               </motion.div>
             </AnimatePresence>
@@ -307,7 +303,9 @@ function SkillsContent() {
 
   useEffect(() => {
     let alive = true
-    void listUserSkills()
+    void useAgentCacheStore
+      .getState()
+      .fetchUserSkills()
       .then((items) => {
         if (!alive) return
         setSkills(items)
@@ -398,11 +396,15 @@ function SkillsContent() {
         ...current,
         ...Object.fromEntries(savedItems.map((item) => [item.skillId, item.enabled])),
       }))
+      // 스킬 활성 상태가 바뀌었으므로 캐시 무효화 — 다음 패널 진입에서 다시 받는다.
+      useAgentCacheStore.getState().invalidateUserSkills()
       setError(null)
     } catch {
       setError('스킬 설정을 저장하지 못했습니다.')
       try {
-        const latest = await listUserSkills()
+        // 저장 실패로 서버 상태가 의도와 어긋났을 수 있어 캐시 무효화 후 최신본을 다시 받는다.
+        useAgentCacheStore.getState().invalidateUserSkills()
+        const latest = await useAgentCacheStore.getState().fetchUserSkills()
         setSkills(latest)
         setDraftEnabled(Object.fromEntries(latest.map((item) => [item.skillId, item.enabled])))
       } catch {
@@ -963,10 +965,22 @@ const API_KEY_GUIDES = {
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
+// 등록된 API 키가 있다는 시각적 표시 — 실제 값과는 무관하며 자릿수만 비슷하게 점으로 채운 placeholder
+const MASKED_KEY_LENGTHS: Record<string, number> = {
+  openai_api_key: 51, // sk-... 약 51자
+  gemini_api_key: 39, // AIza... 약 39자
+  claude_api_key: 108, // sk-ant-api03-... 약 108자
+}
+
+function getMaskedKeyPlaceholder(providerName: string): string {
+  const length = MASKED_KEY_LENGTHS[providerName] ?? 40
+  return '•'.repeat(length)
+}
+
 function ApiKeysContent() {
   const [apiKeys, setApiKeys] = useState([
-    { id: 'openai_api_key' as const, name: 'OpenAI API', value: '', visible: false },
-    { id: 'gemini_api_key' as const, name: 'Gemini API', value: '', visible: false },
+    { id: 'openai_api_key' as const, name: 'OpenAI API', value: '' },
+    { id: 'gemini_api_key' as const, name: 'Gemini API', value: '' },
   ])
   const [connectedProviders, setConnectedProviders] = useState<Record<string, boolean>>({})
 
@@ -1010,10 +1024,6 @@ function ApiKeysContent() {
   const [saveErrors, setSaveErrors] = useState<Record<string, string | null>>({})
   const [deleteStatuses, setDeleteStatuses] = useState<Record<string, SaveStatus>>({})
 
-  const toggleVisibility = (id: string) => {
-    setApiKeys((prev) => prev.map((k) => (k.id === id ? { ...k, visible: !k.visible } : k)))
-  }
-
   const handleDelete = async (id: ProviderName) => {
     setDeleteStatuses((prev) => ({ ...prev, [id]: 'saving' }))
     try {
@@ -1051,16 +1061,16 @@ function ApiKeysContent() {
       <div>
         <div className="mb-2 flex items-center gap-2">
           <h3 className="text-foreground text-xl font-semibold">API 키</h3>
-          <HelpHint label="API 키 도움말" iconClassName="h-4 w-4">
-            <p className="text-foreground font-medium">API 키</p>
+          <HelpHint label="API 키 도움말" iconClassName="h-4 w-4" triggerTabIndex={-1}>
+            <p className="text-foreground font-medium">API 키란?</p>
             <p>
-              외부 AI 서비스를 사용하기 위한 <span className="text-foreground">출입증</span>이에요.
+              OpenAI·Gemini 같은 외부 AI 서비스를 내 계정으로 쓰기 위한{' '}
+              <span className="text-foreground">출입증</span>이에요.
             </p>
-            <p>각 서비스 홈페이지에 로그인해 발급받아 붙여넣어 주세요.</p>
-            <p>예) OpenAI: platform.openai.com → API keys.</p>
-            <p>
-              비밀번호처럼 다뤄야 하니{' '}
-              <span className="text-foreground">남과 공유하지 마세요.</span>
+            <p>각 서비스 홈페이지에서 발급받아 여기에 붙여넣으면 끝입니다.</p>
+            <p className="text-red-500 dark:text-red-400">
+              ⚠ 비밀번호와 같은 정보입니다. 절대 다른 사람과 공유하거나 메신저·문서에 붙여넣지
+              마세요.
             </p>
           </HelpHint>
         </div>
@@ -1071,12 +1081,7 @@ function ApiKeysContent() {
 
       <div className="space-y-3">
         {apiKeys.map(
-          (key: {
-            id: 'openai_api_key' | 'gemini_api_key'
-            name: string
-            value: string
-            visible: boolean
-          }) => {
+          (key: { id: 'openai_api_key' | 'gemini_api_key'; name: string; value: string }) => {
             const guide = API_KEY_GUIDES[key.id]
             return (
               <div
@@ -1111,23 +1116,20 @@ function ApiKeysContent() {
                 {/* 입력창 */}
                 <div className="relative">
                   <input
-                    type={key.visible ? 'text' : 'password'}
+                    type="password"
                     value={key.value}
                     onChange={(e) =>
                       setApiKeys((prev) =>
                         prev.map((k) => (k.id === key.id ? { ...k, value: e.target.value } : k)),
                       )
                     }
-                    placeholder={guide.placeholder}
-                    className="border-border text-foreground placeholder:text-muted-foreground focus:ring-ring/20 w-full rounded-lg border bg-transparent py-2 pr-10 pl-3 text-sm focus:ring-2 focus:outline-none"
+                    placeholder={
+                      connectedProviders[key.id]
+                        ? getMaskedKeyPlaceholder(key.id)
+                        : guide.placeholder
+                    }
+                    className="border-border text-foreground placeholder:text-muted-foreground/80 focus:ring-ring/20 w-full rounded-lg border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
                   />
-                  <button
-                    type="button"
-                    onClick={() => toggleVisibility(key.id)}
-                    className="text-muted-foreground hover:text-foreground absolute top-1/2 right-3 -translate-y-1/2 transition-colors"
-                  >
-                    {key.visible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-                  </button>
                 </div>
 
                 {/* 저장/삭제 버튼 행 */}
@@ -1294,7 +1296,13 @@ function ApiKeysContent() {
 // ────────────────────────────────────────────────────────────────────────────
 // Channels Content
 // ────────────────────────────────────────────────────────────────────────────
-function ChannelsContent() {
+function ChannelsContent({
+  embedded = false,
+  onChannelsChange,
+}: {
+  embedded?: boolean
+  onChannelsChange?: (channels: MattermostChannel[]) => void
+} = {}) {
   const [channels, setChannels] = useState<MattermostChannel[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -1329,12 +1337,13 @@ function ChannelsContent() {
     try {
       const nextChannels = await getMattermostChannels()
       setChannels(nextChannels)
+      onChannelsChange?.(nextChannels)
     } catch {
       setErrorText('Mattermost 채널 설정을 불러오지 못했습니다.')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [onChannelsChange])
 
   useEffect(() => {
     let cancelled = false
@@ -1435,7 +1444,11 @@ function ChannelsContent() {
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-foreground mb-2 text-xl font-semibold">채널 연결</h3>
+        {embedded ? (
+          <h4 className="text-foreground mb-2 text-sm font-semibold">Mattermost 채널 설정</h4>
+        ) : (
+          <h3 className="text-foreground mb-2 text-xl font-semibold">채널 연결</h3>
+        )}
         <p className="text-muted-foreground text-sm">
           Mattermost 채널 별칭과 Incoming Webhook URL을 등록합니다.
         </p>
@@ -1617,8 +1630,16 @@ function ChannelsContent() {
 // ────────────────────────────────────────────────────────────────────────────
 function ExternalServicesContent() {
   const [notionConnected, setNotionConnected] = useState(false)
+  const [gmailConnected, setGmailConnected] = useState(false)
+  const [mattermostChannels, setMattermostChannels] = useState<MattermostChannel[]>([])
+  const [mattermostLoading, setMattermostLoading] = useState(true)
+  const [mattermostSettingsOpen, setMattermostSettingsOpen] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [gmailLoading, setGmailLoading] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const gmailPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const mattermostConnected = mattermostChannels.length > 0
+  const defaultMattermostChannel = mattermostChannels.find((channel) => channel.defaultChannel)
 
   // 마운트 시 연결 상태 조회
   useEffect(() => {
@@ -1627,7 +1648,32 @@ function ExternalServicesContent() {
         .then((res) => setNotionConnected(res.data.connected))
         .catch(() => {})
     })
+    import('@/apis/gmail').then(({ getGmailStatus }) => {
+      getGmailStatus()
+        .then((res) => setGmailConnected(res.data.connected))
+        .catch(() => {})
+    })
   }, [])
+
+  const loadMattermostChannels = useCallback(async () => {
+    setMattermostLoading(true)
+    try {
+      const channels = await getMattermostChannels()
+      setMattermostChannels(channels)
+    } catch {
+      setMattermostChannels([])
+    } finally {
+      setMattermostLoading(false)
+    }
+  }, [])
+
+  const handleMattermostChannelsChange = useCallback((channels: MattermostChannel[]) => {
+    setMattermostChannels(channels)
+  }, [])
+
+  useEffect(() => {
+    void Promise.resolve().then(() => loadMattermostChannels())
+  }, [loadMattermostChannels])
 
   const stopPolling = () => {
     if (pollRef.current) {
@@ -1684,7 +1730,65 @@ function ExternalServicesContent() {
     }
   }
 
-  useEffect(() => () => stopPolling(), [])
+  const stopGmailPolling = () => {
+    if (gmailPollRef.current) {
+      clearInterval(gmailPollRef.current)
+      gmailPollRef.current = null
+    }
+  }
+
+  const handleGmailConnect = async () => {
+    try {
+      setGmailLoading(true)
+      const popup = window.open('about:blank', '_blank')
+      const { getGmailConnectUrl, getGmailStatus } = await import('@/apis/gmail')
+      const res = await getGmailConnectUrl()
+      if (popup) {
+        popup.location.href = res.data.url
+      } else {
+        window.open(res.data.url, '_blank')
+      }
+
+      gmailPollRef.current = setInterval(async () => {
+        try {
+          const statusRes = await getGmailStatus()
+          if (statusRes.data.connected) {
+            setGmailConnected(true)
+            stopGmailPolling()
+            setGmailLoading(false)
+          }
+        } catch {
+          stopGmailPolling()
+          setGmailLoading(false)
+        }
+      }, 2000)
+
+      setTimeout(() => {
+        stopGmailPolling()
+        setGmailLoading(false)
+      }, 120000)
+    } catch {
+      setGmailLoading(false)
+    }
+  }
+
+  const handleGmailDisconnect = async () => {
+    try {
+      const { disconnectGmail } = await import('@/apis/gmail')
+      await disconnectGmail()
+      setGmailConnected(false)
+    } catch {
+      // 에러 무시
+    }
+  }
+
+  useEffect(
+    () => () => {
+      stopPolling()
+      stopGmailPolling()
+    },
+    [],
+  )
 
   return (
     <div className="space-y-6">
@@ -1739,6 +1843,107 @@ function ExternalServicesContent() {
             </button>
           </div>
         </div>
+
+        <div
+          className={`rounded-xl border p-4 transition-colors ${
+            gmailConnected ? 'bg-muted/40 border-border' : 'bg-background border-border'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white">
+                <svg viewBox="0 0 24 24" className="h-5 w-5" xmlns="http://www.w3.org/2000/svg">
+                  <path
+                    fill="#4285F4"
+                    d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.91 1.528-1.145C21.69 2.28 24 3.434 24 5.457z"
+                  />
+                </svg>
+              </div>
+              <div>
+                <h4 className="text-foreground text-sm font-medium">Gmail</h4>
+                <span
+                  className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${
+                    gmailConnected ? 'text-switch-on' : 'text-muted-foreground'
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      gmailConnected ? 'bg-switch-on' : 'bg-muted-foreground/60'
+                    }`}
+                  />
+                  {gmailConnected ? '연결됨' : '미연결'}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={gmailConnected ? handleGmailDisconnect : handleGmailConnect}
+              disabled={gmailLoading}
+              className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 ${
+                gmailConnected
+                  ? 'border-border bg-background text-foreground hover:bg-muted'
+                  : 'border-foreground bg-foreground text-background hover:bg-foreground/90'
+              }`}
+            >
+              {gmailLoading ? '연결 중...' : gmailConnected ? '연결 해제' : '연결하기'}
+            </button>
+          </div>
+        </div>
+
+        <div
+          className={`rounded-xl border p-4 transition-colors ${
+            mattermostConnected ? 'bg-muted/40 border-border' : 'bg-background border-border'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg">
+                <img
+                  src="/assets/integrations/mattermost.jpg"
+                  alt="Mattermost"
+                  className="h-10 w-10 scale-[1.55] object-cover"
+                />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-foreground text-sm font-medium">Mattermost</h4>
+                <span
+                  className={`mt-1 inline-flex items-center gap-1 text-xs font-medium ${
+                    mattermostConnected ? 'text-switch-on' : 'text-muted-foreground'
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${
+                      mattermostConnected ? 'bg-switch-on' : 'bg-muted-foreground/60'
+                    }`}
+                  />
+                  {mattermostLoading
+                    ? '확인 중'
+                    : mattermostConnected
+                      ? `${mattermostChannels.length}개 채널 연결됨`
+                      : '미연결'}
+                </span>
+                {defaultMattermostChannel && (
+                  <p className="text-muted-foreground mt-1 truncate text-xs">
+                    기본 채널: {defaultMattermostChannel.alias}
+                  </p>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => setMattermostSettingsOpen((open) => !open)}
+              className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                mattermostSettingsOpen
+                  ? 'border-border bg-background text-foreground hover:bg-muted'
+                  : 'border-foreground bg-foreground text-background hover:bg-foreground/90'
+              }`}
+            >
+              {mattermostSettingsOpen ? '닫기' : mattermostConnected ? '관리하기' : '연결하기'}
+            </button>
+          </div>
+        </div>
+
+        {mattermostSettingsOpen && (
+          <ChannelsContent embedded onChannelsChange={handleMattermostChannelsChange} />
+        )}
       </div>
     </div>
   )

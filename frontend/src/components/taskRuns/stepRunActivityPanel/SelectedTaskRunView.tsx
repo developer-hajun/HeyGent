@@ -1,6 +1,7 @@
 import { RotateCcw } from 'lucide-react'
 import type { ActivityItemView, RawApproval, RawStepRun, RawTaskRun } from '@/types/taskRuns'
 import { toTaskRunStatusTone } from '@/utils/taskRunStatusView'
+import { isTerminalTaskRunStatus, resolveTaskRunDisplayStatus } from '@/utils/taskRunDisplayStatus'
 import { ActivityEventItem } from './ActivityEventItem'
 import { ApprovalCard } from './ApprovalCard'
 import { StepProgressItem } from './StepProgressItem'
@@ -24,9 +25,8 @@ export function SelectedTaskRunView({
   replayNeeded: boolean
 }) {
   // snapshot이 아직 도착하지 않은 순간에는 raw event의 마지막 상태를 대표 상태로 쓴다.
-  const status =
-    activities.at(-1)?.raw.status ?? activities.at(-1)?.raw.event_type ?? taskRun?.status
-  const taskRunFinished = status === 'COMPLETED' || status === 'task.completed'
+  const status = resolveTaskRunDisplayStatus(taskRun, activities)
+  const taskRunFinished = isTerminalTaskRunStatus(status)
   const reversedActivities = [...activities].reverse()
   const agentNameMap = buildActivityAgentNameMap(activities)
   const currentStep = selectCurrentVisibleStep(taskRun, steps)
@@ -34,7 +34,7 @@ export function SelectedTaskRunView({
   const currentStepTone = toTaskRunStatusTone(currentStep?.status ?? status)
 
   return (
-    <div className="space-y-5">
+    <div className="selectable-text space-y-5">
       {!taskRunFinished && currentStep !== undefined && (
         <section className="border-border bg-muted/30 rounded-lg border px-3 py-2">
           <div className="flex items-start gap-2">
@@ -101,7 +101,7 @@ export function SelectedTaskRunView({
               <summary className="text-muted-foreground hover:text-foreground cursor-pointer text-[11px] font-medium">
                 Raw memory payload
               </summary>
-              <pre className="bg-background text-muted-foreground border-border mt-2 max-h-72 overflow-auto rounded-md border p-2 text-[11px] leading-relaxed">
+              <pre className="selectable-text bg-background text-muted-foreground border-border mt-2 max-h-72 overflow-auto rounded-md border p-2 text-[11px] leading-relaxed">
                 {formatDebugJson(memoryDebug.raw)}
               </pre>
             </details>
@@ -141,7 +141,7 @@ function MemoryDebugBlock({ title, value }: { title: string; value: unknown }) {
   return (
     <div>
       <div className="text-muted-foreground mb-1 text-[11px] font-semibold uppercase">{title}</div>
-      <pre className="bg-background text-muted-foreground border-border max-h-44 overflow-auto rounded-md border p-2 text-[11px] leading-relaxed">
+      <pre className="selectable-text bg-background text-muted-foreground border-border max-h-44 overflow-auto rounded-md border p-2 text-[11px] leading-relaxed">
         {formatDebugJson(value)}
       </pre>
     </div>

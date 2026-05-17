@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -24,97 +25,55 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.mob.common.AppTopBar
+import com.example.mob.data.remote.ChatSessionResponse
 import com.example.mob.ui.theme.*
-import kotlinx.coroutines.delay
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-
-// ─── 데이터 ────────────────────────────────────────────────────────────────
-
-private data class ChatListItem(
-    val id: Int,
-    val title: String,
-    val preview: String,
-    val time: String,
-    val inputPlaceholder: String,
-    val initialMessages: List<ChatMessage>
-)
-
-private val messagesSession = listOf(
-    ChatMessage(isBot = true,  text = "안녕하세요. 오늘 어떻게 도와드릴까요?", timestamp = "오전\n09:58"),
-    ChatMessage(isBot = false, text = "이번 주 일정 계획을 도와주실 수 있나요?", timestamp = "오전\n10:00"),
-    ChatMessage(isBot = true,  text = "물론입니다. 캘린더와 우선순위를 분석하겠습니다. 월요일 오전에 분기 보고서에 집중하고, 화요일에 클라이언트 발표 준비를 하시는 것이 좋겠습니다.", timestamp = "오전\n10:01")
-)
-
-private val messagesDefault = listOf(
-    ChatMessage(isBot = true,  text = "안녕하세요! 프레젠테이션에 어떻게 도움을 드릴까요?", timestamp = "오후\n10:58"),
-    ChatMessage(isBot = false, text = "프레젠테이션 아웃라인 작성을 도와주세요", timestamp = "오후\n11:00"),
-    ChatMessage(isBot = true,  text = "기꺼이 도와드리겠습니다. 프레젠테이션의 주제가 무엇인가요?", timestamp = "오후\n11:01")
-)
-
-private val chatSessions = listOf(
-    ChatListItem(1, "주간 일정 계획", "물론입니다. 캘린더와 우선순위를 분석하겠습니다.", "오후 2:30", "궁금한 내용을 입력해 주세요", messagesSession),
-    ChatListItem(2, "발표 자료 아웃라인", "기꺼이 도와드리겠습니다. 프레젠테이션의 주제가 무엇인가요?", "어제", "무엇을 도와드릴까요?", messagesDefault),
-    ChatListItem(3, "건강 지표 검토", "건강 데이터를 분석해드리겠습니다.", "오전 10:15", "필요한 일을 입력해 주세요",
-        listOf(ChatMessage(isBot = true, text = "안녕하세요! 건강 지표 분석을 도와드리겠습니다.", timestamp = "오전\n10:15"))),
-    ChatListItem(4, "회의 요약", "회의 내용을 정리해드리겠습니다.", "어제", "오늘은 무엇을 도와드릴까요?",
-        listOf(ChatMessage(isBot = true, text = "안녕하세요! 회의 요약을 도와드리겠습니다.", timestamp = "어제"))),
-    ChatListItem(5, "리서치 요청", "원하시는 내용을 조사해드리겠습니다.", "4월 20일", "무엇이든 편하게 물어보세요",
-        listOf(ChatMessage(isBot = true, text = "안녕하세요! 리서치를 도와드리겠습니다.", timestamp = "4월\n20일")))
-)
-
-private val newChatSession = ChatListItem(
-    id = 0,
-    title = "새 채팅",
-    preview = "",
-    time = "",
-    inputPlaceholder = "무엇이든 편하게 물어보세요",
-    initialMessages = emptyList()
-)
-
-private val botResponses = listOf(
-    "이해했습니다. 바로 도와드리겠습니다.",
-    "물론입니다! 요청을 분석하고 답변드리겠습니다.",
-    "네. 요청을 바탕으로 제안드립니다.",
-    "기꺼이 도와드리겠습니다."
-)
-
-private fun currentTime(): String = SimpleDateFormat("a\nhh:mm", Locale.KOREAN).format(Date())
 
 // ─── ChatScreen (진입점) ───────────────────────────────────────────────────
 
 @Composable
 fun ChatScreen(
     onMenuClick: () -> Unit,
-    activeChatSessionId: Int?,
-    onActiveChatSessionChange: (Int?) -> Unit,
-    agentName: String = "Jarvis",
+    activeChatSessionId: String?,
+    onActiveChatSessionChange: (String?) -> Unit,
+    viewModel: ChatViewModel,
+    agentName: String = "HeyGent",
     bottomPadding: Dp = 0.dp
 ) {
-    val session = when (activeChatSessionId) {
-        null -> null
-        0 -> newChatSession
-        else -> chatSessions.find { it.id == activeChatSessionId }
+    val sessions by viewModel.sessions.collectAsState()
+    val messages by viewModel.messages.collectAsState()
+    val isProcessing by viewModel.isProcessing.collectAsState()
+    val isLoadingSessions by viewModel.isLoadingSessions.collectAsState()
+
+    LaunchedEffect(activeChatSessionId) {
+        when {
+            activeChatSessionId == null -> { /* 목록 화면 — 별도 처리 없음 */ }
+            activeChatSessionId.isEmpty() -> viewModel.startNewSession()
+            else -> viewModel.openSession(activeChatSessionId)
+        }
     }
 
-    if (session == null) {
+    if (activeChatSessionId == null) {
+        LaunchedEffect(Unit) { viewModel.loadSessions() }
         ChatListView(
             onMenuClick = onMenuClick,
             agentName = agentName,
-            onChatSelected = { item -> onActiveChatSessionChange(item.id) },
+            sessions = sessions,
+            isLoading = isLoadingSessions,
+            onChatSelected = { onActiveChatSessionChange(it) },
             bottomPadding = bottomPadding
         )
     } else {
-        key(session.id) {
-            SingleChatView(
-                session = session,
-                agentName = agentName,
-                onMenuClick = onMenuClick,
-                onBack = { onActiveChatSessionChange(null) },
-                bottomPadding = bottomPadding
-            )
-        }
+        val sessionTitle by viewModel.currentSessionTitle.collectAsState()
+        SingleChatView(
+            agentName = agentName,
+            sessionTitle = sessionTitle,
+            messages = messages,
+            isProcessing = isProcessing,
+            onBack = { onActiveChatSessionChange(null) },
+            onSend = { viewModel.sendMessage(it) },
+            onStop = { viewModel.stopProcessing() },
+            bottomPadding = bottomPadding
+        )
     }
 }
 
@@ -124,31 +83,61 @@ fun ChatScreen(
 private fun ChatListView(
     onMenuClick: () -> Unit,
     agentName: String,
-    onChatSelected: (ChatListItem) -> Unit,
+    sessions: List<ChatSessionResponse>,
+    isLoading: Boolean,
+    onChatSelected: (String) -> Unit,
     bottomPadding: Dp
 ) {
     Scaffold(
-        topBar = { AppTopBar(title = agentName, onMenuClick = onMenuClick) },
-        containerColor = Color.White,
+        topBar = {
+            AppTopBar(
+                title = "HEYGENT",
+                onMenuClick = onMenuClick,
+                actions = {
+                    IconButton(onClick = {}) {
+                        Icon(Icons.Default.Notifications, contentDescription = "알림", tint = Color.White)
+                    }
+                }
+            )
+        },
+        containerColor = AppBackground,
         contentWindowInsets = WindowInsets(0)
     ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(
-                top = innerPadding.calculateTopPadding(),
-                bottom = bottomPadding + 12.dp
-            )
-        ) {
-            items(chatSessions) { item ->
-                ChatSessionRow(item = item, onClick = { onChatSelected(item) })
-                HorizontalDivider(color = Color(0xFFF0F0F0))
+        when {
+            isLoading -> Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = innerPadding.calculateTopPadding()),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(color = NavyPrimary)
+            }
+            sessions.isEmpty() -> Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = innerPadding.calculateTopPadding()),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("채팅 세션이 없습니다.", color = TextSecondary, fontSize = 14.sp)
+            }
+            else -> LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    top = innerPadding.calculateTopPadding(),
+                    bottom = bottomPadding + 12.dp
+                )
+            ) {
+                items(sessions, key = { it.sessionId }) { session ->
+                    ChatSessionRow(session = session, onClick = { onChatSelected(session.sessionId) })
+                    HorizontalDivider(color = DividerColor)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun ChatSessionRow(item: ChatListItem, onClick: () -> Unit) {
+private fun ChatSessionRow(session: ChatSessionResponse, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -166,16 +155,19 @@ private fun ChatSessionRow(item: ChatListItem, onClick: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = item.title,
+                    text = session.title ?: "채팅",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = TextPrimary
+                    color = TextPrimary,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Text(text = item.time, fontSize = 12.sp, color = TextSecondary)
+                Text(text = session.formatTime(), fontSize = 12.sp, color = TextSecondary)
             }
             Spacer(Modifier.height(3.dp))
             Text(
-                text = item.preview,
+                text = "${session.messageCount}개의 메시지",
                 fontSize = 13.sp,
                 color = TextSecondary,
                 maxLines = 1,
@@ -189,63 +181,44 @@ private fun ChatSessionRow(item: ChatListItem, onClick: () -> Unit) {
 
 @Composable
 private fun SingleChatView(
-    session: ChatListItem,
     agentName: String,
-    onMenuClick: () -> Unit,
+    sessionTitle: String,
+    messages: List<ChatMessage>,
+    isProcessing: Boolean,
     onBack: () -> Unit,
+    onSend: (String) -> Unit,
+    onStop: () -> Unit,
     bottomPadding: Dp
 ) {
-    var messages by remember { mutableStateOf(session.initialMessages) }
-    var isProcessing by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     var showAttachMenu by remember { mutableStateOf(false) }
     var showModelPanel by remember { mutableStateOf(false) }
     var isVoiceMode by remember { mutableStateOf(false) }
 
-    LaunchedEffect(messages.size, isProcessing) {
-        val count = messages.size + if (isProcessing) 1 else 0
-        if (count > 0) listState.animateScrollToItem(count - 1)
-    }
-
-    LaunchedEffect(isProcessing) {
-        if (isProcessing) {
-            delay(3000)
-            messages = messages + ChatMessage(
-                isBot = true,
-                text = botResponses.random(),
-                timestamp = currentTime()
-            )
-            isProcessing = false
-        }
-    }
-
     val displayMessages = if (isProcessing) {
         messages + ChatMessage(isBot = true, text = "", timestamp = "", isTyping = true)
     } else messages
 
-    val lastUserMessage = messages.lastOrNull { !it.isBot }?.text ?: session.title
+    LaunchedEffect(displayMessages.size) {
+        if (displayMessages.isNotEmpty()) listState.animateScrollToItem(displayMessages.size - 1)
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             topBar = {
-                AppTopBar(
-                    title = agentName,
-                    onMenuClick = onMenuClick,
+                ChatRoomHeader(
+                    title = sessionTitle,
                     onBack = onBack,
-                    actions = {
-                        Box {
-                            IconButton(onClick = { showModelPanel = !showModelPanel }) {
-                                Icon(Icons.Default.MoreVert, contentDescription = "더 보기", tint = Color.White)
-                            }
-                            DropdownMenu(
-                                expanded = showModelPanel,
-                                onDismissRequest = { showModelPanel = false },
-                                modifier = Modifier.width(288.dp),
-                                containerColor = Color.White
-                            ) {
-                                ModelPanelContent()
-                            }
+                    onMoreClick = { showModelPanel = !showModelPanel },
+                    moreMenu = {
+                        DropdownMenu(
+                            expanded = showModelPanel,
+                            onDismissRequest = { showModelPanel = false },
+                            modifier = Modifier.width(288.dp),
+                            containerColor = Color.White
+                        ) {
+                            ModelPanelContent()
                         }
                     }
                 )
@@ -258,10 +231,6 @@ private fun SingleChatView(
                     .fillMaxSize()
                     .padding(top = innerPadding.calculateTopPadding())
             ) {
-                if (isProcessing) {
-                    TaskStatusBanner(taskName = lastUserMessage.take(40) + if (lastUserMessage.length > 40) "..." else "")
-                }
-
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.weight(1f),
@@ -277,15 +246,14 @@ private fun SingleChatView(
                     inputText = inputText,
                     onInputChange = { inputText = it },
                     isProcessing = isProcessing,
-                    placeholder = session.inputPlaceholder,
+                    placeholder = "무엇이든 편하게 물어보세요",
                     onSend = {
                         if (inputText.isNotBlank()) {
-                            messages = messages + ChatMessage(isBot = false, text = inputText, timestamp = currentTime())
+                            onSend(inputText)
                             inputText = ""
-                            isProcessing = true
                         }
                     },
-                    onStop = { isProcessing = false },
+                    onStop = onStop,
                     onPlusClick = { showAttachMenu = !showAttachMenu },
                     onVoiceMode = { isVoiceMode = true }
                 )
@@ -298,7 +266,10 @@ private fun SingleChatView(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { showAttachMenu = false }
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { showAttachMenu = false }
             )
             Card(
                 modifier = Modifier
@@ -310,7 +281,10 @@ private fun SingleChatView(
             ) {
                 Column(modifier = Modifier.width(140.dp)) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().clickable { showAttachMenu = false }.padding(horizontal = 16.dp, vertical = 14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showAttachMenu = false }
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Default.Image, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(22.dp))
@@ -319,7 +293,10 @@ private fun SingleChatView(
                     }
                     HorizontalDivider(color = Color(0xFFF0F0F0))
                     Row(
-                        modifier = Modifier.fillMaxWidth().clickable { showAttachMenu = false }.padding(horizontal = 16.dp, vertical = 14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showAttachMenu = false }
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(Icons.Default.AttachFile, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(22.dp))
@@ -333,6 +310,62 @@ private fun SingleChatView(
         if (isVoiceMode) {
             VoiceModeOverlay(onStop = { isVoiceMode = false })
         }
+    }
+}
+
+// ─── 채팅방 헤더 ───────────────────────────────────────────────────────────
+
+@Composable
+private fun ChatRoomHeader(
+    title: String,
+    onBack: () -> Unit,
+    onMoreClick: () -> Unit,
+    moreMenu: @Composable () -> Unit
+) {
+    val headerColor = SurfaceWarm
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(headerColor)
+            .windowInsetsPadding(WindowInsets.statusBars)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "뒤로가기",
+                    tint = TextPrimary
+                )
+            }
+            Text(
+                text = title,
+                color = TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 16.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 4.dp)
+            )
+            Box {
+                IconButton(onClick = onMoreClick) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "더 보기",
+                        tint = TextPrimary
+                    )
+                }
+                moreMenu()
+            }
+        }
+        HorizontalDivider(color = DividerColor, thickness = 0.5.dp)
     }
 }
 
@@ -426,7 +459,12 @@ private fun ModelPanelContent() {
                 Switch(
                     checked = claudeAdaptive,
                     onCheckedChange = { claudeAdaptive = it },
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Color.Black, uncheckedThumbColor = Color.White, uncheckedTrackColor = Color(0xFFDDDDDD))
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = Color.Black,
+                        uncheckedThumbColor = Color.White,
+                        uncheckedTrackColor = Color(0xFFDDDDDD)
+                    )
                 )
             }
         }
@@ -435,8 +473,17 @@ private fun ModelPanelContent() {
 
 @Composable
 private fun InferenceOptionRow(label: String, selected: Boolean, onClick: () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, fontSize = 14.sp, color = TextPrimary, fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal, modifier = Modifier.weight(1f))
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            label,
+            fontSize = 14.sp,
+            color = TextPrimary,
+            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+            modifier = Modifier.weight(1f)
+        )
         if (selected) Icon(Icons.Default.Check, contentDescription = null, tint = TextPrimary, modifier = Modifier.size(18.dp))
     }
 }

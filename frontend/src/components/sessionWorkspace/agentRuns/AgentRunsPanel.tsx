@@ -177,9 +177,21 @@ function buildVisibleRunItem(
   taskFlow?: TaskRunFlowResponse | null,
 ): AgentRunItemData {
   const inputPayload = toRecord(taskDetail?.input_payload)
+  const resultPayload = toRecord(taskDetail?.result_payload)
+  const model =
+    getStringValue(inputPayload, 'model', 'provider_model', 'providerModel') ??
+    getStringValue(resultPayload, 'model') ??
+    getStringValue(toRecord(resultPayload?.metadata), 'model') ??
+    run.model
+  const provider =
+    getStringValue(inputPayload, 'provider_name', 'providerName', 'provider') ??
+    getStringValue(resultPayload, 'provider_name', 'providerName', 'provider') ??
+    run.adapter
   return {
     ...run,
     status: getEffectiveRunStatus(run, taskDetail, taskFlow),
+    adapter: getRunAdapterLabel(provider, model) ?? run.adapter,
+    model,
     delegationInput:
       run.delegationInput ?? buildDelegationInput(inputPayload, taskDetail?.displayContext),
   }
@@ -320,7 +332,7 @@ function AgentRunConversationFlow({
       <div className="grid gap-3">
         <AgentRunFlowBlock
           emptyText="저장된 사용자 요청을 찾지 못했습니다."
-          eyebrow="사용자 -> CEO"
+          eyebrow="사용자 -> 팀장"
           title="받은 요청"
           value={detail.request}
         />
@@ -536,7 +548,7 @@ function AgentRunStatusHelp() {
           <div>
             <div className="font-medium">실행 기록 상태</div>
             <p className="text-muted-foreground mt-1 text-xs leading-5">
-              CEO와 서브에이전트는 같은 상태 체계를 씁니다. 색상은 역할 차이가 아니라 현재 실행
+              팀장과 서브에이전트는 같은 상태 체계를 씁니다. 색상은 역할 차이가 아니라 현재 실행
               상태를 뜻합니다.
             </p>
           </div>
@@ -579,6 +591,11 @@ function buildRunDetailView(
   const resultPayload = toRecord(taskDetail?.result_payload)
   const assigneeName = taskDetail?.displayContext?.assigneeAgent?.displayName ?? run.agentName
   const actorName = taskDetail?.displayContext?.actorAgent?.displayName ?? assigneeName
+  const assigneeIsMain = isTeamLeadAgentName(
+    assigneeName,
+    taskDetail?.displayContext?.assigneeAgent?.kind,
+  )
+  const actorIsMain = isTeamLeadAgentName(actorName, taskDetail?.displayContext?.actorAgent?.kind)
   const transcriptUserRequest = getFirstUserMessageContent(transcript)
   const lastAssistantAnswer = getLastAssistantMessageContent(transcript)
   const parentTranscriptSessionId =
@@ -603,9 +620,8 @@ function buildRunDetailView(
     run.handoff ??
     run.summary
   return {
-    delegateRoute:
-      assigneeName && assigneeName !== 'CEO' ? `CEO -> ${assigneeName}` : 'CEO가 직접 처리',
-    returnRoute: actorName && actorName !== 'CEO' ? `${actorName} -> CEO/사용자` : 'CEO -> 사용자',
+    delegateRoute: assigneeName && !assigneeIsMain ? `팀장 -> ${assigneeName}` : '팀장이 직접 처리',
+    returnRoute: actorName && !actorIsMain ? `${actorName} -> 팀장/사용자` : '팀장 -> 사용자',
     parentTranscriptSessionId,
     request,
     delegationInput,
@@ -613,6 +629,11 @@ function buildRunDetailView(
     messages: transcript,
     timeline: mergeRunTimeline(run.timeline ?? [], taskFlow),
   }
+}
+
+function isTeamLeadAgentName(name?: string | null, kind?: string | null) {
+  if (kind === 'main') return true
+  return name === 'CEO' || name === '팀장' || name === '팀장 에이전트'
 }
 
 function getEffectiveRunStatus(
@@ -841,6 +862,14 @@ function getStringValue(source: unknown, ...keys: string[]) {
     if (typeof value === 'string' && value.trim() !== '') return value.trim()
   }
   return undefined
+}
+
+function getRunAdapterLabel(provider?: string | null, model?: string | null) {
+  const providerText = (provider ?? '').trim().toLowerCase()
+  const modelText = (model ?? '').trim().toLowerCase()
+  if (providerText.includes('gemini') || modelText.startsWith('gemini-')) return 'gemini'
+  if (providerText.includes('openai') || modelText.startsWith('gpt-')) return 'openai'
+  return providerText || undefined
 }
 
 function compactLongText(value: string) {

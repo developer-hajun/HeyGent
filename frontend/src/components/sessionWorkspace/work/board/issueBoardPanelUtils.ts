@@ -248,6 +248,11 @@ export function assigneeLabel(value: string | null, assignees: BoardAssignee[]) 
   return assignees.find((assignee) => assignee.id === value)?.name ?? value
 }
 
+export function assigneeImageUrl(value: string | null, assignees: BoardAssignee[]) {
+  if (value === null) return null
+  return assignees.find((assignee) => assignee.id === value)?.imageUrl ?? null
+}
+
 export function formatRelativeTime(value: string) {
   const timestamp = new Date(value).getTime()
   if (Number.isNaN(timestamp)) return '알 수 없음'

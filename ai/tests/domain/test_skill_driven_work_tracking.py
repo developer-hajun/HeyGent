@@ -3,10 +3,13 @@ from __future__ import annotations
 import asyncio
 from copy import deepcopy
 
+from app.contracts.task.task_status import TaskStatus
 from app.domain.orchestration.agent.loop import TaskEngine
+from app.domain.orchestration.runtime_planning.planner import Planner
 from app.domain.orchestration.prompts.skill_prompt import SkillLoader
 from app.domain.tasks.models import TaskRun
 from app.domain.work.models import WorkItem, WorkRunLink
+from app.tools.contracts import HandlerSpec
 from tests.fakes import InMemoryAgentRepository, InMemorySkillRepository, InMemoryTaskRepository
 
 
@@ -66,6 +69,23 @@ class FakeWorkRepository:
     def context_preview(self, work_id: str) -> dict:
         work = self.items[work_id]
         return {"title": work.title, "labels": [], "commentsIncluded": 0, "recentRunsIncluded": 1, "promptPreview": work.execution_instruction or ""}
+
+    def update_run_status(self, work_id: str, task_run_id: str, status: str) -> WorkRunLink | None:
+        link = self.runs.get((work_id, task_run_id))
+        if link is None:
+            return None
+        updated = WorkRunLink(work_id=work_id, task_run_id=task_run_id, run_kind=link.run_kind, status=status)
+        self.runs[(work_id, task_run_id)] = updated
+        return updated
+
+    def update_status(self, work_id: str, status: str) -> WorkItem:
+        work = self.items[work_id]
+        updated = WorkItem(**{**_work_dict(work), "status": status})
+        self.items[work_id] = updated
+        return updated
+
+    def add_comment(self, comment):
+        return comment
 
 
 def test_successful_skill_execute_creates_work_and_links_current_task_run():
@@ -189,6 +209,121 @@ def test_session_agent_child_input_includes_profile_skill_names():
     )
 
 
+def test_session_agent_child_input_keeps_parent_prototype_session_binding():
+    engine = _engine(
+        task_repository=InMemoryTaskRepository(),
+        work_repository=FakeWorkRepository(),
+    )
+    work = WorkItem(
+        work_id="work-design",
+        identifier="TASK-1",
+        session_id="session-ui",
+        owner_key="7",
+        owner_user_id=7,
+        title="날씨 화면 제작",
+        description="부산 날씨 화면을 만든다.",
+        status="in_progress",
+        execution_instruction="부산 날씨 화면을 React 프로토타입으로 만들어줘.",
+    )
+    engine.work_repository.create_work(work)
+
+    child_input = engine._build_session_agent_work_input(
+        parent_task=_task(
+            input_payload={
+                "model": "gpt-5.4",
+                "sessionId": "session-ui",
+                "promptMessageId": "msg-user",
+            }
+        ),
+        work=work,
+    )
+
+    assert child_input["sessionId"] == "session-ui"
+    assert child_input["promptMessageId"] == "msg-user"
+
+
+def test_session_agent_parent_update_exposes_materialized_child_task_run():
+    task_repository = InMemoryTaskRepository()
+    work_repository = FakeWorkRepository()
+    agent_repository = InMemoryAgentRepository()
+    profile = agent_repository.create_session_agent_from_template(
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        template_key="k_services",
+    )
+    broadcaster = DummyBroadcaster()
+    engine = _engine(
+        task_repository=task_repository,
+        work_repository=work_repository,
+        broadcaster=broadcaster,
+        agent_repository=agent_repository,
+        planner=Planner(),
+    )
+    parent_task = _task(input_payload={"prompt": "지갑 잃어버렸어", "model": "gpt-5.4"})
+    parent_task.status = TaskStatus.RUNNING
+    task_repository.create_task(parent_task)
+    step = engine.planner.materialize_observed_semantic_step(
+        task=parent_task,
+        handler=_CompletingHandler(),
+        input_payload={},
+        step_order=1,
+        observed_step={"id": "delegate", "title": "분실물 대응 배정", "goal": "K-에이전트에게 확인을 맡긴다"},
+        outcome={},
+        include_outcome_detail=False,
+    )
+    step.status = "RUNNING"
+    task_repository.create_step(step)
+    parent_task.current_step_run_id = step.step_run_id
+    task_repository.update_task(parent_task)
+
+    child_work = WorkItem(
+        work_id="work-child",
+        identifier="TASK-1",
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        title="강남역 분실 지갑 대응",
+        description="강남역에서 잃어버린 지갑 대응",
+        status="todo",
+        assignee_agent_id=profile["profile_id"],
+        parent_id="work-parent",
+        execution_instruction="강남역 지갑 분실 대응 순서를 정리해줘.",
+    )
+    work_repository.create_work(child_work)
+    progress_sink = engine._build_progress_sink(task=parent_task, step=step)
+    executor = engine._build_session_agent_work_executor(
+        task=parent_task,
+        handler=_CompletingHandler(),
+        progress_sink=progress_sink,
+    )
+
+    result = asyncio.run(
+        executor(
+            child_work={"workId": child_work.work_id},
+            tool_call_id="tool-call-1",
+            args={},
+            accepted_result={"ok": True},
+        )
+    )
+
+    started_event = next(
+        event
+        for event in broadcaster.events
+        if event.task_run_id == parent_task.task_run_id
+        and event.event_type == "step.updated"
+        and event.payload.get("reason") == "session_agent_work.started"
+    )
+    child_task_run_id = started_event.payload["childTaskRunId"]
+
+    assert result["taskRunId"] == child_task_run_id
+    assert started_event.payload["childWorkId"] == child_work.work_id
+    assert started_event.payload["profileId"] == profile["profile_id"]
+    assert task_repository.get_task(child_task_run_id) is not None
+    event_order = [(event.task_run_id, event.event_type) for event in broadcaster.events]
+    assert event_order.index((child_task_run_id, "task.created")) < event_order.index((parent_task.task_run_id, "step.updated"))
+
+
 def _engine(
     *,
     task_repository: InMemoryTaskRepository,
@@ -196,18 +331,41 @@ def _engine(
     broadcaster: DummyBroadcaster | None = None,
     agent_repository: InMemoryAgentRepository | None = None,
     skill_repository: InMemorySkillRepository | None = None,
+    planner: Planner | None = None,
 ) -> TaskEngine:
     return TaskEngine(
         task_repository,
         broadcaster or DummyBroadcaster(),
         approval_service=None,
         child_session_launcher=None,
-        planner=None,
+        planner=planner,
         tool_registry=DummyToolRegistry(),
         work_repository=work_repository,
         agent_repository=agent_repository,
         skill_repository=skill_repository,
     )
+
+
+class _CompletingHandler:
+    spec = HandlerSpec(
+        task_type="agent.loop",
+        task_title="에이전트 실행",
+        step_type="agent.loop.execute",
+        step_title="에이전트 실행",
+    )
+
+    async def execute_async(self, **kwargs):
+        return {
+            "task_status": "COMPLETED",
+            "step_status": "COMPLETED",
+            "result_payload": {
+                "workDisposition": {
+                    "status": "done",
+                    "summary": "분실 대응 순서를 정리했습니다.",
+                }
+            },
+            "summary_message": "분실 대응 순서를 정리했습니다.",
+        }
 
 
 def _task(input_payload: dict | None = None) -> TaskRun:

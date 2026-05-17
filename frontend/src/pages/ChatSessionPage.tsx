@@ -1,21 +1,31 @@
 import { AlertCircle, ListTodo, Loader2, RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useParams } from 'react-router'
-import { ChatComposer } from '@/components/chat/ChatComposer'
+import { ChatComposer, type ChatAttachmentPayload } from '@/components/chat/ChatComposer'
 import { ChatEmptyState } from '@/components/chat/ChatEmptyState'
 import { ChatMessageList } from '@/components/chat/ChatMessageList'
 import type { ChatConnectionState } from '@/components/chat/chatTypes'
+import { PrototypePanel } from '@/components/prototype/PrototypePanel'
 import { StepRunActivityPanel } from '@/components/taskRuns/StepRunActivityPanel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { issueBoardStatusLabel } from '@/components/sessionWorkspace/work/model'
-import type { AiRealtimeAuthStatus, AiRealtimeConnectionStatus } from '@/realtime/aiRealtimeTypes'
+import type {
+  AiRealtimeAuthStatus,
+  AiRealtimeConnectionStatus,
+  JsonObject,
+} from '@/realtime/aiRealtimeTypes'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import { useSessionStore } from '@/store/useSessionStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import { useUIStore } from '@/store/useUIStore'
 import { useWorkStore } from '@/store/useWorkStore'
+import {
+  getString as getJsonString,
+  toJsonObject,
+} from '@/components/sessionWorkspace/sessionWorkspaceUtils'
 import type { WorkItem, WorkStatus } from '@/types/work'
 import {
   isInternalStepAnchorEvent,
@@ -24,6 +34,7 @@ import {
   toActivityItemView,
   toTaskRunSummaryView,
 } from '@/utils/taskRunStatusView'
+import { shouldHydrateTaskRunOnSessionOpen } from '@/utils/taskRunHydration'
 
 type LoadState = 'loading' | 'ready' | 'error'
 
@@ -61,6 +72,11 @@ export function ChatSessionPage() {
   const accessToken = useAuthStore((state) => state.accessToken)
   const activityOpen = useUIStore((state) => state.taskActivityPanelOpen)
   const setActivityOpen = useUIStore((state) => state.setTaskActivityPanelOpen)
+  const setSessionWorkspaceCollapsed = useUIStore((state) => state.setSessionWorkspaceCollapsed)
+  const prototypePanelSessionId = useUIStore((state) => state.prototypePanelSessionId)
+  const prototypePanelOpenRequest = useUIStore((state) => state.prototypePanelOpenRequest)
+  const requestPrototypePanel = useUIStore((state) => state.requestPrototypePanel)
+  const prototypeAutoCollapsedSessionIdsRef = useRef<Set<string>>(new Set())
 
   const storeMessages = useChatStore((state) =>
     sessionId === '' ? EMPTY_MESSAGES : (state.messagesBySessionId[sessionId] ?? EMPTY_MESSAGES),
@@ -72,7 +88,23 @@ export function ChatSessionPage() {
   const currentSession = useChatStore((state) =>
     sessionId === '' ? undefined : state.sessionsById[sessionId],
   )
+  const sessionMainAgentDraft = useSessionStore((state) =>
+    sessionId === '' ? undefined : state.mainAgentNameDraftBySessionId[sessionId],
+  )
+  // 어시스턴트 메시지에 표시할 이름 — 세션별 인라인 편집 draft → metadata.ui.agentName → 기본값
+  const mainAgentName = useMemo(() => {
+    const draft = sessionMainAgentDraft?.trim()
+    if (draft) return draft
+    if (currentSession) {
+      const metadata = toJsonObject(currentSession.metadata)
+      const uiMetadata = toJsonObject(metadata.ui)
+      const stored = getJsonString(uiMetadata, 'agentName')
+      if (stored && stored.trim() !== '') return stored
+    }
+    return '팀장 에이전트'
+  }, [currentSession, sessionMainAgentDraft])
   const fetchMessages = useChatStore((state) => state.fetchMessages)
+  const addExternalTaskPlaceholder = useChatStore((state) => state.addExternalTaskPlaceholder)
   const sendMessage = useChatStore((state) => state.sendMessage)
   const fetchSessionWork = useWorkStore((state) => state.fetchSessionWork)
   const workItems = useWorkStore((state) =>
@@ -85,6 +117,7 @@ export function ChatSessionPage() {
   const taskRunsById = useTaskRunStore((state) => state.taskRunsById)
   const stepRunsById = useTaskRunStore((state) => state.stepRunsById)
   const eventsByTaskRunId = useTaskRunStore((state) => state.eventsByTaskRunId)
+  const activityItemsByTaskRunId = useTaskRunStore((state) => state.activityItemsByTaskRunId)
   const lastSequenceByTaskRunId = useTaskRunStore((state) => state.lastSequenceByTaskRunId)
   const taskRunError = useTaskRunStore((state) => state.lastError)
   const fetchActiveTaskRuns = useTaskRunStore((state) => state.fetchActiveTaskRuns)
@@ -117,18 +150,23 @@ export function ChatSessionPage() {
 
     return [...ids]
   }, [messages, sessionId, taskRunsById])
+  const latestMessageTaskRunId = useMemo(
+    () => [...messages].reverse().find((message) => message.taskRunId)?.taskRunId,
+    [messages],
+  )
   const taskRunIdKey = taskRunIds.join('|')
   const activitiesByTaskRunId = useMemo(
     () =>
       Object.fromEntries(
         taskRunIds.map((taskRunId) => [
           taskRunId,
-          (eventsByTaskRunId[taskRunId] ?? [])
-            .filter((event) => !isInternalStepAnchorEvent(event))
-            .map(toActivityItemView),
+          activityItemsByTaskRunId[taskRunId] ??
+            (eventsByTaskRunId[taskRunId] ?? [])
+              .filter((event) => !isInternalStepAnchorEvent(event))
+              .map(toActivityItemView),
         ]),
       ),
-    [eventsByTaskRunId, taskRunIds],
+    [activityItemsByTaskRunId, eventsByTaskRunId, taskRunIds],
   )
   const stepRunsByTaskRunId = useMemo(
     () =>
@@ -266,9 +304,15 @@ export function ChatSessionPage() {
       const hasRuntimeState =
         taskRun !== undefined || taskRunEvents.length > 0 || hasStreamingMessage
 
-      if (!hasRuntimeState) {
+      if (
+        !shouldHydrateTaskRunOnSessionOpen({
+          hasRuntimeState,
+          isLatestMessageTaskRun: taskRunId === latestMessageTaskRunId,
+        })
+      ) {
         // 과거 완료 메시지까지 모두 snapshot/replay 하면 WebSocket command가 폭주해서
-        // 현재 답변의 step event가 뒤로 밀린다. 완료 이력은 활동 패널을 열 때 lazy load한다.
+        // 현재 답변의 step event가 뒤로 밀린다. 다만 최신 답변은 페이지 복귀 직후
+        // 채팅 아래 진행 상태를 복원해야 하므로 snapshot/replay 대상에 포함한다.
         return
       }
 
@@ -342,12 +386,13 @@ export function ChatSessionPage() {
     sessionId,
     socketClient,
     subscribeTask,
+    latestMessageTaskRunId,
     taskRunIdKey,
     taskRunIds,
     taskRunsById,
   ])
 
-  const handleSend = async (content: string) => {
+  const handleSend = async (content: string, attachments: ChatAttachmentPayload[] = []) => {
     if (!sessionId || isSending) return
     setComposerDraft(null)
 
@@ -385,17 +430,26 @@ export function ChatSessionPage() {
           setSelectedWorkId(selectedWork.workId)
         }
       }
+      const workPayload: JsonObject | undefined = selectedWork
+        ? {
+            workId: selectedWork.workId,
+            workIdentifier: selectedWork.identifier,
+            workTitle: selectedWork.title,
+            workAssigneeAgentId: selectedWork.assigneeAgentId ?? 'CEO',
+          }
+        : undefined
+      const attachmentPayload = buildAttachmentInputPayload(attachments)
+
       await sendMessage({
         sessionId,
-        content,
-        inputPayload: selectedWork
-          ? {
-              workId: selectedWork.workId,
-              workIdentifier: selectedWork.identifier,
-              workTitle: selectedWork.title,
-              workAssigneeAgentId: selectedWork.assigneeAgentId ?? 'CEO',
-            }
-          : undefined,
+        content: formatMessageWithAttachmentSummary(content, attachments),
+        inputPayload:
+          workPayload || attachmentPayload
+            ? {
+                ...(workPayload ?? {}),
+                ...(attachmentPayload ?? {}),
+              }
+            : undefined,
       })
       setLoadState('ready')
       if (selectedWork) {
@@ -467,9 +521,6 @@ export function ChatSessionPage() {
     typeof currentSession?.active_task_run_id === 'string'
       ? currentSession.active_task_run_id
       : undefined
-  const latestMessageTaskRunId = [...messages]
-    .reverse()
-    .find((message) => message.taskRunId)?.taskRunId
   const visibleTaskRunId =
     latestLinkedWorkEvent?.taskRunId ??
     selectedWork?.activeRunId ??
@@ -480,14 +531,45 @@ export function ChatSessionPage() {
     selectedWork ?? findWorkByTaskRunId(workItems, visibleTaskRunId) ?? latestLinkedWorkEvent?.work
   const visibleTaskRunSummary =
     visibleTaskRunId === undefined ? undefined : taskRunSummariesById[visibleTaskRunId]
+  const visibleTaskRunStatus =
+    visibleTaskRunId === undefined ? undefined : taskRunsById[visibleTaskRunId]?.status
   const hasActiveChatTurn =
     activeSessionTaskRunId !== undefined ||
+    (visibleTaskRunStatus !== undefined && isLiveTaskRunStatus(visibleTaskRunStatus)) ||
     messages.some(
       (message) =>
         message.status === 'optimistic' ||
         message.status === 'streaming' ||
         message.status === 'waiting',
     )
+  const prototypePanelRequested = prototypePanelSessionId === sessionId
+
+  const handlePrototypeArtifactVisible = useCallback(() => {
+    requestPrototypePanel(sessionId)
+    if (!prototypeAutoCollapsedSessionIdsRef.current.has(sessionId)) {
+      prototypeAutoCollapsedSessionIdsRef.current.add(sessionId)
+      setSessionWorkspaceCollapsed(true)
+    }
+  }, [requestPrototypePanel, sessionId, setSessionWorkspaceCollapsed])
+
+  useEffect(() => {
+    if (
+      !sessionId ||
+      visibleTaskRunId === undefined ||
+      visibleTaskRunStatus === undefined ||
+      !isLiveTaskRunStatus(visibleTaskRunStatus)
+    ) {
+      return
+    }
+    const hasAssistantForTask = messages.some(
+      (message) => message.role === 'assistant' && message.taskRunId === visibleTaskRunId,
+    )
+    if (hasAssistantForTask) {
+      return
+    }
+    addExternalTaskPlaceholder(sessionId, visibleTaskRunId)
+  }, [addExternalTaskPlaceholder, messages, sessionId, visibleTaskRunId, visibleTaskRunStatus])
+
   const isStreaming = messages.some(
     (message) => message.role === 'assistant' && message.status === 'streaming',
   )
@@ -556,6 +638,7 @@ export function ChatSessionPage() {
             taskRunSummariesById={taskRunSummariesById}
             onOpenTaskRun={handleOpenTaskRun}
             focusedTaskRunTarget={focusedTaskRunTarget}
+            assistantName={mainAgentName}
           />
         )}
         <ChatComposer
@@ -597,6 +680,15 @@ export function ChatSessionPage() {
         onSelectTaskRun={setSelectedTaskRunId}
         onFocusTaskRunMessage={handleFocusTaskRunMessage}
       />
+      {!isPendingSession && (
+        <PrototypePanel
+          sessionId={sessionId}
+          openHint={prototypePanelRequested}
+          pollForArtifact={hasActiveChatTurn}
+          reopenSignal={prototypePanelOpenRequest}
+          onArtifactVisible={handlePrototypeArtifactVisible}
+        />
+      )}
     </main>
   )
 }
@@ -850,6 +942,31 @@ function extractWorkIdentifier(content: string) {
 function normalizeWorkIdentifier(identifier: string) {
   const match = identifier.match(/\btask\s*[-#]?\s*(\d+)\b/i)
   return match ? `TASK-${match[1]}` : identifier.trim().toUpperCase()
+}
+
+function buildAttachmentInputPayload(attachments: ChatAttachmentPayload[]): JsonObject | undefined {
+  if (attachments.length === 0) return undefined
+  return {
+    sessionAttachments: attachments,
+    attachmentSummary: attachments.map(({ error, name, size, type }) => ({
+      name,
+      type,
+      size,
+      error,
+    })),
+  }
+}
+
+function formatMessageWithAttachmentSummary(content: string, attachments: ChatAttachmentPayload[]) {
+  if (attachments.length === 0) return content
+  const summary = attachments
+    .map((attachment) => {
+      const sizeKb = Math.max(1, Math.round(attachment.size / 1024))
+      const state = attachment.error ? `, ${attachment.error}` : ''
+      return `- ${attachment.name} (${attachment.type || 'application/octet-stream'}, ${sizeKb}KB${state})`
+    })
+    .join('\n')
+  return `${content.trim()}\n\n[첨부 파일]\n${summary}`.trim()
 }
 
 function toChatConnectionState(

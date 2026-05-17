@@ -17,21 +17,29 @@ import type {
   TaskRunDetailSummaryView,
   TaskRunEventsReplayResultPayload,
   TaskRunsActiveListResultPayload,
+  ActivityItemView,
 } from '@/types/taskRuns'
 import { createApprovalResponseId, createClientCommandId } from '@/utils/requestId'
 import { getLastTaskRunSequence, mergeTaskRunEvents } from '@/utils/taskRunEvents'
-import { isInternalStepAnchorEvent, toTaskRunDetailSummaryView } from '@/utils/taskRunStatusView'
+import {
+  isInternalStepAnchorEvent,
+  toTaskRunDetailSummaryView,
+  toTaskRunStatusText,
+  toTaskRunStatusTone,
+} from '@/utils/taskRunStatusView'
 
 type TaskRunState = {
   taskRunsById: Record<string, RawTaskRun>
   stepRunsById: Record<string, RawStepRun>
   approvalsById: Record<string, RawApproval>
   eventsByTaskRunId: Record<string, RawTaskEventPayload[]>
+  activityItemsByTaskRunId: Record<string, ActivityItemView[]>
   lastSequenceByTaskRunId: Record<string, number>
   replayNeededByTaskRunId: Record<string, boolean>
   recoveryAfterSequenceByTaskRunId: Record<string, number | undefined>
   recoveringByTaskRunId: Record<string, boolean>
   approvalSubmissionIdsByApprovalId: Record<string, string>
+  subscribedChildTaskRunIds: Record<string, true>
   lastError: string | null
   fetchActiveTaskRuns: (sessionId?: string) => Promise<RawTaskRun[]>
   fetchSessionTaskRuns: (sessionId: string) => Promise<RawTaskRun[]>
@@ -58,11 +66,13 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
   stepRunsById: {},
   approvalsById: {},
   eventsByTaskRunId: {},
+  activityItemsByTaskRunId: {},
   lastSequenceByTaskRunId: {},
   replayNeededByTaskRunId: {},
   recoveryAfterSequenceByTaskRunId: {},
   recoveringByTaskRunId: {},
   approvalSubmissionIdsByApprovalId: {},
+  subscribedChildTaskRunIds: {},
   lastError: null,
   fetchActiveTaskRuns: async (sessionId) => {
     const frame = await useAiRealtimeStore
@@ -88,6 +98,13 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
     }
 
     mergeSnapshot(snapshot, set)
+
+    // 스냅샷 이벤트에서 child TaskRun을 발견하면 자동 구독한다 (재접속 복구용).
+    const snapshotEvents = Array.isArray(snapshot.events)
+      ? snapshot.events.filter(isRawTaskEventPayload)
+      : []
+    subscribeChildTaskRunsFromEvents(snapshotEvents, get, set)
+
     return snapshot
   },
   replayEvents: async (taskRunId, afterSequence) => {
@@ -98,6 +115,7 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
     const events = getRawTaskEventList(payload)
 
     mergeReplayResult(taskRunId, events, payload, set)
+    subscribeChildTaskRunsFromEvents(events, get, set)
 
     return events
   },
@@ -124,6 +142,7 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
       const retentionExceeded = getBooleanField(payload, 'retention_exceeded', 'retentionExceeded')
 
       mergeReplayResult(taskRunId, events, payload, set)
+      subscribeChildTaskRunsFromEvents(events, get, set)
 
       if (retentionExceeded) {
         // replay 보관 구간을 벗어난 경우에는 event 전체 복구가 불가능하므로 snapshot으로 현재 상태를 맞춘다.
@@ -231,6 +250,11 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
     }
   },
   mergeTaskEvent: (event) => {
+    // step.updated 이벤트의 payload에서 childTaskRunId를 추출한다 — live event 기준.
+    const childTaskRunId = getChildTaskRunId(event)
+    const shouldSubscribeChild =
+      childTaskRunId !== null && get().subscribedChildTaskRunIds[childTaskRunId] === undefined
+
     set((state) => {
       const currentEvents = state.eventsByTaskRunId[event.task_run_id] ?? []
       const mergeResult = mergeTaskRunEvents(currentEvents, [event])
@@ -259,6 +283,10 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
           ...state.eventsByTaskRunId,
           [event.task_run_id]: mergeResult.events,
         },
+        activityItemsByTaskRunId: withoutTaskRunActivityProjection(
+          state.activityItemsByTaskRunId,
+          event.task_run_id,
+        ),
         stepRunsById:
           placeholderStepRun === null
             ? state.stepRunsById
@@ -285,8 +313,23 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
                 [event.task_run_id]: mergeResult.expectedSequence - 1,
               }
             : state.recoveryAfterSequenceByTaskRunId,
+        subscribedChildTaskRunIds: shouldSubscribeChild
+          ? { ...state.subscribedChildTaskRunIds, [childTaskRunId!]: true }
+          : state.subscribedChildTaskRunIds,
       }
     })
+
+    // set() 이후 비동기 구독 — WebSocket이 준비되지 않으면 무시하고 재접속 시 복구한다.
+    if (shouldSubscribeChild && childTaskRunId !== null) {
+      try {
+        useAiRealtimeStore.getState().subscribeTask(childTaskRunId)
+      } catch {
+        // 소켓 미준비 상태 — 재접속 후 snapshot/replay로 복구됨
+      }
+      void get()
+        .fetchSnapshot(childTaskRunId)
+        .catch(() => {})
+    }
   },
   clearTaskRunState: () =>
     set({
@@ -294,11 +337,13 @@ export const useTaskRunStore = create<TaskRunState>((set, get) => ({
       stepRunsById: {},
       approvalsById: {},
       eventsByTaskRunId: {},
+      activityItemsByTaskRunId: {},
       lastSequenceByTaskRunId: {},
       replayNeededByTaskRunId: {},
       recoveryAfterSequenceByTaskRunId: {},
       recoveringByTaskRunId: {},
       approvalSubmissionIdsByApprovalId: {},
+      subscribedChildTaskRunIds: {},
       lastError: null,
     }),
 }))
@@ -419,6 +464,7 @@ const mergeSnapshot = (
     .map((approval) => normalizeApproval(approval, taskRunId))
     .filter((approval) => approval !== null)
   const events = (snapshot.events ?? []).filter(isRawTaskEventPayload)
+  const projectedActivities = getProjectedActivityItems(snapshot, taskRunId)
 
   set((state) => {
     const nextEventsByTaskRunId = { ...state.eventsByTaskRunId }
@@ -469,6 +515,13 @@ const mergeSnapshot = (
         approvals,
       ),
       eventsByTaskRunId: nextEventsByTaskRunId,
+      activityItemsByTaskRunId:
+        taskRunId === undefined || projectedActivities.length === 0
+          ? state.activityItemsByTaskRunId
+          : {
+              ...state.activityItemsByTaskRunId,
+              [taskRunId]: projectedActivities,
+            },
       lastSequenceByTaskRunId: nextLastSequenceByTaskRunId,
       replayNeededByTaskRunId: nextReplayNeededByTaskRunId,
       recoveryAfterSequenceByTaskRunId: nextRecoveryAfterSequenceByTaskRunId,
@@ -484,6 +537,7 @@ const mergeReplayResult = (
 ) => {
   set((state) => {
     const mergeResult = mergeTaskRunEvents(state.eventsByTaskRunId[taskRunId] ?? [], events)
+    const projectedActivities = getProjectedActivityItems(payload, taskRunId)
     const retentionExceeded = getBooleanField(payload, 'retention_exceeded', 'retentionExceeded')
     const replayNeeded = retentionExceeded || mergeResult.hasGap
     const recoveryAfterSequenceByTaskRunId = { ...state.recoveryAfterSequenceByTaskRunId }
@@ -504,6 +558,11 @@ const mergeReplayResult = (
         ...state.eventsByTaskRunId,
         [taskRunId]: mergeResult.events,
       },
+      activityItemsByTaskRunId: mergeProjectedActivityItems(
+        state.activityItemsByTaskRunId,
+        taskRunId,
+        projectedActivities,
+      ),
       lastSequenceByTaskRunId:
         mergeResult.lastSequence === undefined
           ? state.lastSequenceByTaskRunId
@@ -643,23 +702,32 @@ const inferTaskRunStatusFromEvent = (
       return 'RUNNING'
     case 'step.waiting':
       return 'WAITING'
+    case 'step.completed':
+    case 'step.failed':
+    case 'step.canceled':
+    case 'step.cancelled':
+    case 'tool.completed':
+    case 'search.completed':
+      return existingStatus ?? 'RUNNING'
     default:
       break
   }
 
   const eventStatus = normalizeRealtimeStepRunStatus(event.status)
-  if (eventStatus !== undefined && !isStepTerminalEvent(event.event_type)) {
+  if (eventStatus !== undefined && !isChildTerminalEvent(event.event_type)) {
     return eventStatus
   }
 
   return undefined
 }
 
-const isStepTerminalEvent = (eventType: string) =>
+const isChildTerminalEvent = (eventType: string) =>
   eventType === 'step.completed' ||
   eventType === 'step.failed' ||
   eventType === 'step.canceled' ||
-  eventType === 'step.cancelled'
+  eventType === 'step.cancelled' ||
+  eventType === 'tool.completed' ||
+  eventType === 'search.completed'
 
 const buildRealtimeStepRunPlaceholder = (
   event: RawTaskEventPayload,
@@ -843,6 +911,87 @@ const pickTaskEventDisplayContext = (value: unknown): TaskRunDisplayContext | un
   return value.displayContext as TaskRunDisplayContext
 }
 
+const getProjectedActivityItems = (
+  payload: Record<string, unknown>,
+  fallbackTaskRunId?: string,
+): ActivityItemView[] => {
+  const rawItems = payload.activity_items ?? payload.activityItems
+  if (!Array.isArray(rawItems)) {
+    return []
+  }
+  return rawItems
+    .map((item) => normalizeProjectedActivityItem(item, fallbackTaskRunId))
+    .filter((item) => item !== null)
+}
+
+const normalizeProjectedActivityItem = (
+  item: unknown,
+  fallbackTaskRunId?: string,
+): ActivityItemView | null => {
+  if (!isJsonObject(item)) {
+    return null
+  }
+  const id = getStringField(item, 'activity_id', 'activityId')
+  const taskRunId = getStringField(item, 'task_run_id', 'taskRunId') ?? fallbackTaskRunId
+  if (id === undefined || taskRunId === undefined) {
+    return null
+  }
+  const status = getStringField(item, 'status') ?? 'RUNNING'
+  const sequence = pickTaskEventNumber(item, ['last_sequence', 'lastSequence'])
+  const occurredAt = getStringField(item, 'occurred_at', 'occurredAt')
+  const stepRunId = getStringField(item, 'step_run_id', 'stepRunId')
+  const title = getStringField(item, 'title') ?? toTaskRunStatusText(status)
+  const raw: RawTaskEventPayload = {
+    event_id: id,
+    event_type: status,
+    task_run_id: taskRunId,
+    step_run_id: stepRunId,
+    sequence,
+    occurred_at: occurredAt,
+    status,
+    summary_message: title,
+    payload: item.payload,
+  }
+  return {
+    id,
+    taskRunId,
+    stepRunId,
+    title,
+    statusText: toTaskRunStatusText(status),
+    tone: toTaskRunStatusTone(status),
+    sequence,
+    occurredAt,
+    displayContext: pickTaskEventDisplayContext(item.payload),
+    raw,
+  }
+}
+
+const mergeProjectedActivityItems = (
+  current: Record<string, ActivityItemView[]>,
+  taskRunId: string,
+  projectedActivities: ActivityItemView[],
+) => {
+  if (projectedActivities.length === 0) {
+    return current
+  }
+  return {
+    ...current,
+    [taskRunId]: projectedActivities,
+  }
+}
+
+const withoutTaskRunActivityProjection = (
+  current: Record<string, ActivityItemView[]>,
+  taskRunId: string,
+) => {
+  if (current[taskRunId] === undefined) {
+    return current
+  }
+  const next = { ...current }
+  delete next[taskRunId]
+  return next
+}
+
 const getRealtimeStepRunFallbackTitle = (eventType: string) => {
   if (eventType.startsWith('tool.')) {
     return '도구 실행'
@@ -883,6 +1032,7 @@ const selectTaskRunSummary = (state: TaskRunState, taskRunId: string) => {
     stepRuns,
     approvals,
     events: state.eventsByTaskRunId[taskRunId] ?? [],
+    activityItems: state.activityItemsByTaskRunId[taskRunId],
     replayNeeded: state.replayNeededByTaskRunId[taskRunId] === true,
     recovering: state.recoveringByTaskRunId[taskRunId] === true,
     recoveryAfterSequence: state.recoveryAfterSequenceByTaskRunId[taskRunId],
@@ -1018,3 +1168,48 @@ const isRawTaskEventPayload = (value: unknown): value is RawTaskEventPayload =>
   typeof value.event_id === 'string' &&
   typeof value.event_type === 'string' &&
   typeof value.task_run_id === 'string'
+
+// step.updated 이벤트의 payload에서 childTaskRunId를 추출한다.
+// camelCase와 snake_case 모두 처리한다.
+const getChildTaskRunId = (event: RawTaskEventPayload): string | null => {
+  if (event.event_type !== 'step.updated' || !isJsonObject(event.payload)) return null
+  const id = event.payload.childTaskRunId ?? event.payload.child_task_run_id
+  return typeof id === 'string' && id !== '' ? id : null
+}
+
+// 이벤트 목록에서 미구독 child TaskRun을 찾아 구독하고 snapshot을 가져온다.
+// fetchSnapshot이 재귀 호출될 수 있으나 subscribedChildTaskRunIds로 중복을 방지한다.
+const subscribeChildTaskRunsFromEvents = (
+  events: RawTaskEventPayload[],
+  get: () => TaskRunState,
+  set: (partial: Partial<TaskRunState> | ((state: TaskRunState) => Partial<TaskRunState>)) => void,
+) => {
+  const subscribedIds = get().subscribedChildTaskRunIds
+  const newChildIds = [
+    ...new Set(
+      events
+        .map(getChildTaskRunId)
+        .filter((id): id is string => id !== null && subscribedIds[id] === undefined),
+    ),
+  ]
+
+  if (newChildIds.length === 0) return
+
+  set((state) => ({
+    subscribedChildTaskRunIds: {
+      ...state.subscribedChildTaskRunIds,
+      ...Object.fromEntries(newChildIds.map((id) => [id, true as const])),
+    },
+  }))
+
+  for (const childId of newChildIds) {
+    try {
+      useAiRealtimeStore.getState().subscribeTask(childId)
+    } catch {
+      // 소켓 미준비 — 재접속 후 snapshot/replay로 복구됨
+    }
+    void get()
+      .fetchSnapshot(childId)
+      .catch(() => {})
+  }
+}

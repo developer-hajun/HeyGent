@@ -42,12 +42,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tabs } from '@/components/ui/tabs'
 import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
-import {
-  getUserSkillDetail,
-  listUserSkills,
-  type SkillCatalogDetail,
-  type SkillCatalogItem,
-} from '@/apis/agents'
+import { getUserSkillDetail, type SkillCatalogDetail, type SkillCatalogItem } from '@/apis/agents'
+import { useAgentCacheStore } from '@/store/useAgentCacheStore'
 import { listTaskRuns } from '@/apis/taskRuns'
 import {
   getCachedTaskRuns,
@@ -237,7 +233,9 @@ export function SubAgentDetailView({
     }
 
     let alive = true
-    void listUserSkills()
+    void useAgentCacheStore
+      .getState()
+      .fetchUserSkills()
       .then((items) => {
         if (!alive) return
         setSkillCatalog(items)
@@ -499,7 +497,6 @@ export function SubAgentDetailView({
               detail: skill.enabled
                 ? undefined
                 : '사용자 설정에서 꺼져 있어 이 에이전트에 적용할 수 없습니다.',
-              locationLabel: skill.sourcePath ?? undefined,
             }))}
             missingSkills={missingSkillIds}
             selectedCount={selectedKnownSkillIds.length}
@@ -686,6 +683,16 @@ function buildAgentRunItem(taskRun: RawTaskRun, rawEvents: RawTaskEventPayload[]
     typeof taskRun.progress_summary === 'string' ? taskRun.progress_summary : undefined
   const inputPayload = toRecord(taskRun.input_payload)
   const resultPayload = toRecord(taskRun.result_payload)
+  const resultMetadata = toRecord(resultPayload?.metadata)
+  const model =
+    getStringValue(inputPayload, 'model', 'provider_model', 'providerModel') ??
+    getStringValue(resultPayload, 'model') ??
+    getStringValue(resultMetadata, 'model') ??
+    undefined
+  const provider =
+    getStringValue(inputPayload, 'provider_name', 'providerName', 'provider') ??
+    getStringValue(resultPayload, 'provider_name', 'providerName', 'provider') ??
+    undefined
   const sortTime = getRunSortTime(taskRun, events)
 
   return {
@@ -698,8 +705,8 @@ function buildAgentRunItem(taskRun: RawTaskRun, rawEvents: RawTaskEventPayload[]
       compactText(progressSummary) ??
       compactText(summary.title) ??
       '아직 요약이 없습니다.',
-    adapter: 'openai',
-    model: getStringValue(inputPayload, 'model') ?? undefined,
+    adapter: getRunAdapterLabel(provider, model),
+    model,
     request:
       getStringValue(inputPayload, 'prompt', 'content', 'rawUserInput', 'raw_user_input') ??
       inputSummary,
@@ -792,6 +799,14 @@ function getStringValue(source: unknown, ...keys: string[]) {
     if (typeof value === 'string' && value.trim() !== '') return value.trim()
   }
   return undefined
+}
+
+function getRunAdapterLabel(provider?: string | null, model?: string | null) {
+  const providerText = (provider ?? '').trim().toLowerCase()
+  const modelText = (model ?? '').trim().toLowerCase()
+  if (providerText.includes('gemini') || modelText.startsWith('gemini-')) return 'gemini'
+  if (providerText.includes('openai') || modelText.startsWith('gpt-')) return 'openai'
+  return providerText || undefined
 }
 
 function buildDelegationInput(

@@ -34,11 +34,12 @@ interface OfficeMapProps {
   obstacleLineMode?: boolean
   obstacleLines?: Rect[]
   onNewLine?: (line: Rect) => void
-  onAgentClick?: (agentId: string) => void
+  onAgentClick?: (agentId: string, event: { clientX: number; clientY: number }) => void
   agentInfoMap?: Record<string, AgentVisualizationInfo>
   selectedAgentId?: string | null
   spawningIds?: ReadonlySet<string>
   tokenUsageSummary?: CommandUsageSummary | null
+  onTokenChartClick?: () => void
 }
 
 export function OfficeMap({
@@ -57,6 +58,7 @@ export function OfficeMap({
   selectedAgentId,
   spawningIds,
   tokenUsageSummary,
+  onTokenChartClick,
 }: OfficeMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
@@ -200,7 +202,7 @@ export function OfficeMap({
             display: 'block',
           }}
         />
-        <WhiteboardTokenChart summary={tokenUsageSummary ?? null} />
+        <WhiteboardTokenChart summary={tokenUsageSummary ?? null} onOpen={onTokenChartClick} />
         {agents.map((agent) => (
           <AgentSprite
             key={agent.config.id}

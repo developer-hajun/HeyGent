@@ -241,6 +241,39 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     );
     """,
     """
+    CREATE TABLE IF NOT EXISTS session_prototype_artifacts (
+        artifact_id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+        owner_key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        framework TEXT NOT NULL DEFAULT 'react' CHECK (framework IN ('react', 'html')),
+        styling TEXT NOT NULL DEFAULT 'css' CHECK (styling IN ('css', 'tailwind', 'mixed')),
+        design_preset_id TEXT,
+        active_version_id TEXT,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+        is_active BOOLEAN NOT NULL DEFAULT true,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS session_prototype_artifact_versions (
+        version_id TEXT PRIMARY KEY,
+        artifact_id TEXT NOT NULL REFERENCES session_prototype_artifacts(artifact_id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
+        owner_key TEXT NOT NULL,
+        version_number INTEGER NOT NULL,
+        prompt_message_id TEXT,
+        task_run_id TEXT,
+        files_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+        entry_file TEXT NOT NULL DEFAULT '/src/App.tsx',
+        summary TEXT NOT NULL DEFAULT '',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (artifact_id, version_number)
+    );
+    """,
+    """
     CREATE TABLE IF NOT EXISTS provider_oauth_states (
         provider_name TEXT NOT NULL,
         state TEXT NOT NULL,
@@ -607,6 +640,15 @@ POSTGRES_SCHEMA_STATEMENTS: list[str] = [
     """
     CREATE INDEX IF NOT EXISTS idx_ai_agent_skill_settings_profile_enabled
     ON ai_agent_skill_settings(profile_id, enabled);
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_session_prototype_artifacts_active
+    ON session_prototype_artifacts(session_id, owner_key, updated_at DESC)
+    WHERE is_active = true;
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_session_prototype_artifact_versions_artifact
+    ON session_prototype_artifact_versions(artifact_id, version_number DESC);
     """,
     """
     INSERT INTO ai_agent_profiles (

@@ -3,6 +3,8 @@ from types import SimpleNamespace
 from app.api.http.agents import (
     _bundle_response,
     _custom_agent_config_snapshot,
+    _profile_response,
+    _template_response,
     _sanitize_profile_skill_config,
 )
 from app.domain.orchestration.prompts.skill_prompt import SkillLoader
@@ -23,6 +25,35 @@ def test_main_agent_template_does_not_include_heartbeat_document():
     assert "HEARTBEAT.md" not in document_keys
 
 
+def test_main_agent_template_includes_mattermost_send_skill():
+    assert "mattermost-send" in MAIN_AGENT_TEMPLATE.skills
+
+
+def test_main_agent_template_includes_notion_skill():
+    assert "notion" in MAIN_AGENT_TEMPLATE.skills
+
+
+def test_main_agent_template_includes_awesome_design_skill():
+    assert "awesome-design" in MAIN_AGENT_TEMPLATE.skills
+
+
+def test_prototype_capable_subagents_include_awesome_design_skill():
+    template_by_key = {template.template_key: template for template in BUILTIN_AGENT_TEMPLATES}
+
+    assert "awesome-design" in template_by_key["coder"].skills
+    assert "awesome-design" in template_by_key["ux_designer"].skills
+
+
+def test_main_agent_template_uses_team_lead_display_copy():
+    assert MAIN_AGENT_TEMPLATE.display_name == "팀장"
+    assert MAIN_AGENT_TEMPLATE.name == "팀장"
+    assert MAIN_AGENT_TEMPLATE.title == "팀장"
+    assert MAIN_AGENT_TEMPLATE.role == "ceo"
+    joined_documents = "\n".join(document for _, _, document in MAIN_AGENT_TEMPLATE.documents)
+    assert "팀장 지침" in joined_documents
+    assert "CEO 지침" not in joined_documents
+
+
 def test_builtin_agent_template_skills_exist_in_builtin_catalog():
     catalog_skill_names = {skill["name"] for skill in SkillLoader().load_builtin()}
     template_skills = {
@@ -36,14 +67,65 @@ def test_builtin_agent_template_skills_exist_in_builtin_catalog():
     assert template_skills.issubset(catalog_skill_names)
 
 
+def test_builtin_subagent_templates_do_not_default_to_notion_or_mattermost():
+    restricted_defaults = {"notion", "mattermost-send"}
+
+    for template in BUILTIN_AGENT_TEMPLATES:
+        assert restricted_defaults.isdisjoint(template.skills)
+
+
 def test_k_service_template_includes_korean_life_skills():
     template_by_key = {template.template_key: template for template in BUILTIN_AGENT_TEMPLATES}
     template = template_by_key["k_services"]
 
     assert "k_services" in DEFAULT_SESSION_TEMPLATE_KEYS
     assert template.display_name == "K-에이전트"
+    assert template.profile_image == "/assets/agents/agent06/idle_front.png"
     assert set(K_SERVICE_SKILL_IDS).issubset(set(template.skills))
     assert "subway-lost-property" in template.skills
+
+
+def test_builtin_subagent_profile_images_point_to_frontend_assets():
+    for template in BUILTIN_AGENT_TEMPLATES:
+        assert not template.profile_image.startswith("/assets/agents/sub/")
+        assert template.profile_image.startswith("/assets/agents/agent")
+        assert template.profile_image.endswith("/idle_front.png")
+
+
+def test_agent_template_and_profile_responses_include_visual_key():
+    template = next(item for item in BUILTIN_AGENT_TEMPLATES if item.template_key == "k_services")
+    template_payload = _template_response(
+        {
+            "template_id": "template-k",
+            "template_key": template.template_key,
+            "template_version": 1,
+            "default_config_snapshot": {
+                "name": template.name,
+                "role": template.role,
+                "profileImage": template.profile_image,
+                "skills": list(template.skills),
+            },
+        }
+    )
+    profile_payload = _profile_response(
+        {
+            "profile_id": "agent-profile-k",
+            "session_id": "session-1",
+            "profile_key": "session.session-1.agent-profile-k",
+            "profile_version": 1,
+            "agent_type": "user_subagent",
+            "template_key": "k_services",
+            "config_snapshot": {
+                "name": template.name,
+                "role": template.role,
+                "profileImage": template.profile_image,
+                "skills": list(template.skills),
+            },
+        }
+    )
+
+    assert template_payload.visual_key == "agent06"
+    assert profile_payload.visual_key == "agent06"
 
 
 def test_visible_builtin_templates_are_routing_focused_agents():
@@ -119,7 +201,7 @@ def test_agent_profile_skill_sanitizer_removes_catalog_missing_skills():
         app=SimpleNamespace(
             state=SimpleNamespace(
                 agent_repository=agent_repository,
-                skill_repository=_FakeSkillRepository(["subagent-driven-development"]),
+                skill_repository=_FakeSkillRepository(["notion", "subagent-driven-development"]),
             )
         )
     )
@@ -130,8 +212,8 @@ def test_agent_profile_skill_sanitizer_removes_catalog_missing_skills():
         user=SimpleNamespace(user_id=1),
     )
 
-    assert sanitized["config_snapshot"]["skills"] == ["subagent-driven-development"]
-    assert agent_repository.updated_config["skills"] == ["subagent-driven-development"]
+    assert sanitized["config_snapshot"]["skills"] == ["notion", "subagent-driven-development"]
+    assert agent_repository.updated_config["skills"] == ["notion", "subagent-driven-development"]
 
 
 class _FakeSkillRepository:
