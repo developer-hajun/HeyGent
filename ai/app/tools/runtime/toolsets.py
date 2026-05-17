@@ -33,8 +33,8 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
         tools=("terminal.run",),
     ),
     "web": RuntimeToolsetDefinition(
-        description="Web research, extraction, and crawl tools.",
-        tools=("web_search", "web_extract", "web_crawl", "http_get"),
+        description="Web search and direct HTTP fetch tools.",
+        tools=("web_search", "http_get"),
     ),
     "messaging": RuntimeToolsetDefinition(
         description="Outbound messaging tools.",
@@ -51,22 +51,6 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     "prototype": RuntimeToolsetDefinition(
         description="Session-scoped React prototype artifact tools.",
         tools=("prototype.create_artifact", "prototype.get_active_artifact"),
-    ),
-    "browser": RuntimeToolsetDefinition(
-        description="Browser automation tools.",
-        tools=(
-            "browser_navigate",
-            "browser_snapshot",
-            "browser_click",
-            "browser_type",
-            "browser_scroll",
-            "browser_back",
-            "browser_press",
-            "browser_get_images",
-            "browser_vision",
-            "browser_console",
-            "browser_cdp",
-        ),
     ),
     "file": RuntimeToolsetDefinition(
         description="Local file read, write, patch, and search tools.",

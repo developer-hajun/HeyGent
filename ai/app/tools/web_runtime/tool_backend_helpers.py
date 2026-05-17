@@ -106,21 +106,6 @@ def resolve_openai_audio_api_key() -> str:
     ).strip()
 
 
-def prefers_gateway(config_section: str) -> bool:
-    """Return True when the user opted into the Tool Gateway for this tool.
-
-    Reads ``<section>.use_gateway`` from config.yaml.  Never raises.
-    """
-    try:
-        from app.tools.web_runtime.support.config import load_config
-        section = (load_config() or {}).get(config_section)
-        if isinstance(section, dict):
-            return bool(section.get("use_gateway"))
-    except Exception:
-        pass
-    return False
-
-
 def fal_key_is_configured() -> bool:
     """Return True when FAL_KEY is set to a non-whitespace value.
 

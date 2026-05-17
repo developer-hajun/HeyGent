@@ -15,7 +15,7 @@ from app.domain.tasks.detail import merge_step_detail
 
 
 BLOCKED_WORKER_TOOLSETS = ("delegate", "delegation")
-DEFAULT_WORKER_TOOLSETS = ("skills", "terminal", "file", "web", "browser")
+DEFAULT_WORKER_TOOLSETS = ("skills", "terminal", "file", "web")
 DEFAULT_WORKER_MAX_ITERATIONS = 80
 DEFAULT_WORKER_HARD_TIMEOUT_SECONDS = 900
 

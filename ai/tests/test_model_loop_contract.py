@@ -539,7 +539,6 @@ def test_builtin_browser_web_skills_are_loaded_from_app_skills():
         "web-scraping",
         "academic-paper-search",
         "domain-intelligence",
-        "ux-flow-review",
     }:
         assert name in loaded
         assert "Hermes" not in loaded[name]["body"]

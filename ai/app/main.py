@@ -167,7 +167,6 @@ async def lifespan(app: FastAPI):
             "terminal",
             "file",
             "web",
-            "browser",
             "work",
             "messaging",
             "design",

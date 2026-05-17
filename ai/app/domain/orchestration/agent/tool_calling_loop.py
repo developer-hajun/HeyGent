@@ -673,12 +673,6 @@ class ToolCallingLoopHandler:
         if tool_name == "web_search":
             query = cls._optional_text(args.get("query"))
             return f"{query} 웹 검색" if query else "웹 검색"
-        if tool_name in {"web_extract", "web_crawl"}:
-            url = cls._optional_text(args.get("url"))
-            return f"{url} 자료 확인" if url else "웹 자료 확인"
-        if tool_name.startswith("browser_"):
-            url = cls._optional_text(args.get("url"))
-            return f"{url} 브라우저 확인" if url else f"{tool_name} 실행"
         return f"{tool_name} 실행"
 
     @classmethod
@@ -1329,7 +1323,7 @@ class ToolCallingLoopHandler:
         raw_toolsets = task_input.get("enabled_toolsets")
         if not isinstance(raw_toolsets, list):
             if ToolCallingLoopHandler._is_worker_payload(task_input):
-                return ("skills", "terminal", "file", "web", "browser")
+                return ("skills", "terminal", "file", "web")
             return None
         normalized = tuple(str(item).strip() for item in raw_toolsets if str(item).strip())
         if ToolCallingLoopHandler._is_worker_payload(task_input):
@@ -1340,7 +1334,7 @@ class ToolCallingLoopHandler:
                 for item in normalized
                 if item not in {"all", "*", "delegate", "delegation", "delegate_task"}
             )
-            return worker_toolsets or ("skills", "terminal", "file", "web", "browser")
+            return worker_toolsets or ("skills", "terminal", "file", "web")
         return normalized or None
 
     def _max_iterations(self, task_input: dict[str, Any]) -> int:

@@ -11,7 +11,7 @@ from app.domain.orchestration.runtime_planning.todo_state import (
 )
 from app.tools.file import file_tools
 from app.tools.runtime.local_tool_runtime import LocalToolRuntime
-from app.tools.runtime.toolsets import resolve_runtime_tool_names
+from app.tools.runtime.toolsets import list_runtime_toolsets, resolve_runtime_tool_names
 
 
 class DummySessionStore:
@@ -178,18 +178,27 @@ def test_file_toolset_is_available_for_coding_and_local_core_but_not_safe():
     assert file_tool_names.isdisjoint(resolve_runtime_tool_names(("safe",)))
 
 
-def test_runtime_exposes_heygent_web_tool_definitions():
+def test_runtime_exposes_heygent_web_tool_definitions(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
 
     definitions = runtime.list_tool_definitions(enabled_toolsets=("web",))
 
-    assert [definition["name"] for definition in definitions] == ["http_get", "web_crawl", "web_extract", "web_search"]
+    assert [definition["name"] for definition in definitions] == ["http_get", "web_search"]
     schema_by_name = {definition["name"]: definition["schema"] for definition in definitions}
     assert schema_by_name["http_get"]["parameters"]["properties"]["url"]["type"] == "string"
     assert schema_by_name["web_search"]["parameters"]["properties"]["query"]["type"] == "string"
     assert "skills.read" not in schema_by_name["web_search"]["description"]
-    assert schema_by_name["web_extract"]["parameters"]["properties"]["urls"]["items"]["type"] == "string"
-    assert schema_by_name["web_crawl"]["parameters"]["properties"]["url"]["type"] == "string"
+
+
+def test_runtime_hides_web_search_when_search_backend_is_not_configured(monkeypatch):
+    for key in ("EXA_API_KEY", "PARALLEL_API_KEY", "TAVILY_API_KEY", "OPENAI_API_KEY", "HEYGENT_OPENAI_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    definitions = runtime.list_tool_definitions(enabled_toolsets=("web",))
+
+    assert [definition["name"] for definition in definitions] == ["http_get"]
 
 
 def test_runtime_exposes_notion_execute_only_for_notion_toolset():
@@ -288,36 +297,15 @@ def test_disabled_skill_readers_are_unavailable_even_with_enabled_skill_context(
     assert file_result["error"]["code"] == "skill_disabled"
 
 
-def test_runtime_exposes_heygent_browser_tool_definitions():
-    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
-
-    definitions = runtime.list_tool_definitions(enabled_toolsets=("browser",))
-
-    names = [definition["name"] for definition in definitions]
-    assert "browser_navigate" in names
-    assert "browser_snapshot" in names
-    assert "browser_click" in names
-    assert "browser_cdp" in names
-    schema_by_name = {definition["name"]: definition["schema"] for definition in definitions}
-    assert schema_by_name["browser_navigate"]["parameters"]["properties"]["url"]["type"] == "string"
-    assert schema_by_name["browser_click"]["parameters"]["properties"]["ref"]["type"] == "string"
-
-
-def test_web_browser_runtime_defaults_use_tolerant_timeouts():
-    from app.tools.web_runtime import browser_camofox, browser_tool
-    from app.tools.web_runtime.browser_providers import browser_use
-
-    assert browser_tool.DEFAULT_COMMAND_TIMEOUT == 180
-    assert browser_camofox._DEFAULT_TIMEOUT == 90
-    assert browser_use._DEFAULT_MANAGED_TIMEOUT_MINUTES == 10
-
-
-def test_web_is_available_in_local_core_and_safe_but_browser_is_explicit():
-    assert {"web_search", "web_extract", "web_crawl", "http_get"} <= resolve_runtime_tool_names(("web",))
-    assert {"web_search", "web_extract", "web_crawl", "http_get"} <= resolve_runtime_tool_names(("local-core",))
-    assert {"web_search", "web_extract", "web_crawl", "http_get"} <= resolve_runtime_tool_names(("safe",))
-    assert "browser_navigate" in resolve_runtime_tool_names(("browser",))
+def test_web_is_available_in_local_core_and_safe_without_removed_extract_or_browser_tools():
+    assert {"web_search", "http_get"} <= resolve_runtime_tool_names(("web",))
+    assert {"web_search", "http_get"} <= resolve_runtime_tool_names(("local-core",))
+    assert {"web_search", "http_get"} <= resolve_runtime_tool_names(("safe",))
+    assert "web_extract" not in resolve_runtime_tool_names(("web",))
+    assert "web_crawl" not in resolve_runtime_tool_names(("web",))
+    assert "browser" not in list_runtime_toolsets()
     assert "browser_navigate" not in resolve_runtime_tool_names(("local-core",))
+    assert "browser_navigate" not in resolve_runtime_tool_names(("safe",))
 
 
 def test_web_runtime_invokes_heygent_web_tool(monkeypatch):
@@ -382,25 +370,6 @@ def test_http_get_runtime_fetches_json(monkeypatch):
 
     assert result["ok"] is True
     assert result["json"] == {"ok": True, "weather": "clear"}
-
-
-def test_browser_runtime_invokes_heygent_browser_tool(monkeypatch):
-    fake_module = types.ModuleType("app.tools.web_runtime.browser_tool")
-
-    def fake_browser_navigate(url, task_id=None):
-        return json.dumps({"success": True, "url": url, "task_id": task_id})
-
-    fake_module.browser_navigate = fake_browser_navigate
-    monkeypatch.setitem(sys.modules, "app.tools.web_runtime.browser_tool", fake_module)
-    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
-
-    result = runtime.run_call(
-        name="browser_navigate",
-        args={"url": "https://example.com", "task_id": "task-test"},
-        enabled_toolsets=("browser",),
-    )
-
-    assert result == {"success": True, "url": "https://example.com", "task_id": "task-test"}
 
 
 def test_delegation_toolset_exposes_delegate_task_contract():
@@ -683,7 +652,7 @@ def test_delegate_task_normalizes_tool_names_to_worker_toolsets():
         name="delegate_task",
         args={
             "goal": "웹 자료 조사",
-            "toolsets": ["web_search", "web_extract", "read_file", "terminal.run"],
+            "toolsets": ["web_search", "http_get", "read_file", "terminal.run"],
         },
         enabled_toolsets=("delegation",),
     )

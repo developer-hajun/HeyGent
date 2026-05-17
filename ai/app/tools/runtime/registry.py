@@ -39,8 +39,11 @@ def list_runtime_tool_definitions(handler_by_name: dict[str, Callable]) -> list[
             "module": entry.definition.module,
             "schema": entry.definition.schema,
             "result_format": entry.definition.result_format,
+            "requires_env": list(entry.definition.requires_env),
+            "unavailable_reason": entry.definition.unavailable_reason,
         }
         for _, entry in sorted(entries.items())
+        if _definition_is_available(entry.definition)
     ]
 
 
@@ -49,11 +52,24 @@ def list_runtime_tool_schemas(handler_by_name: dict[str, Callable]) -> list[dict
     return [
         {"type": "function", "function": entry.definition.schema}
         for _, entry in sorted(entries.items())
+        if _definition_is_available(entry.definition)
     ]
 
 
+def _definition_is_available(definition: RuntimeToolDefinition) -> bool:
+    if not definition.enabled:
+        return False
+    if definition.check_fn is None:
+        return True
+    try:
+        return bool(definition.check_fn())
+    except Exception:
+        # check_fn은 도구 노출 여부만 판단한다. 검사 자체가 실패하면 모델에게
+        # "쓸 수 있는 도구"처럼 보여 반복 실패를 만들지 않도록 숨긴다.
+        return False
+
+
 def _discover_runtime_tool_modules() -> None:
-    from app.tools.browser import browser_tool  # noqa: F401
     from app.tools.design import design_tool  # noqa: F401
     from app.tools.delegation import delegate_tool  # noqa: F401
     from app.tools.file import file_tools  # noqa: F401

@@ -1597,7 +1597,8 @@ def test_ws_main_agent_skill_keeps_default_local_toolsets(client, monkeypatch):
         assert task is not None
         assert "mattermost-send" in task.input_payload["enabledSkillNames"]
         enabled_toolsets = set(task.input_payload["enabled_toolsets"])
-        assert {"file", "terminal", "browser", "messaging"}.issubset(enabled_toolsets)
+        assert {"file", "terminal", "messaging"}.issubset(enabled_toolsets)
+        assert "browser" not in enabled_toolsets
     finally:
         context.__exit__(None, None, None)
 

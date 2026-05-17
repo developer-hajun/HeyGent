@@ -85,6 +85,7 @@ def _patch_respond(monkeypatch, responses: list[AgentModelResponse | Exception])
 
 
 def test_agent_loop_executes_native_tool_calls_and_materializes_step(client, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     provider_calls = _patch_respond(
         monkeypatch,
         [

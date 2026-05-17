@@ -15,7 +15,7 @@ metadata:
 
 Free web search using DuckDuckGo. **No API key required.**
 
-Preferred when `web_search` is unavailable or unsuitable (for example when `FIRECRAWL_API_KEY` is not set). Can also be used as a standalone search path when DuckDuckGo results are specifically desired.
+Preferred when `web_search` is unavailable or unsuitable. Can also be used as a standalone search path when DuckDuckGo results are specifically desired.
 
 ## Detection Flow
 
@@ -30,7 +30,7 @@ Decision tree:
 1. If `ddgs` CLI is installed, prefer `terminal` + `ddgs`
 2. If `ddgs` CLI is missing, do not assume `execute_code` can import `ddgs`
 3. If the user wants DuckDuckGo specifically, install `ddgs` first in the relevant environment
-4. Otherwise fall back to built-in web/browser tools
+4. Otherwise fall back to built-in web tools
 
 Important runtime note:
 - Terminal and `execute_code` are separate runtimes
@@ -184,7 +184,7 @@ Returns: `title`, `content`, `description`, `duration`, `provider`, `published`,
 
 ## Workflow: Search then Extract
 
-DuckDuckGo returns titles, URLs, and snippets — not full page content. To get full page content, search first and then extract the most relevant URL with `web_extract`, browser tools, or curl.
+DuckDuckGo returns titles, URLs, and snippets — not full page content. To get full page content, search first and then fetch the most relevant URL with `http_get`, curl, or a task-specific skill.
 
 CLI example:
 
@@ -203,13 +203,13 @@ with DDGS() as ddgs:
         print(r["title"], "->", r["href"])
 ```
 
-Then extract the best URL with `web_extract` or another content-retrieval tool.
+Then fetch the best URL with `http_get`, curl, or another content-retrieval tool.
 
 ## Limitations
 
 - **Rate limiting**: DuckDuckGo may throttle after many rapid requests. Add a short delay between searches if needed.
-- **No content extraction**: `ddgs` returns snippets, not full page content. Use `web_extract`, browser tools, or curl for the full article/page.
-- **Results quality**: Generally good but less configurable than Firecrawl's search.
+- **No content extraction**: `ddgs` returns snippets, not full page content. Use `http_get`, curl, or a task-specific skill for the full article/page.
+- **Results quality**: Generally good but less configurable than paid search APIs.
 - **Availability**: DuckDuckGo may block requests from some cloud IPs. If searches return empty, try different keywords or wait a few seconds.
 - **Field variability**: Return fields may vary between results or `ddgs` versions. Use `.get()` for optional fields to avoid `KeyError`.
 - **Separate runtimes**: A successful `ddgs` install in terminal does not automatically mean `execute_code` can import it.
@@ -218,7 +218,7 @@ Then extract the best URL with `web_extract` or another content-retrieval tool.
 
 | Problem | Likely Cause | What To Do |
 |---------|--------------|------------|
-| `ddgs: command not found` | CLI not installed in the shell environment | Install `ddgs`, or use built-in web/browser tools instead |
+| `ddgs: command not found` | CLI not installed in the shell environment | Install `ddgs`, or use built-in web tools instead |
 | `ModuleNotFoundError: No module named 'ddgs'` | Python runtime does not have the package installed | Do not use Python DDGS there until that runtime is prepared |
 | Search returns nothing | Temporary rate limiting or poor query | Wait a few seconds, retry, or adjust the query |
 | CLI works but `execute_code` import fails | Terminal and `execute_code` are different runtimes | Keep using CLI, or separately prepare the Python runtime |

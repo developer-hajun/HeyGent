@@ -34,7 +34,7 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """
             UPDATE ai_agent_profiles
             SET
-                config_snapshot = '{"promptRole":"main","toolsets":["skills","session","planning","terminal","file","web","browser","delegation"]}'::jsonb,
+                config_snapshot = '{"promptRole":"main","toolsets":["skills","session","planning","terminal","file","web","delegation"]}'::jsonb,
                 delegation_policy = '{"canDelegate":true,"maxWorkerDepth":1,"maxConcurrentWorkers":3}'::jsonb
             WHERE owner_key = 'system'
               AND profile_key = 'main.default'
@@ -43,7 +43,7 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """
             UPDATE ai_agent_profiles
             SET
-                config_snapshot = '{"promptRole":"worker","toolsets":["skills","terminal","file","web","browser"]}'::jsonb,
+                config_snapshot = '{"promptRole":"worker","toolsets":["skills","terminal","file","web"]}'::jsonb,
                 delegation_policy = '{"canDelegate":false,"maxWorkerDepth":0,"hardTimeoutSeconds":900,"maxIterations":80}'::jsonb
             WHERE owner_key = 'system'
               AND profile_key = 'worker.default'
