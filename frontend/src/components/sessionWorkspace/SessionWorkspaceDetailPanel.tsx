@@ -47,7 +47,6 @@ import {
 import { WorkBoardPanel, WorkflowPanel } from '@/components/sessionWorkspace/work/board'
 import { SubAgentsPanel } from '@/components/sessionWorkspace/subAgents'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
-import { AgentStatusPage } from '@/pages/AgentStatusPage'
 import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
 import {
   getSessionMainAgent,
@@ -99,26 +98,21 @@ export function SessionWorkspaceDetailPanel({
   sessionId,
   session,
 }: SessionWorkspaceDetailPanelProps) {
-  if (activePanel === null) {
+  // 시각화 패널은 SessionShell 이 항상 백그라운드로 마운트한다.
+  // 여기서는 시각화 이외 패널만 렌더한다.
+  if (activePanel === null || activePanel === 'visualization') {
     return null
   }
 
   if (activePanel === 'subAgents') {
     return <SubAgentsPanel sessionId={sessionId} />
   }
-
-  if (activePanel === 'visualization') {
-    return <AgentStatusPage />
-  }
-
   if (activePanel === 'issueBoard') {
     return <WorkBoardPanel sessionId={sessionId} />
   }
-
   if (activePanel === 'workflow') {
     return <WorkflowPanel sessionId={sessionId} />
   }
-
   if (session === null) {
     const title = activePanel === 'ceo' ? '팀장 에이전트' : '세션'
     return (
@@ -127,11 +121,9 @@ export function SessionWorkspaceDetailPanel({
       </WorkspacePageShell>
     )
   }
-
   if (activePanel === 'ceo') {
     return <MainAgentPage key={session.session_id} session={session} />
   }
-
   return null
 }
 

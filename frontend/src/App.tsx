@@ -236,11 +236,13 @@ function WorkspaceRoutes() {
       <Route path="/new-chat" element={<NewChatPage />} />
       <Route path="/agent-status" element={<BuildingOverviewPage />} />
       <Route path="/agent-status/:sessionId" element={<AgentStatusPage />} />
-      <Route path="/session/:sessionId" element={<ChatSessionPage />} />
-      <Route
-        path="/session/:sessionId/workspace/:panelSlug"
-        element={<SessionWorkspaceRoutePage />}
-      />
+      {/*
+       * 세션 페이지(/session/:sessionId 와 /session/:sessionId/workspace/...)는
+       * 모두 같은 SessionShell 로 마운트한다. SessionShell 이 시각화 패널을
+       * 항상 백그라운드로 한 번만 마운트하고 그 위에 채팅/다른 패널을 덮어
+       * 와리가리 시 캐릭터 walkTimer/transition 이 끊기는 것을 막는다.
+       */}
+      <Route path="/session/:sessionId/*" element={<SessionShell />} />
       <Route path="/chat" element={<Navigate to="/new-chat" replace />} />
       <Route path="/agents" element={<Navigate to="/agent-status" replace />} />
       <Route path="/reminders" element={<Navigate to="/" replace />} />
@@ -252,23 +254,77 @@ function WorkspaceRoutes() {
   )
 }
 
-function SessionWorkspaceRoutePage() {
+function SessionShell() {
   const location = useLocation()
   const { sessionId = '' } = useParams()
   const sessionsById = useChatStore((state) => state.sessionsById)
   const activePanel = getWorkspacePanelFromPath(location.pathname)
+  // 시각화 패널을 한 번이라도 진입했는지 — 진입 후엔 영구 true 로 유지해야 컴포넌트가 안 죽는다.
+  // React 공식 권장: "render 중에 prev state 와 새 state 를 비교해서 set" 하는 패턴 (한 번만 발생, 무한 루프 없음).
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const [visualizationVisited, setVisualizationVisited] = useState(false)
+  if (activePanel === 'visualization' && !visualizationVisited) {
+    setVisualizationVisited(true)
+  }
+  const visualizationVisible = activePanel === 'visualization'
+  const isChat = activePanel === null
 
-  if (activePanel === null || sessionId === '') {
-    return <Navigate to={sessionId === '' ? '/new-chat' : `/session/${sessionId}`} replace />
+  if (sessionId === '') {
+    return <Navigate to="/new-chat" replace />
+  }
+
+  // 시각화 패널은 한 번이라도 진입했으면 절대 언마운트되지 않는다.
+  // 안 보일 때는 화면 밖으로 옮겨두지만 DOM/walkTimer/CSS transition 은 계속 살아있다.
+  const visualizationNode = visualizationVisited ? (
+    <div
+      key="session-visualization-persistent"
+      style={
+        visualizationVisible
+          ? {
+              position: 'absolute',
+              inset: 0,
+              zIndex: 0,
+              display: 'flex',
+            }
+          : {
+              position: 'absolute',
+              left: '-99999px',
+              top: '-99999px',
+              width: '100%',
+              height: '100%',
+              pointerEvents: 'none',
+              visibility: 'hidden',
+              display: 'flex',
+            }
+      }
+      aria-hidden={!visualizationVisible}
+    >
+      <AgentStatusPage />
+    </div>
+  ) : null
+
+  let overlayNode: JSX.Element | null = null
+  if (isChat) {
+    overlayNode = <ChatSessionPage />
+  } else if (activePanel !== null && activePanel !== 'visualization') {
+    overlayNode = (
+      <SessionWorkspaceDetailPanel
+        activePanel={activePanel}
+        sessionId={sessionId}
+        session={sessionsById[sessionId] ?? null}
+      />
+    )
   }
 
   return (
-    <SessionWorkspaceDetailPanel
-      key={`${sessionId}:${activePanel}`}
-      activePanel={activePanel}
-      sessionId={sessionId}
-      session={sessionsById[sessionId] ?? null}
-    />
+    <div className="relative flex min-w-0 flex-1">
+      {visualizationNode}
+      {overlayNode !== null && (
+        <div className="bg-background relative flex min-w-0 flex-1" style={{ zIndex: 1 }}>
+          {overlayNode}
+        </div>
+      )}
+    </div>
   )
 }
 

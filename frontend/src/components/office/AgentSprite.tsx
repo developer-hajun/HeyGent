@@ -54,7 +54,7 @@ function getSpriteSrc(agent: AgentRuntime, standingUp: boolean): string {
 interface AgentSpriteProps {
   agent: AgentRuntime
   onArrived: (agentId: string) => void
-  onClick?: (agentId: string) => void
+  onClick?: (agentId: string, event: { clientX: number; clientY: number }) => void
   hoverInfo?: AgentVisualizationInfo
   isSelected?: boolean
   isSpawning?: boolean
@@ -99,7 +99,8 @@ export function AgentSprite({
   const size = (state === 'sitting_desk' ? SIZE_SITTING : SIZE_NORMAL) * scale
   const isInteractive = !!onClick
 
-  const zIndex = isSelected ? 25 : 10
+  const [hovered, setHovered] = useState(false)
+  const zIndex = isSelected ? 25 : hovered ? 20 : 10
 
   const [bubbleHovered, setBubbleHovered] = useState(false)
 
@@ -131,7 +132,9 @@ export function AgentSprite({
       onTransitionEnd={(e) => {
         if (state === 'walking' && e.propertyName === 'transform') onArrived(config.id)
       }}
-      onClick={() => onClick?.(config.id)}
+      onClick={(e) => onClick?.(config.id, { clientX: e.clientX, clientY: e.clientY })}
+      onMouseEnter={() => isInteractive && setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       {/* 스폰 전구 — 에이전트 등장 시 머리 위에 💡 아이콘이 팝업 */}
       {isSpawning && (
@@ -247,7 +250,9 @@ export function AgentSprite({
           width: '100%',
           height: '100%',
           userSelect: 'none',
-          transform: imgTransform,
+          transform: [imgTransform, hovered ? 'translateY(-6px)' : null].filter(Boolean).join(' '),
+          filter: hovered ? 'drop-shadow(0 6px 10px rgba(0, 0, 0, 0.45))' : undefined,
+          transition: 'transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), filter 0.18s ease',
         }}
       />
     </div>

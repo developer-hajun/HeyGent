@@ -69,6 +69,17 @@ function resolveDestination(
   taskRun: RawTaskRun,
   latestEvent?: RawTaskEventPayload,
 ): UIDestination | null {
+  // taskRun 자체가 terminal 이면 latestEvent 의 step.started 같은 비-terminal event 에 휘둘리지 말고
+  // taskRun.status 를 기준으로 즉시 결정한다 — task 가 끝났는데 가장 마지막 step event 가
+  // step.started 같은 거여서 'desk' 가 잘못 발사되어 캐릭터가 책상에 박히는 사고를 막는다.
+  const taskStatus = taskRun.status?.toUpperCase()
+  if (taskStatus === 'COMPLETED' || taskStatus === 'CANCELED' || taskStatus === 'CANCELLED') {
+    return 'rest'
+  }
+  if (taskStatus === 'FAILED') {
+    return 'calling'
+  }
+
   if (latestEvent !== undefined) {
     if (TASK_COMPLETED_EVENT_TYPES.has(latestEvent.event_type)) return 'rest'
     if (TASK_FAILED_EVENT_TYPES.has(latestEvent.event_type)) return 'calling'
