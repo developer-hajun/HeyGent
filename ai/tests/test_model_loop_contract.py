@@ -219,7 +219,7 @@ def test_prompt_builder_promotes_session_agent_task_from_candidate_profiles():
         },
         available_tools=[
             {"name": "session_agent_task", "summary": "세션 에이전트에게 하위 작업 위임", "toolset": "work"},
-            {"name": "web_search", "summary": "웹 검색", "toolset": "web"},
+            {"name": "http_get", "summary": "HTTP 조회", "toolset": "web"},
         ],
         tool_results=[],
         task_todo_state=None,
@@ -405,7 +405,7 @@ def test_prompt_builder_includes_skill_description_catalog_without_reader_tool_p
     prompt = prompt_builder.build_agent_loop_prompt(
         input_payload={"prompt": "강남구 날씨 알려줘"},
         available_tools=[
-            {"name": "web_search", "summary": "웹 검색", "toolset": "web"},
+            {"name": "http_get", "summary": "HTTP 조회", "toolset": "web"},
         ],
         tool_results=[],
         task_todo_state=None,
@@ -509,14 +509,14 @@ def test_skill_catalog_filters_optional_tool_conditions_like_reference():
             },
             {
                 "name": "web-search-fallback",
-                "description": "web_search가 없을 때만 보여야 하는 대체 검색 스킬",
-                "metadata": {"runtime": {"requires_toolsets": ["terminal"], "fallback_for_tools": ["web_search"]}},
+                "description": "removed_search가 없을 때만 보여야 하는 대체 검색 스킬",
+                "metadata": {"runtime": {"requires_toolsets": ["terminal"], "fallback_for_tools": ["removed_search"]}},
             },
         ]
     )
     prompt_builder = PromptBuilder(SkillPromptBuilder(registry))
 
-    prompt_without_web_search = prompt_builder.build_agent_loop_prompt(
+    prompt_without_removed_search = prompt_builder.build_agent_loop_prompt(
         input_payload={"prompt": "검색해줘"},
         available_tools=[
             {"name": "terminal.run", "summary": "터미널 실행", "toolset": "terminal"},
@@ -528,11 +528,11 @@ def test_skill_catalog_filters_optional_tool_conditions_like_reference():
         turn_index=1,
         max_iterations=4,
     )
-    prompt_with_web_search = prompt_builder.build_agent_loop_prompt(
+    prompt_with_removed_search = prompt_builder.build_agent_loop_prompt(
         input_payload={"prompt": "검색해줘"},
         available_tools=[
             {"name": "terminal.run", "summary": "터미널 실행", "toolset": "terminal"},
-            {"name": "web_search", "summary": "웹 검색", "toolset": "web"},
+            {"name": "removed_search", "summary": "제거 예정 검색", "toolset": "web"},
         ],
         tool_results=[],
         task_todo_state=None,
@@ -541,21 +541,12 @@ def test_skill_catalog_filters_optional_tool_conditions_like_reference():
         max_iterations=4,
     )
 
-    assert "`general-note`" in prompt_without_web_search
-    assert "`web-search-fallback`" in prompt_without_web_search
-    assert "`browser-only`" not in prompt_without_web_search
-    assert "`general-note`" in prompt_with_web_search
-    assert "`web-search-fallback`" not in prompt_with_web_search
-    assert "`browser-only`" not in prompt_with_web_search
-
-
-def test_skill_loader_preserves_nested_runtime_metadata():
-    loaded = {skill["name"]: skill for skill in SkillLoader().load_builtin()}
-
-    metadata = loaded["web-search-fallback"]["metadata"]["runtime"]
-
-    assert metadata["requires_toolsets"] == ["terminal"]
-    assert metadata["fallback_for_tools"] == ["web_search"]
+    assert "`general-note`" in prompt_without_removed_search
+    assert "`web-search-fallback`" in prompt_without_removed_search
+    assert "`browser-only`" not in prompt_without_removed_search
+    assert "`general-note`" in prompt_with_removed_search
+    assert "`web-search-fallback`" not in prompt_with_removed_search
+    assert "`browser-only`" not in prompt_with_removed_search
 
 
 def test_assemble_agent_loop_messages_wraps_history_as_context_only():
@@ -600,7 +591,6 @@ def test_builtin_browser_web_skills_are_loaded_from_app_skills():
     loaded = {skill["name"]: skill for skill in SkillLoader().load_builtin()}
 
     for name in {
-        "web-search-fallback",
         "web-scraping",
         "academic-paper-search",
         "domain-intelligence",

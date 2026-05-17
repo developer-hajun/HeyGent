@@ -747,9 +747,6 @@ class ToolCallingLoopHandler:
             if summary:
                 return f"worker 결과 회수: {summary[:80]}"
             return f"{goal} worker 실행" if goal else "worker 실행"
-        if tool_name == "web_search":
-            query = cls._optional_text(args.get("query"))
-            return f"{query} 웹 검색" if query else "웹 검색"
         return f"{tool_name} 실행"
 
     @classmethod

@@ -8,30 +8,6 @@ from urllib.request import Request, urlopen
 from app.tools.runtime.catalog import register_runtime_tool_definition
 
 
-WEB_SEARCH_BACKEND_ENV_KEYS = (
-    "EXA_API_KEY",
-    "PARALLEL_API_KEY",
-    "TAVILY_API_KEY",
-    "OPENAI_API_KEY",
-    "HEYGENT_OPENAI_API_KEY",
-)
-
-
-WEB_SEARCH_SCHEMA = {
-    "name": "web_search",
-    "description": (
-        "Search the web for information on any topic. Returns relevant results with titles, URLs, and descriptions."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "The search query to look up on the web."},
-            "limit": {"type": "integer", "description": "Maximum number of results to return.", "default": 5},
-        },
-        "required": ["query"],
-    },
-}
-
 HTTP_GET_SCHEMA = {
     "name": "http_get",
     "description": (
@@ -54,29 +30,12 @@ HTTP_GET_SCHEMA = {
 
 
 register_runtime_tool_definition(
-    name="web_search",
-    toolset="web",
-    module="app.tools.web.web_tools",
-    summary="Search the web through the configured web backend.",
-    schema=WEB_SEARCH_SCHEMA,
-    check_fn=lambda: _web_search_available(),
-    requires_env=WEB_SEARCH_BACKEND_ENV_KEYS,
-    unavailable_reason="No configured web search backend key is available.",
-)
-register_runtime_tool_definition(
     name="http_get",
     toolset="web",
     module="app.tools.web.web_tools",
     summary="Fetch JSON or text from an HTTP(S) URL.",
     schema=HTTP_GET_SCHEMA,
 )
-
-
-def web_search_handler(args: dict[str, Any]) -> dict[str, Any]:
-    from app.tools.web_runtime.web_tools import web_search_tool
-
-    limit = _coerce_int(args.get("limit"), default=5, minimum=1, maximum=20)
-    return _decode_tool_result(web_search_tool(str(args.get("query") or ""), limit=limit))
 
 
 def http_get_handler(args: dict[str, Any]) -> dict[str, Any]:
@@ -128,20 +87,3 @@ def _decode_tool_result(raw: Any) -> dict[str, Any]:
     return {"ok": True, "result": raw}
 
 
-def _coerce_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = default
-    return max(minimum, min(maximum, parsed))
-
-
-def _web_search_available() -> bool:
-    try:
-        from app.tools.web_runtime.web_tools import check_web_api_key
-
-        return bool(check_web_api_key())
-    except Exception:
-        # 검색 백엔드 설정 확인에 실패하면 web_search를 숨긴다.
-        # http_get은 별도 API/스킬 프록시 호출용으로 유지한다.
-        return False

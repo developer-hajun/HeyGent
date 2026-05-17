@@ -37,8 +37,8 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
         tools=("terminal.run",),
     ),
     "web": RuntimeToolsetDefinition(
-        description="Web search and direct HTTP fetch tools.",
-        tools=("web_search", "http_get"),
+        description="Direct HTTP fetch tools.",
+        tools=("http_get",),
     ),
     "messaging": RuntimeToolsetDefinition(
         description="Outbound messaging tools.",

@@ -80,7 +80,6 @@ class LocalToolRuntime:
                 "prototype.get_active_artifact": self._get_active_prototype_artifact,
                 "prototype.create_artifact": self._create_prototype_artifact,
                 "terminal.run": self._run_terminal_command,
-                "web_search": self._run_web_search,
                 "http_get": self._run_http_get,
                 "read_file": self._read_file,
                 "write_file": self._write_file,
@@ -472,9 +471,6 @@ class LocalToolRuntime:
 
     def _search_files(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_file_tool_handler("search_files_handler", args)
-
-    def _run_web_search(self, args: dict[str, Any]) -> dict[str, Any]:
-        return self._run_external_tool_handler("app.tools.web.web_tools", "web_search_handler", args)
 
     def _run_http_get(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.web.web_tools", "http_get_handler", args)
@@ -1274,7 +1270,6 @@ class LocalToolRuntime:
         if not isinstance(value, list):
             return ["skills", "terminal", "file", "web"]
         tool_name_to_toolset = {
-            "web_search": "web",
             "http_get": "web",
             "read_file": "file",
             "write_file": "file",

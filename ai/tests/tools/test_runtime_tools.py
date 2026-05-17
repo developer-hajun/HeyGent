@@ -1,6 +1,5 @@
 import json
 import sys
-import types
 from copy import deepcopy
 
 from app.domain.work.models import WorkComment, WorkItem, WorkRelation, WorkRunLink
@@ -187,21 +186,18 @@ def test_file_toolset_is_available_for_coding_and_local_core_but_not_safe():
 
 
 def test_runtime_exposes_heygent_web_tool_definitions(monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
 
     definitions = runtime.list_tool_definitions(enabled_toolsets=("web",))
 
-    assert [definition["name"] for definition in definitions] == ["http_get", "web_search"]
+    assert [definition["name"] for definition in definitions] == ["http_get"]
     schema_by_name = {definition["name"]: definition["schema"] for definition in definitions}
     assert schema_by_name["http_get"]["parameters"]["properties"]["url"]["type"] == "string"
-    assert schema_by_name["web_search"]["parameters"]["properties"]["query"]["type"] == "string"
-    assert "skills.read" not in schema_by_name["web_search"]["description"]
 
 
-def test_runtime_hides_web_search_when_search_backend_is_not_configured(monkeypatch):
+def test_runtime_does_not_expose_removed_web_search_tool(monkeypatch):
     for key in ("EXA_API_KEY", "PARALLEL_API_KEY", "TAVILY_API_KEY", "OPENAI_API_KEY", "HEYGENT_OPENAI_API_KEY"):
-        monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv(key, "test-key")
     runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
 
     definitions = runtime.list_tool_definitions(enabled_toolsets=("web",))
@@ -306,9 +302,12 @@ def test_disabled_skill_readers_are_unavailable_even_with_enabled_skill_context(
 
 
 def test_web_is_available_in_local_core_and_safe_without_removed_extract_or_browser_tools():
-    assert {"web_search", "http_get"} <= resolve_runtime_tool_names(("web",))
-    assert {"web_search", "http_get"} <= resolve_runtime_tool_names(("local-core",))
-    assert {"web_search", "http_get"} <= resolve_runtime_tool_names(("safe",))
+    assert resolve_runtime_tool_names(("web",)) == {"http_get"}
+    assert "http_get" in resolve_runtime_tool_names(("local-core",))
+    assert "http_get" in resolve_runtime_tool_names(("safe",))
+    assert "web_search" not in resolve_runtime_tool_names(("web",))
+    assert "web_search" not in resolve_runtime_tool_names(("local-core",))
+    assert "web_search" not in resolve_runtime_tool_names(("safe",))
     assert "web_extract" not in resolve_runtime_tool_names(("web",))
     assert "web_crawl" not in resolve_runtime_tool_names(("web",))
     assert "browser" not in list_runtime_toolsets()
@@ -319,49 +318,21 @@ def test_web_is_available_in_local_core_and_safe_without_removed_extract_or_brow
 def test_runtime_ignores_stale_or_unknown_toolsets():
     resolved = resolve_runtime_tool_names(("web", "browser", "unknown-toolset", ""))
 
-    assert {"web_search", "http_get"} <= resolved
+    assert "http_get" in resolved
+    assert "web_search" not in resolved
     assert "browser_navigate" not in resolved
 
 
-def test_runtime_tool_availability_reports_hidden_search_backend(monkeypatch):
+def test_runtime_tool_availability_omits_removed_search_tool(monkeypatch):
     for key in ("EXA_API_KEY", "PARALLEL_API_KEY", "TAVILY_API_KEY", "OPENAI_API_KEY", "HEYGENT_OPENAI_API_KEY"):
-        monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv(key, "test-key")
     runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
 
     availability = {item["name"]: item for item in runtime.list_tool_availability(enabled_toolsets=("web", "browser"))}
 
     assert availability["http_get"]["available"] is True
-    assert availability["web_search"]["available"] is False
-    assert availability["web_search"]["requires_env"] == [
-        "EXA_API_KEY",
-        "PARALLEL_API_KEY",
-        "TAVILY_API_KEY",
-        "OPENAI_API_KEY",
-        "HEYGENT_OPENAI_API_KEY",
-    ]
-    assert availability["web_search"]["unavailable_reason"] == "No configured web search backend key is available."
+    assert "web_search" not in availability
     assert "browser_navigate" not in availability
-
-
-def test_web_runtime_invokes_heygent_web_tool(monkeypatch):
-    fake_module = types.ModuleType("app.tools.web_runtime.web_tools")
-
-    def fake_web_search_tool(query, limit=5):
-        return json.dumps({"success": True, "data": {"web": [{"title": query, "url": "https://example.com"}]}, "limit": limit})
-
-    fake_module.web_search_tool = fake_web_search_tool
-    monkeypatch.setitem(sys.modules, "app.tools.web_runtime.web_tools", fake_module)
-    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
-
-    result = runtime.run_call(
-        name="web_search",
-        args={"query": "agent tool", "limit": 2},
-        enabled_toolsets=("web",),
-    )
-
-    assert result["success"] is True
-    assert result["data"]["web"][0]["title"] == "agent tool"
-    assert result["limit"] == 2
 
 
 def test_http_get_runtime_fetches_json(monkeypatch):
@@ -789,7 +760,7 @@ def test_delegate_task_normalizes_tool_names_to_worker_toolsets():
         name="delegate_task",
         args={
             "goal": "웹 자료 조사",
-            "toolsets": ["web_search", "http_get", "read_file", "terminal.run"],
+            "toolsets": ["http_get", "read_file", "terminal.run"],
         },
         enabled_toolsets=("delegation",),
     )

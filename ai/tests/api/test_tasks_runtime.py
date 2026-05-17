@@ -123,7 +123,8 @@ def test_agent_loop_executes_native_tool_calls_on_runtime_step(client, monkeypat
     exposed_tool_names = [tool["function"]["name"] for tool in provider_calls[0]["tools"]]
     assert "skills_list" in exposed_tool_names
     assert "skills_read" in exposed_tool_names
-    assert "web_search" in exposed_tool_names
+    assert "web_search" not in exposed_tool_names
+    assert "http_get" in exposed_tool_names
     assert "terminal_run" in exposed_tool_names
     assert "step" not in exposed_tool_names
     assert all("." not in name for name in exposed_tool_names)
@@ -681,7 +682,7 @@ def test_agent_loop_keeps_delegate_step_running_until_worker_result_before_file_
             summary="웹 자료 조사, 실무 운영 관점, 아키텍처 관점, 사용자 경험 관점 검토 완료",
             output_payload={
                 "tool_results": [
-                    {"tool_call_id": "worker_web", "name": "web_search", "result": {"ok": True}},
+                    {"tool_call_id": "worker_http", "name": "http_get", "result": {"ok": True}},
                 ]
             },
         )

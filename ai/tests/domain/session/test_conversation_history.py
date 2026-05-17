@@ -9,7 +9,7 @@ def test_build_conversation_history_keeps_user_assistant_turns_only():
     rows = [
         {"id": 1, "role": "user", "content": "강남역에서 지갑 잃어버렸어", "metadata": {}},
         {"id": 2, "role": "assistant", "content": "공식 조회 경로를 확인했습니다.", "metadata": {}},
-        {"id": 3, "role": "tool", "content": "internal", "metadata": {"tool_name": "web_search"}},
+        {"id": 3, "role": "tool", "content": "internal", "metadata": {"tool_name": "http_get"}},
         {"id": 4, "role": "user", "content": "ㄴㄴ 분실물 찾은 거", "metadata": {}},
     ]
 
