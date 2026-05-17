@@ -537,7 +537,6 @@ function DeleteSessionDialog({
         </AlertDialogHeader>
         {deleteError ? <p className="text-destructive text-sm">{deleteError}</p> : null}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={deleting}>취소</AlertDialogCancel>
           <Button variant="destructive" onClick={onConfirm} disabled={deleting}>
             {deleting ? (
               <>
@@ -548,6 +547,7 @@ function DeleteSessionDialog({
               '삭제'
             )}
           </Button>
+          <AlertDialogCancel disabled={deleting}>취소</AlertDialogCancel>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

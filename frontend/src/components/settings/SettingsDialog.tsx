@@ -1495,6 +1495,15 @@ function ChannelsContent({
             <span className="text-foreground text-sm">기본 채널로 지정</span>
           </label>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleSaveChannel()}
+              disabled={!canSave || saving}
+              className="bg-foreground text-background hover:bg-foreground/85 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:opacity-40"
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+              {isEditing ? '수정' : '추가'}
+            </button>
             {isEditing && (
               <button
                 type="button"
@@ -1505,15 +1514,6 @@ function ChannelsContent({
                 취소
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => void handleSaveChannel()}
-              disabled={!canSave || saving}
-              className="bg-foreground text-background hover:bg-foreground/85 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors disabled:opacity-40"
-            >
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              {isEditing ? '수정' : '추가'}
-            </button>
           </div>
         </div>
       </div>

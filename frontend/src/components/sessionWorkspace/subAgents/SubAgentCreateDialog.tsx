@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { ArrowLeft, Bot, Sparkles, type LucideIcon } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { ArrowLeft, Bot, ChevronLeft, ChevronRight, Sparkles, type LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { HelpHint } from '@/components/ui/help-hint'
@@ -28,11 +28,18 @@ export function SubAgentCreateDialog({
   templates: AgentTemplate[]
 }) {
   const [showAdvancedCards, setShowAdvancedCards] = useState(false)
+  const [activeTemplateIndex, setActiveTemplateIndex] = useState(0)
 
   const closeDialog = () => {
     setShowAdvancedCards(false)
+    setActiveTemplateIndex(0)
     onOpenChange(false)
   }
+
+  const activeTemplate =
+    templates.length > 0
+      ? (templates[Math.min(activeTemplateIndex, templates.length - 1)] ?? null)
+      : null
 
   return (
     <Dialog
@@ -42,7 +49,10 @@ export function SubAgentCreateDialog({
         onOpenChange(nextOpen)
       }}
     >
-      <DialogContent showCloseButton={false} className="gap-0 overflow-hidden p-0 sm:max-w-md">
+      <DialogContent
+        showCloseButton={false}
+        className="w-[min(94vw,42rem)] gap-0 overflow-hidden p-0 sm:max-w-2xl"
+      >
         <DialogTitle className="sr-only">새 에이전트 추가</DialogTitle>
         <DialogDescription className="sr-only">
           팀장 에이전트에게 생성을 요청하거나 직접 세부 설정으로 새 서브에이전트를 추가합니다.
@@ -71,7 +81,7 @@ export function SubAgentCreateDialog({
           </Button>
         </div>
 
-        <div className="space-y-6 p-6">
+        <div className="space-y-6 px-4 py-5">
           {!showAdvancedCards ? (
             <>
               <div className="space-y-3 text-center">
@@ -89,35 +99,24 @@ export function SubAgentCreateDialog({
                 팀장 에이전트에게 새 에이전트 생성 요청
               </Button>
 
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <div className="text-muted-foreground text-left text-xs font-medium">
                   기본 제공 에이전트
                 </div>
-                <div className="grid gap-2">
-                  {templates.map((template) => {
-                    const Icon = Bot
-                    return (
-                      <button
-                        key={template.templateKey}
-                        type="button"
-                        className="border-border hover:bg-accent/50 flex items-start gap-3 rounded-md border p-3 text-left transition-colors"
-                        onClick={() => onPickTemplate(template.templateKey)}
-                      >
-                        <span className="bg-muted/70 mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md">
-                          <Icon className="h-4 w-4" />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">
-                            {template.displayName}
-                          </span>
-                          <span className="text-muted-foreground mt-0.5 line-clamp-2 block text-xs leading-5">
-                            {template.description}
-                          </span>
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
+                <TemplateCarousel
+                  templates={templates}
+                  activeIndex={activeTemplateIndex}
+                  onActiveIndexChange={setActiveTemplateIndex}
+                />
+                {activeTemplate && (
+                  <Button
+                    className="w-full"
+                    size="lg"
+                    onClick={() => onPickTemplate(activeTemplate.templateKey)}
+                  >
+                    에이전트 생성
+                  </Button>
+                )}
               </div>
 
               <div className="text-center">
@@ -183,5 +182,128 @@ export function SubAgentCreateDialog({
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function TemplateCarousel({
+  templates,
+  activeIndex,
+  onActiveIndexChange,
+}: {
+  templates: AgentTemplate[]
+  activeIndex: number
+  onActiveIndexChange: (index: number) => void
+}) {
+  const scrollerRef = useRef<HTMLDivElement | null>(null)
+  const total = templates.length
+
+  // 스크롤 위치 → 현재 인덱스 추적
+  useEffect(() => {
+    const scroller = scrollerRef.current
+    if (!scroller) return
+    const handleScroll = () => {
+      const cardWidth = scroller.clientWidth
+      if (cardWidth === 0) return
+      const next = Math.round(scroller.scrollLeft / cardWidth)
+      onActiveIndexChange(next)
+    }
+    scroller.addEventListener('scroll', handleScroll, { passive: true })
+    return () => scroller.removeEventListener('scroll', handleScroll)
+  }, [onActiveIndexChange])
+
+  // activeIndex가 외부에서 변경됐을 때 스크롤 위치도 동기화
+  useEffect(() => {
+    const scroller = scrollerRef.current
+    if (!scroller) return
+    const target = Math.max(0, Math.min(total - 1, activeIndex))
+    const desiredLeft = target * scroller.clientWidth
+    if (Math.abs(scroller.scrollLeft - desiredLeft) > 4) {
+      scroller.scrollTo({ left: desiredLeft, behavior: 'smooth' })
+    }
+  }, [activeIndex, total])
+
+  const goToIndex = (index: number) => {
+    const next = Math.max(0, Math.min(total - 1, index))
+    onActiveIndexChange(next)
+  }
+
+  if (total === 0) {
+    return (
+      <div className="border-border text-muted-foreground rounded-md border px-3 py-6 text-center text-xs">
+        사용 가능한 기본 에이전트가 없습니다.
+      </div>
+    )
+  }
+
+  const canPrev = activeIndex > 0
+  const canNext = activeIndex < total - 1
+
+  return (
+    <div className="w-full min-w-0 space-y-3">
+      <div className="relative w-full min-w-0">
+        <div
+          ref={scrollerRef}
+          className="flex w-full min-w-0 snap-x snap-mandatory overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {templates.map((template) => (
+            <div
+              key={template.templateKey}
+              className="min-w-0 shrink-0 grow-0 basis-full snap-start"
+            >
+              <div className="border-border flex h-32 w-full items-start gap-3 rounded-md border p-3 pr-12 text-left">
+                <span className="bg-muted/70 mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md">
+                  <Bot className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{template.displayName}</span>
+                  <span className="text-muted-foreground mt-0.5 line-clamp-4 block text-xs leading-5">
+                    {template.description}
+                  </span>
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+        {canPrev && (
+          <button
+            type="button"
+            aria-label="이전 에이전트"
+            onClick={() => goToIndex(activeIndex - 1)}
+            className="border-border bg-background/95 text-muted-foreground hover:text-foreground hover:bg-accent/50 absolute top-1/2 left-2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border shadow-sm transition-colors"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+        )}
+        {canNext && (
+          <button
+            type="button"
+            aria-label="다음 에이전트"
+            onClick={() => goToIndex(activeIndex + 1)}
+            className="border-border bg-background/95 text-muted-foreground hover:text-foreground hover:bg-accent/50 absolute top-1/2 right-2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border shadow-sm transition-colors"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      {total > 1 && (
+        <div className="flex items-center justify-center gap-1.5">
+          {templates.map((template, index) => (
+            <button
+              key={template.templateKey}
+              type="button"
+              aria-label={`${index + 1}번째 에이전트로 이동`}
+              onClick={() => goToIndex(index)}
+              className={cn(
+                'h-1.5 rounded-full transition-all',
+                index === activeIndex
+                  ? 'bg-foreground/70 w-4'
+                  : 'bg-muted-foreground/30 hover:bg-muted-foreground/50 w-1.5',
+              )}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   )
 }

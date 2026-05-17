@@ -1659,10 +1659,6 @@ function DeleteIssueDialog({
         </AlertDialogHeader>
         {deleteError ? <p className="text-destructive text-sm">{deleteError}</p> : null}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={deleting}>취소</AlertDialogCancel>
-          <Button variant="outline" disabled={deleting} onClick={onDeleteOnlyParent}>
-            부모만 삭제
-          </Button>
           <Button variant="destructive" disabled={deleting} onClick={onDeleteWithChildren}>
             {deleting ? (
               <>
@@ -1673,6 +1669,10 @@ function DeleteIssueDialog({
               '하위까지 삭제'
             )}
           </Button>
+          <Button variant="outline" disabled={deleting} onClick={onDeleteOnlyParent}>
+            부모만 삭제
+          </Button>
+          <AlertDialogCancel disabled={deleting}>취소</AlertDialogCancel>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
