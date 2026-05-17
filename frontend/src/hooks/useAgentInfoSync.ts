@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
-import { listSessionAgents, getSessionMainAgent, deriveSpriteId } from '@/apis/agents'
+import { deriveSpriteId } from '@/apis/agents'
 import type { AgentActivityStatus, TaskStatus, VisualizationTask } from '@/components/office/types'
+import { useAgentCacheStore } from '@/store/useAgentCacheStore'
 import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import type { RawStepRun, RawTaskRun } from '@/types/taskRuns'
@@ -196,7 +197,9 @@ export function useAgentInfoSync(sessionId?: string, profileIdMap?: Record<strin
       if (fetchedSessionIds.current.has(currentSessionId)) continue
       fetchedSessionIds.current.add(currentSessionId)
 
-      void listSessionAgents(currentSessionId)
+      void useAgentCacheStore
+        .getState()
+        .fetchSessionAgents(currentSessionId)
         .then((profiles) => {
           for (const profile of profiles) {
             const profileData: CachedSubAgentProfile = {
@@ -217,7 +220,9 @@ export function useAgentInfoSync(sessionId?: string, profileIdMap?: Record<strin
         })
         .catch(() => {})
 
-      void getSessionMainAgent(currentSessionId)
+      void useAgentCacheStore
+        .getState()
+        .fetchSessionMainAgent(currentSessionId)
         .then((profile) => {
           const profileData = {
             name: '팀장',
