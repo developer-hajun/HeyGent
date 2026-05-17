@@ -7,6 +7,15 @@ from app.domain.providers.model.base import BaseProvider
 class ProviderRegistry:
     """Provider 등록과 조회를 담당하는 얇은 레지스트리다."""
 
+    _RUNTIME_PROVIDER_ALIASES = {
+        "openai": "openai_api",
+        "openai_api_key": "openai_api",
+        "openai_user_api_key": "openai_api",
+        "openai_dev_fallback": "openai_api",
+        "gemini": "gemini_api",
+        "gemini_api_key": "gemini_api",
+    }
+
     def __init__(self, providers: list[BaseProvider] | None = None) -> None:
         self._providers: dict[str, BaseProvider] = {}
         for provider in providers or []:
@@ -20,6 +29,16 @@ class ProviderRegistry:
             return self._providers[provider_name]
         except KeyError as error:
             raise KeyError(provider_name) from error
+
+    def model_provider_for(self, provider_name: str | None) -> BaseProvider:
+        normalized = str(provider_name or "").strip()
+        if not normalized:
+            return self.preferred_model_provider()
+        registered_name = self._RUNTIME_PROVIDER_ALIASES.get(normalized, normalized)
+        provider = self._providers.get(registered_name)
+        if provider is not None:
+            return provider
+        return self.preferred_model_provider()
 
     def list_names(self) -> list[str]:
         return sorted(self._providers)

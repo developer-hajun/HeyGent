@@ -12,6 +12,7 @@ from app.domain.orchestration.agent.memory.memory_reconciler import (
     MemoryReconciliationContext,
 )
 from app.domain.orchestration.agent.memory.provider_retry import memory_provider_error_details
+from app.domain.orchestration.agent.memory.runtime_context import resolve_memory_provider_name
 
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ async def writeback_persistent_memory_candidates(
             reason="memory_extractor_unavailable",
         )
 
+    resolved_provider_name = resolve_memory_provider_name(provider_name, model)
     context = MemoryExtractionContext(
         user_id=user_id,
         session_id=session_id,
@@ -62,7 +64,7 @@ async def writeback_persistent_memory_candidates(
         assistant_message_id=assistant_message_id,
         model=str(model or "").strip() or None,
         request_date=_request_date(request_date),
-        provider_name=str(provider_name or "").strip() or "openai_api_key",
+        provider_name=resolved_provider_name,
         step_run_id=str(step_run_id or "").strip() or None,
     )
     try:
@@ -102,7 +104,7 @@ async def writeback_persistent_memory_candidates(
             session_id=session_id,
             task_run_id=task_run_id,
             step_run_id=step_run_id,
-            provider_name=str(provider_name or "").strip() or "openai_api_key",
+            provider_name=resolved_provider_name,
             model=str(model or "").strip() or None,
         ),
     )

@@ -1190,6 +1190,9 @@ class TaskEngine:
         profile_model = self._profile_model(profile)
         if profile_model:
             payload["model"] = profile_model
+        profile_provider = self._profile_provider_name(profile)
+        if profile_provider:
+            payload["provider_name"] = profile_provider
         payload["targetAgentProfile"] = {
             "profileId": profile.get("profile_id"),
             "profileKey": profile.get("profile_key"),
@@ -1240,6 +1243,20 @@ class TaskEngine:
         config = profile.get("config_snapshot") if isinstance(profile.get("config_snapshot"), dict) else {}
         value = config.get("model") or profile.get("model_name")
         text = str(value or "").strip()
+        return text or None
+
+    @staticmethod
+    def _profile_provider_name(profile: dict) -> str | None:
+        config = profile.get("config_snapshot") if isinstance(profile.get("config_snapshot"), dict) else {}
+        model = str(config.get("model") or profile.get("model_name") or "").strip()
+        if model.lower().startswith("gemini-"):
+            return "gemini_api_key"
+        value = config.get("providerName") or config.get("provider_name") or config.get("adapterType") or profile.get("provider_name")
+        text = str(value or "").strip()
+        if text == "openai":
+            return "openai_api_key"
+        if text == "gemini":
+            return "gemini_api_key"
         return text or None
 
     def _create_work_transcript_session(self, *, parent_task: TaskRun, work, model: str | None) -> str | None:

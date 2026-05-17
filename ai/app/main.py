@@ -40,7 +40,7 @@ from app.api.memory_mark_used import LlmMemoryUsageAttributionVerifier
 from app.domain.orchestration.orchestrator import Orchestrator
 from app.domain.orchestration.runtime_planning import Planner
 from app.domain.orchestration.task_execution_supervisor import TaskExecutionSupervisor, TaskExecutionSupervisorConfig
-from app.domain.providers.model import OpenAIAPIProvider
+from app.domain.providers.model import GeminiAPIProvider, OpenAIAPIProvider
 from app.domain.providers.registry import ProviderRegistry
 from app.storage.postgres import (
     PostgresAgentRepository,
@@ -119,6 +119,7 @@ async def lifespan(app: FastAPI):
     provider_registry = ProviderRegistry(
         [
             OpenAIAPIProvider(settings),
+            GeminiAPIProvider(settings),
         ]
     )
     memory_extraction_provider = ProviderMemoryExtractionClient(provider_registry=provider_registry)

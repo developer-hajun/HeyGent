@@ -37,6 +37,12 @@ import {
 } from '@/components/sessionWorkspace/agentUsageDisplay'
 import { WorkBoardPanel, WorkflowPanel } from '@/components/sessionWorkspace/work/board'
 import { SubAgentsPanel } from '@/components/sessionWorkspace/subAgents'
+import {
+  SUB_AGENT_ADAPTER_OPTIONS,
+  getDefaultModel,
+  normalizeSubAgentAdapterType,
+  type SubAgentAdapterType,
+} from '@/components/sessionWorkspace/subAgents/subAgentConfigOptions'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
 import {
@@ -59,7 +65,12 @@ import { useChatStore } from '@/store/useChatStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import type { JsonObject, RawTaskEventPayload } from '@/realtime/aiRealtimeTypes'
-import type { AiSessionSettingsPatch, ChatMessageView, RawAiSession } from '@/types/aiChat'
+import type {
+  AiModelOption,
+  AiSessionSettingsPatch,
+  ChatMessageView,
+  RawAiSession,
+} from '@/types/aiChat'
 import type { RawTaskRun, TaskRunAgentRef } from '@/types/taskRuns'
 import { isInternalStepAnchorEvent, toTaskRunSummaryView } from '@/utils/taskRunStatusView'
 import {
@@ -177,6 +188,12 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     getString(uiMetadata, 'instructionsMode') === 'external' ? 'external' : 'managed'
   const currentInstructionsRootPath = getString(uiMetadata, 'instructionsRootPath') ?? ''
   const currentModel = getString(mainAgentConfig, 'model') ?? getString(settings, 'model') ?? ''
+  const currentProvider = inferProviderFromModel(
+    currentModel,
+    getString(mainAgentConfig, 'adapterType') ??
+      getString(settings, 'provider') ??
+      getString(settings, 'providerName'),
+  )
   const currentDelegationPolicy = toJsonObject(settings.delegationPolicy)
   const currentCanDelegate = currentDelegationPolicy.canDelegate === true
   const currentProfileImage = normalizeAgentProfileImage(
@@ -195,6 +212,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     currentInstructionsMode,
   )
   const [instructionsRootPath, setInstructionsRootPath] = useState(currentInstructionsRootPath)
+  const [selectedProvider, setSelectedProvider] = useState<SubAgentAdapterType>(currentProvider)
   const [selectedModel, setSelectedModel] = useState(currentModel)
   const [canDelegate, setCanDelegate] = useState(currentCanDelegate)
   const [profileImage, setProfileImage] = useState(currentProfileImage)
@@ -206,6 +224,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     getModelOptions(cachedModelOptions?.models),
   )
   const [selectedFamily, setSelectedFamily] = useState<ModelFamily>(inferModelFamily(currentModel))
+  const [providerBaseline, setProviderBaseline] = useState<SubAgentAdapterType>(currentProvider)
   const [modelBaseline, setModelBaseline] = useState(currentModel)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -220,7 +239,11 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
   const [skillDetailOpen, setSkillDetailOpen] = useState(false)
   const [skillDetailLoading, setSkillDetailLoading] = useState(false)
 
-  const modelGroups = useMemo(() => groupModels(modelOptions), [modelOptions])
+  const providerModelOptions = useMemo(
+    () => getProviderModelOptions(modelOptions, selectedProvider),
+    [modelOptions, selectedProvider],
+  )
+  const modelGroups = useMemo(() => groupModels(providerModelOptions), [providerModelOptions])
   const modelFamilies = useMemo(() => getModelFamilies(modelGroups), [modelGroups])
   const effectiveSelectedFamily = modelFamilies.some((family) => family.id === selectedFamily)
     ? selectedFamily
@@ -256,6 +279,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     !shallowStringRecordEqual(instructionsFiles, currentInstructionsFiles) ||
     instructionsMode !== currentInstructionsMode ||
     instructionsRootPath.trim() !== currentInstructionsRootPath ||
+    selectedProvider !== providerBaseline ||
     selectedModel !== modelBaseline ||
     profileImage !== currentProfileImage ||
     canDelegate !== currentCanDelegate
@@ -349,6 +373,12 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
         )
         setInstructionsRootPath(getString(uiMetadata, 'instructionsRootPath') ?? '')
         const profileModel = getString(config, 'model') ?? ''
+        const profileProvider = inferProviderFromModel(
+          profileModel,
+          getString(config, 'adapterType'),
+        )
+        setSelectedProvider(profileProvider)
+        setProviderBaseline(profileProvider)
         setSelectedModel(profileModel)
         setModelBaseline(profileModel)
         setSelectedFamily(inferModelFamily(profileModel))
@@ -425,10 +455,14 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     void fetchModelOptions(sessionId)
       .then((options) => {
         if (!active) return
-        const nextModels = getModelOptions(options.models)
+        const providerModels =
+          options.providers?.flatMap((provider) => provider.models) ?? options.models
+        const nextModels = getModelOptions(providerModels)
         setModelOptions(nextModels)
         setModelOptionsLoading(false)
         if (currentModel === '' && typeof options.model === 'string' && options.model.trim()) {
+          setSelectedProvider(inferProviderFromModel(options.model))
+          setProviderBaseline(inferProviderFromModel(options.model))
           setSelectedModel(options.model)
           setModelBaseline(options.model)
           setSelectedFamily(inferModelFamily(options.model))
@@ -491,6 +525,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     setInstructionsFiles(currentInstructionsFiles)
     setInstructionsMode(currentInstructionsMode)
     setInstructionsRootPath(currentInstructionsRootPath)
+    setSelectedProvider(providerBaseline)
     setSelectedModel(modelBaseline)
     setSelectedFamily(inferModelFamily(modelBaseline))
     setCanDelegate(currentCanDelegate)
@@ -566,7 +601,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
           role: 'ceo',
           title: callName.trim() || '팀장 에이전트',
           description: capabilities.trim(),
-          adapterType: 'openai',
+          adapterType: selectedProvider,
           model: selectedModel,
           profileImage,
           skills: selectedKnownSkillIds,
@@ -578,6 +613,14 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
         // 시각화/사이드바 등에서 stale 정보 표시되는 것을 막는다.
         useAgentCacheStore.getState().invalidateSessionMainAgent(sessionId)
         useAgentCacheStore.getState().invalidateSessionAgents(sessionId)
+        const savedProvider = inferProviderFromModel(
+          profile.model,
+          profile.adapterType ?? getString(toJsonObject(profile.configSnapshot), 'adapterType'),
+        )
+        setSelectedProvider(savedProvider)
+        setProviderBaseline(savedProvider)
+      } else {
+        setProviderBaseline(selectedProvider)
       }
       if (settingsPatch.model !== undefined || mainAgentProfile !== null) {
         setModelBaseline(selectedModel)
@@ -835,9 +878,21 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
                 <AgentSectionCard title="모델">
                   <Field label="공급자">
                     <AgentAdapterTypeDropdown
-                      value="openai"
-                      options={[{ value: 'openai', label: 'OpenAI' }]}
-                      onChange={() => undefined}
+                      value={selectedProvider}
+                      options={SUB_AGENT_ADAPTER_OPTIONS.map((option) => ({
+                        value: option.id,
+                        label: option.label,
+                        description: option.description,
+                      }))}
+                      onChange={(value) => {
+                        const nextProvider = normalizeSubAgentAdapterType(value)
+                        const nextModels = getProviderModelOptions(modelOptions, nextProvider)
+                        const nextModel = nextModels[0]?.id ?? getDefaultModel(nextProvider)
+                        setSelectedProvider(nextProvider)
+                        setSelectedModel(nextModel)
+                        setSelectedFamily(inferModelFamily(nextModel))
+                        markDirty()
+                      }}
                     />
                   </Field>
                   <Field
@@ -974,6 +1029,13 @@ function buildSessionRunItems(
     return runItems
   }
 
+  const sessionSettings = toJsonObject(session.settings)
+  const fallbackModel = getString(sessionSettings, 'model') ?? undefined
+  const fallbackProvider =
+    getString(sessionSettings, 'providerName') ??
+    getString(sessionSettings, 'provider') ??
+    getString(sessionSettings, 'provider_name')
+
   return [
     {
       id: session.session_id,
@@ -983,7 +1045,8 @@ function buildSessionRunItems(
       summary: session.last_message || '아직 요약이 없습니다.',
       tokens: '-',
       cost: '-',
-      adapter: 'openai',
+      adapter: getRunAdapterLabel(fallbackProvider, fallbackModel),
+      model: fallbackModel,
       sortTime: getTime(session.last_message_at),
     },
   ]
@@ -1035,6 +1098,27 @@ function matchesMainAgentRef(agent: TaskRunAgentRef | undefined, mainProfileId: 
   return agent?.profileId === mainProfileId || agent?.id === mainProfileId || agent?.kind === 'main'
 }
 
+function inferProviderFromModel(
+  model: string | null | undefined,
+  provider?: string | null,
+): SubAgentAdapterType {
+  const modelText = (model ?? '').trim().toLowerCase()
+  if (modelText.startsWith('gemini-')) {
+    return 'gemini_api_key'
+  }
+  return normalizeSubAgentAdapterType(provider ?? undefined)
+}
+
+function getProviderModelOptions(models: AiModelOption[], providerType: SubAgentAdapterType) {
+  return models.filter((model) => {
+    const provider = model.provider?.toLowerCase()
+    if (providerType === 'openai_api_key') {
+      return provider === undefined || provider.includes('openai') || provider === 'openai_api_key'
+    }
+    return provider === providerType || model.id.toLowerCase().startsWith('gemini-')
+  })
+}
+
 function buildSessionRunItem(
   taskRunId: string,
   session: RawAiSession,
@@ -1053,6 +1137,21 @@ function buildSessionRunItem(
     .find((message) => message.role === 'assistant')?.content
   const inputPayload = toJsonObject(taskRun?.input_payload)
   const resultPayload = toJsonObject(taskRun?.result_payload)
+  const resultMetadata = toJsonObject(resultPayload.metadata)
+  const sessionSettings = toJsonObject(session.settings)
+  const model =
+    getFirstString(inputPayload, 'model', 'provider_model', 'providerModel') ??
+    getFirstString(resultPayload, 'model') ??
+    getFirstString(resultMetadata, 'model') ??
+    getString(sessionSettings, 'model') ??
+    undefined
+  const provider =
+    getFirstString(inputPayload, 'provider_name', 'providerName', 'provider') ??
+    getFirstString(resultPayload, 'provider_name', 'providerName', 'provider') ??
+    getString(sessionSettings, 'providerName') ??
+    getString(sessionSettings, 'provider') ??
+    getString(sessionSettings, 'provider_name') ??
+    undefined
   const sortTime = getRunSortTime(taskRun, events, relatedMessages, session)
 
   return {
@@ -1069,8 +1168,8 @@ function buildSessionRunItem(
       '아직 요약이 없습니다.',
     tokens: '-',
     cost: '-',
-    adapter: 'openai',
-    model: getString(toJsonObject(session.settings), 'model') ?? undefined,
+    adapter: getRunAdapterLabel(provider, model),
+    model,
     request:
       prompt ??
       getFirstString(inputPayload, 'prompt', 'content', 'rawUserInput', 'raw_user_input') ??
@@ -1172,6 +1271,14 @@ function getFirstString(source: unknown, ...keys: string[]) {
     if (typeof value === 'string' && value.trim() !== '') return value.trim()
   }
   return null
+}
+
+function getRunAdapterLabel(provider?: string | null, model?: string | null) {
+  const providerText = (provider ?? '').trim().toLowerCase()
+  const modelText = (model ?? '').trim().toLowerCase()
+  if (providerText.includes('gemini') || modelText.startsWith('gemini-')) return 'gemini'
+  if (providerText.includes('openai') || modelText.startsWith('gpt-')) return 'openai'
+  return providerText || undefined
 }
 
 function buildRunDelegationInput(

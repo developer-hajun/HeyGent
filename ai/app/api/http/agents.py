@@ -435,12 +435,14 @@ def _custom_agent_config_snapshot(payload: CreateSessionAgentRequest) -> dict[st
     }
     if entry_document_key not in instructions_files:
         instructions_files[entry_document_key] = ""
+    adapter_type = (payload.adapter_type or "").strip()
     return {
         "name": payload.name.strip(),
         "role": payload.role.strip() or "general",
         "title": (payload.title or "").strip(),
         "description": (payload.description or "").strip(),
-        "adapterType": (payload.adapter_type or "").strip(),
+        "adapterType": adapter_type,
+        "providerName": adapter_type,
         "model": (payload.model or "").strip(),
         "profileImage": (payload.profile_image or "").strip(),
         "skills": [str(skill).strip() for skill in payload.skills if str(skill).strip()],
@@ -471,7 +473,9 @@ def _updated_agent_config_snapshot(
     if payload.description is not None:
         next_config["description"] = payload.description.strip()
     if payload.adapter_type is not None:
-        next_config["adapterType"] = payload.adapter_type.strip()
+        adapter_type = payload.adapter_type.strip()
+        next_config["adapterType"] = adapter_type
+        next_config["providerName"] = adapter_type
     if payload.model is not None:
         next_config["model"] = payload.model.strip()
     if payload.profile_image is not None:
