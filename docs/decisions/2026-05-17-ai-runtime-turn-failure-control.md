@@ -27,9 +27,12 @@ AI 런타임은 다음 두 문제를 분리해서 다룬다.
 
 2. 같은 run 안의 실패 반복 방지
    - 실패 이력은 대화 history가 아니라 runtime state로 관리한다.
+   - provider API 실패와 runtime tool 실패는 별도 ledger로 분리한다.
    - 동일 tool, 동일 args, 동일 실패 유형이 반복되면 실제 runtime 호출 전에 차단한다.
-   - 429/rate-limit은 일반 실패와 분리해 같은 run에서 즉시 재시도 루프로 빠지지 않게 한다.
+   - unknown/unavailable tool은 args가 바뀌어도 tool name 기준 반복을 별도로 감지한다.
+   - 429/rate-limit은 일반 실패와 분리해 첫 실패 이후 같은 run에서 즉시 재시도 루프로 빠지지 않게 한다.
    - 차단된 tool call도 provider tool-call 흐름을 깨지 않도록 synthetic tool result를 반환한다.
+   - 반복 실패 차단은 `max_iterations_exceeded`가 아니라 명시적인 실패 사유로 종료한다.
 
 ## 적용 현황
 
@@ -45,6 +48,8 @@ AI 런타임은 다음 두 문제를 분리해서 다룬다.
 - run-local failure ledger
 - unavailable tool / 동일 실패 반복 circuit breaker
 - 429/rate-limit error classification
+- circuit-open synthetic tool result 포맷
+- provider API 실패와 runtime tool 실패 분리
 - circuit breaker 적용 후 실제 부산 기상 요청 재측정
 
 ## 테스트 기준
@@ -52,7 +57,17 @@ AI 런타임은 다음 두 문제를 분리해서 다룬다.
 - 과거 부산 기상 요청이 다음 요약/분석 turn에서 다시 tool call을 만들지 않아야 한다.
 - 새 turn은 이전 tool transcript를 replay하지 않아야 하고, resume/approval 재개는 기존 replay 흐름을 유지해야 한다.
 - 같은 unavailable tool 또는 같은 429 search call은 정책 threshold 이후 실제 runtime 호출을 반복하지 않아야 한다.
+- 429/rate-limit은 threshold 반복을 기다리지 않고 같은 run 동일 signature 재호출을 차단해야 한다.
+- unknown/unavailable tool은 args가 바뀌어도 같은 tool name 반복으로 감지되어야 한다.
 - 반복 실패로 종료할 때는 `max_iterations_exceeded`까지 끌지 않고 명시적인 blocked 또는 실패 응답으로 끝나야 한다.
+
+## 제외 범위
+
+- 다중 credential pool 전체
+- provider 자동 fallback chain
+- cross-session persistent rate-limit guard
+- 외부 서버 단위 circuit breaker 전체
+- generic repeat를 즉시 hard block하는 정책
 
 ## 관련 문서
 
