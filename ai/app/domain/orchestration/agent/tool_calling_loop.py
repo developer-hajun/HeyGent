@@ -17,6 +17,7 @@ from app.domain.orchestration.agent.tool_failure_circuit import (
     classify_provider_failure,
 )
 from app.domain.orchestration.agent.tool_guard import ToolGuard, ToolGuardDecision, ToolGuardResult
+from app.domain.orchestration.agent.tool_result_store import store_raw_tool_result
 from app.domain.providers.model.base import AgentMessage, AgentModelResponse, ToolResultMessage, parse_assistant_response_contract
 from app.domain.orchestration.prompts.prompt_builder import assemble_agent_loop_messages
 from app.domain.session.sessions.transcript_store import TranscriptStore
@@ -30,6 +31,11 @@ from app.domain.orchestration.runtime_planning.todo_state import (
 
 class ToolCallingLoopHandler:
     """현재 provider 위에서 native tool call(모델이 구조화된 도구 호출을 직접 반환하는 방식) loop를 실행한다."""
+
+    TOOL_RESULT_OBSERVATION_MAX_CHARS = 12_000
+    TOOL_RESULT_INLINE_MAX_CHARS = 12_000
+    TOOL_RESULT_PREVIEW_MAX_CHARS = 6_000
+    TOOL_RESULT_ARRAY_SAMPLE_SIZE = 3
 
     def __init__(
         self,
@@ -401,8 +407,9 @@ class ToolCallingLoopHandler:
                     "name": runtime_tool_name,
                     "args": tool_call.arguments,
                     "result": result,
+                    "task_run_id": getattr(task, "id", None) or getattr(task, "task_run_id", None),
                 }
-                self._append_tool_result_observation(
+                stored_tool_result = self._append_tool_result_observation(
                     tool_result=tool_result,
                     all_tool_results=all_tool_results,
                     messages=messages,
@@ -416,7 +423,7 @@ class ToolCallingLoopHandler:
                     tool_call_id=tool_call.id,
                     tool_name=runtime_tool_name,
                     args=tool_call.arguments,
-                    result=result,
+                    result=stored_tool_result.get("result"),
                 )
                 self._sync_dynamic_runtime_context(
                     task=task,
@@ -1096,13 +1103,24 @@ class ToolCallingLoopHandler:
         transcript_session_id: str | None,
         operations: list[dict[str, Any]],
         operation_counters: dict[str, int],
-    ) -> None:
-        all_tool_results.append(tool_result)
+    ) -> dict[str, Any]:
         tool_name = str(tool_result["name"])
         result = tool_result["result"]
+        observed_result = self._tool_result_model_observation_result(
+            result,
+            tool_name=tool_name,
+            tool_call_id=str(tool_result["tool_call_id"]),
+            task_run_id=str(tool_result.get("task_run_id") or "") or None,
+        )
+        stored_tool_result = {
+            **tool_result,
+            "result": observed_result,
+        }
+        stored_tool_result.pop("task_run_id", None)
+        all_tool_results.append(stored_tool_result)
         tool_message = ToolResultMessage(
             tool_call_id=str(tool_result["tool_call_id"]),
-            content=self._tool_result_content(result),
+            content=self._tool_result_content(observed_result),
         )
         messages.append(tool_message)
         self._append_transcript_message(transcript_session_id, tool_message, tool_name=tool_name)
@@ -1122,6 +1140,7 @@ class ToolCallingLoopHandler:
         if operation_error is not None:
             operation["error"] = operation_error
         operations.append(operation)
+        return stored_tool_result
 
     @staticmethod
     def _guard_decision(guard_result: ToolGuardResult) -> ToolGuardDecision:
@@ -1332,10 +1351,130 @@ class ToolCallingLoopHandler:
             )
 
     @staticmethod
-    def _tool_result_content(result: dict[str, Any]) -> str:
-        if isinstance(result, dict) and isinstance(result.get("content"), str):
-            return str(result["content"])
-        return json.dumps(result, ensure_ascii=False)
+    def _tool_result_content(result: Any) -> str:
+        try:
+            return json.dumps(result, ensure_ascii=False, default=str)
+        except TypeError:
+            return json.dumps(str(result), ensure_ascii=False)
+
+    def _tool_result_model_observation_result(
+        self,
+        result: Any,
+        *,
+        tool_name: str,
+        tool_call_id: str,
+        task_run_id: str | None,
+    ) -> dict[str, Any]:
+        """큰 tool 원문은 별도 저장소로 빼고, 모델/DB에는 bounded observation만 남긴다."""
+
+        raw_text = self._stable_json(result)
+        if len(raw_text) <= self.TOOL_RESULT_INLINE_MAX_CHARS:
+            if isinstance(result, dict):
+                return result
+            return {"ok": True, "content": str(result)}
+
+        raw_meta = store_raw_tool_result(
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            task_run_id=task_run_id,
+            result=result,
+        )
+        preview, preview_meta = self._preview_tool_result_value(result)
+        observation = {
+            "ok": self._tool_result_ok_value(result),
+            "content": (
+                "[...truncated tool result: "
+                f"kept preview of {raw_meta['raw_chars']} chars. "
+                "Use tool_result.read with raw_ref, or call the tool again with narrower parameters, "
+                "if the preview is insufficient.]"
+            ),
+            "observation_type": "tool_result_preview",
+            "tool_name": tool_name,
+            "truncated": True,
+            "raw_ref": raw_meta["raw_ref"],
+            "raw_chars": raw_meta["raw_chars"],
+            "expires_at": raw_meta["expires_at"],
+            "preview": preview,
+            "preview_meta": preview_meta,
+        }
+        return self._cap_observation_result(observation)
+
+    def _preview_tool_result_value(self, value: Any) -> tuple[Any, dict[str, Any]]:
+        large_arrays: list[dict[str, Any]] = []
+        preview = self._preview_value(value, path="$", large_arrays=large_arrays, depth=0)
+        return preview, {
+            "large_arrays": large_arrays[:20],
+            "preview_chars": len(self._stable_json(preview)),
+            "array_sample_size": self.TOOL_RESULT_ARRAY_SAMPLE_SIZE,
+        }
+
+    def _preview_value(self, value: Any, *, path: str, large_arrays: list[dict[str, Any]], depth: int) -> Any:
+        if depth >= 6:
+            return self._preview_leaf(value)
+        if isinstance(value, dict):
+            result: dict[str, Any] = {}
+            for index, (key, item) in enumerate(value.items()):
+                if index >= 30:
+                    result["..."] = f"{len(value) - index} more keys omitted"
+                    break
+                child_path = f"{path}.{key}" if path else str(key)
+                result[str(key)] = self._preview_value(item, path=child_path, large_arrays=large_arrays, depth=depth + 1)
+            return result
+        if isinstance(value, list):
+            if len(value) > self.TOOL_RESULT_ARRAY_SAMPLE_SIZE:
+                large_arrays.append(
+                    {
+                        "path": path,
+                        "count": len(value),
+                        "sample_count": self.TOOL_RESULT_ARRAY_SAMPLE_SIZE,
+                    }
+                )
+            sample = [
+                self._preview_value(item, path=f"{path}[{index}]", large_arrays=large_arrays, depth=depth + 1)
+                for index, item in enumerate(value[: self.TOOL_RESULT_ARRAY_SAMPLE_SIZE])
+            ]
+            if len(value) > self.TOOL_RESULT_ARRAY_SAMPLE_SIZE:
+                sample.append(f"... {len(value) - self.TOOL_RESULT_ARRAY_SAMPLE_SIZE} more items omitted")
+            return sample
+        return self._preview_leaf(value)
+
+    @staticmethod
+    def _preview_leaf(value: Any) -> Any:
+        if isinstance(value, str) and len(value) > 1_000:
+            return value[:1_000] + f"\n...[truncated string: kept 1000 of {len(value)} chars]..."
+        return value
+
+    def _cap_observation_result(self, observation: dict[str, Any]) -> dict[str, Any]:
+        rendered = self._stable_json(observation)
+        if len(rendered) <= self.TOOL_RESULT_OBSERVATION_MAX_CHARS:
+            return observation
+        capped = {
+            **observation,
+            "preview": self._stable_json(observation.get("preview"))[: self.TOOL_RESULT_PREVIEW_MAX_CHARS]
+            + "\n...[truncated preview]...",
+            "preview_meta": {
+                **dict(observation.get("preview_meta") or {}),
+                "observation_capped": True,
+                "observation_chars_before_cap": len(rendered),
+            },
+        }
+        if len(self._stable_json(capped)) <= self.TOOL_RESULT_OBSERVATION_MAX_CHARS:
+            return capped
+        capped["preview"] = "[preview omitted because the tool result shape is too large; use raw_ref with a narrow offset/limit.]"
+        return capped
+
+    @staticmethod
+    def _tool_result_ok_value(result: Any) -> bool:
+        if isinstance(result, dict) and isinstance(result.get("ok"), bool):
+            return bool(result["ok"])
+        return True
+
+    @staticmethod
+    def _stable_json(value: Any) -> str:
+        try:
+            return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        except TypeError:
+            return json.dumps(str(value), ensure_ascii=False)
 
     def _build_completed_outcome(
         self,

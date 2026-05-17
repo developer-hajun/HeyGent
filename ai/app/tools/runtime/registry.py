@@ -113,5 +113,6 @@ def _discover_runtime_tool_modules() -> None:
     from app.tools.skills import skill_execute_tool  # noqa: F401
     from app.tools.skills import skills_tool  # noqa: F401
     from app.tools.terminal import terminal_tool  # noqa: F401
+    from app.tools.runtime import tool_result_tool  # noqa: F401
     from app.tools.web import web_tools  # noqa: F401
     from app.tools.work import session_agent_tool  # noqa: F401

@@ -16,6 +16,7 @@ from app.tools.runtime.registry import (
     list_runtime_tool_availability,
     list_runtime_tool_definitions,
 )
+from app.tools.runtime.tool_result_tool import tool_result_read_handler
 from app.tools.runtime.toolsets import resolve_runtime_tool_names
 
 
@@ -24,8 +25,6 @@ FILE_TOOL_NAMES = {"read_file", "write_file", "patch", "search_files"}
 # 분기 자리는 한 곳뿐이라 호출자(tool_calling_loop, transcript 기록)는 결과 dict가 같으면 변경을 인지할 필요 없음.
 BRIDGE_ROUTABLE_TOOLS = {"terminal.run", "read_file", "write_file", "patch", "search_files"}
 MAX_TERMINAL_STREAM_CHARS = 12_000
-MAX_TOOL_RESULT_STRING_CHARS = 20_000
-MAX_TOOL_RESULT_TRUNCATED_FIELDS = 20
 MAX_SKILL_RESOURCE_BYTES = 200_000
 SECRET_FILE_NAME_PATTERN = re.compile(
     r"(^|[._-])(secret|secrets|token|password|passwd|credential|credentials|env)($|[._-])",
@@ -79,6 +78,7 @@ class LocalToolRuntime:
                 "design.read_preset": self._read_design_preset,
                 "prototype.get_active_artifact": self._get_active_prototype_artifact,
                 "prototype.create_artifact": self._create_prototype_artifact,
+                "tool_result.read": self._read_tool_result,
                 "terminal.run": self._run_terminal_command,
                 "http_get": self._run_http_get,
                 "read_file": self._read_file,
@@ -207,7 +207,7 @@ class LocalToolRuntime:
         if normalized_name in BRIDGE_ROUTABLE_TOOLS and self.bridge_session_manager is not None:
             bridge_result = self._maybe_route_via_bridge(tool_name=normalized_name, args=trusted_args)
             if bridge_result is not None:
-                return self._cap_tool_result(bridge_result)
+                return bridge_result
 
         try:
             result = entry.handler(trusted_args)
@@ -218,7 +218,7 @@ class LocalToolRuntime:
                 message=f"{type(error).__name__}: {error}",
                 tool_name=normalized_name,
             )
-        return self._cap_tool_result(result)
+        return result
 
     def require_call(self, *, name: str, args: dict[str, Any]) -> dict[str, Any]:
         entry = self._tool_entries.get(name)
@@ -474,6 +474,9 @@ class LocalToolRuntime:
 
     def _run_http_get(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler("app.tools.web.web_tools", "http_get_handler", args)
+
+    def _read_tool_result(self, args: dict[str, Any]) -> dict[str, Any]:
+        return tool_result_read_handler(args)
 
     def _send_mattermost_message(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_external_tool_handler(
@@ -1130,50 +1133,6 @@ class LocalToolRuntime:
         marker = f"\n[truncated: {field_name} exceeded {MAX_TERMINAL_STREAM_CHARS} chars]\n"
         keep = max(0, MAX_TERMINAL_STREAM_CHARS - len(marker))
         return value[:keep] + marker, True
-
-    @classmethod
-    def _cap_tool_result(cls, result: dict[str, Any]) -> dict[str, Any]:
-        """도구 결과가 transcript와 API 응답을 과도하게 키우지 않도록 문자열 필드를 제한한다."""
-
-        if not isinstance(result, dict):
-            return result
-
-        truncated_fields: list[str] = []
-        capped = cls._cap_result_value(result, path="", truncated_fields=truncated_fields)
-        if not truncated_fields or not isinstance(capped, dict):
-            return capped
-        capped["result_truncated"] = True
-        capped["truncated_fields"] = truncated_fields[:MAX_TOOL_RESULT_TRUNCATED_FIELDS]
-        return capped
-
-    @classmethod
-    def _cap_result_value(cls, value: Any, *, path: str, truncated_fields: list[str]) -> Any:
-        if isinstance(value, str):
-            if len(value) <= MAX_TOOL_RESULT_STRING_CHARS:
-                return value
-            marker = f"\n[truncated: result field exceeded {MAX_TOOL_RESULT_STRING_CHARS} chars]\n"
-            keep = max(0, MAX_TOOL_RESULT_STRING_CHARS - len(marker))
-            truncated_fields.append(path or "$")
-            return value[:keep] + marker
-        if isinstance(value, list):
-            return [
-                cls._cap_result_value(
-                    item,
-                    path=f"{path}.{index}" if path else str(index),
-                    truncated_fields=truncated_fields,
-                )
-                for index, item in enumerate(value)
-            ]
-        if isinstance(value, dict):
-            return {
-                key: cls._cap_result_value(
-                    item,
-                    path=f"{path}.{key}" if path else str(key),
-                    truncated_fields=truncated_fields,
-                )
-                for key, item in value.items()
-            }
-        return value
 
     @staticmethod
     def _resolve_workspace_root(value: str | os.PathLike[str] | None = None) -> Path:

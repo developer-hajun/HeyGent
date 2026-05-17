@@ -1528,8 +1528,8 @@ def test_ws_new_session_message_augments_toolsets_for_enabled_skill(client, monk
 
         assert task is not None
         assert "korea-weather" in task.input_payload["enabledSkillNames"]
-        assert task.input_payload["enabled_toolsets"] == ["skills", "web"]
-        assert task.input_payload["toolsets"] == ["skills", "web"]
+        assert task.input_payload["enabled_toolsets"] == ["skills", "web", "tool-result"]
+        assert task.input_payload["toolsets"] == ["skills", "web", "tool-result"]
     finally:
         context.__exit__(None, None, None)
 

@@ -40,6 +40,10 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
         description="Direct HTTP fetch tools.",
         tools=("http_get",),
     ),
+    "tool-result": RuntimeToolsetDefinition(
+        description="Bounded access to stored raw tool results.",
+        tools=("tool_result.read",),
+    ),
     "messaging": RuntimeToolsetDefinition(
         description="Outbound messaging tools.",
         tools=("mattermost.send",),
@@ -130,8 +134,8 @@ def _resolve_runtime_toolset(name: str, *, seen: set[str]) -> set[str]:
     if definition is None:
         # DB/settings 에 남은 과거 toolset(browser 등)이나 잘못 저장된 toolset 이
         # 한 번 들어왔다고 실행 전체를 죽이면, 모델은 실제 사용 가능한 도구도
-        # 받지 못한다. Hermes 레퍼런스처럼 알 수 없는 toolset 은 빈 목록으로
-        # 처리하고, 공개 설정 저장 단계에서만 allowlist 로 막는다.
+        # 받지 못한다. 알 수 없는 toolset 은 빈 목록으로 처리하고,
+        # 공개 설정 저장 단계에서만 allowlist 로 막는다.
         logger.warning("Ignoring unknown runtime toolset: %s", name)
         return set()
 

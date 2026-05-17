@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from app.domain.work.models import WorkComment, WorkItem, WorkRelation, WorkRunLink
 from app.domain.orchestration.prompts.skill_prompt import SkillLoader, SkillRegistry
+from app.domain.orchestration.agent.tool_result_store import store_raw_tool_result
 from app.domain.orchestration.runtime_planning.todo_state import (
     apply_tool_results_to_todo_state,
     build_task_todo_payload,
@@ -193,6 +194,40 @@ def test_runtime_exposes_heygent_web_tool_definitions(monkeypatch):
     assert [definition["name"] for definition in definitions] == ["http_get"]
     schema_by_name = {definition["name"]: definition["schema"] for definition in definitions}
     assert schema_by_name["http_get"]["parameters"]["properties"]["url"]["type"] == "string"
+
+
+def test_runtime_exposes_tool_result_reader_only_for_tool_result_toolset():
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    definitions = runtime.list_tool_definitions(enabled_toolsets=("tool-result",))
+
+    assert [definition["name"] for definition in definitions] == ["tool_result.read"]
+    assert resolve_runtime_tool_names(("tool-result",)) == {"tool_result.read"}
+    assert "tool_result.read" not in resolve_runtime_tool_names(("web",))
+    assert "tool_result.read" not in resolve_runtime_tool_names(("local-core",))
+
+
+def test_runtime_executes_tool_result_reader(monkeypatch, tmp_path):
+    monkeypatch.setenv("HEYGENT_TOOL_RESULT_STORE_DIR", str(tmp_path / "tool-results"))
+    raw_meta = store_raw_tool_result(
+        tool_name="http_get",
+        tool_call_id="call_raw",
+        task_run_id="task_raw",
+        result={"ok": True, "content": "x" * 25_000},
+    )
+    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
+
+    result = runtime.run_call(
+        name="tool_result.read",
+        args={"raw_ref": raw_meta["raw_ref"], "offset": 0, "limit": 600},
+        enabled_toolsets=("tool-result",),
+    )
+
+    assert result["ok"] is True
+    assert result["raw_ref"] == raw_meta["raw_ref"]
+    assert result["returned_chars"] == 600
+    assert result["has_more"] is True
+    assert len(result["content"]) == 600
 
 
 def test_runtime_does_not_expose_removed_web_search_tool(monkeypatch):
