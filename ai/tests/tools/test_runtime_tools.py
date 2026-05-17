@@ -21,6 +21,7 @@ class DummySessionStore:
 class FakeRuntimeWorkRepository:
     def __init__(self) -> None:
         self.items: dict[str, WorkItem] = {}
+        self.client_request_ids: dict[tuple[str, str], str] = {}
         self.comments: list[WorkComment] = []
         self.relations: list[WorkRelation] = []
         self.next_number = 1
@@ -32,6 +33,8 @@ class FakeRuntimeWorkRepository:
     def create_work(self, work: WorkItem, *, client_request_id: str | None = None) -> WorkItem:
         saved = deepcopy(work)
         self.items[saved.work_id] = saved
+        if client_request_id:
+            self.client_request_ids[(saved.session_id, client_request_id)] = saved.work_id
         return saved
 
     def get_work(self, work_id: str) -> WorkItem | None:
@@ -42,7 +45,8 @@ class FakeRuntimeWorkRepository:
         session_id: str,
         client_request_id: str,
     ) -> WorkItem | None:
-        return None
+        work_id = self.client_request_ids.get((session_id, client_request_id))
+        return self.items.get(work_id) if work_id else None
 
     def set_label_links_by_names(
         self,
@@ -473,6 +477,104 @@ def test_session_agent_task_leaves_parent_waiting_by_default():
     assert work_repository.items[parent.work_id].status == "in_progress"
     assert work_repository.items[child_id].assignee_agent_id == "agent-research"
     assert work_repository.relations == []
+
+
+def test_session_agent_task_reuses_child_work_for_same_turn_and_payload():
+    work_repository = FakeRuntimeWorkRepository()
+    parent = WorkItem(
+        work_id="work-parent",
+        identifier="TASK-1",
+        session_id="session-1",
+        owner_key="7",
+        owner_user_id=7,
+        title="부모 작업",
+        description="부모",
+        status="in_progress",
+        assignee_agent_id="CEO",
+    )
+    work_repository.items[parent.work_id] = parent
+    agent_repository = FakeRuntimeAgentRepository(
+        {
+            "profile_id": "agent-research",
+            "session_id": "session-1",
+            "agent_type": "user_subagent",
+            "profile_key": "session.agent",
+            "config_snapshot": {"name": "Research", "role": "research"},
+        }
+    )
+    runtime = LocalToolRuntime(
+        skill_registry=object(),
+        session_store=DummySessionStore(),
+        work_repository=work_repository,
+        agent_repository=agent_repository,
+        runtime_context={"workId": parent.work_id, "promptMessageId": "msg-1", "taskRunId": "task-root"},
+    )
+    args = {"title": "자료 조사", "instruction": "자료를 조사해줘"}
+
+    first = runtime.run_call(name="session_agent_task", args=args, enabled_toolsets=("work",))
+    second = runtime.run_call(name="session_agent_task", args=args, enabled_toolsets=("work",))
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert first["child_work"]["workId"] == second["child_work"]["workId"]
+    assert first["startExecution"] is True
+    assert second["startExecution"] is False
+    assert second["reused"] is True
+    assert len(work_repository.items) == 2
+    assert len(work_repository.comments) == 1
+
+
+def test_session_agent_task_reuses_root_and_child_work_for_same_prompt_message():
+    work_repository = FakeRuntimeWorkRepository()
+    agent_repository = FakeRuntimeAgentRepository(
+        {
+            "profile_id": "agent-weather",
+            "session_id": "session-1",
+            "agent_type": "user_subagent",
+            "profile_key": "session.weather",
+            "config_snapshot": {"name": "Weather", "role": "research"},
+        }
+    )
+    context = {
+        "sessionId": "session-1",
+        "ownerKey": "7",
+        "ownerUserId": 7,
+        "prompt": "부산 기상 관련 일주일 소식을 조사하고 나한테 말해줘",
+        "promptMessageId": "msg-1",
+        "allowSessionAgentRootWork": True,
+    }
+    args = {
+        "title": "부산 기상 조사",
+        "instruction": "부산 기상 관련 일주일 소식을 조사하고 요약해줘.",
+    }
+
+    first_runtime = LocalToolRuntime(
+        skill_registry=object(),
+        session_store=DummySessionStore(),
+        work_repository=work_repository,
+        agent_repository=agent_repository,
+        runtime_context=dict(context),
+    )
+    second_runtime = LocalToolRuntime(
+        skill_registry=object(),
+        session_store=DummySessionStore(),
+        work_repository=work_repository,
+        agent_repository=agent_repository,
+        runtime_context=dict(context),
+    )
+
+    first = first_runtime.run_call(name="session_agent_task", args=args, enabled_toolsets=("work",))
+    second = second_runtime.run_call(name="session_agent_task", args=args, enabled_toolsets=("work",))
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert first["parent_work"]["workId"] == second["parent_work"]["workId"]
+    assert first["child_work"]["workId"] == second["child_work"]["workId"]
+    assert first["startExecution"] is True
+    assert second["startExecution"] is False
+    assert second["reused"] is True
+    assert len(work_repository.items) == 2
+    assert len(work_repository.comments) == 1
 
 
 def test_session_agent_task_rejects_agent_without_explicit_required_skill():

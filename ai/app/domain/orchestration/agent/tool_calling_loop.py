@@ -678,6 +678,8 @@ class ToolCallingLoopHandler:
         child_work = accepted_result.get("child_work")
         if not isinstance(child_work, dict):
             return accepted_result
+        if accepted_result.get("startExecution") is False:
+            return accepted_result
         return await session_agent_executor(
             child_work=dict(child_work),
             tool_call_id=tool_call_id,

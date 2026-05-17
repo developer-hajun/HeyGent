@@ -86,9 +86,9 @@ class TaskEngine:
         self.step_handler = StepHandler()
 
     async def run(self, *, task: TaskRun, handler) -> TaskRun:
-        self.repository.create_task(task)
-        await self._emit("task.created", task)
-        return await self._execute_initial(task=task, handler=handler, resume_payload=None)
+        saved = self.repository.create_direct_task(task)
+        await self._emit("task.created", saved)
+        return await self._execute_initial(task=saved, handler=handler, resume_payload=None)
 
     async def enqueue_pending(self, *, task: TaskRun) -> TaskRun:
         saved = self.repository.create_pending_task(task)
@@ -96,6 +96,13 @@ class TaskEngine:
         return saved
 
     async def run_claimed(self, *, task: TaskRun, handler) -> TaskRun:
+        latest = self.repository.get_task(task.task_run_id) or task
+        queue_status = str(getattr(latest, "queue_status", "") or "")
+        claim_owner = str(getattr(latest, "claim_owner", "") or "")
+        # run_claimed는 supervisor가 durable queue에서 claim한 작업만 실행한다.
+        # direct 실행이 이 경로로 들어오면 같은 TaskRun을 두 실행자가 동시에 돌릴 수 있다.
+        if queue_status not in {"claimed", "running"} or not claim_owner:
+            raise RuntimeError(f"TaskRun is not claimed by a supervisor worker: {task.task_run_id}")
         return await self._execute_initial(task=task, handler=handler, resume_payload=None)
 
     async def _execute_initial(self, *, task: TaskRun, handler, resume_payload: dict | None) -> TaskRun:
@@ -1060,7 +1067,7 @@ class TaskEngine:
                     handler=handler,
                     task_run_id=task_run_id,
                 )
-                self.repository.create_task(child_task)
+                self.repository.create_direct_task(child_task)
                 await self._emit("task.created", child_task)
                 service.mark_run_started(work_id=work.work_id, task_run_id=task_run_id)
                 await self._notify_step_updated(
@@ -1082,7 +1089,7 @@ class TaskEngine:
                     },
                     summary_message=f"{work.identifier} 세션 에이전트 실행 중",
                 )
-                child_task = await self.run_claimed(task=child_task, handler=handler)
+                child_task = await self._execute_initial(task=child_task, handler=handler, resume_payload=None)
                 updated_work = service.apply_task_result(work_id=work.work_id, task=child_task)
                 if updated_work is not None:
                     self._record_session_agent_parent_result_comment(work=updated_work, task=child_task)

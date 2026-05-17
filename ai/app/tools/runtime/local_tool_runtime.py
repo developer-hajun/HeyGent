@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -855,6 +856,17 @@ class LocalToolRuntime:
             )
 
         profile_id = str(profile.get("profile_id") or "").strip()
+        child_client_request_id = self._session_agent_child_client_request_id(
+            context=context,
+            parent_work_id=parent.work_id,
+            profile_id=profile_id,
+            title=title,
+            instruction=instruction,
+            description=description,
+            args=args,
+            required_skill_names=required_skill_names,
+        )
+        existing_child = self.work_repository.get_work_by_client_request_id(parent.session_id, child_client_request_id)
         child = WorkService(self.work_repository).create_from_payload(
             session_id=parent.session_id,
             owner_key=parent.owner_key,
@@ -873,30 +885,40 @@ class LocalToolRuntime:
                 "metadata": {
                     "createdByWorkId": parent.work_id,
                     "createdByTool": "session_agent_task",
+                    "clientRequestId": child_client_request_id,
                 },
             },
-            client_request_id=None,
+            client_request_id=child_client_request_id,
         )
         block_parent_until_done = args.get("blockParentUntilDone", args.get("block_parent_until_done"))
-        if block_parent_until_done is True:
+        if block_parent_until_done is True and existing_child is None:
             self.work_repository.add_relation(
                 source_work_id=child.work_id,
                 target_work_id=parent.work_id,
                 relation_type="blocks",
             )
-        self.work_repository.add_comment(
-            WorkComment(
-                comment_id=new_id("comment"),
-                work_id=parent.work_id,
-                author_type="system",
-                body=f"{child.identifier} 하위 작업을 만들고 세션 에이전트에게 배정했습니다.",
-                metadata={"childWorkId": child.work_id, "assigneeAgentId": profile_id},
+        if existing_child is None:
+            self.work_repository.add_comment(
+                WorkComment(
+                    comment_id=new_id("comment"),
+                    work_id=parent.work_id,
+                    author_type="system",
+                    body=f"{child.identifier} 하위 작업을 만들고 세션 에이전트에게 배정했습니다.",
+                    metadata={
+                        "childWorkId": child.work_id,
+                        "assigneeAgentId": profile_id,
+                        "clientRequestId": child_client_request_id,
+                    },
+                )
             )
-        )
         config = dict(profile.get("config_snapshot") or {})
         return {
             "ok": True,
-            "content": f"{child.identifier} child work accepted: {child.title}",
+            "content": (
+                f"{child.identifier} child work already accepted: {child.title}"
+                if existing_child is not None
+                else f"{child.identifier} child work accepted: {child.title}"
+            ),
             "parent_work": self._work_tool_payload(parent),
             "child_work": self._work_tool_payload(child),
             "agent": {
@@ -904,7 +926,8 @@ class LocalToolRuntime:
                 "name": str(config.get("name") or profile.get("profile_key") or profile_id),
                 "role": str(config.get("role") or profile.get("agent_type") or "user_subagent"),
             },
-            "startExecution": True,
+            "reused": existing_child is not None,
+            "startExecution": existing_child is None,
         }
 
     def _create_session_agent_root_work(self, *, args: dict[str, Any], context: dict[str, Any]):
@@ -916,6 +939,12 @@ class LocalToolRuntime:
         prompt = str(context.get("prompt") or "").strip()
         title = str(args.get("title") or prompt or "세션 에이전트 작업").strip()
         description = str(prompt or args.get("description") or title).strip()
+        client_request_id = self._session_agent_root_client_request_id(
+            context=context,
+            title=title,
+            description=description,
+            prompt=prompt,
+        )
         return WorkService(self.work_repository).create_from_payload(
             session_id=session_id,
             owner_key=owner_key,
@@ -927,10 +956,80 @@ class LocalToolRuntime:
                 "executionInstruction": description,
                 "assigneeAgentId": "CEO",
                 "source": "session_agent_task",
-                "metadata": {"createdByTool": "session_agent_task"},
+                "metadata": {
+                    "createdByTool": "session_agent_task",
+                    "clientRequestId": client_request_id,
+                },
             },
-            client_request_id=None,
+            client_request_id=client_request_id,
         )
+
+    @classmethod
+    def _session_agent_root_client_request_id(
+        cls,
+        *,
+        context: dict[str, Any],
+        title: str,
+        description: str,
+        prompt: str,
+    ) -> str:
+        turn_id = cls._session_agent_turn_id(context)
+        digest = cls._stable_digest({"title": title, "description": description, "prompt": prompt})
+        return f"session-agent-root:v1:{turn_id}:{digest}"
+
+    @classmethod
+    def _session_agent_child_client_request_id(
+        cls,
+        *,
+        context: dict[str, Any],
+        parent_work_id: str,
+        profile_id: str,
+        title: str,
+        instruction: str,
+        description: str,
+        args: dict[str, Any],
+        required_skill_names: list[str],
+    ) -> str:
+        turn_id = cls._session_agent_turn_id(context)
+        digest = cls._stable_digest(
+            {
+                "parentWorkId": parent_work_id,
+                "profileId": profile_id,
+                "title": title,
+                "instruction": instruction,
+                "description": description,
+                "expectedDeliverable": args.get("expectedDeliverable") or args.get("expected_deliverable"),
+                "acceptanceCriteria": args.get("acceptanceCriteria") or args.get("acceptance_criteria"),
+                "constraints": args.get("constraints"),
+                "requiredSkillNames": required_skill_names,
+            }
+        )
+        return f"session-agent-child:v1:{turn_id}:{parent_work_id}:{profile_id}:{digest}"
+
+    @staticmethod
+    def _session_agent_turn_id(context: dict[str, Any]) -> str:
+        # 같은 사용자 턴이 재실행되어도 같은 work를 가리키게 하는 안정 키다.
+        # 값이 없는 오래된 호출은 task_run_id를 마지막 경계로 쓰고, 그래도 없으면 prompt hash로 떨어진다.
+        for key in (
+            "promptMessageId",
+            "prompt_message_id",
+            "client_message_id",
+            "clientMessageId",
+            "retry_source_message_id",
+            "after_user_message_version",
+            "completion_expected_version",
+            "taskRunId",
+            "task_run_id",
+        ):
+            value = str(context.get(key) or "").strip()
+            if value:
+                return re.sub(r"[^A-Za-z0-9_.:-]+", "_", value)[:120]
+        return LocalToolRuntime._stable_digest({"prompt": context.get("prompt") or ""})
+
+    @staticmethod
+    def _stable_digest(value: Any) -> str:
+        encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
 
     def _work_disposition(self, args: dict[str, Any]) -> dict[str, Any]:
         context = dict(self.runtime_context or {})
