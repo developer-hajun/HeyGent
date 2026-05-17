@@ -1,11 +1,16 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { useParams } from 'react-router'
+import { Loader2 } from 'lucide-react'
 import { OfficeMap } from '@/components/office/OfficeMap'
+import { CeoActionMenu } from '@/components/office/CeoActionMenu'
+import { CeoCommandDialog } from '@/components/office/CeoCommandDialog'
 import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
+import { useAgentCacheStore } from '@/store/useAgentCacheStore'
+import { useTaskRunStore } from '@/store/useTaskRunStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { getCommandUsage } from '@/apis/aiCommandUsage'
-import { agentProfilesToPanelItems, listSessionAgents } from '@/apis/agents'
+import { agentProfilesToPanelItems } from '@/apis/agents'
 import type { CommandUsageSummary } from '@/apis/aiCommandUsage'
 import type {
   AgentConfig,
@@ -152,12 +157,13 @@ const TOKEN_DETAIL_BARS: {
     'inputTokens' | 'outputTokens' | 'cachedInputTokens' | 'reasoningTokens'
   >
   label: string
+  description: string
   color: string
 }[] = [
-  { key: 'inputTokens', label: 'Input', color: '#3b82f6' },
-  { key: 'outputTokens', label: 'Output', color: '#22c55e' },
-  { key: 'cachedInputTokens', label: 'Cache', color: '#f59e0b' },
-  { key: 'reasoningTokens', label: 'Reasoning', color: '#a855f7' },
+  { key: 'inputTokens', label: 'Input', description: '질문', color: '#3b82f6' },
+  { key: 'outputTokens', label: 'Output', description: '답변', color: '#22c55e' },
+  { key: 'cachedInputTokens', label: 'Cache', description: '재사용 질문', color: '#f59e0b' },
+  { key: 'reasoningTokens', label: 'Reasoning', description: 'AI 생각 과정', color: '#a855f7' },
 ]
 
 function TokenUsageModal({
@@ -180,64 +186,240 @@ function TokenUsageModal({
       className="absolute inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={onClose}
     >
+      {/* 화이트보드 본체 — 알루미늄 프레임 + 흰 보드 면 */}
       <div
-        className="w-110 rounded-2xl border border-white/15 bg-black/85 p-6 shadow-2xl backdrop-blur-md"
         onClick={(e) => e.stopPropagation()}
+        style={{
+          position: 'relative',
+          padding: 14,
+          borderRadius: 8,
+          background: 'linear-gradient(145deg, #d8d8dc 0%, #b8b8c0 50%, #989aa2 100%)',
+          boxShadow:
+            '0 24px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -1px 0 rgba(0, 0, 0, 0.15)',
+          width: 'min(720px, 92vw)',
+          animation: 'whiteboardModalIn 0.45s cubic-bezier(0.22, 1.16, 0.36, 1)',
+        }}
       >
-        {/* 헤더 */}
-        <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-base font-bold text-white">토큰 사용량 상세</h2>
-          <button
-            onClick={onClose}
-            className="text-xl leading-none text-white/30 transition-colors hover:text-white"
-          >
-            ×
-          </button>
-        </div>
+        <style>{`
+          @keyframes whiteboardModalIn {
+            from { opacity: 0; transform: translateY(80vh) scale(0.95); }
+            60% { opacity: 1; }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+          }
+        `}</style>
+        {/* 4 모서리 나사 */}
+        {[
+          { top: 6, left: 6 },
+          { top: 6, right: 6 },
+          { bottom: 6, left: 6 },
+          { bottom: 6, right: 6 },
+        ].map((pos, i) => (
+          <div
+            key={i}
+            style={{
+              position: 'absolute',
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: 'radial-gradient(circle at 30% 30%, #888, #444)',
+              boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.4), 0 1px 2px rgba(0,0,0,0.3)',
+              ...pos,
+            }}
+          />
+        ))}
 
-        {/* 막대 그래프 */}
-        <div className="mb-5 flex flex-col gap-4">
-          {TOKEN_DETAIL_BARS.map(({ key, label, color }) => {
-            const value = summary[key]
-            const pct = (value / maxVal) * 100
-            return (
-              <div key={key}>
-                <div className="mb-1.5 flex justify-between">
-                  <span className="text-xs font-semibold text-white/70">{label}</span>
-                  <span className="font-mono text-xs text-white">{value.toLocaleString()}</span>
-                </div>
-                <div className="h-2.5 overflow-hidden rounded-full bg-white/10">
+        {/* 화이트보드 면 */}
+        <div
+          style={{
+            position: 'relative',
+            background:
+              'linear-gradient(180deg, #fdfdf8 0%, #f5f5ee 100%), repeating-linear-gradient(0deg, transparent 0, transparent 2px, rgba(0,0,0,0.015) 2px, rgba(0,0,0,0.015) 3px)',
+            borderRadius: 4,
+            padding: '26px 32px 28px',
+            boxShadow: 'inset 0 1px 3px rgba(0, 0, 0, 0.08), inset 0 -1px 2px rgba(0, 0, 0, 0.04)',
+            color: '#1a1a1a',
+          }}
+        >
+          {/* 헤더 */}
+          <div className="mb-6 flex items-center justify-between">
+            <h2
+              style={{
+                fontSize: 22,
+                fontWeight: 800,
+                letterSpacing: '0.02em',
+                color: '#222',
+                textShadow: '0 1px 0 rgba(255,255,255,0.5)',
+              }}
+            >
+              ⊕ 토큰 사용량
+            </h2>
+            <button
+              onClick={onClose}
+              aria-label="닫기"
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: 6,
+                background: 'transparent',
+                border: '2px solid #888',
+                color: '#555',
+                fontSize: 16,
+                lineHeight: 1,
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = '#e5e5db'
+                e.currentTarget.style.borderColor = '#444'
+                e.currentTarget.style.color = '#111'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'transparent'
+                e.currentTarget.style.borderColor = '#888'
+                e.currentTarget.style.color = '#555'
+              }}
+            >
+              ×
+            </button>
+          </div>
+
+          {/* 막대 — 보드 마커 색감 */}
+          <div className="mb-6 flex flex-col gap-4">
+            {TOKEN_DETAIL_BARS.map(({ key, label, description, color }) => {
+              const value = summary[key]
+              const pct = (value / maxVal) * 100
+              return (
+                <div key={key}>
+                  <div className="mb-1.5 flex items-baseline justify-between">
+                    <span
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 700,
+                        letterSpacing: '0.08em',
+                        color: '#333',
+                      }}
+                    >
+                      {label}
+                      <span
+                        style={{
+                          marginLeft: 8,
+                          fontSize: 12,
+                          fontWeight: 500,
+                          letterSpacing: 0,
+                          color: '#777',
+                        }}
+                      >
+                        ({description})
+                      </span>
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 16,
+                        fontWeight: 700,
+                        color: '#1a1a1a',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {value.toLocaleString()}
+                    </span>
+                  </div>
                   <div
-                    className="h-full rounded-full"
-                    style={{ width: `${pct}%`, background: color, transition: 'width 0.6s ease' }}
-                  />
+                    style={{
+                      height: 13,
+                      background: 'rgba(0, 0, 0, 0.06)',
+                      borderRadius: 7,
+                      overflow: 'hidden',
+                      boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.1)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        height: '100%',
+                        width: `${pct}%`,
+                        background: color,
+                        borderRadius: 7,
+                        boxShadow: `0 0 6px ${color}55`,
+                        transition: 'width 0.7s cubic-bezier(0.34, 1.2, 0.64, 1)',
+                      }}
+                    />
+                  </div>
                 </div>
+              )
+            })}
+          </div>
+
+          {/* 요약 — 화이트보드 위쪽 가로선 + 손글씨 느낌 */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: 16,
+              paddingTop: 18,
+              borderTop: '2px dashed rgba(0, 0, 0, 0.15)',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#666' }}>총 토큰</div>
+              <div
+                style={{
+                  marginTop: 4,
+                  fontSize: 22,
+                  fontWeight: 800,
+                  color: '#0f3a8a',
+                  fontVariantNumeric: 'tabular-nums',
+                  letterSpacing: '-0.01em',
+                }}
+              >
+                {summary.totalTokens.toLocaleString()}
               </div>
-            )
-          })}
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#666' }}>예상 비용</div>
+              <div
+                style={{
+                  marginTop: 4,
+                  fontSize: 22,
+                  fontWeight: 800,
+                  color: '#0f8a3a',
+                  fontVariantNumeric: 'tabular-nums',
+                  letterSpacing: '-0.01em',
+                }}
+              >
+                ${summary.estimatedCostUsd.toFixed(4)}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#666' }}>API 호출</div>
+              <div
+                style={{
+                  marginTop: 4,
+                  fontSize: 22,
+                  fontWeight: 800,
+                  color: '#8a3a0f',
+                  fontVariantNumeric: 'tabular-nums',
+                  letterSpacing: '-0.01em',
+                }}
+              >
+                {summary.recordCount.toLocaleString()}
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* 요약 */}
-        <div className="grid grid-cols-3 gap-3 border-t border-white/10 pt-4">
-          <div className="flex flex-col gap-0.5">
-            <span className="text-xs text-white/40">총 토큰</span>
-            <span className="font-mono text-sm font-semibold text-white">
-              {summary.totalTokens.toLocaleString()}
-            </span>
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-xs text-white/40">예상 비용</span>
-            <span className="font-mono text-sm font-semibold text-white">
-              ${summary.estimatedCostUsd.toFixed(4)}
-            </span>
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-xs text-white/40">API 호출</span>
-            <span className="font-mono text-sm font-semibold text-white">
-              {summary.recordCount.toLocaleString()}
-            </span>
-          </div>
-        </div>
+        {/* 보드 하단 마커 트레이 */}
+        <div
+          style={{
+            position: 'absolute',
+            bottom: -6,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: '55%',
+            height: 10,
+            background: 'linear-gradient(180deg, #b8b8c0 0%, #888892 100%)',
+            borderRadius: '0 0 4px 4px',
+            boxShadow: '0 4px 8px rgba(0, 0, 0, 0.25)',
+          }}
+        />
       </div>
     </div>
   )
@@ -906,9 +1088,23 @@ export function AgentStatusPage() {
   const setAgents = useAgentVisualizationStore((s) => s.setAgentRuntimes)
   const addSpawnedKey = useAgentVisualizationStore((s) => s.addSpawnedKey)
   const [navmeshGrid, setNavmeshGrid] = useState<boolean[][] | null>(null)
+  // 세션 에이전트 패널이 로드 완료되었는지 — 로딩 스피너 표시와 일괄 spawn 시점 판단에 사용
+  const [agentsLoaded, setAgentsLoaded] = useState(false)
   const [spawningIds, setSpawningIds] = useState<ReadonlySet<string>>(new Set())
   const [tokenUsageSummary, setTokenUsageSummary] = useState<CommandUsageSummary | null>(null)
   const [tokenModalOpen, setTokenModalOpen] = useState(false)
+  // 팀장(CEO) 클릭 시 화면에 띄우는 라디얼 메뉴 — clientX/clientY 는 viewport 좌표
+  const [ceoMenu, setCeoMenu] = useState<{ x: number; y: number } | null>(null)
+  // 명령하기 다이얼로그 열림 여부 — 라디얼 메뉴에서 "명령하기" 선택 시 true
+  const [commandDialogOpen, setCommandDialogOpen] = useState(false)
+
+  // [디버깅용 임시] store 노출
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      ;(window as unknown as { __vizStore?: unknown }).__vizStore = useAgentVisualizationStore
+      ;(window as unknown as { __taskStore?: unknown }).__taskStore = useTaskRunStore
+    }
+  }, [])
 
   useEffect(() => {
     void getCommandUsage({})
@@ -945,6 +1141,10 @@ export function AgentStatusPage() {
     walkTimersRef.current = {}
     initialSessionAgentProfileIdsRef.current = new Set()
     capturedInitialAgentPanelsRef.current = false
+    // sessionId 가 바뀐 외부 트리거에 동기화하기 위한 reset — listSessionAgents 다시 호출되어
+    // 응답 오면 true 가 된다. 다른 setState 가 아니라 sessionId 변화에 정확히 1회만 발생.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAgentsLoaded(false)
     useAgentVisualizationStore.getState().clearVisualizationState(sessionId ?? null)
     return () => {
       Object.values(walkTimersRef.current).forEach((t) => clearTimeout(t))
@@ -956,7 +1156,9 @@ export function AgentStatusPage() {
     if (!sessionId || sessionId.startsWith('pending_session_') || accessToken === null) return
 
     let cancelled = false
-    void listSessionAgents(sessionId)
+    void useAgentCacheStore
+      .getState()
+      .fetchSessionAgents(sessionId)
       .then((profiles) => {
         if (cancelled) return
         const panels = agentProfilesToPanelItems(profiles)
@@ -971,9 +1173,12 @@ export function AgentStatusPage() {
         initialSessionAgentProfileIdsRef.current = new Set(initialProfileIds)
         capturedInitialAgentPanelsRef.current = true
         setAgentPanelsForSession(sessionId, panels)
+        setAgentsLoaded(true)
       })
       .catch(() => {
         // 사이드바/서브에이전트 패널에서도 동일 데이터를 불러오므로 실패 시 기존 캐시를 유지한다.
+        // 다만 시각화는 빈 상태에서 무한 로딩하면 안 되므로 로딩 플래그는 풀어준다.
+        if (!cancelled) setAgentsLoaded(true)
       })
 
     return () => {
@@ -1055,6 +1260,67 @@ export function AgentStatusPage() {
   const profileIdMap = useMemo<Record<string, string>>(() => {
     return buildProfileIdSpriteMap(agentPanels)
   }, [agentPanels])
+
+  // 세션의 모든 에이전트가 준비되면 한 번에 spawn 한다.
+  // - listSessionAgents 응답 완료 (agentsLoaded=true)
+  // - navmesh 로드 완료
+  // - 아직 아무도 spawn 되지 않은 상태 (와리가리 후 재진입 시 중복 spawn 방지)
+  // CEO 는 책상에, 서브에이전트는 소파(최대 2명) / 바닥 휴식 자리에 sitting 상태로 즉시 배치한다.
+  // 한 번에 모두 sitting 으로 mount 되므로 CSS transition 의 from 좌표 없음 문제(walking 박힘)가 발생하지 않는다.
+  // 이후 useVisualizationSync 가 task 를 감지하면 그제야 walking 으로 전환 — 그건 update 라서 transition 정상 동작.
+  useEffect(() => {
+    if (!agentsLoaded || navmeshGrid === null) return
+    if (useAgentVisualizationStore.getState().agentRuntimes.length > 0) return
+
+    const subSpriteIds = Object.values(profileIdMap).filter((spriteId) =>
+      AGENT_CONFIGS.some((c) => c.id === spriteId && c.id !== 'ceo'),
+    )
+
+    const ceoConfig = AGENT_CONFIGS.find((c) => c.id === 'ceo')
+    if (!ceoConfig) return
+    const ceoDeskPos = ceoConfig.destinations.desk ?? ceoConfig.initialPosition
+
+    const newAgents: AgentRuntime[] = [
+      {
+        config: ceoConfig,
+        position: { ...ceoDeskPos },
+        state: 'sitting_desk',
+        targetState: 'sitting_desk',
+        walkFrame: 0,
+        transitionDuration: 0,
+        pendingWaypoints: [],
+        targetPosition: null,
+        standWaitTarget: null,
+        facingRight: false,
+      },
+    ]
+
+    for (const spriteId of subSpriteIds) {
+      const config = AGENT_CONFIGS.find((c) => c.id === spriteId)
+      if (!config) continue
+      const freeSofa = SOFA_SPOTS.find((spot) => !isSpotOccupied(spot, newAgents, spriteId))
+      const position = freeSofa ?? config.destinations.floorLean ?? config.initialPosition
+      const state = (freeSofa ? 'sitting_sofa' : 'sitting_floor_lean') as SittingState
+      newAgents.push({
+        config,
+        position: { ...position },
+        state,
+        targetState: state,
+        walkFrame: 0,
+        transitionDuration: 0,
+        pendingWaypoints: [],
+        targetPosition: null,
+        standWaitTarget: null,
+        facingRight: false,
+      })
+    }
+
+    setAgents(newAgents)
+    addSpawnedKey('ceo')
+    for (const spriteId of subSpriteIds) {
+      addSpawnedKey(spriteId)
+    }
+  }, [agentsLoaded, navmeshGrid, profileIdMap, setAgents, addSpawnedKey])
 
   const handleMove = (agentId: string, rawDestination: UIDestination) => {
     // 팀장 전용 목적지 매핑
@@ -1191,7 +1457,9 @@ export function AgentStatusPage() {
             },
           ]
         }
-        requestAnimationFrame(() => handleMove(agentId, rawDestination))
+        // idle 상태로 추가만 한다 — 별도 idleAgentIds useEffect 가 다음 paint 사이클(RAF 2회)에 handleMove 를
+        // 호출해 walking 으로 전환한다. 보통은 일괄 spawn (위 useEffect) 가 먼저 발화해 이 분기 자체에 들어오지 않지만,
+        // race condition 으로 미리 spawn 안 된 채 useVisualizationSync 등 외부 호출이 먼저 일어나면 fallback 으로 동작.
         return [
           ...prevAgents,
           {
@@ -1486,10 +1754,59 @@ export function AgentStatusPage() {
       })
     }
 
-    for (const [, spriteId] of elevatorSubs) {
-      handleMoveRef.current(spriteId, 'rest')
+    // 엘리베이터 입장 케이스: 먼저 initialPosition 에 idle 상태로 spawn 만 한다.
+    // 같은 commit 에서 walking 까지 시작하면 mount 시점부터 transform 이 목표 좌표라
+    // CSS transition 의 from 값이 없고 onTransitionEnd 가 영원히 발화하지 않는다.
+    // 별도 useEffect 가 다음 paint 사이클에 handleMove 를 호출해 walking 을 시작한다.
+    if (elevatorSubs.length > 0) {
+      elevatorSubs.forEach(([, spriteId]) => addSpawnedKey(spriteId))
+      setAgents((prev) => {
+        const newAgents: AgentRuntime[] = []
+        for (const [, spriteId] of elevatorSubs) {
+          const config = AGENT_CONFIGS.find((c) => c.id === spriteId)
+          if (!config || prev.some((a) => a.config.id === spriteId)) continue
+          newAgents.push({
+            config,
+            position: { ...config.initialPosition },
+            state: 'idle',
+            targetState: 'sitting_sofa',
+            walkFrame: 0,
+            transitionDuration: 0,
+            pendingWaypoints: [],
+            targetPosition: null,
+            standWaitTarget: null,
+            facingRight: false,
+          })
+        }
+        return [...prev, ...newAgents]
+      })
     }
   }, [profileIdMap, setAgents, addSpawnedKey])
+
+  // idle 상태로 spawn 된 에이전트는 브라우저가 실제로 paint 한 후에 walking 으로 전환한다.
+  // useEffect 만으로는 React 가 idle commit 과 walking commit 을 한 paint 로 묶을 수 있다.
+  // requestAnimationFrame 두 번으로 paint 한 번을 사이에 끼워 CSS transition 의 from 좌표를 보장한다.
+  const idleAgentIds = useAgentVisualizationStore((s) =>
+    s.agentRuntimes
+      .filter((a) => a.state === 'idle')
+      .map((a) => a.config.id)
+      .join(','),
+  )
+  useEffect(() => {
+    if (idleAgentIds === '') return
+    let inner: number | null = null
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => {
+        for (const agentId of idleAgentIds.split(',')) {
+          handleMoveRef.current(agentId, 'rest')
+        }
+      })
+    })
+    return () => {
+      cancelAnimationFrame(outer)
+      if (inner !== null) cancelAnimationFrame(inner)
+    }
+  }, [idleAgentIds])
 
   // 팀장 상태 구독 — explain 타이머 조건 판단에 사용
   const ceoState = useAgentVisualizationStore(
@@ -1586,19 +1903,67 @@ export function AgentStatusPage() {
 
   const selectedInfo = selectedAgentId ? agentInfoMap[selectedAgentId] : null
 
+  const isInitializing = !agentsLoaded || navmeshGrid === null
+
+  // 팀장(CEO)은 클릭 시 라디얼 메뉴를 띄우고, 서브에이전트는 기존처럼 즉시 정보 패널을 연다.
+  const handleAgentClickWithMenu = (
+    agentId: string,
+    event: { clientX: number; clientY: number },
+  ) => {
+    if (agentId === 'ceo') {
+      setCeoMenu({ x: event.clientX, y: event.clientY })
+      return
+    }
+    selectAgent(agentId)
+  }
+
+  const ceoProfileImage = agentInfoMap.ceo?.profileImage ?? '/assets/agents/ceo/ceo_profile.png'
+  const ceoName = agentInfoMap.ceo?.name ?? '팀장 에이전트'
+
   return (
     <div className="relative flex flex-1 overflow-hidden">
       <OfficeMap
         agents={agents}
         onAgentArrived={handleAgentArrived}
         ceoMode={null}
-        onAgentClick={selectAgent}
+        onAgentClick={handleAgentClickWithMenu}
         agentInfoMap={agentInfoMap}
         selectedAgentId={selectedAgentId}
         spawningIds={spawningIds}
         tokenUsageSummary={tokenUsageSummary}
         onTokenChartClick={() => setTokenModalOpen(true)}
       />
+      {isInitializing && (
+        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3 rounded-2xl bg-black/70 px-6 py-5 shadow-2xl">
+            <Loader2 className="h-8 w-8 animate-spin text-white" />
+            <p className="text-sm font-medium text-white/90">에이전트를 불러오는 중...</p>
+          </div>
+        </div>
+      )}
+      {ceoMenu && (
+        <CeoActionMenu
+          x={ceoMenu.x}
+          y={ceoMenu.y}
+          onSelectCommand={() => {
+            setCeoMenu(null)
+            setCommandDialogOpen(true)
+          }}
+          onSelectInfo={() => {
+            setCeoMenu(null)
+            selectAgent('ceo')
+          }}
+          onClose={() => setCeoMenu(null)}
+        />
+      )}
+      {commandDialogOpen && sessionId !== undefined && (
+        <CeoCommandDialog
+          sessionId={sessionId}
+          ceoName={ceoName}
+          ceoProfileImage={ceoProfileImage}
+          onClose={() => setCommandDialogOpen(false)}
+        />
+      )}
       {selectedInfo && <AgentInfoPanel info={selectedInfo} onClose={() => selectAgent(null)} />}
       {tokenModalOpen && tokenUsageSummary && (
         <TokenUsageModal summary={tokenUsageSummary} onClose={() => setTokenModalOpen(false)} />

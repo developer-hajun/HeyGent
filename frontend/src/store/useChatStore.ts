@@ -20,7 +20,8 @@ import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
 import { useSessionStore, type AgentPanelItem } from '@/store/useSessionStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
-import { agentProfilesToPanelItems, listSessionAgents } from '@/apis/agents'
+import { agentProfilesToPanelItems } from '@/apis/agents'
+import { useAgentCacheStore } from '@/store/useAgentCacheStore'
 import type {
   AiModelOption,
   AiModelProviderOption,
@@ -125,7 +126,11 @@ function startVisualizationForSession(
 }
 
 function refreshVisualizationSessionAgents(sessionId: string, taskRunId: string) {
-  void listSessionAgents(sessionId)
+  // 새 에이전트 spawn 또는 작업 시작 흐름 — 캐시를 무효화한 뒤 다시 받아 최신 panel 로 갱신한다.
+  useAgentCacheStore.getState().invalidateSessionAgents(sessionId)
+  void useAgentCacheStore
+    .getState()
+    .fetchSessionAgents(sessionId)
     .then((profiles) => {
       const panels = agentProfilesToPanelItems(profiles)
       useSessionStore.getState().setAgentPanelsForSession(sessionId, panels)

@@ -34,7 +34,7 @@ interface OfficeMapProps {
   obstacleLineMode?: boolean
   obstacleLines?: Rect[]
   onNewLine?: (line: Rect) => void
-  onAgentClick?: (agentId: string) => void
+  onAgentClick?: (agentId: string, event: { clientX: number; clientY: number }) => void
   agentInfoMap?: Record<string, AgentVisualizationInfo>
   selectedAgentId?: string | null
   spawningIds?: ReadonlySet<string>

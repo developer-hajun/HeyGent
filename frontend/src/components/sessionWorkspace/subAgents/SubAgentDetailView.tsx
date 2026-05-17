@@ -42,12 +42,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tabs } from '@/components/ui/tabs'
 import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
-import {
-  getUserSkillDetail,
-  listUserSkills,
-  type SkillCatalogDetail,
-  type SkillCatalogItem,
-} from '@/apis/agents'
+import { getUserSkillDetail, type SkillCatalogDetail, type SkillCatalogItem } from '@/apis/agents'
+import { useAgentCacheStore } from '@/store/useAgentCacheStore'
 import { listTaskRuns } from '@/apis/taskRuns'
 import {
   getCachedTaskRuns,
@@ -237,7 +233,9 @@ export function SubAgentDetailView({
     }
 
     let alive = true
-    void listUserSkills()
+    void useAgentCacheStore
+      .getState()
+      .fetchUserSkills()
       .then((items) => {
         if (!alive) return
         setSkillCatalog(items)
