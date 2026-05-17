@@ -3,7 +3,7 @@ import sys
 import types
 from copy import deepcopy
 
-from app.domain.work.models import WorkComment, WorkItem, WorkRelation
+from app.domain.work.models import WorkComment, WorkItem, WorkRelation, WorkRunLink
 from app.domain.orchestration.prompts.skill_prompt import SkillLoader, SkillRegistry
 from app.domain.orchestration.runtime_planning.todo_state import (
     apply_tool_results_to_todo_state,
@@ -24,6 +24,7 @@ class FakeRuntimeWorkRepository:
         self.client_request_ids: dict[tuple[str, str], str] = {}
         self.comments: list[WorkComment] = []
         self.relations: list[WorkRelation] = []
+        self.runs: dict[tuple[str, str], WorkRunLink] = {}
         self.next_number = 1
 
     def next_identifier(self, session_id: str) -> str:
@@ -69,6 +70,15 @@ class FakeRuntimeWorkRepository:
         work = self.items[work_id]
         self.items[work_id] = WorkItem(**{**_work_dict(work), "status": status})
         return self.items[work_id]
+
+    def link_run(self, work_id: str, task_run_id: str, *, run_kind: str, status: str) -> WorkRunLink:
+        link = WorkRunLink(work_id=work_id, task_run_id=task_run_id, run_kind=run_kind, status=status)
+        self.runs[(work_id, task_run_id)] = link
+        active_run_id = None if status in {"COMPLETED", "FAILED", "CANCELED"} else task_run_id
+        work = self.items[work_id]
+        if work.active_run_id is None or work.active_run_id == task_run_id:
+            self.items[work_id] = WorkItem(**{**_work_dict(work), "active_run_id": active_run_id, "latest_run_id": task_run_id})
+        return link
 
     def add_relation(
         self,
@@ -118,15 +128,9 @@ def test_runtime_exposes_todo_schema_without_legacy_write_name():
     definitions = runtime.list_tool_definitions(enabled_toolsets=("planning",))
 
     schema_by_name = {definition["name"]: definition["schema"] for definition in definitions}
-    assert [definition["name"] for definition in definitions] == ["step", "todo"]
+    assert [definition["name"] for definition in definitions] == ["todo"]
     assert schema_by_name["todo"]["name"] == "todo"
     assert "todos" in schema_by_name["todo"]["parameters"]["properties"]
-    assert schema_by_name["step"]["name"] == "step"
-    assert "steps" in schema_by_name["step"]["parameters"]["properties"]
-    title_description = schema_by_name["step"]["parameters"]["properties"]["steps"]["items"]["properties"]["title"]["description"]
-    assert "target/topic/artifact" in title_description
-    assert "뉴스 출처 근거 조사" in title_description
-    assert "기존 자료 파악" in title_description
 
 
 def test_runtime_exposes_terminal_argument_schema():
@@ -541,6 +545,7 @@ def test_session_agent_task_reuses_root_and_child_work_for_same_prompt_message()
         "ownerUserId": 7,
         "prompt": "부산 기상 관련 일주일 소식을 조사하고 나한테 말해줘",
         "promptMessageId": "msg-1",
+        "taskRunId": "task-root",
         "allowSessionAgentRootWork": True,
     }
     args = {
@@ -575,6 +580,7 @@ def test_session_agent_task_reuses_root_and_child_work_for_same_prompt_message()
     assert second["reused"] is True
     assert len(work_repository.items) == 2
     assert len(work_repository.comments) == 1
+    assert work_repository.items[first["parent_work"]["workId"]].active_run_id == "task-root"
 
 
 def test_session_agent_task_rejects_agent_without_explicit_required_skill():
@@ -709,6 +715,7 @@ def test_session_agent_task_can_create_root_work_when_default_agent_session_allo
             "ownerKey": "7",
             "ownerUserId": 7,
             "prompt": "SRT 예약 가능 여부를 확인해줘.",
+            "taskRunId": "task-root",
             "allowSessionAgentRootWork": True,
         },
     )
@@ -725,6 +732,7 @@ def test_session_agent_task_can_create_root_work_when_default_agent_session_allo
     assert result["child_work"]["parentId"] == parent_id
     assert work_repository.items[parent_id].assignee_agent_id == "CEO"
     assert work_repository.items[parent_id].source == "session_agent_task"
+    assert work_repository.items[parent_id].active_run_id == "task-root"
     assert work_repository.items[child_id].assignee_agent_id == "agent-travel"
     assert runtime.runtime_context["workId"] == parent_id
 
@@ -817,51 +825,6 @@ def test_todo_writes_and_reads_full_json_ready_result():
         "cancelled": 0,
     }
     json.dumps(written, ensure_ascii=False)
-
-
-def test_step_writes_and_reads_declared_semantic_steps():
-    runtime = LocalToolRuntime(skill_registry=object(), session_store=DummySessionStore())
-
-    written = runtime.run_call(
-        name="step",
-        args={
-            "steps": [
-                {
-                    "id": "research",
-                    "title": "뉴스 근거 자료 조사",
-                    "summary": "뉴스 근거 자료 조사 중",
-                    "goal": "근거 자료를 정리한다.",
-                    "status": "completed",
-                },
-                {
-                    "id": "draft",
-                    "title": "뉴스 브리핑 문서 초안 작성",
-                    "summary": "뉴스 브리핑 문서 초안 작성 중",
-                    "goal": "조사 결과를 문서화한다.",
-                    "status": "in_progress",
-                },
-            ]
-        },
-    )
-    read = runtime.run_call(name="step", args={"steps": [], "merge": True})
-
-    assert written == read
-    assert written["steps"] == [
-        {
-            "id": "research",
-            "title": "뉴스 근거 자료 조사",
-            "summary": "뉴스 근거 자료 조사 중",
-            "goal": "근거 자료를 정리한다.",
-            "status": "completed",
-        },
-        {
-            "id": "draft",
-            "title": "뉴스 브리핑 문서 초안 작성",
-            "summary": "뉴스 브리핑 문서 초안 작성 중",
-            "goal": "조사 결과를 문서화한다.",
-            "status": "in_progress",
-        },
-    ]
 
 
 def test_todo_projection_accepts_json_string_tool_content():

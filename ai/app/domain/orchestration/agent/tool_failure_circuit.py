@@ -218,7 +218,7 @@ def classify_tool_failure(result: Any) -> ToolFailure | None:
 
 def classify_provider_failure(error: BaseException) -> ProviderFailure | None:
     status_code = _provider_status_code(error)
-    message = str(error)
+    message = f"{type(error).__name__}: {error}"
     lowered = message.lower()
     if status_code is None and not any(token in lowered for token in ("rate limit", "too many requests", "timeout", "timed out")):
         return None

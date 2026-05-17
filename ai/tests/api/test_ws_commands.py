@@ -88,7 +88,7 @@ def _patch_respond_sequence(monkeypatch, responses: list[AgentModelResponse]) ->
     monkeypatch.setattr("app.domain.providers.model.openai_api.OpenAIAPIProvider.respond_async", fake_respond_async)
 
 
-def _model_text_response(*, model: str, text: str) -> AgentModelResponse:
+def _model_text_response(*, model: str, text: str, work_disposition: dict | None = None) -> AgentModelResponse:
     return AgentModelResponse(
         provider_name="openai_api",
         model=model,
@@ -97,6 +97,8 @@ def _model_text_response(*, model: str, text: str) -> AgentModelResponse:
         tool_calls=[],
         finish_reason="stop",
         metadata={"model": model},
+        work_disposition=work_disposition,
+        visible_text=text,
     )
 
 
@@ -466,8 +468,8 @@ def test_ws_list_snapshot_and_replay_happy_path(client, monkeypatch):
         assert snapshot["requestId"] == "req_snapshot"
         assert snapshot["payload"]["task"]["task_run_id"] == task_run_id
         assert snapshot["payload"]["task_run"]["task_run_id"] == task_run_id
-        assert snapshot["payload"]["steps"] == []
-        assert snapshot["payload"]["step_runs"] == []
+        assert len(snapshot["payload"]["steps"]) == 1
+        assert len(snapshot["payload"]["step_runs"]) == 1
         assert snapshot["payload"]["approvals"] == []
         assert snapshot["payload"]["events"]
         assert snapshot["payload"]["events"][0]["task_run_id"] == task_run_id
@@ -502,21 +504,6 @@ def test_ws_session_agent_task_child_taskrun_can_be_subscribed_snapshotted_and_r
                 model="gpt-test",
                 tool_calls=[
                     _tool_call(
-                        "call-step-1",
-                        "step",
-                        {
-                            "steps": [
-                                {
-                                    "id": "delegate-k-service",
-                                    "title": "분실물 대응 배정",
-                                    "summary": "K-에이전트에게 지하철 유실물 안내를 맡깁니다.",
-                                    "goal": "K-에이전트에게 강남역 지갑 분실 대응을 맡긴다.",
-                                    "status": "in_progress",
-                                }
-                            ]
-                        },
-                    ),
-                    _tool_call(
                         "call-session-agent-1",
                         "session_agent_task",
                         {
@@ -529,17 +516,11 @@ def test_ws_session_agent_task_child_taskrun_can_be_subscribed_snapshotted_and_r
                     ),
                 ],
             ),
-            _model_tool_response(
+            _model_text_response(
                 model="gpt-test",
-                tool_calls=[
-                    _tool_call(
-                        "call-child-disposition-1",
-                        "work_disposition",
-                        {"status": "done", "summary": "지하철 유실물 확인 절차를 정리했습니다."},
-                    )
-                ],
+                text="CHILD_DONE",
+                work_disposition={"status": "done", "summary": "지하철 유실물 확인 절차를 정리했습니다."},
             ),
-            _model_text_response(model="gpt-test", text="CHILD_DONE"),
             _model_text_response(model="gpt-test", text="PARENT_DONE"),
         ],
     )

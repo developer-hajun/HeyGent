@@ -16,7 +16,7 @@ from app.domain.orchestration.agent.tool_failure_circuit import (
     classify_provider_failure,
 )
 from app.domain.orchestration.agent.tool_guard import ToolGuard, ToolGuardDecision, ToolGuardResult
-from app.domain.providers.model.base import AgentMessage, AgentModelResponse, ToolResultMessage
+from app.domain.providers.model.base import AgentMessage, AgentModelResponse, ToolResultMessage, parse_assistant_response_contract
 from app.domain.orchestration.prompts.prompt_builder import assemble_agent_loop_messages
 from app.domain.session.sessions.transcript_store import TranscriptStore
 from app.domain.orchestration.runtime_planning.todo_state import (
@@ -191,6 +191,16 @@ class ToolCallingLoopHandler:
             llm_call_count += 1
             messages.append(generated.message)
             self._append_transcript_message(transcript_session_id, generated.message, finish_reason=generated.finish_reason)
+            response_contract = self._response_contract_from_model_response(generated)
+            progress_update = generated.progress_update if isinstance(generated.progress_update, dict) else response_contract.get("progressUpdate")
+            if isinstance(progress_update, dict):
+                await self._emit_model_progress_update(
+                    progress_sink=progress_sink,
+                    progress_update=progress_update,
+                    turn_index=turn_index,
+                    generated=generated,
+                )
+            visible_output_text = str(generated.visible_text or response_contract.get("text") or generated.output_text or "")
             operations.append(
                 {
                     "key": self._next_operation_key(
@@ -201,17 +211,18 @@ class ToolCallingLoopHandler:
                     "title": f"모델 응답 생성 {turn_index}",
                     "kind": "llm",
                     "status": "completed",
-                    "summary": generated.output_text[:80] or f"tool_calls={len(generated.tool_calls)}",
+                    "summary": visible_output_text[:80] or self._progress_summary(progress_update) or f"tool_calls={len(generated.tool_calls)}",
                 }
             )
 
             if not generated.tool_calls:
-                final_text = generated.output_text
+                final_text = visible_output_text
                 return self._build_completed_outcome(
                     task_input=task_input,
                     prompt=prompt,
                     generated=generated,
                     final_text=final_text,
+                    response_contract=response_contract,
                     tool_results=all_tool_results,
                     operations=operations,
                     llm_call_count=llm_call_count,
@@ -717,10 +728,6 @@ class ToolCallingLoopHandler:
             active_title = cls._active_todo_title(args.get("todos"))
             if active_title:
                 return active_title
-        if tool_name == "step":
-            active_title = cls._active_step_title(args.get("steps"))
-            if active_title:
-                return active_title
         if tool_name == "write_file":
             path = cls._optional_text(args.get("path")) or cls._optional_text((result or {}).get("path"))
             return f"{path} 파일 작성" if path else "파일 작성"
@@ -775,18 +782,6 @@ class ToolCallingLoopHandler:
                     "status": cls._optional_text(item.get("status")),
                 }
                 for item in todos[:12]
-            ]
-        if tool_name == "step":
-            steps = [item for item in args.get("steps") or [] if isinstance(item, dict)]
-            payload["steps"] = [
-                {
-                    "id": cls._optional_text(item.get("id") or item.get("key")),
-                    "title": cls._optional_text(item.get("title") or item.get("summary")),
-                    "summary": cls._optional_text(item.get("summary") or item.get("title")),
-                    "goal": cls._optional_text(item.get("goal")),
-                    "status": cls._optional_text(item.get("status")),
-                }
-                for item in steps[:12]
             ]
         if isinstance(result, dict):
             payload["result"] = cls._compact_progress_value(result)
@@ -863,21 +858,6 @@ class ToolCallingLoopHandler:
         return None
 
     @classmethod
-    def _active_step_title(cls, value: Any) -> str | None:
-        if not isinstance(value, list):
-            return None
-        for status in ("in_progress", "pending", "completed"):
-            for item in value:
-                if not isinstance(item, dict):
-                    continue
-                if str(item.get("status") or "").strip().lower() != status:
-                    continue
-                title = cls._optional_text(item.get("summary") or item.get("title"))
-                if title:
-                    return title
-        return None
-
-    @classmethod
     def _terminal_command_summary(cls, args: dict[str, Any]) -> str | None:
         argv = args.get("argv")
         if isinstance(argv, list) and argv:
@@ -896,7 +876,7 @@ class ToolCallingLoopHandler:
 
     @staticmethod
     def _sync_dynamic_runtime_context(*, task, task_input: dict[str, Any], tool_runtime) -> None:
-        latest_input = dict(getattr(task, "input_payload", None) or {})
+        runtime_context = getattr(tool_runtime, "runtime_context", None)
         dynamic_keys = (
             "workId",
             "workIdentifier",
@@ -905,6 +885,22 @@ class ToolCallingLoopHandler:
             "workContext",
             "workLinkReason",
         )
+        if isinstance(runtime_context, dict):
+            # session_agent_task처럼 도구 실행 중 새로 연결된 work context는 tool runtime에 먼저 생긴다.
+            # 이 값을 TaskRun input에도 즉시 반영해야 이후 loop와 최종 WorkService 처리에서
+            # 같은 parent work/run 관계를 잃지 않는다.
+            runtime_updates = {
+                key: runtime_context[key]
+                for key in dynamic_keys
+                if key in runtime_context and task_input.get(key) != runtime_context[key]
+            }
+            if runtime_updates:
+                task_input.update(runtime_updates)
+                latest_input = dict(getattr(task, "input_payload", None) or {})
+                latest_input.update(runtime_updates)
+                task.input_payload = latest_input
+
+        latest_input = dict(getattr(task, "input_payload", None) or {})
         updates = {
             key: latest_input[key]
             for key in dynamic_keys
@@ -913,7 +909,6 @@ class ToolCallingLoopHandler:
         if not updates:
             return
         task_input.update(updates)
-        runtime_context = getattr(tool_runtime, "runtime_context", None)
         if isinstance(runtime_context, dict):
             runtime_context.update(updates)
 
@@ -1244,6 +1239,7 @@ class ToolCallingLoopHandler:
         prompt: str,
         generated,
         final_text: str,
+        response_contract: dict[str, Any] | None,
         tool_results: list[dict[str, Any]],
         operations: list[dict[str, Any]],
         llm_call_count: int,
@@ -1264,7 +1260,9 @@ class ToolCallingLoopHandler:
             "metadata": metadata,
             "tool_results": tool_results,
         }
-        work_disposition = self._work_disposition_from_tool_results(tool_results)
+        work_disposition = self._work_disposition_from_response_contract(response_contract)
+        if work_disposition is None:
+            work_disposition = self._parent_work_disposition_from_tool_results(tool_results)
         if work_disposition is not None:
             result_payload["workDisposition"] = work_disposition
         output_payload = {
@@ -1291,8 +1289,6 @@ class ToolCallingLoopHandler:
                 **dict(detail_json.get("agentDetail") or {}),
                 **session_agent_detail,
             }
-        observed_steps = self._observed_semantic_steps(tool_results)
-        step_summary = self._observed_step_summary(observed_steps)
         if resume_payload is not None:
             operations.append(
                 {
@@ -1314,8 +1310,8 @@ class ToolCallingLoopHandler:
             "output_payload": output_payload,
             "detail_json": detail_json,
             "todo_state": todo_state,
-            "observed_steps": observed_steps,
-            "summary_message": step_summary or final_text[:120] or "agent loop completed",
+            "observed_steps": [],
+            "summary_message": self._progress_summary(response_contract.get("progressUpdate")) or final_text[:120] or "agent loop completed",
             "operations": operations,
         }
         child_session = self._child_session_from_tool_results(tool_results)
@@ -1339,8 +1335,6 @@ class ToolCallingLoopHandler:
         """approval 대기 상태를 TaskRun/StepRun 저장 형식으로 만든다."""
 
         tool_names = [str(item["name"]) for item in tool_results]
-        observed_steps = self._observed_semantic_steps(tool_results)
-        step_summary = self._observed_step_summary(observed_steps)
         return {
             "task_status": TaskStatus.WAITING,
             "step_status": StepStatus.WAITING,
@@ -1358,8 +1352,8 @@ class ToolCallingLoopHandler:
                 todo_state=todo_state,
             ),
             "todo_state": todo_state,
-            "observed_steps": observed_steps,
-            "summary_message": step_summary or "approval required",
+            "observed_steps": [],
+            "summary_message": "approval required",
             "approval_payload": {
                 "reason": approval_reason,
                 "tool_results": tool_results,
@@ -1393,8 +1387,6 @@ class ToolCallingLoopHandler:
         max_iterations: int,
     ) -> dict[str, Any]:
         tool_names = [str(item["name"]) for item in tool_results]
-        observed_steps = self._observed_semantic_steps(tool_results)
-        step_summary = self._observed_step_summary(observed_steps)
         message = f"작업 반복 한도({max_iterations})에 도달했습니다."
         return {
             "task_status": TaskStatus.FAILED,
@@ -1417,8 +1409,8 @@ class ToolCallingLoopHandler:
                 todo_state=todo_state,
             ),
             "todo_state": todo_state,
-            "observed_steps": observed_steps,
-            "summary_message": step_summary or message,
+            "observed_steps": [],
+            "summary_message": message,
             "error_message": message,
             "operations": [
                 *operations,
@@ -1449,8 +1441,6 @@ class ToolCallingLoopHandler:
         result: dict[str, Any],
     ) -> dict[str, Any]:
         tool_names = [str(item["name"]) for item in tool_results]
-        observed_steps = self._observed_semantic_steps(tool_results)
-        step_summary = self._observed_step_summary(observed_steps)
         operation_error = self._tool_operation_error(result) or {
             "code": "tool_failure_blocked",
             "message": "반복 도구 실패가 차단되었습니다.",
@@ -1477,8 +1467,8 @@ class ToolCallingLoopHandler:
                 todo_state=todo_state,
             ),
             "todo_state": todo_state,
-            "observed_steps": observed_steps,
-            "summary_message": step_summary or message,
+            "observed_steps": [],
+            "summary_message": message,
             "error_message": message,
             "operations": [
                 *operations,
@@ -1511,7 +1501,6 @@ class ToolCallingLoopHandler:
     ) -> dict[str, Any]:
         message = str(failure_payload.get("message") or "모델 provider 호출이 실패했습니다.")
         code = str(failure_payload.get("code") or "provider_call_failed")
-        observed_steps = self._observed_semantic_steps(tool_results)
         return {
             "task_status": TaskStatus.FAILED,
             "step_status": StepStatus.FAILED,
@@ -1531,7 +1520,7 @@ class ToolCallingLoopHandler:
                 todo_state=todo_state,
             ),
             "todo_state": todo_state,
-            "observed_steps": observed_steps,
+            "observed_steps": [],
             "summary_message": message,
             "error_message": message,
             "operations": [
@@ -1633,25 +1622,47 @@ class ToolCallingLoopHandler:
         return None
 
     @classmethod
-    def _observed_semantic_steps(cls, tool_results: list[dict[str, Any]]) -> list[dict[str, str]]:
-        observed: list[dict[str, str]] = []
-        for tool_result in tool_results:
-            if str(tool_result.get("name") or "") != "step":
-                continue
-            result = tool_result.get("result")
-            if not isinstance(result, dict) or result.get("ok") is False:
-                continue
-            raw_steps = result.get("steps")
-            if not isinstance(raw_steps, list):
-                continue
-            observed = [
-                normalized
-                for index, item in enumerate(raw_steps[:12])
-                if isinstance(item, dict)
-                for normalized in [cls._normalize_observed_step(item, index=index)]
-                if normalized is not None
-            ]
-        return observed
+    def _response_contract_from_model_response(cls, generated: AgentModelResponse) -> dict[str, Any]:
+        contract = parse_assistant_response_contract(generated.output_text)
+        if isinstance(generated.progress_update, dict):
+            contract["progressUpdate"] = generated.progress_update
+        if isinstance(generated.work_disposition, dict):
+            contract["workDisposition"] = generated.work_disposition
+        if isinstance(generated.visible_text, str) and generated.visible_text.strip():
+            contract["text"] = generated.visible_text.strip()
+        return contract
+
+    @staticmethod
+    async def _emit_model_progress_update(
+        *,
+        progress_sink,
+        progress_update: dict[str, Any],
+        turn_index: int,
+        generated: AgentModelResponse,
+    ) -> None:
+        if progress_sink is None:
+            return
+        payload = {
+            "progressUpdate": dict(progress_update),
+            "turn": turn_index,
+            "model": generated.model,
+            "responseId": (generated.metadata or {}).get("response_id"),
+        }
+        await progress_sink(
+            event_type="model.progress.updated",
+            summary_message=ToolCallingLoopHandler._progress_summary(progress_update),
+            payload=payload,
+        )
+
+    @staticmethod
+    def _progress_summary(progress_update: Any) -> str | None:
+        if not isinstance(progress_update, dict):
+            return None
+        for key in ("summary", "message", "statusMessage", "title", "step"):
+            value = progress_update.get(key)
+            if isinstance(value, str) and value.strip():
+                return " ".join(value.split())[:120]
+        return None
 
     @staticmethod
     def _child_session_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -1667,13 +1678,21 @@ class ToolCallingLoopHandler:
         return None
 
     @staticmethod
-    def _work_disposition_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, Any] | None:
-        for item in reversed(tool_results):
-            if str(item.get("name") or "") != "work_disposition":
-                continue
-            result = item.get("result")
-            if isinstance(result, dict) and isinstance(result.get("workDisposition"), dict):
-                return dict(result["workDisposition"])
+    def _work_disposition_from_response_contract(response_contract: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not isinstance(response_contract, dict):
+            return None
+        disposition = response_contract.get("workDisposition")
+        if not isinstance(disposition, dict):
+            return None
+        status = str(disposition.get("status") or "").strip()
+        if status not in {"todo", "in_progress", "in_review", "blocked", "done", "cancelled"}:
+            return None
+        normalized = dict(disposition)
+        normalized["status"] = status
+        return normalized
+
+    @staticmethod
+    def _parent_work_disposition_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, Any] | None:
         for item in reversed(tool_results):
             if str(item.get("name") or "") != "session_agent_task":
                 continue
@@ -1748,39 +1767,6 @@ class ToolCallingLoopHandler:
             "summary": latest.get("summary"),
             "sessionAgents": session_agents,
         }
-
-    @staticmethod
-    def _normalize_observed_step(item: dict[str, Any], *, index: int) -> dict[str, str] | None:
-        title = str(item.get("title") or item.get("summary") or "").strip()
-        if not title:
-            return None
-        step_id = str(item.get("id") or f"step-{index + 1}").strip() or f"step-{index + 1}"
-        summary = str(item.get("summary") or title).strip()
-        goal = str(item.get("goal") or summary or title).strip()
-        status = str(item.get("status") or "pending").strip().lower()
-        if status not in {"pending", "in_progress", "completed", "cancelled"}:
-            status = "pending"
-        return {
-            "id": step_id,
-            "title": title,
-            "summary": summary or title,
-            "goal": goal or summary or title,
-            "status": status,
-        }
-
-    @staticmethod
-    def _observed_step_summary(observed_steps: list[dict[str, str]]) -> str | None:
-        if not observed_steps:
-            return None
-        active = next(
-            (
-                step
-                for step in observed_steps
-                if step.get("status") in {"in_progress", "pending"}
-            ),
-            observed_steps[-1],
-        )
-        return active.get("summary") or active.get("title")
 
     @staticmethod
     def _build_detail_json(

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.utils.ids import new_id
-from app.domain.work import WorkComment, WorkService
+from app.domain.work import WorkComment, WorkRunClaimConflict, WorkService
 from app.domain.session.sessions.transcript_store import TranscriptStore
 from app.tools.runtime.registry import (
     build_runtime_tool_entries,
@@ -61,7 +61,6 @@ class LocalToolRuntime:
         self.prototype_repository = prototype_repository
         self.runtime_context = dict(runtime_context or {})
         self.workspace_root = self._resolve_workspace_root(workspace_root)
-        self._step_items: list[dict[str, str]] = []
         self._todo_items: list[dict[str, str]] = []
         self._tool_entries = build_runtime_tool_entries(
             {
@@ -71,11 +70,9 @@ class LocalToolRuntime:
                 "skill.execute": self._execute_skill,
                 "session.record": self._record_session_message,
                 "session.search": self._search_sessions,
-                "step": self._step,
                 "todo": self._todo,
                 "delegate_task": self._delegate_task,
                 "session_agent_task": self._session_agent_task,
-                "work_disposition": self._work_disposition,
                 "mattermost.send": self._send_mattermost_message,
                 "notion.execute": self._execute_notion,
                 "design.list_presets": self._list_design_presets,
@@ -125,7 +122,6 @@ class LocalToolRuntime:
             prototype_repository=self.prototype_repository,
             runtime_context=self.runtime_context,
         )
-        bound._step_items = [dict(item) for item in self._step_items]
         bound._todo_items = [dict(item) for item in self._todo_items]
         return bound
 
@@ -147,7 +143,6 @@ class LocalToolRuntime:
             prototype_repository=self.prototype_repository,
             runtime_context=runtime_context if runtime_context is not None else self.runtime_context,
         )
-        bound._step_items = [dict(item) for item in self._step_items]
         bound._todo_items = [dict(item) for item in self._todo_items]
         return bound
 
@@ -466,13 +461,6 @@ class LocalToolRuntime:
             "summary": self._todo_summary(self._todo_items),
         }
 
-    def _step(self, args: dict[str, Any]) -> dict[str, object]:
-        self._step_items = self._write_steps(list(args.get("steps") or []), merge=bool(args.get("merge", False)))
-        return {
-            "steps": [dict(item) for item in self._step_items],
-            "summary": self._todo_summary(self._step_items),
-        }
-
     def _read_file(self, args: dict[str, Any]) -> dict[str, Any]:
         return self._run_file_tool_handler("read_file_handler", args)
 
@@ -686,37 +674,6 @@ class LocalToolRuntime:
             existing[item["id"]] = item
         return [existing[item_id] for item_id in order if item_id in existing]
 
-    def _write_steps(self, steps: list[Any], *, merge: bool) -> list[dict[str, str]]:
-        normalized = [
-            self._normalize_step_item(item, index=index)
-            for index, item in enumerate(steps)
-            if isinstance(item, dict)
-        ]
-        if not merge:
-            return self._dedupe_todos(normalized)
-
-        existing = {item["id"]: dict(item) for item in self._step_items}
-        order = [item["id"] for item in self._step_items]
-        for item in normalized:
-            if item["id"] not in existing:
-                order.append(item["id"])
-            existing[item["id"]] = item
-        return [existing[item_id] for item_id in order if item_id in existing]
-
-    @staticmethod
-    def _normalize_step_item(item: dict[str, Any], *, index: int) -> dict[str, str]:
-        normalized = LocalToolRuntime._normalize_todo_item(item, index=index)
-        title = str(item.get("title") or item.get("content") or normalized["content"]).strip()
-        summary = str(item.get("summary") or title).strip()
-        goal = str(item.get("goal") or summary or title).strip()
-        return {
-            "id": normalized["id"],
-            "title": title or normalized["content"],
-            "summary": summary or title or normalized["content"],
-            "goal": goal or summary or title or normalized["content"],
-            "status": normalized["status"],
-        }
-
     def _delegate_task(self, args: dict[str, Any]) -> dict[str, Any]:
         """worker 위임 요청을 실행 엔진이 해석할 수 있는 handoff 계약으로 정규화한다."""
 
@@ -786,6 +743,9 @@ class LocalToolRuntime:
                 self.runtime_context["workId"] = parent.work_id
                 self.runtime_context["workIdentifier"] = parent.identifier
                 self.runtime_context["workAssigneeAgentId"] = parent.assignee_agent_id
+                root_claim_error = self._mark_session_agent_root_run_started(parent.work_id)
+                if root_claim_error is not None:
+                    return root_claim_error
                 parent_work_id = parent.work_id
             else:
                 return self._tool_error(
@@ -964,6 +924,21 @@ class LocalToolRuntime:
             client_request_id=client_request_id,
         )
 
+    def _mark_session_agent_root_run_started(self, work_id: str) -> dict[str, Any] | None:
+        task_run_id = self._optional_text(self.runtime_context.get("taskRunId") or self.runtime_context.get("task_run_id"))
+        if not task_run_id:
+            return None
+        try:
+            WorkService(self.work_repository).mark_run_started(work_id=work_id, task_run_id=task_run_id)
+        except WorkRunClaimConflict:
+            return self._tool_error(
+                code="work_run_conflict",
+                message="session agent root work already has an active run",
+                tool_name="session_agent_task",
+                details={"workId": work_id, "taskRunId": task_run_id},
+            )
+        return None
+
     @classmethod
     def _session_agent_root_client_request_id(
         cls,
@@ -1030,35 +1005,6 @@ class LocalToolRuntime:
     def _stable_digest(value: Any) -> str:
         encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
-
-    def _work_disposition(self, args: dict[str, Any]) -> dict[str, Any]:
-        context = dict(self.runtime_context or {})
-        work_id = self._optional_text(context.get("workId") or context.get("work_id"))
-        if not work_id:
-            return self._tool_error(
-                code="work_context_required",
-                message="work_disposition requires a connected work item",
-                tool_name="work_disposition",
-            )
-        status = self._optional_text(args.get("status"))
-        if status not in {"todo", "in_progress", "in_review", "blocked", "done", "cancelled"}:
-            return self._tool_error(
-                code="invalid_work_status",
-                message="work_disposition status is invalid",
-                tool_name="work_disposition",
-            )
-        summary = str(args.get("summary") or "").strip()
-        next_action = self._optional_text(args.get("nextAction") or args.get("next_action"))
-        return {
-            "ok": True,
-            "content": f"work disposition accepted: {status}",
-            "workDisposition": {
-                "workId": work_id,
-                "status": status,
-                "summary": summary,
-                "nextAction": next_action,
-            },
-        }
 
     def _run_terminal_command(self, args: dict[str, Any]) -> dict[str, Any]:
         argv = list(args.get("argv") or []) or None

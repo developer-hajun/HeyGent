@@ -30,7 +30,7 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "planning": RuntimeToolsetDefinition(
         description="Todo and planning tools.",
-        tools=("step", "todo"),
+        tools=("todo",),
     ),
     "terminal": RuntimeToolsetDefinition(
         description="Local terminal execution tools.",
@@ -74,7 +74,7 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "work": RuntimeToolsetDefinition(
         description="Work board assignment tools.",
-        tools=("session_agent_task", "work_disposition"),
+        tools=("session_agent_task",),
     ),
     "local-core": RuntimeToolsetDefinition(
         description="Current minimal local runtime tool bundle.",
