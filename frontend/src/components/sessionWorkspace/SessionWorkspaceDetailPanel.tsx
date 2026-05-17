@@ -960,11 +960,11 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
         {showConfigActionBar && (
           <div className="border-border bg-background/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-sm sm:hidden">
             <div className="flex items-center justify-end gap-2 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)]">
-              <Button variant="ghost" size="sm" onClick={resetDraft} disabled={saving}>
-                취소
-              </Button>
               <Button size="sm" onClick={() => void handleSave()} disabled={saving || !isDirty}>
                 {saving ? '저장 중' : '저장'}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={resetDraft} disabled={saving}>
+                취소
               </Button>
             </div>
           </div>
@@ -972,11 +972,11 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
         {showConfigActionBar && (
           <div className="fixed right-6 bottom-6 z-30 hidden sm:block">
             <div className="bg-background/90 border-border flex items-center gap-2 rounded-lg border px-3 py-1.5 shadow-lg backdrop-blur-sm">
-              <Button variant="ghost" size="sm" onClick={resetDraft} disabled={saving}>
-                취소
-              </Button>
               <Button size="sm" onClick={() => void handleSave()} disabled={saving || !isDirty}>
                 {saving ? '저장 중' : '저장'}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={resetDraft} disabled={saving}>
+                취소
               </Button>
             </div>
           </div>

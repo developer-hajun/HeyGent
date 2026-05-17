@@ -76,6 +76,7 @@ class PromptBuilder:
                 build_project_context_prompt(input_payload=input_payload),
                 build_gateway_context_prompt(input_payload=input_payload),
                 build_work_context_prompt(input_payload=input_payload),
+                build_attachment_context_prompt(input_payload=input_payload),
                 self.skill_prompt_builder.build_catalog(input_payload=input_payload),
                 base_prompt,
                 str(input_payload.get("persistent_memory_context", "")).strip(),
@@ -261,6 +262,46 @@ def build_work_context_prompt(*, input_payload: dict) -> str:
             lines.append("- 요약:")
             lines.append(prompt_preview)
     return "\n".join(lines)
+
+
+def build_attachment_context_prompt(*, input_payload: dict) -> str:
+    raw_attachments = input_payload.get("sessionAttachments") or input_payload.get("attachments")
+    if not isinstance(raw_attachments, list) or not raw_attachments:
+        return ""
+
+    lines = ["첨부 파일 컨텍스트:"]
+    for index, raw_attachment in enumerate(raw_attachments, start=1):
+        if not isinstance(raw_attachment, dict):
+            continue
+        name = str(raw_attachment.get("name") or f"attachment-{index}").strip()
+        content_type = str(raw_attachment.get("type") or "application/octet-stream").strip()
+        size = raw_attachment.get("size")
+        error = str(raw_attachment.get("error") or "").strip()
+        text = str(raw_attachment.get("text") or "").strip()
+        text_truncated = bool(raw_attachment.get("textTruncated"))
+        is_image = bool(raw_attachment.get("isImage"))
+
+        detail = f"- {index}. {name} ({content_type}"
+        if isinstance(size, int):
+            detail += f", {size} bytes"
+        detail += ")"
+        if error:
+            detail += f" - {error}"
+        elif is_image:
+            detail += " - 이미지 파일"
+        lines.append(detail)
+
+        if text:
+            lines.append("  내용:")
+            lines.append(_indent_attachment_text(text[:8000]))
+            if text_truncated or len(text) > 8000:
+                lines.append("  [첨부 텍스트가 길어 일부만 포함되었습니다.]")
+
+    return "\n".join(lines)
+
+
+def _indent_attachment_text(value: str) -> str:
+    return "\n".join(f"  {line}" for line in value.splitlines())
 
 
 def _build_session_agent_profile_lines(profiles: list) -> list[str]:
