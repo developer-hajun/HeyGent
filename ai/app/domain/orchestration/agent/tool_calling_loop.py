@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import json
 import re
+import time
 from typing import Any
 
 from app.contracts.task.step_status import StepStatus
@@ -166,15 +167,37 @@ class ToolCallingLoopHandler:
         llm_call_count = 0
 
         for turn_index in range(1, max_iterations + 1):
+            model_started_at = time.perf_counter()
+            runtime_context = self._model_runtime_context(task=task, step=step, task_input=task_input)
+            await self._emit_model_call_progress(
+                progress_sink=progress_sink,
+                event_type="model.started",
+                turn_index=turn_index,
+                model=model,
+                runtime_context=runtime_context,
+                messages=messages,
+                tools=provider_tools,
+            )
             try:
                 generated = await self._respond_with_runtime_context_async(
                     messages=messages,
                     tools=provider_tools,
                     model=model,
                     tool_choice=None,
-                    runtime_context=self._model_runtime_context(task=task, step=step, task_input=task_input),
+                    runtime_context=runtime_context,
                 )
             except Exception as exc:
+                await self._emit_model_call_progress(
+                    progress_sink=progress_sink,
+                    event_type="model.failed",
+                    turn_index=turn_index,
+                    model=model,
+                    runtime_context=runtime_context,
+                    messages=messages,
+                    tools=provider_tools,
+                    duration_ms=self._elapsed_ms(model_started_at),
+                    error=exc,
+                )
                 provider_failure = classify_provider_failure(exc)
                 if provider_failure is None:
                     raise
@@ -189,6 +212,17 @@ class ToolCallingLoopHandler:
                     operation_counters=operation_counters,
                 )
             llm_call_count += 1
+            await self._emit_model_call_progress(
+                progress_sink=progress_sink,
+                event_type="model.completed",
+                turn_index=turn_index,
+                model=self._model_name(generated, task_input),
+                runtime_context=runtime_context,
+                messages=messages,
+                tools=provider_tools,
+                duration_ms=self._elapsed_ms(model_started_at),
+                generated=generated,
+            )
             messages.append(generated.message)
             self._append_transcript_message(transcript_session_id, generated.message, finish_reason=generated.finish_reason)
             response_contract = self._response_contract_from_model_response(generated)
@@ -721,6 +755,80 @@ class ToolCallingLoopHandler:
                 result=result,
             ),
         )
+
+    async def _emit_model_call_progress(
+        self,
+        *,
+        progress_sink,
+        event_type: str,
+        turn_index: int,
+        model: str,
+        runtime_context: dict[str, Any],
+        messages: list[AgentMessage | ToolResultMessage | dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        duration_ms: int | None = None,
+        generated: AgentModelResponse | None = None,
+        error: BaseException | None = None,
+    ) -> None:
+        if progress_sink is None:
+            return
+
+        payload: dict[str, Any] = {
+            "turnIndex": turn_index,
+            "model": model,
+            "providerName": str(runtime_context.get("provider_name") or runtime_context.get("providerName") or ""),
+            "messageCount": len(messages),
+            "toolSchemaCount": len(tools or []),
+        }
+        if duration_ms is not None:
+            payload["durationMs"] = duration_ms
+        if generated is not None:
+            payload.update(
+                {
+                    "finishReason": generated.finish_reason,
+                    "toolCallCount": len(generated.tool_calls),
+                    "outputTextLength": len(str(generated.output_text or "")),
+                    "visibleTextLength": len(str(generated.visible_text or "")),
+                    "usage": dict(generated.usage or {}),
+                }
+            )
+        if error is not None:
+            payload["error"] = {
+                "type": type(error).__name__,
+                "message": str(error)[:500],
+            }
+
+        await progress_sink(
+            event_type=event_type,
+            summary_message=self._model_progress_summary(
+                event_type=event_type,
+                turn_index=turn_index,
+                duration_ms=duration_ms,
+                generated=generated,
+            ),
+            payload=payload,
+        )
+
+    @staticmethod
+    def _elapsed_ms(started_at: float) -> int:
+        return max(0, int((time.perf_counter() - started_at) * 1000))
+
+    @staticmethod
+    def _model_progress_summary(
+        *,
+        event_type: str,
+        turn_index: int,
+        duration_ms: int | None,
+        generated: AgentModelResponse | None,
+    ) -> str:
+        if event_type == "model.started":
+            return f"모델 응답 생성 {turn_index} 시작"
+        if event_type == "model.failed":
+            return f"모델 응답 생성 {turn_index} 실패"
+        suffix = f" ({duration_ms}ms)" if duration_ms is not None else ""
+        if generated is not None and generated.tool_calls:
+            return f"모델 응답 생성 {turn_index} 완료: tool_calls={len(generated.tool_calls)}{suffix}"
+        return f"모델 응답 생성 {turn_index} 완료{suffix}"
 
     @classmethod
     def _tool_progress_summary(cls, *, tool_name: str, args: dict[str, Any], result: dict[str, Any] | None) -> str:

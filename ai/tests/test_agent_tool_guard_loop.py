@@ -246,6 +246,31 @@ async def test_agent_loop_prefers_provider_respond_async():
     assert provider.calls[0]["runtime_context"]["task_run_id"] == "task_guard"
 
 
+@pytest.mark.asyncio
+async def test_agent_loop_emits_model_call_timing_events():
+    provider = AsyncOnlyProvider([_response(text="timed ok")])
+    handler = ToolCallingLoopHandler(
+        provider=provider,
+        prompt_builder=FakePromptBuilder(),
+        tool_runtime=RecordingRuntime(),
+        tool_catalog=FakeToolCatalog(),
+    )
+    events: list[dict] = []
+
+    async def progress_sink(**kwargs):
+        events.append(kwargs)
+
+    outcome = await handler.execute_async(task=_task(), step=_step(), progress_sink=progress_sink)
+
+    assert outcome["step_status"] == StepStatus.COMPLETED
+    assert [event["event_type"] for event in events] == ["model.started", "model.completed"]
+    assert events[0]["payload"]["turnIndex"] == 1
+    assert events[0]["payload"]["messageCount"] >= 1
+    assert events[1]["payload"]["durationMs"] >= 0
+    assert events[1]["payload"]["finishReason"] == "stop"
+    assert events[1]["payload"]["toolCallCount"] == 0
+
+
 def _task(input_payload: dict | None = None):
     return SimpleNamespace(
         task_run_id="task_guard",
