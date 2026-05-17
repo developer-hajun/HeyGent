@@ -5,11 +5,12 @@ import { OfficeMap } from '@/components/office/OfficeMap'
 import { CeoActionMenu } from '@/components/office/CeoActionMenu'
 import { CeoCommandDialog } from '@/components/office/CeoCommandDialog'
 import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
+import { useAgentCacheStore } from '@/store/useAgentCacheStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { getCommandUsage } from '@/apis/aiCommandUsage'
-import { agentProfilesToPanelItems, listSessionAgents } from '@/apis/agents'
+import { agentProfilesToPanelItems } from '@/apis/agents'
 import type { CommandUsageSummary } from '@/apis/aiCommandUsage'
 import type {
   AgentConfig,
@@ -1155,7 +1156,9 @@ export function AgentStatusPage() {
     if (!sessionId || sessionId.startsWith('pending_session_') || accessToken === null) return
 
     let cancelled = false
-    void listSessionAgents(sessionId)
+    void useAgentCacheStore
+      .getState()
+      .fetchSessionAgents(sessionId)
       .then((profiles) => {
         if (cancelled) return
         const panels = agentProfilesToPanelItems(profiles)

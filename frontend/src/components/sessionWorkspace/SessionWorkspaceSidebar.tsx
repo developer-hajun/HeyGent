@@ -13,7 +13,8 @@ import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { useUIStore } from '@/store/useUIStore'
-import { agentProfilesToPanelItems, listSessionAgents } from '@/apis/agents'
+import { agentProfilesToPanelItems } from '@/apis/agents'
+import { useAgentCacheStore } from '@/store/useAgentCacheStore'
 import { pickTopSession } from '@/components/layout/sessionListUtils'
 
 export function SessionWorkspaceSidebar() {
@@ -49,7 +50,9 @@ export function SessionWorkspaceSidebar() {
     if (sessionId.startsWith('pending_session_')) return
 
     let cancelled = false
-    void listSessionAgents(sessionId)
+    void useAgentCacheStore
+      .getState()
+      .fetchSessionAgents(sessionId)
       .then((profiles) => {
         if (cancelled) return
         setAgentPanelsForSession(sessionId, agentProfilesToPanelItems(profiles))

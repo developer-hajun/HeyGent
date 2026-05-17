@@ -49,14 +49,13 @@ import { SubAgentsPanel } from '@/components/sessionWorkspace/subAgents'
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
 import {
-  getSessionMainAgent,
   getUserSkillDetail,
-  listUserSkills,
   updateSessionAgent,
   type AgentProfile,
   type SkillCatalogDetail,
   type SkillCatalogItem,
 } from '@/apis/agents'
+import { useAgentCacheStore } from '@/store/useAgentCacheStore'
 import {
   getCachedMainAgentProfile,
   getCachedUsageRecords,
@@ -326,7 +325,9 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     }
 
     let cancelled = false
-    void getSessionMainAgent(sessionId)
+    void useAgentCacheStore
+      .getState()
+      .fetchSessionMainAgent(sessionId)
       .then((profile) => {
         if (cancelled) return
         setMainAgentProfile(profile)
@@ -387,7 +388,9 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
     }
 
     let cancelled = false
-    void listUserSkills()
+    void useAgentCacheStore
+      .getState()
+      .fetchUserSkills()
       .then((items) => {
         if (cancelled) return
         setSkillCatalog(items)
@@ -584,6 +587,10 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
           instructionsFiles: nextInstructionsFiles,
         })
         setMainAgentProfile(profile)
+        // 메인 에이전트 정보가 수정되었으므로 캐시 무효화.
+        // 시각화/사이드바 등에서 stale 정보 표시되는 것을 막는다.
+        useAgentCacheStore.getState().invalidateSessionMainAgent(sessionId)
+        useAgentCacheStore.getState().invalidateSessionAgents(sessionId)
       }
       if (settingsPatch.model !== undefined || mainAgentProfile !== null) {
         setModelBaseline(selectedModel)
