@@ -266,6 +266,38 @@ def test_ws_session_message_create_attaches_backend_memory_context(client, monke
         context.__exit__(None, None, None)
 
 
+def test_ws_session_message_create_resends_snapshot_after_memory_observation(client, monkeypatch):
+    _patch_respond(monkeypatch, text="WS_MEMORY_OBSERVATION_DONE")
+    context, websocket = _authenticated_socket(client, user_id="ws-memory-observation-owner")
+    try:
+        websocket.send_json(
+            {
+                "protocolVersion": 1,
+                "type": "session.message.create",
+                "requestId": "req_memory_observation",
+                "payload": {
+                    "content": "나 국수 좋아해",
+                    "clientMessageId": "client_msg_memory_observation_1",
+                    "model": "gpt-test",
+                },
+            }
+        )
+
+        accepted = websocket.receive_json()
+        assert accepted["type"] == "session.message.accepted"
+        completed = _receive_until(websocket, "session.message.completed")
+        assert completed["payload"]["content"] == "WS_MEMORY_OBSERVATION_DONE"
+
+        snapshot = _receive_until(websocket, "taskRun.snapshot.result")
+        task_payload = snapshot["payload"]["task"]
+        observation = task_payload["result_payload"]["memory_observation"]
+        assert task_payload["task_run_id"] == accepted["payload"]["task_run_id"]
+        assert observation["writeback"]["status"] == "no_candidates"
+        assert observation["mark_used"]["status"] == "skipped"
+    finally:
+        context.__exit__(None, None, None)
+
+
 def test_ws_followup_message_passes_previous_public_messages_without_current_user(client, monkeypatch):
     provider_calls: list[dict] = []
 
@@ -400,7 +432,7 @@ def test_ws_list_snapshot_and_replay_happy_path(client, monkeypatch):
         task_run_id = completed["payload"]["task_run_id"]
 
         websocket.send_json({"protocolVersion": 1, "type": "session.list", "requestId": "req_sessions", "payload": {}})
-        sessions = websocket.receive_json()
+        sessions = _receive_command_frame(websocket, "session.list.result", "req_sessions")
         assert sessions["type"] == "session.list.result"
         assert sessions["requestId"] == "req_sessions"
         assert [item["session_id"] for item in sessions["payload"]["items"]] == [session_id]
@@ -413,7 +445,7 @@ def test_ws_list_snapshot_and_replay_happy_path(client, monkeypatch):
                 "payload": {"sessionId": session_id},
             }
         )
-        messages = websocket.receive_json()
+        messages = _receive_command_frame(websocket, "session.messages.list.result", "req_messages")
         assert messages["type"] == "session.messages.list.result"
         assert messages["type"] != "session.messages.result"
         assert messages["requestId"] == "req_messages"
@@ -429,7 +461,7 @@ def test_ws_list_snapshot_and_replay_happy_path(client, monkeypatch):
                 "payload": {"taskRunId": task_run_id, "includeSteps": True},
             }
         )
-        snapshot = websocket.receive_json()
+        snapshot = _receive_command_frame(websocket, "taskRun.snapshot.result", "req_snapshot")
         assert snapshot["type"] == "taskRun.snapshot.result"
         assert snapshot["requestId"] == "req_snapshot"
         assert snapshot["payload"]["task"]["task_run_id"] == task_run_id
@@ -448,7 +480,7 @@ def test_ws_list_snapshot_and_replay_happy_path(client, monkeypatch):
                 "payload": {"taskRunId": task_run_id, "afterSequence": 0},
             }
         )
-        replay = websocket.receive_json()
+        replay = _receive_command_frame(websocket, "taskRun.events.replay.result", "req_replay")
         assert replay["type"] == "taskRun.events.replay.result"
         assert replay["requestId"] == "req_replay"
         assert replay["payload"]["events"]

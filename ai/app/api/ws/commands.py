@@ -1236,6 +1236,12 @@ class WebSocketCommandRouter:
                 task_run_id=completed_task.task_run_id,
                 user_message_id=str(user_message_id),
                 assistant_message_id=str(assistant_append["message_id"]),
+                model=str((completed_task.input_payload or {}).get("model") or "") or None,
+                provider_name=str(
+                    (completed_task.input_payload or {}).get("provider_name")
+                    or (completed_task.input_payload or {}).get("providerName")
+                    or ""
+                ) or None,
             )
             mark_used_observation = await mark_used_recalled_memories(
                 app_state=context.websocket.app.state,
@@ -1249,6 +1255,12 @@ class WebSocketCommandRouter:
                 repository=context.websocket.app.state.repository,
                 writeback=writeback_observation,
                 mark_used=mark_used_observation,
+            )
+            await context.send_json(
+                _event_frame(
+                    "taskRun.snapshot.result",
+                    _task_snapshot_payload(completed_task),
+                )
             )
 
     async def _run_resume_task(self, *, context: WebSocketBackgroundContext, task_run_id: str, approval_id: str, payload: dict[str, Any]) -> None:
