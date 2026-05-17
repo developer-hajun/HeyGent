@@ -50,7 +50,7 @@ MAIN_AGENT_TEMPLATE = BuiltinAgentTemplate(
     description="사용자 요청을 이해해 작업으로 정리하고, 세션 에이전트의 할 수 있는 일과 스킬을 기준으로 담당자를 배정하며, 단순 응답과 최종 종합은 직접 처리합니다.",
     adapter_type="openai",
     model="gpt-5.4",
-    profile_image="/assets/agents/ceo/ceo_profile.png",
+    profile_image="/assets/agents/ceo/ceo_profile_img.png",
     skills=("mattermost-send", "notion", "awesome-design"),
     documents=(
         (
