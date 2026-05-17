@@ -448,6 +448,8 @@ async def _create_message_in_session(
     task_input["after_user_message_version"] = user_append["after_user_message_version"]
     task_input["completion_expected_version"] = user_append["completion_expected_version"]
     task_input["client_message_id"] = client_message_id
+    task_input["prompt_message_id"] = str(user_append["message_id"])
+    task_input["promptMessageId"] = str(user_append["message_id"])
     if work_id is not None:
         try:
             WorkService(request.app.state.work_repository).mark_run_started(

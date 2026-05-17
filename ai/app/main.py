@@ -128,8 +128,10 @@ async def lifespan(app: FastAPI):
         backend_memory_client,
         operation_provider=memory_extraction_provider,
     )
-    memory_recall_planner_provider = ProviderMemoryRecallPlannerClient(provider_registry=provider_registry)
-    memory_recall_planner = LlmMemoryRecallPlanner(provider=memory_recall_planner_provider)
+    memory_recall_planner = None
+    if settings.memory_recall_llm_planner_enabled:
+        memory_recall_planner_provider = ProviderMemoryRecallPlannerClient(provider_registry=provider_registry)
+        memory_recall_planner = LlmMemoryRecallPlanner(provider=memory_recall_planner_provider)
     memory_usage_attribution_provider = ProviderMemoryUsageAttributionClient(provider_registry=provider_registry)
     memory_usage_attribution_verifier = LlmMemoryUsageAttributionVerifier(provider=memory_usage_attribution_provider)
     session_store = PostgresSessionStore(postgres_connection_factory)
@@ -167,7 +169,6 @@ async def lifespan(app: FastAPI):
             "terminal",
             "file",
             "web",
-            "browser",
             "work",
             "messaging",
             "design",

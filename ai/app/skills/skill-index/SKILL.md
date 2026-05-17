@@ -29,7 +29,6 @@ This skill is a discovery guide. It does not replace the target skill. After cho
 - `web`: Web search, scraping, domain intelligence, and academic paper search.
 - `research`: Parallel command-line research and blog monitoring.
 - `software-development`: Planning and subagent-driven development guidance.
-- `browser`: Browser UX flow review.
 - `mcp`: Native MCP integration.
 - `messaging`: External messaging integrations.
 - `k-skills`: Korean public data, Korean local information, Korean search surfaces, and Korean text utilities.
@@ -49,8 +48,6 @@ Read `parallel-cli` when the task needs parallel command-line investigation.
 Read `blogwatcher` when the user asks to monitor or summarize blog feeds.
 
 Read `writing-plans` or `subagent-driven-development` for software planning and delegated development workflows.
-
-Read `ux-flow-review` when the user asks to inspect a browser flow or review UX behavior.
 
 Read `native-mcp` when the user asks about MCP tool or server integration.
 

@@ -263,15 +263,13 @@ def test_session_agent_parent_update_exposes_materialized_child_task_run():
     parent_task = _task(input_payload={"prompt": "지갑 잃어버렸어", "model": "gpt-5.4"})
     parent_task.status = TaskStatus.RUNNING
     task_repository.create_task(parent_task)
-    step = engine.planner.materialize_observed_semantic_step(
+    step = engine.planner.materialize_runtime_step(
         task=parent_task,
         handler=_CompletingHandler(),
-        input_payload={},
+        input_payload=parent_task.input_payload,
         step_order=1,
-        observed_step={"id": "delegate", "title": "분실물 대응 배정", "goal": "K-에이전트에게 확인을 맡긴다"},
-        outcome={},
-        include_outcome_detail=False,
     )
+    step.title = "분실물 대응 배정"
     step.status = "RUNNING"
     task_repository.create_step(step)
     parent_task.current_step_run_id = step.step_run_id
