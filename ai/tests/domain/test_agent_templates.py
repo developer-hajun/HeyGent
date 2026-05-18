@@ -92,6 +92,18 @@ def test_k_service_template_includes_korean_life_skills():
     assert "subway-lost-property" in template.skills
 
 
+def test_k_service_template_includes_srt_booking_and_secrets_document():
+    template_by_key = {template.template_key: template for template in BUILTIN_AGENT_TEMPLATES}
+    template = template_by_key["k_services"]
+    documents = {document_key: content for document_key, _, content in template.documents}
+
+    assert "srt-booking" in template.skills
+    assert "SECRETS.md" in documents
+    assert "KSKILL_SRT_ID=" in documents["SECRETS.md"]
+    assert "KSKILL_SRT_PASSWORD=" in documents["SECRETS.md"]
+    assert "SECRETS.md" in documents["AGENTS.md"]
+
+
 def test_builtin_subagent_profile_images_point_to_frontend_assets():
     for template in BUILTIN_AGENT_TEMPLATES:
         assert not template.profile_image.startswith("/assets/agents/sub/")

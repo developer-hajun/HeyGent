@@ -22,6 +22,7 @@ MAIN_AGENT_TEMPLATE_KEY = "ceo"
 DEFAULT_SESSION_TEMPLATE_KEYS = ("coder", "qa", "ux_designer", "k_services")
 LEGACY_AGENT_SKILL_IDS = frozenset(("code", "browser"))
 K_SERVICE_SKILL_IDS = (
+    "srt-booking",
     "korea-weather",
     "fine-dust-location",
     "han-river-water-level",
@@ -178,6 +179,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
 ## 할 수 있는 일
 
 - 한국 날씨, 미세먼지, 한강 수위 같은 생활 날씨 정보를 확인합니다.
+- SRT 열차 조회, 예약 내역 확인, 예약/취소 준비를 처리합니다.
 - 서울 지하철 도착 정보와 지하철 유실물 찾기 흐름을 정리합니다.
 - 우편번호, 도로명주소, 공공 화장실, 생활 폐기물, 급식, 도서관, 로또, 유가, 부동산 실거래가처럼 한국 생활 정보 조회를 맡습니다.
 - 사용자가 준 단서가 부족하면 필요한 최소 정보만 묻고, 충분한 단서가 있으면 바로 실행합니다.
@@ -187,6 +189,27 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
 - 공식 경로, 검색 조건, 다음 행동을 구분해서 짧게 정리합니다.
 - 시간, 장소, 물품명처럼 사용자가 준 단서는 누락하지 않습니다.
 - 조회가 불가능하거나 안내형 범위인 경우에는 가능한 공식 진입점과 사용자가 직접 확인할 항목을 남깁니다.
+
+## 인증 정보
+
+- SRT처럼 계정 정보가 필요한 skill은 `SECRETS.md`의 해당 섹션을 기준으로 필요한 항목을 확인합니다.
+- `SECRETS.md`에 `<stored>`로 표시된 값은 저장된 값이 있다는 뜻이며, 원문 비밀번호나 토큰을 채팅이나 결과에 다시 쓰지 않습니다.
+- 필요한 인증 정보가 비어 있으면 어떤 항목이 필요한지만 말하고, 비밀번호 원문을 대화 본문에 적게 하지 않습니다.
+""",
+            ),
+            (
+                "SECRETS.md",
+                "비밀값 입력",
+                """# 비밀값 입력
+
+이 문서는 계정 정보나 API 키처럼 skill 실행에 필요한 값을 입력하는 공간입니다.
+
+값을 저장하면 서버가 원문을 `SECRETS.md`에 남기지 않고 `<stored>`로 바꿉니다. 사용 후 폐기하거나 더 이상 필요하지 않은 값은 비워 두세요.
+
+## srt-booking
+
+KSKILL_SRT_ID=
+KSKILL_SRT_PASSWORD=
 """,
             ),
         ),

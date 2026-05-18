@@ -10,6 +10,7 @@ from app.domain.agents import (
     LEGACY_AGENT_SKILL_IDS,
     MAIN_AGENT_TEMPLATE,
 )
+from app.domain.agents.secret_documents import is_secrets_document, sanitize_secret_document
 
 
 class PostgresAgentRepository:
@@ -570,6 +571,9 @@ class PostgresAgentRepository:
         if bundle is None:
             raise KeyError(profile_id)
         bundle_id = str(bundle["bundle_id"])
+        content_to_save = content
+        if is_secrets_document(document_key):
+            content_to_save, _assignments = sanitize_secret_document(content)
         connection = self.connection_factory()
         row = connection.execute(
             """
@@ -584,7 +588,7 @@ class PostgresAgentRepository:
                 updated_at = now()
             RETURNING *
             """,
-            (new_id("instruction_document"), bundle_id, document_key, display_name, content),
+            (new_id("instruction_document"), bundle_id, document_key, display_name, content_to_save),
         ).fetchone()
         connection.commit()
         return _document_from_row(row)
