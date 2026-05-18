@@ -11,13 +11,20 @@ from app.domain.agents import (
     MAIN_AGENT_TEMPLATE,
 )
 from app.domain.agents.secret_documents import is_secrets_document, sanitize_secret_document
+from app.domain.agents.secret_store import AgentSecretCipher, AgentSecretStoreNotConfigured
 
 
 class PostgresAgentRepository:
     storage_backend = "postgres"
 
-    def __init__(self, connection_factory: Callable[[], Any]) -> None:
+    def __init__(
+        self,
+        connection_factory: Callable[[], Any],
+        *,
+        secret_cipher: AgentSecretCipher | None = None,
+    ) -> None:
         self.connection_factory = connection_factory
+        self.secret_cipher = secret_cipher
 
     def ensure_builtin_templates(self) -> None:
         connection = self.connection_factory()
@@ -573,8 +580,35 @@ class PostgresAgentRepository:
         bundle_id = str(bundle["bundle_id"])
         content_to_save = content
         if is_secrets_document(document_key):
-            content_to_save, _assignments = sanitize_secret_document(content)
+            content_to_save, assignments = sanitize_secret_document(content)
+            if assignments and self.secret_cipher is None:
+                raise AgentSecretStoreNotConfigured("agent secret store is not configured")
+        else:
+            assignments = []
         connection = self.connection_factory()
+        for assignment in assignments:
+            connection.execute(
+                """
+                INSERT INTO ai_agent_secret_values (
+                    secret_value_id, owner_key, owner_user_id, profile_id,
+                    document_key, section_key, secret_key, encrypted_value
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (profile_id, document_key, section_key, secret_key) DO UPDATE
+                SET encrypted_value = EXCLUDED.encrypted_value,
+                    updated_at = now()
+                """,
+                (
+                    new_id("agent_secret"),
+                    owner_key,
+                    bundle.get("owner_user_id"),
+                    profile_id,
+                    document_key,
+                    assignment.section,
+                    assignment.key,
+                    self.secret_cipher.encrypt(assignment.value) if self.secret_cipher is not None else "",
+                ),
+            )
         row = connection.execute(
             """
             INSERT INTO ai_agent_instruction_documents (
@@ -592,6 +626,44 @@ class PostgresAgentRepository:
         ).fetchone()
         connection.commit()
         return _document_from_row(row)
+
+    def get_agent_secret_values(
+        self,
+        *,
+        profile_id: str,
+        owner_key: str,
+        document_key: str = "SECRETS.md",
+        section_key: str | None = None,
+    ) -> dict[str, dict[str, str]]:
+        if self.secret_cipher is None:
+            raise AgentSecretStoreNotConfigured("agent secret store is not configured")
+        params: list[Any] = [profile_id, owner_key, document_key]
+        section_filter = ""
+        if section_key is not None:
+            section_filter = "AND section_key = %s"
+            params.append(section_key)
+        rows = self.connection_factory().execute(
+            f"""
+            SELECT section_key, secret_key, encrypted_value
+            FROM ai_agent_secret_values
+            WHERE profile_id = %s
+              AND owner_key = %s
+              AND document_key = %s
+              {section_filter}
+            ORDER BY section_key ASC, secret_key ASC
+            """,
+            tuple(params),
+        ).fetchall()
+        values: dict[str, dict[str, str]] = {}
+        for row in rows:
+            record = _normalize_row(row)
+            section = str(record.get("section_key") or "")
+            key = str(record.get("secret_key") or "")
+            encrypted_value = str(record.get("encrypted_value") or "")
+            if not section or not key:
+                continue
+            values.setdefault(section, {})[key] = self.secret_cipher.decrypt(encrypted_value)
+        return values
 
 
 def _template_config_snapshot(template) -> dict[str, Any]:
