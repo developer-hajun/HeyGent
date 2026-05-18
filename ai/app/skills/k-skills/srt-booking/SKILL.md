@@ -6,6 +6,9 @@ metadata:
   category: travel
   locale: ko-KR
   phase: v1
+  runtime:
+    required_toolsets:
+      - skill-runtime
 ---
 
 # SRT Booking
@@ -31,6 +34,7 @@ metadata:
 
 - Python 3.10+
 - `python3 -m pip install SRTrain`
+- `skill.run_script` runtime tool
 
 ## Required credentials
 
@@ -64,15 +68,25 @@ KSKILL_SRT_PASSWORD=
 - 인원 수와 승객 유형
 - 좌석 선호: 일반실 / 특실
 
-## Workflow
+## Runtime tool
 
-### 0. Install the package globally when missing
+실제 조회/예약/취소는 이 스킬에 포함된 `scripts/srt_booking.py`를 `skill.run_script`로 실행한다.
 
-`python3 -c 'import SRT'` 가 실패하면 다른 구현으로 우회하지 말고 전역 Python 패키지 설치를 먼저 시도한다.
+항상 아래 secret key를 요구한다.
 
-```bash
-python3 -m pip install SRTrain
+```json
+{
+  "skill_name": "srt-booking",
+  "script_path": "scripts/srt_booking.py",
+  "required_secret_keys": ["KSKILL_SRT_ID", "KSKILL_SRT_PASSWORD"]
+}
 ```
+
+`skill.run_script`가 `missing_skill_secrets`를 반환하면 사용자에게 K-agent 설정의 `SECRETS.md`에서 `srt-booking` 섹션을 저장하라고 안내한다. 채팅창에서 비밀번호를 받지 않는다.
+
+`missing_dependency`가 반환되면 `SRTrain` 설치가 필요하다고 안내한다. 서버/컨테이너 실행 환경에서는 `python -m pip install SRTrain` 또는 이미지 의존성 추가가 필요하다.
+
+## Workflow
 
 ### 1. Ensure credentials are available
 
@@ -82,19 +96,23 @@ K-agent 설정의 `SECRETS.md`에서 `KSKILL_SRT_ID`, `KSKILL_SRT_PASSWORD`가 �
 
 ### 2. Search first
 
-먼저 조회해서 후보를 요약한다.
+먼저 조회해서 후보를 요약한다. 예시 tool call:
 
-```bash
-python3 - <<'PY'
-import os
-from SRT import SRT
-
-srt = SRT(os.environ["KSKILL_SRT_ID"], os.environ["KSKILL_SRT_PASSWORD"])
-trains = srt.search_train("수서", "부산", "20260328", "080000", time_limit="120000")
-
-for idx, train in enumerate(trains[:5], start=1):
-    print(idx, train)
-PY
+```json
+{
+  "skill_name": "srt-booking",
+  "script_path": "scripts/srt_booking.py",
+  "argv": [
+    "search",
+    "--departure", "수서",
+    "--arrival", "부산",
+    "--date", "20260328",
+    "--time", "080000",
+    "--time-limit", "120000",
+    "--limit", "5"
+  ],
+  "required_secret_keys": ["KSKILL_SRT_ID", "KSKILL_SRT_PASSWORD"]
+}
 ```
 
 ### 3. Summarize options before side effects
@@ -109,35 +127,45 @@ PY
 
 예약은 부작용이 있으므로 정확한 열차를 고른 뒤에만 진행한다.
 
-```bash
-python3 - <<'PY'
-import os
-from SRT import Adult, SRT, SeatType
-
-srt = SRT(os.environ["KSKILL_SRT_ID"], os.environ["KSKILL_SRT_PASSWORD"])
-trains = srt.search_train("수서", "부산", "20260328", "080000", time_limit="120000")
-reservation = srt.reserve(
-    trains[0],
-    passengers=[Adult(1)],
-    special_seat=SeatType.GENERAL_FIRST,
-)
-print(reservation)
-PY
+```json
+{
+  "skill_name": "srt-booking",
+  "script_path": "scripts/srt_booking.py",
+  "argv": [
+    "reserve",
+    "--departure", "수서",
+    "--arrival", "부산",
+    "--date", "20260328",
+    "--time", "080000",
+    "--time-limit", "120000",
+    "--train-index", "0",
+    "--adult-count", "1",
+    "--seat", "general-first"
+  ],
+  "required_secret_keys": ["KSKILL_SRT_ID", "KSKILL_SRT_PASSWORD"]
+}
 ```
 
 ### 5. Inspect or cancel
 
 취소 전에는 대상 예약을 다시 식별한다.
 
-```bash
-python3 - <<'PY'
-import os
-from SRT import SRT
+```json
+{
+  "skill_name": "srt-booking",
+  "script_path": "scripts/srt_booking.py",
+  "argv": ["reservations", "--limit", "20"],
+  "required_secret_keys": ["KSKILL_SRT_ID", "KSKILL_SRT_PASSWORD"]
+}
+```
 
-srt = SRT(os.environ["KSKILL_SRT_ID"], os.environ["KSKILL_SRT_PASSWORD"])
-reservations = srt.get_reservations()
-print(reservations)
-PY
+```json
+{
+  "skill_name": "srt-booking",
+  "script_path": "scripts/srt_booking.py",
+  "argv": ["cancel", "--reservation-index", "0"],
+  "required_secret_keys": ["KSKILL_SRT_ID", "KSKILL_SRT_PASSWORD"]
+}
 ```
 
 ## Done when

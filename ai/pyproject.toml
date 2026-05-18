@@ -24,6 +24,7 @@ dependencies = [
   "parallel-web>=0.4,<1",
   "firebase-admin>=6.5,<7",
   "cryptography>=42,<46",
+  "SRTrain>=2.6.7,<3",
 ]
 
 [project.optional-dependencies]
