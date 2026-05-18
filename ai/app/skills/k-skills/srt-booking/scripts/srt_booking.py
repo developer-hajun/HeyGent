@@ -105,7 +105,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _search(srt: Any, args: argparse.Namespace) -> list[Any]:
-    kwargs: dict[str, Any] = {}
+    kwargs: dict[str, Any] = {"available_only": args.command != "search"}
     if args.time_limit:
         kwargs["time_limit"] = args.time_limit
     return list(srt.search_train(args.departure, args.arrival, args.date, args.time, **kwargs))
