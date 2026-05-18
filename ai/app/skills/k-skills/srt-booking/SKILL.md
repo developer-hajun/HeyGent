@@ -32,19 +32,28 @@ metadata:
 - Python 3.10+
 - `python3 -m pip install SRTrain`
 
-## Required environment variables
+## Required credentials
 
-- `KSKILL_SRT_ID`
-- `KSKILL_SRT_PASSWORD`
+SRT 조회/예약/취소에는 SRT 계정 정보가 필요하다.
 
-### Credential resolution order
+K-agent 설정의 `SECRETS.md`에서 아래 섹션을 채운 뒤 저장한다.
 
-1. **이미 환경변수에 있으면** 그대로 사용한다.
-2. **에이전트가 자체 secret vault(1Password CLI, Bitwarden CLI, macOS Keychain 등)를 사용 중이면** 거기서 꺼내 환경변수로 주입해도 된다.
-3. **`~/.config/k-skill/secrets.env`** (기본 fallback) — plain dotenv 파일, 퍼미션 `0600`.
-4. **아무것도 없으면** 유저에게 물어서 2 또는 3에 저장한다.
+```dotenv
+## srt-booking
 
-기본 경로에 저장하는 것은 fallback일 뿐, 강제가 아니다.
+KSKILL_SRT_ID=
+KSKILL_SRT_PASSWORD=
+```
+
+저장하면 서버가 값을 암호화하여 보관한다. 저장 후에는 입력한 값이 다시 노출되지 않는다.
+
+필수값이 모두 저장되면 섹션 제목이 아래처럼 표시된다.
+
+```md
+## srt-booking (암호화 저장 완료)
+```
+
+아이디나 비밀번호 중 하나라도 비어 있으면 사용자에게 K-agent 설정의 `SECRETS.md`를 채워 저장하라고 안내한다. 채팅창에 비밀번호를 직접 입력하라고 요구하지 않는다.
 
 ## Inputs
 
@@ -67,7 +76,7 @@ python3 -m pip install SRTrain
 
 ### 1. Ensure credentials are available
 
-`KSKILL_SRT_ID`, `KSKILL_SRT_PASSWORD` 환경변수가 설정되어 있는지 확인한다. 없으면 위 credential resolution order에 따라 확보한다.
+K-agent 설정의 `SECRETS.md`에서 `KSKILL_SRT_ID`, `KSKILL_SRT_PASSWORD`가 저장되어 있는지 확인한다. 없으면 위 required credentials 안내에 따라 확보한다.
 
 시크릿이 없다는 이유로 웹사이트를 직접 긁거나 다른 비공식 경로를 찾지 않는다.
 
