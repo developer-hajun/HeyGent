@@ -1429,11 +1429,52 @@ class LocalToolRuntime:
         if not parent_skill_names:
             return required
 
-        haystack = self._normalize_match_text(" ".join(text_parts))
         for skill_name in parent_skill_names:
-            if self._normalize_match_text(skill_name) in haystack:
+            if self._has_required_parent_skill_reference(skill_name, text_parts):
                 self._append_unique(required, skill_name)
         return required
+
+    def _has_required_parent_skill_reference(self, skill_name: str, text_parts: list[str]) -> bool:
+        needle = self._normalize_match_text(skill_name)
+        if not needle:
+            return False
+        for text_part in text_parts:
+            haystack = self._normalize_match_text(text_part)
+            start = 0
+            while True:
+                index = haystack.find(needle, start)
+                if index < 0:
+                    break
+                if not self._skill_reference_is_excluded(haystack, index, len(needle)):
+                    return True
+                start = index + len(needle)
+        return False
+
+    @staticmethod
+    def _skill_reference_is_excluded(haystack: str, index: int, length: int) -> bool:
+        window_start = max(0, index - 80)
+        window_end = min(len(haystack), index + length + 80)
+        window = haystack[window_start:window_end]
+        exclusion_markers = (
+            "수행하지",
+            "하지마",
+            "하지않",
+            "맡기지",
+            "요구하지",
+            "필요없",
+            "제외",
+            "팀장이직접",
+            "직접처리",
+            "donot",
+            "doesnot",
+            "mustnot",
+            "shouldnot",
+            "notrequire",
+            "notrequired",
+            "exclude",
+            "without",
+        )
+        return any(marker in window for marker in exclusion_markers)
 
     def _missing_profile_skills(self, profile: dict[str, Any], required_skill_names: list[str] | None) -> list[str]:
         if not required_skill_names:

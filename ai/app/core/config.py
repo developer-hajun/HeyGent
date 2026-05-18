@@ -34,6 +34,7 @@ class Settings:
     backend_auth_verify_url: str = "http://127.0.0.1:8080/internal/ai/auth/validate"
     backend_bridge_auth_verify_url: str = "http://127.0.0.1:8080/internal/bridge/auth/validate"
     backend_memory_timeout_seconds: float = 5.0
+    backend_tool_timeout_seconds: float = 10.0
     memory_recall_llm_planner_enabled: bool = False
     internal_service_token: str | None = None
     redis_url: str | None = None
@@ -179,6 +180,10 @@ def get_settings() -> Settings:
         backend_memory_timeout_seconds=_parse_float(
             _read_env("HEYGENT_BACKEND_MEMORY_TIMEOUT_SECONDS", 5.0, dotenv_values),
             default=5.0,
+        ),
+        backend_tool_timeout_seconds=_parse_float(
+            _read_env("HEYGENT_BACKEND_TOOL_TIMEOUT_SECONDS", 10.0, dotenv_values),
+            default=10.0,
         ),
         memory_recall_llm_planner_enabled=_parse_bool(
             _read_env("HEYGENT_MEMORY_RECALL_LLM_PLANNER_ENABLED", "false", dotenv_values),
