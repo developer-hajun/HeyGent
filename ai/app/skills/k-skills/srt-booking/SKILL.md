@@ -38,7 +38,11 @@ metadata:
 
 ## Required credentials
 
-SRT 조회/예약/취소에는 SRT 계정 정보가 필요하다.
+SRT 조회/예약/취소에는 SRT 계정 정보가 필요하다. `KSKILL_SRT_ID`에는 SRT 회원번호, 이메일, 휴대전화번호 중 하나를 넣을 수 있다.
+
+- 이메일: `name@example.com`
+- 휴대전화번호: `010-1234-5678`처럼 하이픈 포함 권장
+- 그 외 값: 회원번호로 처리
 
 K-agent 설정의 `SECRETS.md`에서 아래 섹션을 채운 뒤 저장한다.
 

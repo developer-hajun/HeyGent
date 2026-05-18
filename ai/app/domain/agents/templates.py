@@ -212,6 +212,8 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
 
 ## srt-booking
 
+# KSKILL_SRT_ID에는 SRT 회원번호, 이메일, 휴대전화번호 중 하나를 입력합니다.
+# 휴대전화번호는 010-1234-5678처럼 하이픈 포함 형식을 권장합니다.
 KSKILL_SRT_ID=
 KSKILL_SRT_PASSWORD=
 """,

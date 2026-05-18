@@ -105,6 +105,8 @@ def test_k_service_template_includes_srt_booking_and_secrets_document():
     assert "필수값이 모두 저장되면 섹션 제목 옆에 `(암호화 저장 완료)`가 표시됩니다" in documents["SECRETS.md"]
     assert "하나라도 비어 있으면 완료 표시가 사라집니다" in documents["SECRETS.md"]
     assert "원문 대신 `<stored>`" not in documents["SECRETS.md"]
+    assert "SRT 회원번호, 이메일, 휴대전화번호 중 하나" in documents["SECRETS.md"]
+    assert "하이픈 포함 형식" in documents["SECRETS.md"]
     assert "KSKILL_SRT_ID=" in documents["SECRETS.md"]
     assert "KSKILL_SRT_PASSWORD=" in documents["SECRETS.md"]
     assert "SECRETS.md" in documents["AGENTS.md"]
