@@ -101,8 +101,10 @@ def test_k_service_template_includes_srt_booking_and_secrets_document():
     assert "SECRETS.md" in documents
     assert "저장 시 자동으로 암호화 저장됩니다" in documents["SECRETS.md"]
     assert "서버가 원문 값을 암호화하여 저장합니다" in documents["SECRETS.md"]
+    assert "저장 후에는 입력한 값이 다시 노출되지 않습니다" in documents["SECRETS.md"]
     assert "필수값이 모두 저장되면 섹션 제목 옆에 `(암호화 저장 완료)`가 표시됩니다" in documents["SECRETS.md"]
     assert "하나라도 비어 있으면 완료 표시가 사라집니다" in documents["SECRETS.md"]
+    assert "원문 대신 `<stored>`" not in documents["SECRETS.md"]
     assert "KSKILL_SRT_ID=" in documents["SECRETS.md"]
     assert "KSKILL_SRT_PASSWORD=" in documents["SECRETS.md"]
     assert "SECRETS.md" in documents["AGENTS.md"]
