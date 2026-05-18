@@ -27,6 +27,27 @@ class FakeSrt:
         return ["sold-out-train"]
 
 
+class FakeReservationSrt:
+    def __init__(self) -> None:
+        self.reserved = []
+
+    def search_train(self, *args, **kwargs):
+        if kwargs.get("available_only"):
+            return ["SRT 356", "SRT 358"]
+        return ["SRT 354 sold out", "SRT 356", "SRT 358"]
+
+    def reserve(self, train, *, passengers, special_seat):
+        self.reserved.append(train)
+        return {"reserved": train}
+
+
+class FakeSeatType:
+    GENERAL_FIRST = "general-first"
+    GENERAL_ONLY = "general-only"
+    SPECIAL_FIRST = "special-first"
+    SPECIAL_ONLY = "special-only"
+
+
 def test_srt_search_command_includes_sold_out_trains_for_explanation():
     fake_srt = FakeSrt()
     args = argparse.Namespace(
@@ -61,3 +82,23 @@ def test_srt_reserve_search_keeps_available_only_filter():
 
     assert trains == ["sold-out-train"]
     assert fake_srt.calls[0]["kwargs"]["available_only"] is True
+
+
+def test_srt_reserve_train_index_uses_same_order_as_search_results():
+    fake_srt = FakeReservationSrt()
+    args = argparse.Namespace(
+        command="reserve",
+        departure="부산",
+        arrival="수서",
+        date="20260522",
+        time="160000",
+        time_limit="180000",
+        train_index=1,
+        adult_count=1,
+        seat="general-first",
+    )
+
+    result = srt_booking._reserve(fake_srt, args, adult_factory=lambda count: count, seat_type=FakeSeatType)
+
+    assert fake_srt.reserved == ["SRT 356"]
+    assert result["train"]["text"] == "SRT 356"

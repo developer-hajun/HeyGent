@@ -70,19 +70,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             "trains": [_serialize(item) for item in trains[: max(args.limit, 0)]],
         }
     if args.command == "reserve":
-        trains = _search(srt, args)
-        if args.train_index < 0 or args.train_index >= len(trains):
-            raise ValueError(f"train-index out of range: {args.train_index}")
-        reservation = srt.reserve(
-            trains[args.train_index],
-            passengers=[srt_module.Adult(max(args.adult_count, 1))],
-            special_seat=_seat_type(srt_module.SeatType, args.seat),
-        )
-        return {
-            "command": "reserve",
-            "train": _serialize(trains[args.train_index]),
-            "reservation": _serialize(reservation),
-        }
+        return _reserve(srt, args, adult_factory=srt_module.Adult, seat_type=srt_module.SeatType)
     if args.command == "reservations":
         reservations = list(srt.get_reservations())
         return {
@@ -104,8 +92,28 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
     raise ValueError(f"unsupported command: {args.command}")
 
 
-def _search(srt: Any, args: argparse.Namespace) -> list[Any]:
-    kwargs: dict[str, Any] = {"available_only": args.command != "search"}
+def _reserve(srt: Any, args: argparse.Namespace, *, adult_factory: Any, seat_type: Any) -> dict[str, Any]:
+    # Reserve against the same ordered list exposed by search, including sold-out rows.
+    # This keeps --train-index stable between "search" and "reserve"; selecting a sold-out
+    # row should fail instead of silently shifting to a different available train.
+    trains = _search(srt, args, available_only=False)
+    if args.train_index < 0 or args.train_index >= len(trains):
+        raise ValueError(f"train-index out of range: {args.train_index}")
+    selected = trains[args.train_index]
+    reservation = srt.reserve(
+        selected,
+        passengers=[adult_factory(max(args.adult_count, 1))],
+        special_seat=_seat_type(seat_type, args.seat),
+    )
+    return {
+        "command": "reserve",
+        "train": _serialize(selected),
+        "reservation": _serialize(reservation),
+    }
+
+
+def _search(srt: Any, args: argparse.Namespace, *, available_only: bool | None = None) -> list[Any]:
+    kwargs: dict[str, Any] = {"available_only": args.command != "search" if available_only is None else available_only}
     if args.time_limit:
         kwargs["time_limit"] = args.time_limit
     return list(srt.search_train(args.departure, args.arrival, args.date, args.time, **kwargs))

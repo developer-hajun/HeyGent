@@ -131,6 +131,8 @@ K-agent 설정의 `SECRETS.md`에서 `KSKILL_SRT_ID`, `KSKILL_SRT_PASSWORD`가 �
 
 예약은 부작용이 있으므로 정확한 열차를 고른 뒤에만 진행한다.
 
+`--train-index`는 직전 `search` 응답의 `trains` 배열 기준이다. `search`는 설명을 위해 매진 열차도 포함하므로, 예약 가능한 후보 중 가장 빠른 열차를 고를 때도 원래 search 목록에서의 index를 그대로 사용한다. 예약 결과의 열차 번호와 출발 시각이 선택한 후보와 다르면 즉시 불일치로 보고한다.
+
 ```json
 {
   "skill_name": "srt-booking",
