@@ -37,6 +37,13 @@ def test_main_agent_template_includes_awesome_design_skill():
     assert "awesome-design" in MAIN_AGENT_TEMPLATE.skills
 
 
+def test_builtin_subagent_templates_default_to_worker_model():
+    assert MAIN_AGENT_TEMPLATE.model == "gpt-5.4"
+
+    for template in BUILTIN_AGENT_TEMPLATES:
+        assert template.model == "gpt-5.2"
+
+
 def test_prototype_capable_subagents_include_awesome_design_skill():
     template_by_key = {template.template_key: template for template in BUILTIN_AGENT_TEMPLATES}
 
