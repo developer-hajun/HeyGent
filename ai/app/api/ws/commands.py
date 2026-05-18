@@ -430,6 +430,8 @@ class WebSocketCommandRouter:
             **dict(task.input_payload or {}),
             "after_user_message_version": user_append["after_user_message_version"],
             "completion_expected_version": user_append["completion_expected_version"],
+            "prompt_message_id": str(user_append["message_id"]),
+            "promptMessageId": str(user_append["message_id"]),
         }
         task_execution_supervisor = getattr(context.websocket.app.state, "task_execution_supervisor", None)
         try:
@@ -455,7 +457,7 @@ class WebSocketCommandRouter:
                     on_complete=finish_supervised_task,
                 )
             else:
-                context.websocket.app.state.repository.create_task(task)
+                context.websocket.app.state.repository.create_direct_task(task)
             if work_id is not None:
                 WorkService(context.websocket.app.state.work_repository).mark_run_started(
                     work_id=work_id,
@@ -542,6 +544,8 @@ class WebSocketCommandRouter:
                 "after_user_message_version": retry_state["completion_expected_version"],
                 "completion_expected_version": retry_state["completion_expected_version"],
                 "retry_source_message_id": retry_state["user_message_id"],
+                "prompt_message_id": str(retry_state["user_message_id"]),
+                "promptMessageId": str(retry_state["user_message_id"]),
                 "client_command_id": command_id,
             }
             if effective_model:
@@ -585,7 +589,7 @@ class WebSocketCommandRouter:
                     on_complete=finish_supervised_retry,
                 )
             else:
-                context.websocket.app.state.repository.create_task(task)
+                context.websocket.app.state.repository.create_direct_task(task)
             context.session_service.subscribe_task(
                 session_id=context.gateway_session_id,
                 websocket=context.websocket,

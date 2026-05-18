@@ -578,7 +578,7 @@ async def test_delegate_runtime_applies_profile_hard_timeout_default():
         "profile_version": 2,
         "agent_type": "worker",
         "config_snapshot": {
-            "toolsets": ["skills", "terminal", "file", "web", "browser"],
+            "toolsets": ["skills", "terminal", "file", "web"],
         },
         "delegation_policy": {
             "hardTimeoutSeconds": 1200,
@@ -594,7 +594,7 @@ async def test_delegate_runtime_applies_profile_hard_timeout_default():
         outcome={
             "child_session": {
                 "goal": "profile timeout 적용",
-                "toolsets": ["web", "browser"],
+                "toolsets": ["web"],
                 "metadata": {"profile_key": "worker.timeout"},
             }
         },
@@ -605,7 +605,7 @@ async def test_delegate_runtime_applies_profile_hard_timeout_default():
     launched_payload = launcher.launched[0]["input_payload"]
     assert handoff["input_payload"]["hard_timeout_seconds"] == 1200
     assert launched_payload["hardTimeoutSeconds"] == 1200
-    assert launched_payload["enabled_toolsets"] == ["web", "browser"]
+    assert launched_payload["enabled_toolsets"] == ["web"]
 
 
 @pytest.mark.asyncio

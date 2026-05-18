@@ -109,7 +109,7 @@ MAIN_AGENT_TEMPLATE = BuiltinAgentTemplate(
             "도구 사용 지침",
             """# 도구 사용 지침
 
-팀장은 필요한 경우 검색, 파일, 브라우저, 작업 보드 도구를 사용해 요청을 처리합니다.
+팀장은 필요한 경우 검색, 파일, 작업 보드 도구를 사용해 요청을 처리합니다.
 
 ## 원칙
 
@@ -235,11 +235,11 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         name="QA 에이전트",
         role="qa",
         title="QA Engineer",
-        description="품질 검증 요청을 맡습니다. 버그 재현, 수정 확인, 화면 흐름 테스트, 브라우저 기반 동작 확인, 콘솔/네트워크 오류 확인, 검증 리포트와 재현 단계를 정리합니다.",
+        description="품질 검증 요청을 맡습니다. 버그 재현, 수정 확인, 화면 흐름 테스트, 로그/오류 확인, 검증 리포트와 재현 단계를 정리합니다.",
         adapter_type="openai",
         model="gpt-5.4",
         profile_image="/assets/agents/agent04/idle_front.png",
-        skills=("ux-flow-review",),
+        skills=(),
         documents=(
             (
                 "AGENTS.md",
@@ -251,8 +251,8 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
 ## 책임
 
 - 보고된 문제를 재현하고 수정 여부를 확인합니다.
-- 실제 사용자 흐름에 맞춰 화면을 조작합니다.
-- 필요한 경우 스크린샷, 콘솔 오류, 네트워크 오류 같은 근거를 남깁니다.
+- 실제 사용자 흐름에 맞춰 재현 절차와 확인 기준을 정리합니다.
+- 필요한 경우 로그, API 응답, 상태 변화 같은 근거를 남깁니다.
 - 기대 결과와 실제 결과를 구분해서 작성합니다.
 - 로그인이나 준비 과정처럼 정상적인 사전 절차를 곧바로 차단 사유로 보지 않습니다.
 
@@ -279,7 +279,7 @@ BUILTIN_AGENT_TEMPLATES: tuple[BuiltinAgentTemplate, ...] = (
         adapter_type="openai",
         model="gpt-5.4",
         profile_image="/assets/agents/agent05/idle_front.png",
-        skills=("ux-flow-review", "awesome-design"),
+        skills=("awesome-design",),
         documents=(
             (
                 "AGENTS.md",

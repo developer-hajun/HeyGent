@@ -34,7 +34,7 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """
             UPDATE ai_agent_profiles
             SET
-                config_snapshot = '{"promptRole":"main","toolsets":["skills","session","planning","terminal","file","web","browser","delegation"]}'::jsonb,
+                config_snapshot = '{"promptRole":"main","toolsets":["skills","session","planning","terminal","file","web","delegation"]}'::jsonb,
                 delegation_policy = '{"canDelegate":true,"maxWorkerDepth":1,"maxConcurrentWorkers":3}'::jsonb
             WHERE owner_key = 'system'
               AND profile_key = 'main.default'
@@ -43,7 +43,7 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """
             UPDATE ai_agent_profiles
             SET
-                config_snapshot = '{"promptRole":"worker","toolsets":["skills","terminal","file","web","browser"]}'::jsonb,
+                config_snapshot = '{"promptRole":"worker","toolsets":["skills","terminal","file","web"]}'::jsonb,
                 delegation_policy = '{"canDelegate":false,"maxWorkerDepth":0,"hardTimeoutSeconds":900,"maxIterations":80}'::jsonb
             WHERE owner_key = 'system'
               AND profile_key = 'worker.default'
@@ -790,6 +790,47 @@ POSTGRES_MIGRATIONS: tuple[PostgresMigration, ...] = (
             """
             CREATE INDEX IF NOT EXISTS idx_workflow_templates_session
             ON workflow_templates(session_id, updated_at DESC);
+            """,
+        ),
+    ),
+    PostgresMigration(
+        migration_id="0019_remove_removed_browser_toolset",
+        statements=(
+            """
+            UPDATE ai_agent_profiles
+            SET config_snapshot = jsonb_set(
+                config_snapshot,
+                '{toolsets}',
+                COALESCE(
+                    (
+                        SELECT jsonb_agg(toolset_name)
+                        FROM jsonb_array_elements(config_snapshot->'toolsets') AS toolset_name
+                        WHERE toolset_name <> to_jsonb('browser'::text)
+                    ),
+                    '[]'::jsonb
+                ),
+                true
+            )
+            WHERE config_snapshot ? 'toolsets'
+              AND config_snapshot->'toolsets' @> '["browser"]'::jsonb;
+            """,
+            """
+            UPDATE agent_sessions
+            SET settings = jsonb_set(
+                settings,
+                '{toolsets}',
+                COALESCE(
+                    (
+                        SELECT jsonb_agg(toolset_name)
+                        FROM jsonb_array_elements(settings->'toolsets') AS toolset_name
+                        WHERE toolset_name <> to_jsonb('browser'::text)
+                    ),
+                    '[]'::jsonb
+                ),
+                true
+            )
+            WHERE settings ? 'toolsets'
+              AND settings->'toolsets' @> '["browser"]'::jsonb;
             """,
         ),
     ),
