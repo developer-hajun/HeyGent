@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from app.domain.agents.secret_documents import MASKED_SECRET_VALUE
 from app.storage.postgres.agent_repository import PostgresAgentRepository
 
@@ -20,6 +22,7 @@ class _Connection:
     def __init__(self) -> None:
         self.saved_params = None
         self.secret_params = []
+        self.profile_update_params = None
         self.secret_rows = [
             {
                 "section_key": "srt-booking",
@@ -36,6 +39,7 @@ class _Connection:
                     "profile_id": "profile-1",
                     "owner_key": "owner-1",
                     "owner_user_id": 7,
+                    "session_id": "session-1",
                     "bundle_id": "bundle-1",
                     "entry_document_key": "AGENTS.md",
                     "config_snapshot": "{}",
@@ -46,6 +50,11 @@ class _Connection:
             return _Cursor(rows=[])
         if "FROM ai_agent_secret_values" in normalized:
             return _Cursor(rows=self.secret_rows)
+        if "UPDATE ai_agent_profiles SET profile_version" in normalized:
+            self.profile_update_params = params
+            return _Cursor()
+        if normalized.startswith("UPDATE ai_agent_instruction_bundles"):
+            return _Cursor()
         if "INSERT INTO ai_agent_instruction_documents" in normalized:
             self.saved_params = params
             return _Cursor(
@@ -114,6 +123,39 @@ def test_save_instruction_document_rejects_raw_secrets_when_store_is_not_configu
 
     assert connection.saved_params is None
     assert connection.secret_params == []
+
+
+def test_update_session_agent_masks_secrets_document_before_profile_and_document_persist():
+    connection = _Connection()
+    repository = PostgresAgentRepository(lambda: connection, secret_cipher=_FakeSecretCipher())
+
+    repository.update_session_agent(
+        session_id="session-1",
+        owner_key="owner-1",
+        profile_id="profile-1",
+        config_snapshot={
+            "name": "K-에이전트",
+            "documents": [
+                {
+                    "documentKey": "SECRETS.md",
+                    "displayName": "비밀값 입력",
+                    "content": "## srt-booking\nKSKILL_SRT_ID=my-id\nKSKILL_SRT_PASSWORD=my-password\n",
+                }
+            ],
+        },
+    )
+
+    saved_profile_config = json.loads(connection.profile_update_params[3])
+    saved_profile_content = saved_profile_config["documents"][0]["content"]
+    saved_document_content = connection.saved_params[4]
+    assert "my-id" not in saved_profile_content
+    assert "my-password" not in saved_profile_content
+    assert saved_document_content == saved_profile_content
+    assert f"KSKILL_SRT_ID={MASKED_SECRET_VALUE}" in saved_document_content
+    assert [params[6] for params in connection.secret_params] == [
+        "KSKILL_SRT_ID",
+        "KSKILL_SRT_PASSWORD",
+    ]
 
 
 def test_get_agent_secret_values_decrypts_stored_values_by_section():
