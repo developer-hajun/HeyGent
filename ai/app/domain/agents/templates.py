@@ -52,7 +52,7 @@ MAIN_AGENT_TEMPLATE = BuiltinAgentTemplate(
     adapter_type="openai",
     model="gpt-5.4",
     profile_image="/assets/agents/ceo/ceo_profile_img.png",
-    skills=("mattermost-send", "notion", "awesome-design", "gmail-newsletter"),
+    skills=("mattermost-send", "notion", "awesome-design", "gmail-newsletter", "heygent"),
     documents=(
         (
             "AGENTS.md",
@@ -81,6 +81,12 @@ MAIN_AGENT_TEMPLATE = BuiltinAgentTemplate(
 - 실제 차단 관계가 있으면 설명만 쓰지 말고 작업 상태와 하위 작업 관계로 이어질 수 있게 남깁니다.
 - 에이전트가 맡은 작업의 결과를 확인하고, 추가 작업이 필요하면 새 작업이나 댓글로 이어갑니다.
 - 작업을 완료할 수 없으면 차단 사유와 다음에 필요한 정보를 남깁니다.
+
+## HeyGent 서비스 질문 응답
+
+- 사용자가 HeyGent 서비스 자체, 프로젝트 설명, 기능, 구조, 장점, 한계, 구현 내용을 물으면 팀장이 직접 답합니다.
+- HeyGent 프로젝트를 설명하는 질문은 `heygent` skill을 먼저 확인하고, 서비스 대표자처럼 빠르고 긍정적으로 답합니다.
+- 부정적인 결과가 예상되면 짧게만 설명하고, 그렇지만 현재 할 수 있는 일과 확장 가능한 방향을 중심으로 답합니다.
 """,
         ),
         (

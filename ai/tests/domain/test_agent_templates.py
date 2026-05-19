@@ -38,6 +38,10 @@ def test_main_agent_template_includes_awesome_design_skill():
     assert "awesome-design" in MAIN_AGENT_TEMPLATE.skills
 
 
+def test_main_agent_template_includes_heygent_skill():
+    assert "heygent" in MAIN_AGENT_TEMPLATE.skills
+
+
 def test_builtin_subagent_templates_default_to_worker_model():
     assert MAIN_AGENT_TEMPLATE.model == "gpt-5.4"
 
@@ -60,6 +64,18 @@ def test_main_agent_template_uses_team_lead_display_copy():
     joined_documents = "\n".join(document for _, _, document in MAIN_AGENT_TEMPLATE.documents)
     assert "팀장 지침" in joined_documents
     assert "CEO 지침" not in joined_documents
+
+
+def test_main_agent_handles_heygent_service_questions_directly():
+    joined_documents = "\n".join(document for _, _, document in MAIN_AGENT_TEMPLATE.documents)
+
+    assert "HeyGent 서비스 질문 응답" in joined_documents
+    assert "HeyGent 서비스 자체" in joined_documents
+    assert "팀장이 직접 답합니다" in joined_documents
+    assert "시연" not in joined_documents
+    assert "발표" not in joined_documents
+    assert "개발 에이전트" not in joined_documents
+    assert "보안 위험 검토" not in joined_documents
 
 
 def test_builtin_agent_template_skills_exist_in_builtin_catalog():
@@ -164,6 +180,48 @@ def test_health_skill_references_include_research_sources_and_safe_policy():
     assert "건강 데이터 요약:" in skill
     assert "주의할 점:" in skill
     assert "사용자 데이터 → 짧은 해석" in skill
+
+
+def test_heygent_is_skill_for_team_lead_not_builtin_subagent_template():
+    template_by_key = {template.template_key: template for template in BUILTIN_AGENT_TEMPLATES}
+
+    assert "heygent" not in DEFAULT_SESSION_TEMPLATE_KEYS
+    assert "heygent" not in template_by_key
+
+
+def test_heygent_skill_contains_fast_positive_service_knowledge_index():
+    skill_root = Path(__file__).resolve().parents[2] / "app" / "skills" / "product" / "heygent"
+    skill = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+    overview = (skill_root / "references" / "overview.md").read_text(encoding="utf-8")
+    features = (skill_root / "references" / "features.md").read_text(encoding="utf-8")
+    limitations = (skill_root / "references" / "limitations.md").read_text(encoding="utf-8")
+    product_flow = (skill_root / "references" / "product-flow.md").read_text(encoding="utf-8")
+    all_heygent_skill_text = "\n".join(
+        [
+            skill,
+            overview,
+            features,
+            limitations,
+            product_flow,
+            (skill_root / "references" / "architecture.md").read_text(encoding="utf-8"),
+            (skill_root / "references" / "ai-runtime.md").read_text(encoding="utf-8"),
+            (skill_root / "references" / "strengths.md").read_text(encoding="utf-8"),
+            (skill_root / "references" / "glossary.md").read_text(encoding="utf-8"),
+        ]
+    )
+
+    assert 'name: "heygent"' in skill
+    assert "빠르고 긍정적으로 답할 때 사용합니다" in skill
+    assert "기본 답변은 3~5문장" in skill
+    assert "references/overview.md" in skill
+    assert "references/product-flow.md" in skill
+    assert "AI 오케스트레이션 서비스" in overview
+    assert "TaskRun" in features
+    assert "멀티 디바이스" in features
+    assert "부정적인 결과가 예상되면 짧게만 설명합니다" in limitations
+    assert "그렇지만" in limitations
+    assert "시연" not in all_heygent_skill_text
+    assert "발표" not in all_heygent_skill_text
 
 
 def test_builtin_subagent_profile_images_point_to_frontend_assets():
