@@ -83,6 +83,18 @@ export type SkillCatalogDocument = {
   contentFormat: string
 }
 
+export type CreateCustomSkillInput = {
+  name: string
+  displayName?: string
+  description?: string
+  body: string
+  documents?: Array<{
+    documentKey: string
+    title?: string
+    content: string
+  }>
+}
+
 type SessionAgentInput = {
   name: string
   role: string
@@ -110,6 +122,13 @@ export async function getUserSkillDetail(skillId: string): Promise<SkillCatalogD
   const { data } = await aiAxiosInstance.get<SkillCatalogDetail>(
     `/skills/${encodeURIComponent(skillId)}`,
   )
+  return data
+}
+
+export async function createCustomSkill(
+  input: CreateCustomSkillInput,
+): Promise<SkillCatalogDetail> {
+  const { data } = await aiAxiosInstance.post<SkillCatalogDetail>('/skills', input)
   return data
 }
 

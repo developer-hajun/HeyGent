@@ -732,6 +732,18 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
               missingSkills={missingSkillIds}
               selectedCount={selectedKnownSkillIds.length}
               warnings={skillCatalogError ? [skillCatalogError] : []}
+              onSkillCreated={(skill) => {
+                setSkillCatalog((current) =>
+                  current.some((item) => item.skillId === skill.skillId)
+                    ? current
+                    : [...current, skill],
+                )
+                setSelectedSkillIds((current) =>
+                  current.includes(skill.skillId) ? current : [...current, skill.skillId],
+                )
+                useAgentCacheStore.getState().invalidateUserSkills()
+                markDirty()
+              }}
               onSkillOpen={openSkillDetail}
               onSkillReorder={(orderedSkillIds) => {
                 setSelectedSkillIds([...orderedSkillIds, ...missingSkillIds])

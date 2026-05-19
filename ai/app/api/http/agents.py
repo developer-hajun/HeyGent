@@ -13,6 +13,7 @@ from app.contracts.agents import (
     AgentProfileResponse,
     AgentTemplateListResponse,
     AgentTemplateResponse,
+    CreateCustomSkillRequest,
     CreateSessionAgentRequest,
     CreateSessionAgentFromTemplateRequest,
     SaveInstructionDocumentRequest,
@@ -45,6 +46,42 @@ async def list_user_skills(request: Request) -> SkillCatalogListResponse:
         owner_user_id=_int_or_none(user.user_id),
     )
     return SkillCatalogListResponse(items=[_skill_response(item) for item in items])
+
+
+@router.post("/skills", response_model=SkillCatalogDetailResponse, summary="사용자 스킬 추가")
+async def create_custom_skill(
+    request: Request,
+    payload: CreateCustomSkillRequest,
+) -> SkillCatalogDetailResponse:
+    user = await authenticate_http_user(request)
+    repository = _skill_repository_or_404(request)
+    try:
+        item = repository.create_custom_skill(
+            owner_key=str(user.user_id),
+            owner_user_id=_int_or_none(user.user_id),
+            name=payload.name,
+            display_name=payload.display_name or payload.name,
+            description=payload.description,
+            body=payload.body,
+            documents=[
+                {
+                    "documentKey": document.document_key,
+                    "title": document.title or "",
+                    "content": document.content,
+                }
+                for document in payload.documents
+            ],
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        if "unique" in str(error).lower():
+            raise HTTPException(status_code=409, detail="skill name already exists") from error
+        raise
+    registry = getattr(request.app.state, "skill_registry", None)
+    if registry is not None:
+        registry.register_many([_runtime_skill_from_detail(item)])
+    return _skill_detail_response(item)
 
 
 @router.get("/skills/{skillId}", response_model=SkillCatalogDetailResponse, summary="사용자 스킬 상세 조회")
@@ -568,6 +605,21 @@ def _skill_detail_response(item: dict[str, Any]) -> SkillCatalogDetailResponse:
             for document in list(item.get("documents") or [])
         ],
     )
+
+
+def _runtime_skill_from_detail(item: dict[str, Any]) -> dict[str, Any]:
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    return {
+        "name": str(item.get("name") or "").strip(),
+        "description": str(item.get("description") or "").strip(),
+        "path": str(item.get("source_path") or ""),
+        "body": str(item.get("body") or metadata.get("body") or ""),
+        "metadata": {
+            key: value
+            for key, value in metadata.items()
+            if key != "body"
+        },
+    }
 
 
 def _agent_visual_key(config: dict[str, Any]) -> str | None:

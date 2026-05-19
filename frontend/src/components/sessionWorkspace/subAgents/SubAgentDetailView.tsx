@@ -510,6 +510,19 @@ export function SubAgentDetailView({
             missingSkills={missingSkillIds}
             selectedCount={selectedKnownSkillIds.length}
             saving={skillSaving}
+            onSkillCreated={(skill) => {
+              setSkillCatalog((current) =>
+                current.some((item) => item.skillId === skill.skillId)
+                  ? current
+                  : [...current, skill],
+              )
+              setSkillDraftState({
+                itemId: item.id,
+                skills: Array.from(new Set([...skillDraft, skill.skillId])),
+              })
+              useAgentCacheStore.getState().invalidateUserSkills()
+              setSaved(false)
+            }}
             onSkillReorder={(orderedSkillIds) => {
               setSkillDraftState({
                 itemId: item.id,

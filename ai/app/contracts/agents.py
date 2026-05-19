@@ -116,6 +116,24 @@ class SkillCatalogListResponse(BaseModel):
     items: list[SkillCatalogItemResponse] = Field(default_factory=list)
 
 
+class CustomSkillDocumentRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    document_key: str = Field(alias="documentKey")
+    title: str | None = None
+    content: str
+
+
+class CreateCustomSkillRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    name: str
+    display_name: str | None = Field(default=None, alias="displayName")
+    description: str = ""
+    body: str
+    documents: list[CustomSkillDocumentRequest] = Field(default_factory=list)
+
+
 class UpdateUserSkillSettingRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 

@@ -33,10 +33,18 @@ import {
   Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { HelpHint } from '@/components/ui/help-hint'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { AgentRunItemData } from '@/components/sessionWorkspace/agentRuns/types'
 import { parseServerTimestamp } from '@/components/sessionWorkspace/agentUsageDisplay'
+import { createCustomSkill, type SkillCatalogItem } from '@/apis/agents'
 
 export interface AgentSummaryItemData {
   label: string
@@ -726,6 +734,7 @@ export function AgentSkillsLibraryPanel({
   adapterLabel,
   applicationLabel,
   missingSkills = [],
+  onSkillCreated,
   onSkillOpen,
   onSkillReorder,
   onSkillToggle,
@@ -738,6 +747,7 @@ export function AgentSkillsLibraryPanel({
   adapterLabel: string
   applicationLabel: string
   missingSkills?: string[]
+  onSkillCreated?: (skill: SkillCatalogItem) => void
   onSkillOpen?: (key: string) => void
   onSkillReorder?: (orderedSkillIds: string[]) => void
   onSkillToggle?: (key: string, checked: boolean) => void
@@ -757,6 +767,7 @@ export function AgentSkillsLibraryPanel({
   const [draggingSkillKey, setDraggingSkillKey] = useState<string | null>(null)
   const [skillSearch, setSkillSearch] = useState('')
   const [unmanagedOpen, setUnmanagedOpen] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
   const saveStatusLabel = saving ? 'Saving changes...' : null
   const normalizedSkillSearch = normalizeSkillSearch(skillSearch)
   const filteredEnabledRows = filterSkillRows(enabledRows, normalizedSkillSearch)
@@ -856,14 +867,26 @@ export function AgentSkillsLibraryPanel({
           onDragEnd={handleDragEnd}
           onDragCancel={() => setDraggingSkillKey(null)}
         >
-          <div className="relative">
-            <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2" />
-            <input
-              value={skillSearch}
-              className={`${agentTextInputClass} pl-8 font-sans`}
-              placeholder="스킬 검색"
-              onChange={(event) => setSkillSearch(event.target.value)}
-            />
+          <div className="flex min-w-0 gap-2">
+            <div className="relative min-w-0 flex-1">
+              <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2" />
+              <input
+                value={skillSearch}
+                className={`${agentTextInputClass} pl-8 font-sans`}
+                placeholder="스킬 검색"
+                onChange={(event) => setSkillSearch(event.target.value)}
+              />
+            </div>
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              className="h-9 w-9 shrink-0"
+              onClick={() => setCreateOpen(true)}
+              aria-label="스킬 추가"
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
           </div>
           <section className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-start">
             <AgentSkillTransferColumn
@@ -971,6 +994,15 @@ export function AgentSkillsLibraryPanel({
           <AgentInlineSummary label="선택한 스킬" value={selectedCount} />
         </div>
       </section>
+
+      <CreateSkillDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={(skill) => {
+          onSkillCreated?.(skill)
+          setSelectedSkillKey(skill.skillId)
+        }}
+      />
     </div>
   )
 }
@@ -986,6 +1018,177 @@ export function AgentSectionCard({ title, children }: { title: string; children:
 
 const agentTextInputClass =
   'border-border placeholder:text-muted-foreground/40 focus-visible:ring-ring w-full rounded-md border bg-transparent px-2.5 py-1.5 font-mono text-sm outline-none focus-visible:ring-2'
+
+function CreateSkillDialog({
+  open,
+  onCreated,
+  onOpenChange,
+}: {
+  open: boolean
+  onCreated: (skill: SkillCatalogItem) => void
+  onOpenChange: (open: boolean) => void
+}) {
+  const [mode, setMode] = useState<'write' | 'import'>('write')
+  const [name, setName] = useState('custom-skill')
+  const [displayName, setDisplayName] = useState('사용자 스킬')
+  const [description, setDescription] = useState('사용자 요청에 맞춘 작업 절차를 따릅니다.')
+  const [body, setBody] = useState(defaultSkillBody())
+  const [referencePath, setReferencePath] = useState('references/notes.md')
+  const [referenceContent, setReferenceContent] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const parsed = parseSkillFrontmatter(body)
+  const effectiveNameSource =
+    mode === 'import' ? parsed.name || name || displayName : name || parsed.name || displayName
+  const normalizedName = normalizeCustomSkillName(effectiveNameSource)
+  const effectiveDescription =
+    mode === 'import' ? parsed.description || description : description || parsed.description
+  const canSubmit = normalizedName !== '' && body.trim() !== '' && !saving
+
+  const handleSubmit = async () => {
+    if (!canSubmit) {
+      setError('스킬 이름과 SKILL.md 본문을 입력하세요.')
+      return
+    }
+    setSaving(true)
+    setError(null)
+    try {
+      const created = await createCustomSkill({
+        name: normalizedName,
+        displayName: displayName.trim() || parsed.name || normalizedName,
+        description: effectiveDescription.trim(),
+        body,
+        documents:
+          referencePath.trim() && referenceContent.trim()
+            ? [
+                {
+                  documentKey: referencePath.trim(),
+                  title: referencePath.trim().split('/').pop() ?? referencePath.trim(),
+                  content: referenceContent,
+                },
+              ]
+            : [],
+      })
+      onCreated(created)
+      onOpenChange(false)
+    } catch {
+      setError('스킬을 추가하지 못했습니다.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[86vh] max-w-3xl overflow-hidden p-0">
+        <DialogHeader className="border-border border-b px-5 py-4">
+          <DialogTitle>스킬 추가</DialogTitle>
+          <DialogDescription>SKILL.md 기준으로 사용자 스킬을 등록합니다.</DialogDescription>
+        </DialogHeader>
+        <div className="max-h-[70vh] space-y-4 overflow-y-auto px-5 py-4">
+          <div className="border-border inline-flex overflow-hidden rounded-md border">
+            <button
+              type="button"
+              onClick={() => setMode('write')}
+              className={`px-3 py-1.5 text-sm ${
+                mode === 'write' ? 'bg-accent text-foreground' : 'text-muted-foreground'
+              }`}
+            >
+              직접 작성
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('import')}
+              className={`border-border border-l px-3 py-1.5 text-sm ${
+                mode === 'import' ? 'bg-accent text-foreground' : 'text-muted-foreground'
+              }`}
+            >
+              가져오기
+            </button>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1.5">
+              <span className="text-muted-foreground text-xs">스킬 키</span>
+              <input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className={agentTextInputClass}
+                placeholder="custom-skill"
+              />
+            </label>
+            <label className="space-y-1.5">
+              <span className="text-muted-foreground text-xs">표시 이름</span>
+              <input
+                value={displayName}
+                onChange={(event) => setDisplayName(event.target.value)}
+                className={agentTextInputClass}
+                placeholder="사용자 스킬"
+              />
+            </label>
+          </div>
+
+          <label className="space-y-1.5">
+            <span className="text-muted-foreground text-xs">설명</span>
+            <input
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              className={agentTextInputClass}
+              placeholder="언제 이 스킬을 써야 하는지 적습니다"
+            />
+          </label>
+
+          <label className="space-y-1.5">
+            <span className="text-muted-foreground text-xs">
+              {mode === 'import' ? '가져온 SKILL.md' : 'SKILL.md'}
+            </span>
+            <textarea
+              value={body}
+              onChange={(event) => setBody(event.target.value)}
+              className={`${agentTextInputClass} min-h-[260px] resize-y font-mono text-xs leading-5`}
+              spellCheck={false}
+            />
+          </label>
+
+          <div className="border-border rounded-md border p-3">
+            <div className="mb-3">
+              <div className="text-sm font-medium">참고 문서</div>
+              <div className="text-muted-foreground text-xs">
+                필요할 때만 읽을 보조 문서를 하나 추가할 수 있습니다.
+              </div>
+            </div>
+            <div className="space-y-3">
+              <input
+                value={referencePath}
+                onChange={(event) => setReferencePath(event.target.value)}
+                className={agentTextInputClass}
+                placeholder="references/notes.md"
+              />
+              <textarea
+                value={referenceContent}
+                onChange={(event) => setReferenceContent(event.target.value)}
+                className={`${agentTextInputClass} min-h-24 resize-y font-mono text-xs leading-5`}
+                placeholder="# Notes"
+                spellCheck={false}
+              />
+            </div>
+          </div>
+
+          {error ? <p className="text-destructive text-sm">{error}</p> : null}
+        </div>
+        <div className="border-border flex items-center justify-end gap-2 border-t px-5 py-4">
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+            취소
+          </Button>
+          <Button type="button" onClick={() => void handleSubmit()} disabled={!canSubmit}>
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            추가
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 export function AgentAdapterTypeDropdown({
   options,
@@ -1739,6 +1942,51 @@ function insertSkillKey(keys: string[], key: string, insertIndex: number) {
 
 function normalizeSkillSearch(value: string) {
   return value.trim().toLowerCase()
+}
+
+function normalizeCustomSkillName(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, '-')
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+function parseSkillFrontmatter(markdown: string) {
+  const normalized = markdown.replace(/\r\n/g, '\n')
+  if (!normalized.startsWith('---\n')) return { name: '', description: '' }
+  const closing = normalized.indexOf('\n---\n', 4)
+  if (closing < 0) return { name: '', description: '' }
+  const raw = normalized.slice(4, closing)
+  const result = { name: '', description: '' }
+  raw.split('\n').forEach((line) => {
+    const index = line.indexOf(':')
+    if (index < 0) return
+    const key = line.slice(0, index).trim()
+    const value = line
+      .slice(index + 1)
+      .trim()
+      .replace(/^['"]|['"]$/g, '')
+    if (key === 'name') result.name = value
+    if (key === 'description') result.description = value
+  })
+  return result
+}
+
+function defaultSkillBody() {
+  return `---
+name: custom-skill
+description: 사용자 요청에 맞춘 작업 절차를 따릅니다.
+---
+
+# 작업 기준
+
+- 요청을 시작할 때 이 스킬이 실제로 필요한지 먼저 확인합니다.
+- 필요한 도구와 입력값을 확인한 뒤 작업합니다.
+- 결과는 사용자가 바로 검토할 수 있게 짧게 정리합니다.
+`
 }
 
 function filterSkillRows(rows: AgentSkillRowData[], normalizedSearch: string) {
