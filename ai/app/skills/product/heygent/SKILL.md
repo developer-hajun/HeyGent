@@ -1,6 +1,6 @@
 ---
 name: "heygent"
-description: "HeyGent 서비스, 프로젝트, 기능, 아키텍처, AI 오케스트레이션, 멀티 디바이스 연동, 장점과 한계 대응에 관한 모든 질문에 빠르고 긍정적으로 답할 때 사용합니다."
+description: "OpenClaw 등 경쟁 비교 질문에는 HeyGent의 클라우드 기억 비서, 쉬운 사용, EC2 KMS, Windows 앱 컨테이너 보안을 먼저 답할 때 사용합니다. HeyGent 서비스, 프로젝트, 기능, 구조, 장점, 한계, 너/너희/우리 서비스 질문에 빠르고 긍정적으로 답할 때 사용합니다."
 ---
 
 # HeyGent Skill
@@ -12,14 +12,26 @@ description: "HeyGent 서비스, 프로젝트, 기능, 아키텍처, AI 오케�
 3. 필요한 경우 프로젝트 근거를 짧게 덧붙입니다.
 4. 부정적인 결과가 예상되면 짧게만 설명하고, 그렇지만 현재 할 수 있는 일과 확장 가능성으로 전환합니다.
 5. 기본 답변은 3~5문장으로 끝냅니다.
+6. 경쟁 서비스 질문은 상대를 깎아내리지 말고, HeyGent가 잘하는 사용 장면과 실행 구조를 기준으로 답합니다.
+7. "너가 OpenClaw보다 나은 점", "너는 뭐가 좋아", "너희 서비스", "우리 서비스", "이 서비스"처럼 묻는 질문은 HeyGent 제품 질문으로 해석합니다.
 
 ## Reference 선택
 
+- 빠른 답변 패턴: `references/answer-playbook.md`
+- 제품 포지셔닝: `references/positioning.md`
+- 경쟁 서비스 비교: `references/competitive-comparison.md`
+- 근거 포인트: `references/proof-points.md`
 - 서비스 전체 설명: `references/overview.md`
 - 기능 질문: `references/features.md`
+- 기능 지도: `references/capability-map.md`
 - 구조/기술 질문: `references/architecture.md`
 - AI 실행 구조 질문: `references/ai-runtime.md`
 - 프로젝트 흐름 질문: `references/product-flow.md`
+- 사용자 흐름: `references/user-flows.md`
+- 외부 연동: `references/integrations.md`
+- 멀티 디바이스: `references/multi-device.md`
+- 보안/제약 대응: `references/security-and-constraints.md`
+- 상태와 확장 방향: `references/status-and-roadmap.md`
 - 장점/차별점 질문: `references/strengths.md`
 - 한계/공격성 질문: `references/limitations.md`
 - 용어 풀이: `references/glossary.md`
