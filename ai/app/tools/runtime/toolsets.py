@@ -22,7 +22,7 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     ),
     "skill-runtime": RuntimeToolsetDefinition(
         description="Restricted skill execution tools.",
-        tools=("skill.execute",),
+        tools=("skill.execute", "skill.run_script"),
     ),
     "session": RuntimeToolsetDefinition(
         description="Session record and recall tools.",
@@ -51,6 +51,10 @@ RUNTIME_TOOLSETS: dict[str, RuntimeToolsetDefinition] = {
     "notion": RuntimeToolsetDefinition(
         description="Notion workspace proxy execution tools.",
         tools=("notion.execute",),
+    ),
+    "gmail": RuntimeToolsetDefinition(
+        description="Gmail account proxy execution tools (read updates label, fetch messages, build newsletter digests).",
+        tools=("gmail.execute",),
     ),
     "design": RuntimeToolsetDefinition(
         description="DESIGN.md preset inspection tools for prototype generation.",
