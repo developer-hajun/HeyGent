@@ -1956,6 +1956,7 @@ export function AgentStatusPage() {
         onAgentArrived={handleAgentArrived}
         ceoMode={null}
         onAgentClick={handleAgentClickWithMenu}
+        onEmptyClick={() => selectAgent(null)}
         agentInfoMap={agentInfoMap}
         selectedAgentId={selectedAgentId}
         spawningIds={spawningIds}
