@@ -17,7 +17,7 @@ import {
   isJsonObject,
 } from '@/realtime/aiRealtimeTypes'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
-import { useAgentVisualizationStore } from '@/store/useAgentVisualizationStore'
+import { useAgentVisualizationStore, playAgentChime } from '@/store/useAgentVisualizationStore'
 import { useSessionStore, type AgentPanelItem } from '@/store/useSessionStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import { agentProfilesToPanelItems } from '@/apis/agents'
@@ -268,6 +268,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         [clientMessageId]: optimisticSessionId,
       },
     }))
+    playAgentChime()
     const visualizationSessionId = sessionId ?? optimisticSessionId
     const sessionPanels =
       useSessionStore.getState().agentPanelsBySessionId[visualizationSessionId] ?? []
@@ -795,6 +796,7 @@ const mergeAssistantCompleted = (
   }
 
   useAgentVisualizationStore.getState().settleCeoAtDesk(taskRunId)
+  playAgentChime()
 
   set((state) => {
     const nextMessages = upsertAssistantMessage(state.messagesBySessionId[sessionId] ?? [], {

@@ -239,6 +239,16 @@ export function useVisualizationSync(
     {
       const runtimes = useAgentVisualizationStore.getState().agentRuntimes
       for (const [profileKey, { destination }] of Object.entries(pendingMoves)) {
+        // 비-휴식 목적지가 확인되면 rest 타이머를 즉시 취소.
+        // dedup으로 명령 자체는 생략되더라도 타이머는 반드시 취소해야 한다.
+        // — task 완료 직후 다음 task가 시작될 때 이전 rest 타이머가 살아남아 10초 후 발화하는 버그 방지.
+        if (destination !== 'rest') {
+          const existing = restDebounceTimers.current[profileKey]
+          if (existing !== undefined) {
+            clearTimeout(existing)
+            delete restDebounceTimers.current[profileKey]
+          }
+        }
         // 이미 같은 명령 보냈고, 실제 state 도 그 명령과 호환되면 skip — 그렇지 않으면 강제로 재발사.
         // 예: destination='rest' 인데 lastDest='rest' 면 보통 skip 하지만 runtime.state 가 여전히
         // 'sitting_desk' 면 어딘가 막혀서 일어나지 못한 것이므로 한 번 더 시도한다.
@@ -254,13 +264,8 @@ export function useVisualizationSync(
             continue
           }
         }
-        // desk/work/meeting/calling 같이 작업 가는 destination 은 즉시 발사 + rest 디바운스 취소.
+        // desk/work/meeting/calling 같이 작업 가는 destination 은 즉시 발사.
         if (destination !== 'rest') {
-          const existing = restDebounceTimers.current[profileKey]
-          if (existing !== undefined) {
-            clearTimeout(existing)
-            delete restDebounceTimers.current[profileKey]
-          }
           lastDestByAgentId.current[profileKey] = destination
           handleMoveRef.current(profileKey, destination)
           continue

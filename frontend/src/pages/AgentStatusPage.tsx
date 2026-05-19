@@ -1501,10 +1501,21 @@ export function AgentStatusPage() {
       if (!agent) return prev
 
       // 작업 중인 서브에이전트에게 rest 명령은 무시 — 작업 완료 전까지 작업 공간 유지.
-      // 타이머·idleAgentIds 등 모든 경로를 막는 최후 방어선.
+      // 1차(agentInfoMap) + 2차(taskRunsById 직접 검증) 이중 잠금.
       if (destination === 'rest' && agentId !== 'ceo') {
         const info = useAgentVisualizationStore.getState().agentInfoMap[agentId]
         if (info?.activityStatus === 'working') return prev
+        // agentInfoMap이 찰나로 'idle'로 보이는 경우를 대비한 2차 검증
+        const { taskRunsById: curRuns } = useTaskRunStore.getState()
+        const isStillWorking = Object.values(curRuns).some((tr) => {
+          const actorAgent = tr.displayContext?.actorAgent
+          if (!actorAgent || actorAgent.kind === 'main') return false
+          const spriteId = profileIdMap[actorAgent.profileId ?? '']
+          if (spriteId !== agentId) return false
+          const s = tr.status?.toUpperCase()
+          return s === 'RUNNING' || s === 'WAITING' || s === 'BLOCKED' || s === 'PENDING'
+        })
+        if (isStillWorking) return prev
       }
 
       if (agentId === 'ceo' && rawDestination === 'rest') {
