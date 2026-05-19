@@ -1810,10 +1810,12 @@ export function AgentStatusPage() {
     // CSS transition 의 from 값이 없고 onTransitionEnd 가 영원히 발화하지 않는다.
     // 별도 useEffect 가 다음 paint 사이클에 handleMove 를 호출해 walking 을 시작한다.
     if (elevatorSubs.length > 0) {
-      elevatorSubs.forEach(([, spriteId]) => addSpawnedKey(spriteId))
+      const elevatorSpriteIds = elevatorSubs.map(([, spriteId]) => spriteId)
+      elevatorSpriteIds.forEach((spriteId) => addSpawnedKey(spriteId))
+      setSpawningIds((s) => new Set([...s, ...elevatorSpriteIds]))
       setAgents((prev) => {
         const newAgents: AgentRuntime[] = []
-        for (const [, spriteId] of elevatorSubs) {
+        for (const spriteId of elevatorSpriteIds) {
           const config = AGENT_CONFIGS.find((c) => c.id === spriteId)
           if (!config || prev.some((a) => a.config.id === spriteId)) continue
           newAgents.push({
@@ -1832,7 +1834,7 @@ export function AgentStatusPage() {
         return [...prev, ...newAgents]
       })
     }
-  }, [profileIdMap, setAgents, addSpawnedKey])
+  }, [profileIdMap, setAgents, addSpawnedKey, setSpawningIds])
 
   const idleAgentIds = useAgentVisualizationStore((s) =>
     s.agentRuntimes
@@ -1840,16 +1842,21 @@ export function AgentStatusPage() {
       .map((a) => a.config.id)
       .join(','),
   )
-  // 5초 후 agentInfoMap이 확정된 시점에 이동 방향 결정
+  // 3초 후 agentInfoMap이 확정된 시점에 이동 방향 결정
   // — 즉시 실행 시 agentInfoMap이 미갱신 상태여서 작업 중인데 rest로 보내는 경쟁조건 발생
   useEffect(() => {
     if (idleAgentIds === '') return
     const timers = idleAgentIds.split(',').map((agentId) =>
       setTimeout(() => {
+        setSpawningIds((s) => {
+          const n = new Set(s)
+          n.delete(agentId)
+          return n
+        })
         const { agentInfoMap } = useAgentVisualizationStore.getState()
         const isWorking = agentInfoMap[agentId]?.activityStatus === 'working'
         handleMoveRef.current(agentId, isWorking ? 'desk' : 'rest')
-      }, 5000),
+      }, 3000),
     )
     return () => timers.forEach(clearTimeout)
   }, [idleAgentIds])

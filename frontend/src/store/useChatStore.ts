@@ -18,6 +18,7 @@ import {
 } from '@/realtime/aiRealtimeTypes'
 import { useAiRealtimeStore } from '@/store/useAiRealtimeStore'
 import { useAgentVisualizationStore, playAgentChime } from '@/store/useAgentVisualizationStore'
+import { toast } from 'sonner'
 import { useSessionStore, type AgentPanelItem } from '@/store/useSessionStore'
 import { useTaskRunStore } from '@/store/useTaskRunStore'
 import { agentProfilesToPanelItems } from '@/apis/agents'
@@ -797,6 +798,7 @@ const mergeAssistantCompleted = (
 
   useAgentVisualizationStore.getState().settleCeoAtDesk(taskRunId)
   playAgentChime()
+  toast.success('답변이 완료되었습니다', { position: 'bottom-right' })
 
   set((state) => {
     const nextMessages = upsertAssistantMessage(state.messagesBySessionId[sessionId] ?? [], {

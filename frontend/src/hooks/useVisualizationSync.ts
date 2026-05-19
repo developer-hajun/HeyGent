@@ -74,20 +74,14 @@ function resolveDestination(
   // taskRun.status 를 기준으로 즉시 결정한다 — task 가 끝났는데 가장 마지막 step event 가
   // step.started 같은 거여서 'desk' 가 잘못 발사되어 캐릭터가 책상에 박히는 사고를 막는다.
   const taskStatus = taskRun.status?.toUpperCase()
-  // 작업이 끝났으면 (성공·실패·취소 무관) 무조건 휴식. 실패해도 엘리베이터 앞 calling 자세로
-  // 박혀 있는 게 아니라 소파/플로어로 보낸다.
-  if (
-    taskStatus === 'COMPLETED' ||
-    taskStatus === 'CANCELED' ||
-    taskStatus === 'CANCELLED' ||
-    taskStatus === 'FAILED'
-  ) {
+  if (taskStatus === 'COMPLETED' || taskStatus === 'CANCELED' || taskStatus === 'CANCELLED') {
     return 'rest'
   }
+  if (taskStatus === 'FAILED') return 'calling'
 
   if (latestEvent !== undefined) {
     if (TASK_COMPLETED_EVENT_TYPES.has(latestEvent.event_type)) return 'rest'
-    if (TASK_FAILED_EVENT_TYPES.has(latestEvent.event_type)) return 'rest'
+    if (TASK_FAILED_EVENT_TYPES.has(latestEvent.event_type)) return 'calling'
     if (TASK_CANCELED_EVENT_TYPES.has(latestEvent.event_type)) return 'rest'
     // step 단위 종료 이벤트는 task 전체 완료가 아님 — taskRun.status가 RUNNING이면 desk 유지
     if (STEP_TERMINAL_EVENT_TYPES.has(latestEvent.event_type)) {
@@ -106,14 +100,10 @@ function resolveDestination(
   const status = (eventStatus ?? taskRun.status)?.toUpperCase()
 
   if (!status || status === 'PENDING') return null
-  if (
-    status === 'FAILED' ||
-    status === 'COMPLETED' ||
-    status === 'CANCELED' ||
-    status === 'CANCELLED'
-  ) {
+  if (status === 'COMPLETED' || status === 'CANCELED' || status === 'CANCELLED') {
     return 'rest'
   }
+  if (status === 'FAILED') return 'calling'
   if (status === 'RUNNING' || status === 'WAITING' || status === 'BLOCKED') return 'desk'
 
   // status 필드 없을 때 event_type으로 보조 판단
