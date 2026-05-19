@@ -95,6 +95,15 @@ export type CreateCustomSkillInput = {
   }>
 }
 
+export type CustomSkillDraft = {
+  name: string
+  displayName: string
+  description: string
+  body: string
+  documents: SkillCatalogDocument[]
+  sourceUrl?: string | null
+}
+
 type SessionAgentInput = {
   name: string
   role: string
@@ -129,6 +138,24 @@ export async function createCustomSkill(
   input: CreateCustomSkillInput,
 ): Promise<SkillCatalogDetail> {
   const { data } = await aiAxiosInstance.post<SkillCatalogDetail>('/skills', input)
+  return data
+}
+
+export async function deleteCustomSkill(skillId: string): Promise<void> {
+  await aiAxiosInstance.delete(`/skills/${encodeURIComponent(skillId)}`)
+}
+
+export async function generateCustomSkillDraft(input: { goal: string }): Promise<CustomSkillDraft> {
+  const { data } = await aiAxiosInstance.post<CustomSkillDraft>('/skills/draft', input, {
+    timeout: 120_000,
+  })
+  return data
+}
+
+export async function importCustomSkillFromUrl(input: { url: string }): Promise<CustomSkillDraft> {
+  const { data } = await aiAxiosInstance.post<CustomSkillDraft>('/skills/import-url', input, {
+    timeout: 120_000,
+  })
   return data
 }
 

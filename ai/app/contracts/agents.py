@@ -122,6 +122,7 @@ class CustomSkillDocumentRequest(BaseModel):
     document_key: str = Field(alias="documentKey")
     title: str | None = None
     content: str
+    content_format: str = Field(default="markdown", alias="contentFormat")
 
 
 class CreateCustomSkillRequest(BaseModel):
@@ -132,6 +133,30 @@ class CreateCustomSkillRequest(BaseModel):
     description: str = ""
     body: str
     documents: list[CustomSkillDocumentRequest] = Field(default_factory=list)
+    source_url: str | None = Field(default=None, alias="sourceUrl")
+
+
+class GenerateCustomSkillDraftRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    goal: str
+
+
+class ImportCustomSkillUrlRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    url: str
+
+
+class CustomSkillDraftResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str
+    display_name: str = Field(alias="displayName")
+    description: str = ""
+    body: str
+    documents: list[SkillCatalogDocumentResponse] = Field(default_factory=list)
+    source_url: str | None = Field(default=None, alias="sourceUrl")
 
 
 class UpdateUserSkillSettingRequest(BaseModel):

@@ -42,7 +42,12 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Tabs } from '@/components/ui/tabs'
 import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
-import { getUserSkillDetail, type SkillCatalogDetail, type SkillCatalogItem } from '@/apis/agents'
+import {
+  deleteCustomSkill,
+  getUserSkillDetail,
+  type SkillCatalogDetail,
+  type SkillCatalogItem,
+} from '@/apis/agents'
 import { useAgentCacheStore } from '@/store/useAgentCacheStore'
 import { listTaskRuns } from '@/apis/taskRuns'
 import {
@@ -325,6 +330,18 @@ export function SubAgentDetailView({
         setSkillCatalogError('스킬 상세를 불러오지 못했습니다.')
       })
       .finally(() => setSkillDetailLoading(false))
+  }
+
+  const handleSkillDeleted = async (detail: SkillCatalogDetail) => {
+    await deleteCustomSkill(detail.skillId)
+    setSkillCatalog((current) => current.filter((skill) => skill.skillId !== detail.skillId))
+    setSkillDraftState({
+      itemId: item.id,
+      skills: skillDraft.filter((skillId) => skillId !== detail.skillId),
+    })
+    setSkillDetail(null)
+    useAgentCacheStore.getState().invalidateUserSkills()
+    setSaved(false)
   }
 
   const handleDelete = async () => {
@@ -622,6 +639,7 @@ export function SubAgentDetailView({
         detail={skillDetail}
         loading={skillDetailLoading}
         open={skillDetailOpen}
+        onDelete={handleSkillDeleted}
         onOpenChange={setSkillDetailOpen}
       />
     </div>

@@ -46,6 +46,7 @@ import {
 import { getTime } from '@/components/taskRuns/stepRunActivityPanel/activityPanelText'
 import { getCommandUsage, type CommandUsageRecord } from '@/apis/aiCommandUsage'
 import {
+  deleteCustomSkill,
   getUserSkillDetail,
   updateSessionAgent,
   type AgentProfile,
@@ -547,6 +548,15 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
       .finally(() => setSkillDetailLoading(false))
   }
 
+  const handleSkillDeleted = async (detail: SkillCatalogDetail) => {
+    await deleteCustomSkill(detail.skillId)
+    setSkillCatalog((current) => current.filter((skill) => skill.skillId !== detail.skillId))
+    setSelectedSkillIds((current) => current.filter((skillId) => skillId !== detail.skillId))
+    setSkillDetail(null)
+    useAgentCacheStore.getState().invalidateUserSkills()
+    markDirty()
+  }
+
   const handleSave = async () => {
     const nextUiMetadata: JsonObject = { ...uiMetadata }
     setOptionalUiString(nextUiMetadata, 'agentName', agentName)
@@ -997,6 +1007,7 @@ function MainAgentPage({ session }: { session: RawAiSession }) {
           detail={skillDetail}
           loading={skillDetailLoading}
           open={skillDetailOpen}
+          onDelete={handleSkillDeleted}
           onOpenChange={setSkillDetailOpen}
         />
       </div>

@@ -237,6 +237,37 @@ class PostgresSkillRepository:
             raise KeyError(skill_id)
         return item
 
+    def delete_custom_skill(self, *, owner_key: str, skill_id: str) -> dict[str, Any] | None:
+        item = self.get_user_skill(owner_key=owner_key, skill_id=skill_id)
+        if item is None or not _is_custom_skill_item(item):
+            return None
+        connection = self.connection_factory()
+        connection.execute(
+            """
+            DELETE FROM ai_agent_skill_settings
+            WHERE skill_id = %s
+            """,
+            (skill_id,),
+        )
+        connection.execute(
+            """
+            DELETE FROM ai_user_skill_settings
+            WHERE skill_id = %s
+            """,
+            (skill_id,),
+        )
+        connection.execute(
+            """
+            DELETE FROM ai_skill_catalog
+            WHERE skill_id = %s
+              AND source_type = 'custom'
+              AND metadata->>'ownerKey' = %s
+            """,
+            (skill_id, owner_key),
+        )
+        connection.commit()
+        return item
+
     def list_runtime_custom_skills(self) -> list[dict[str, Any]]:
         rows = self.connection_factory().execute(
             """
