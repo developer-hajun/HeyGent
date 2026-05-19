@@ -140,6 +140,15 @@ export function useVisualizationSync(
   useEffect(() => {
     handleMoveRef.current = handleMove
   }, [handleMove])
+  // 타이머 callback 은 생성 시점의 클로저 값을 쓰므로 ref 로 최신 값을 항상 노출한다.
+  const profileIdMapRef = useRef(profileIdMap)
+  useEffect(() => {
+    profileIdMapRef.current = profileIdMap
+  }, [profileIdMap])
+  const sessionIdRef = useRef(sessionId)
+  useEffect(() => {
+    sessionIdRef.current = sessionId
+  }, [sessionId])
 
   const taskRunsById = useTaskRunStore((s) => s.taskRunsById)
   const eventsByTaskRunId = useTaskRunStore((s) => s.eventsByTaskRunId)
@@ -169,8 +178,25 @@ export function useVisualizationSync(
       restDebounceTimers.current = {}
     }
   }, [])
+  // 직전 effect 실행 시 책상에 앉아있던 에이전트 ID 집합 — 새로 앉은 에이전트 감지용
+  const prevStuckIdsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
+    // 이번 effect 에서 새로 sitting_desk 가 된 에이전트의 rest 타이머를 리셋한다.
+    // 도착 전에 쌓인 타이머가 도착 직후 발화하는 "앉자마자 바로 휴게공간" 현상을 막는다.
+    // 도착 시점부터 5초를 다시 카운트하기 위해 기존 타이머를 취소한다.
+    const currentStuckIds = new Set(stuckAtDeskKey ? stuckAtDeskKey.split(',').filter(Boolean) : [])
+    for (const id of currentStuckIds) {
+      if (!prevStuckIdsRef.current.has(id)) {
+        const existing = restDebounceTimers.current[id]
+        if (existing !== undefined) {
+          clearTimeout(existing)
+          delete restDebounceTimers.current[id]
+        }
+      }
+    }
+    prevStuckIdsRef.current = currentStuckIds
+
     const pendingMoves: Record<string, { destination: UIDestination; sortTime: number }> = {}
 
     for (const taskRun of Object.values(taskRunsById)) {
@@ -198,11 +224,13 @@ export function useVisualizationSync(
 
       const sortTime = getTaskRunSortTime(taskRun, latestEvent)
       const existing = pendingMoves[profileKey]
+      // DEST_PRIORITY 우선 — 진행 중 task(desk=0)가 완료된 task(rest=2)보다 항상 앞선다.
+      // sortTime은 같은 우선순위 내에서만 최신 이벤트를 선택하는 타이브레이커로 사용한다.
       if (
         existing === undefined ||
-        sortTime > existing.sortTime ||
-        (sortTime === existing.sortTime &&
-          DEST_PRIORITY[destination] < DEST_PRIORITY[existing.destination])
+        DEST_PRIORITY[destination] < DEST_PRIORITY[existing.destination] ||
+        (DEST_PRIORITY[destination] === DEST_PRIORITY[existing.destination] &&
+          sortTime > existing.sortTime)
       ) {
         pendingMoves[profileKey] = { destination, sortTime }
       }
@@ -237,20 +265,44 @@ export function useVisualizationSync(
           handleMoveRef.current(profileKey, destination)
           continue
         }
-        // rest 전환은 3 초 디바운스. 같은 task 의 step 들 사이 또는 새 task 가 곧 올 가능성이
-        // 있으므로 잠시 기다린다. 그 사이 desk 신호 오면 위 분기에서 timer 취소.
-        const prevTimer = restDebounceTimers.current[profileKey]
-        if (prevTimer !== undefined) clearTimeout(prevTimer)
+        // rest 전환은 10초 디바운스. 상태가 바뀐 뒤 10초 후에도 여전히 휴식이면 그때 이동.
+        // desk 신호가 오면 위 분기에서 타이머를 취소해 불필요한 이동을 막는다.
+        // 이미 타이머가 돌고 있으면 리셋하지 않는다 — deps 변경으로 effect 가 자주 재실행돼도
+        // 타이머 기준 시점이 뒤로 밀려 영원히 발화 안 되는 문제를 방지.
+        if (restDebounceTimers.current[profileKey] !== undefined) continue
         const keyAtFire = profileKey
         restDebounceTimers.current[profileKey] = setTimeout(() => {
           delete restDebounceTimers.current[keyAtFire]
-          if (lastDestByAgentId.current[keyAtFire] === 'rest') {
-            // 이미 rest 였으면 다시 발사 안 함 (stuck 가드는 fallback 에서 처리).
-            return
-          }
+          if (lastDestByAgentId.current[keyAtFire] === 'rest') return
+          // 1차: agentInfoMap.activityStatus 확인 — 말풍선·정보패널과 동일한 데이터 소스.
+          //      'working' 이면 무조건 발사 금지 (resolveProfileKey 매핑 실패를 보완).
+          const { agentInfoMap } = useAgentVisualizationStore.getState()
+          if (agentInfoMap[keyAtFire]?.activityStatus === 'working') return
+          // 2차: taskRunsById 직접 확인 (agentInfoMap 갱신 지연 대비).
+          //      profileIdMapRef.current 을 쓰므로 클로저 stale 문제 없음.
+          const { taskRunsById: curRuns, eventsByTaskRunId: curEvents } = useTaskRunStore.getState()
+          const curProfileIdMap = profileIdMapRef.current
+          const curSessionId = sessionIdRef.current
+          const stillWorking = Object.values(curRuns).some((tr) => {
+            const pk = resolveProfileKey(tr.displayContext?.actorAgent, curProfileIdMap)
+            if (pk !== keyAtFire) return false
+            if (
+              pk === 'ceo' &&
+              curSessionId !== undefined &&
+              tr.session_id !== undefined &&
+              tr.session_id !== curSessionId
+            )
+              return false
+            if (tr.status?.toUpperCase() === 'PENDING') return true
+            const evs = curEvents[tr.task_run_id] ?? []
+            const latestEv = evs.length > 0 ? evs[evs.length - 1] : undefined
+            const dest = resolveDestination(tr, latestEv)
+            return dest !== null && dest !== 'rest'
+          })
+          if (stillWorking) return
           lastDestByAgentId.current[keyAtFire] = 'rest'
           handleMoveRef.current(keyAtFire, 'rest')
-        }, 3000)
+        }, 10000)
       }
     }
 
@@ -276,8 +328,38 @@ export function useVisualizationSync(
           runtime.state === 'sitting_desk' ||
           (runtime.state === 'walking' && runtime.targetState === 'sitting_desk')
         if (!isAtDesk) continue
-        lastDestByAgentId.current[spriteKey] = 'rest'
-        handleMoveRef.current(spriteKey, 'rest')
+        if (restDebounceTimers.current[spriteKey] !== undefined) continue
+        const keyAtFire = spriteKey
+        restDebounceTimers.current[spriteKey] = setTimeout(() => {
+          delete restDebounceTimers.current[keyAtFire]
+          if (lastDestByAgentId.current[keyAtFire] === 'rest') return
+          // 1차: agentInfoMap.activityStatus — 말풍선·정보패널과 동일한 데이터 소스.
+          const { agentInfoMap } = useAgentVisualizationStore.getState()
+          if (agentInfoMap[keyAtFire]?.activityStatus === 'working') return
+          // 2차: taskRunsById 직접 확인 (최신 ref 사용).
+          const { taskRunsById: curRuns, eventsByTaskRunId: curEvents } = useTaskRunStore.getState()
+          const curProfileIdMap = profileIdMapRef.current
+          const curSessionId = sessionIdRef.current
+          const stillWorking = Object.values(curRuns).some((tr) => {
+            const pk = resolveProfileKey(tr.displayContext?.actorAgent, curProfileIdMap)
+            if (pk !== keyAtFire) return false
+            if (
+              pk === 'ceo' &&
+              curSessionId !== undefined &&
+              tr.session_id !== undefined &&
+              tr.session_id !== curSessionId
+            )
+              return false
+            if (tr.status?.toUpperCase() === 'PENDING') return true
+            const evs = curEvents[tr.task_run_id] ?? []
+            const latestEv = evs.length > 0 ? evs[evs.length - 1] : undefined
+            const dest = resolveDestination(tr, latestEv)
+            return dest !== null && dest !== 'rest'
+          })
+          if (stillWorking) return
+          lastDestByAgentId.current[keyAtFire] = 'rest'
+          handleMoveRef.current(keyAtFire, 'rest')
+        }, 10000)
       }
     }
   }, [taskRunsById, eventsByTaskRunId, sessionId, profileIdMap, stuckAtDeskKey])
