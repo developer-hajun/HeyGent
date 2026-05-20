@@ -6,6 +6,7 @@ import {
   Layers,
   Loader2,
   MoreHorizontal,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -87,6 +88,7 @@ export function WorkflowRoutinePanel({ sessionId }: { sessionId: string }) {
   )
   const [activeTab, setActiveTab] = useState<RoutineTab>('routines')
   const [composerOpen, setComposerOpen] = useState(false)
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null)
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [routineTitle, setRoutineTitle] = useState('')
   const [triggerKind, setTriggerKind] = useState<'once' | 'schedule'>('once')
@@ -165,6 +167,7 @@ export function WorkflowRoutinePanel({ sessionId }: { sessionId: string }) {
 
   const openComposer = () => {
     const firstTemplate = templates[0]
+    setEditingScheduleId(null)
     setSelectedTemplateId(firstTemplate?.templateId ?? '')
     setRoutineTitle(firstTemplate?.name ?? '')
     setTriggerKind('once')
@@ -174,10 +177,23 @@ export function WorkflowRoutinePanel({ sessionId }: { sessionId: string }) {
     setComposerOpen(true)
   }
 
+  const openEditComposer = (schedule: WorkflowRoutineSchedule) => {
+    const [date = getDefaultScheduledDate(), time = getDefaultScheduledTime()] =
+      schedule.scheduledAt.split('T')
+    setEditingScheduleId(schedule.id)
+    setSelectedTemplateId(schedule.templateId)
+    setRoutineTitle(schedule.templateName)
+    setTriggerKind(schedule.triggerKind)
+    setScheduledDate(date)
+    setScheduledTime(time)
+    setCronExpression(schedule.cronExpression ?? DEFAULT_CRON_EXPRESSION)
+    setComposerOpen(true)
+  }
+
   const handleSaveRoutine = () => {
     const template = templates.find((item) => item.templateId === selectedTemplateId)
     if (!template) {
-      toast.warning('루틴으로 만들 워크플로우를 선택하세요')
+      toast.warning('불러올 워크플로우를 선택하세요')
       return
     }
     if (scheduledDate === '' || scheduledTime === '') {
@@ -193,11 +209,35 @@ export function WorkflowRoutinePanel({ sessionId }: { sessionId: string }) {
       templateName: title,
       triggerKind,
     })
-    const next = upsertWorkflowRoutineSchedule(schedules, schedule)
+    const existing = editingScheduleId
+      ? (schedules.find((item) => item.id === editingScheduleId) ?? null)
+      : null
+    const scheduleChanged =
+      existing !== null &&
+      (existing.templateId !== schedule.templateId ||
+        existing.scheduledAt !== schedule.scheduledAt ||
+        existing.triggerKind !== schedule.triggerKind ||
+        existing.cronExpression !== schedule.cronExpression)
+    const nextSchedule =
+      existing === null
+        ? schedule
+        : {
+            ...schedule,
+            createdAt: existing.createdAt,
+            enabled: scheduleChanged ? true : existing.enabled,
+            lastRunAt: scheduleChanged ? null : existing.lastRunAt,
+          }
+    const baseSchedules = editingScheduleId
+      ? schedules.filter((item) => item.id !== editingScheduleId)
+      : schedules
+    const next = upsertWorkflowRoutineSchedule(baseSchedules, nextSchedule)
     setSchedules(next)
     writeWorkflowRoutineSchedules(sessionId, next)
     setComposerOpen(false)
-    toast.success('워크플로우 루틴이 저장됐습니다')
+    setEditingScheduleId(null)
+    toast.success(
+      existing === null ? '워크플로우를 루틴으로 불러왔습니다' : '워크플로우 루틴을 수정했습니다',
+    )
   }
 
   const handleToggle = (schedule: WorkflowRoutineSchedule) => {
@@ -251,12 +291,12 @@ export function WorkflowRoutinePanel({ sessionId }: { sessionId: string }) {
   return (
     <div className="bg-background h-full min-h-0 overflow-y-auto">
       <main className="min-h-full p-6">
-        <div className="space-y-6">
+        <div className="w-full space-y-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div className="space-y-1">
               <h1 className="text-2xl font-semibold tracking-tight">루틴</h1>
               <p className="text-muted-foreground text-sm">
-                워크플로우를 한 번 실행하거나 반복 실행되도록 예약합니다.
+                워크플로우를 불러와 한 번 실행하거나 반복 실행되도록 예약합니다.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -270,7 +310,7 @@ export function WorkflowRoutinePanel({ sessionId }: { sessionId: string }) {
               </Button>
               <Button onClick={openComposer} disabled={loadingTemplates || templates.length === 0}>
                 <Plus className="h-4 w-4" />
-                루틴 만들기
+                워크플로우 불러오기
               </Button>
             </div>
           </div>
@@ -414,6 +454,7 @@ export function WorkflowRoutinePanel({ sessionId }: { sessionId: string }) {
                           schedule={schedule}
                           runningScheduleId={runningScheduleId}
                           onRemove={handleRemove}
+                          onEdit={openEditComposer}
                           onRunNow={(item) => void handleRunNow(item)}
                           onToggleEnabled={handleToggle}
                         />
@@ -436,6 +477,7 @@ export function WorkflowRoutinePanel({ sessionId }: { sessionId: string }) {
                     schedule={schedule}
                     runningScheduleId={runningScheduleId}
                     onRemove={handleRemove}
+                    onEdit={openEditComposer}
                     onRunNow={(item) => void handleRunNow(item)}
                     onToggleEnabled={handleToggle}
                   />
@@ -450,6 +492,7 @@ export function WorkflowRoutinePanel({ sessionId }: { sessionId: string }) {
         open={composerOpen}
         onOpenChange={(open) => {
           setComposerOpen(open)
+          if (!open) setEditingScheduleId(null)
         }}
       >
         <DialogContent
@@ -459,10 +502,10 @@ export function WorkflowRoutinePanel({ sessionId }: { sessionId: string }) {
           <div className="border-border/60 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b px-5 py-3">
             <div>
               <p className="text-muted-foreground text-xs font-medium tracking-[0.2em] uppercase">
-                새 루틴
+                {editingScheduleId ? '루틴 편집' : '새 루틴'}
               </p>
               <p className="text-muted-foreground text-sm">
-                실행할 워크플로우와 트리거를 먼저 정합니다.
+                불러올 워크플로우와 트리거를 먼저 정합니다.
               </p>
             </div>
             <Button variant="ghost" size="sm" onClick={() => setComposerOpen(false)}>
@@ -489,7 +532,7 @@ export function WorkflowRoutinePanel({ sessionId }: { sessionId: string }) {
             <div className="px-5 pb-3">
               <div className="overflow-x-auto overscroll-x-contain">
                 <div className="inline-flex min-w-full flex-wrap items-center gap-2 text-sm sm:min-w-max sm:flex-nowrap">
-                  <span className="text-muted-foreground">워크플로우</span>
+                  <span className="text-muted-foreground">불러올 워크플로우</span>
                   <select
                     value={selectedTemplateId}
                     onChange={(event) => {
@@ -576,7 +619,7 @@ export function WorkflowRoutinePanel({ sessionId }: { sessionId: string }) {
               disabled={!routineTitle.trim() || !selectedTemplate}
             >
               <Plus className="h-4 w-4" />
-              루틴 만들기
+              {editingScheduleId ? '저장' : '불러오기'}
             </Button>
           </div>
         </DialogContent>
@@ -589,12 +632,14 @@ function WorkflowRoutineRow({
   schedule,
   runningScheduleId,
   onRemove,
+  onEdit,
   onRunNow,
   onToggleEnabled,
 }: {
   schedule: WorkflowRoutineSchedule
   runningScheduleId: string | null
   onRemove: (scheduleId: string) => void
+  onEdit: (schedule: WorkflowRoutineSchedule) => void
   onRunNow: (schedule: WorkflowRoutineSchedule) => void
   onToggleEnabled: (schedule: WorkflowRoutineSchedule) => void
 }) {
@@ -657,7 +702,10 @@ function WorkflowRoutineRow({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => onRunNow(schedule)}>지금 실행</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onEdit(schedule)}>
+              <Pencil className="h-4 w-4" />
+              편집
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => onToggleEnabled(schedule)}>
               {enabled ? '끄기' : '켜기'}
             </DropdownMenuItem>
@@ -680,7 +728,7 @@ function EmptyRoutineState() {
         <Repeat className="h-6 w-6" />
       </div>
       <p className="text-muted-foreground text-sm">
-        아직 루틴이 없습니다. 루틴 만들기로 첫 워크플로우 예약을 추가하세요.
+        아직 루틴이 없습니다. 워크플로우 불러오기로 첫 예약을 추가하세요.
       </p>
     </div>
   )
