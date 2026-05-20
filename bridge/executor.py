@@ -189,20 +189,32 @@ def worker_status() -> dict[str, Any]:
         }
 
 
+def _sandbox_runtime_dir() -> Path:
+    """AppContainer 워커 .exe 와 stderr 로그를 둘 곳. 사용자 워크스페이스를 더럽히지 않는다.
+
+    Windows: %LOCALAPPDATA%\\HeyGent\\sandbox
+    이 폴더는 우리가 ACL 로 AppContainer SID 에 권한을 부여해 워커가 자기 .exe 를 실행하고
+    stderr 를 쓸 수 있도록 한다. 워크스페이스와는 완전히 분리.
+    """
+
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    return Path(base) / "HeyGent" / "sandbox"
+
+
 def _resolve_worker_argv(workspace_root: Path) -> list[str]:
     """워커 entrypoint argv 를 결정한다.
 
-    1) PyInstaller 빌드본 (frozen): HeyGentBridge.exe 를 워크스페이스 안에 복사한 뒤 그 사본을
-       --sandbox-worker 모드로 띄운다. AppContainer 자식이 .exe 파일에 접근하려면 .exe 의 부모
-       디렉터리 traverse 권한이 필요한데, 사용자 임의 폴더에 ACL 을 거슬러 올라가며 부여하는 건
-       무겁고 위험하다. 워크스페이스는 우리가 ACL 을 명시 통제하므로 .exe 도 거기 두면 깔끔.
+    1) PyInstaller 빌드본 (frozen): HeyGentBridge.exe 를 %LOCALAPPDATA%\\HeyGent\\sandbox\\
+       에 복사한 뒤 그 사본을 --sandbox-worker 모드로 띄운다. 사용자 워크스페이스 안에 .exe
+       파일을 두지 않아 워크스페이스 listing 이 깨끗하다. sandbox 폴더는 우리가 ACL 명시 통제.
     2) 개발 실행: 같은 인터프리터로 sandbox_worker.py 실행 (sandboxed=False 폴백).
     """
 
     if getattr(sys, "frozen", False):
-        worker_exe = workspace_root / ".heygent_bridge" / "worker.exe"
+        runtime_dir = _sandbox_runtime_dir()
+        worker_exe = runtime_dir / "worker.exe"
         try:
-            worker_exe.parent.mkdir(parents=True, exist_ok=True)
+            runtime_dir.mkdir(parents=True, exist_ok=True)
             _ensure_exe_copy(src=Path(sys.executable), dst=worker_exe)
             return [str(worker_exe), "--sandbox-worker"]
         except Exception:

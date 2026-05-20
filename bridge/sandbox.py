@@ -476,7 +476,12 @@ def launch_worker(*, workspace_root: Path, worker_argv: list[str]) -> WorkerHand
     if _supports_app_container():
         try:
             sid_bytes = ensure_app_container_profile()
+            # 워크스페이스 (사용자 작업 폴더) + sandbox 런타임 폴더 (워커 .exe 사본 위치) 둘 다
+            # AppContainer SID 가 접근 가능해야 함. worker.exe 가 후자에 있어서 spawn 시 필요.
             grant_app_container_to_path(workspace_root)
+            worker_exe_path = Path(worker_argv[0])
+            if worker_exe_path.parent.exists():
+                grant_app_container_to_path(worker_exe_path.parent)
             sandboxed = True
         except Exception as exc:
             logger.exception("AppContainer 준비 실패, 폴백 모드로 워커를 띄움: %s", exc)
@@ -540,8 +545,10 @@ def _spawn_process(
         raise OSError("CreatePipe(stdout) failed")
     kernel32.SetHandleInformation(stdout_read, HANDLE_FLAG_INHERIT, 0)
 
-    # stderr 는 파일에 쓰게 한다. 워커 디버깅 + 발표 데모에서 'Access Denied' 확인용.
-    stderr_path = workspace_root / ".heygent_bridge_worker.stderr.log"
+    # stderr 는 sandbox 런타임 폴더 (워크스페이스 밖) 의 파일에 쓰게 한다. 사용자 워크스페이스
+    # listing 에 우리 로그가 노출되지 않도록.
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    stderr_path = Path(base) / "HeyGent" / "sandbox" / "worker.stderr.log"
     try:
         stderr_path.parent.mkdir(parents=True, exist_ok=True)
         stderr_file = open(stderr_path, "ab", buffering=0)  # noqa: SIM115 - 자식 수명 동안 보유
