@@ -26,7 +26,6 @@ import type { BoardAssignee } from './issueBoardPanelTypes'
 import {
   createWorkflowTemplate,
   deleteWorkflowTemplate,
-  instantiateWorkflowTemplate,
   listWorkflowTemplates,
   updateWorkflowTemplate,
   type WorkflowTemplate,
@@ -34,8 +33,8 @@ import {
   type WorkflowTemplateNode as ApiTplNode,
 } from '@/apis/workflowTemplates'
 import { useChatStore } from '@/store/useChatStore'
-import { buildWorkflowRunInputPayload, buildWorkflowRunTrigger } from '@/utils/workflowRunPayload'
 import { buildWorkflowAgentChoices, type WorkflowAgentChoice } from './workflowAgentChoices'
+import { runWorkflowTemplate } from './workflowTemplateRunner'
 
 const CEO_PROFILE_IMAGE = '/assets/agents/ceo/ceo_profile_img.png'
 
@@ -585,40 +584,17 @@ function WorkflowTemplateEditorInner({
     }
     setBusyRunning(true)
     try {
-      const execution = await instantiateWorkflowTemplate(sessionId, selectedTemplate.templateId)
+      const result = await runWorkflowTemplate({
+        assignees,
+        sendChatMessage,
+        sessionId,
+        template: selectedTemplate,
+      })
       toast.success(`"${selectedTemplate.name}" 작업 생성됨`)
-      // 팀장 에이전트한테 시작 신호 — 이미 만들어진 자식 작업들을 명시해 위임 유도
-      try {
-        const children = execution.children.map((child) => {
-          const templateNode = selectedTemplate.graph.nodes.find((n) => n.slotKey === child.slotKey)
-          return {
-            slotKey: child.slotKey,
-            workId: child.workId,
-            identifier: child.identifier,
-            title: child.title,
-            description: templateNode?.description ?? child.title,
-            assigneeAgentId: child.assigneeAgentId,
-            assigneeName: assignees.find((a) => a.id === child.assigneeAgentId)?.name ?? '에이전트',
-          }
-        })
-        const trigger = buildWorkflowRunTrigger({
-          templateName: selectedTemplate.name,
-          templateDescription: selectedTemplate.description,
-          children,
-          edges: selectedTemplate.graph.edges,
-        })
-        const inputPayload = buildWorkflowRunInputPayload({
-          templateId: selectedTemplate.templateId,
-          templateName: selectedTemplate.name,
-          rootWorkId: execution.rootWorkId,
-          childWorkIds: execution.childWorkIds,
-          childrenBySlotKey: execution.childrenBySlotKey,
-          children,
-        })
-        await sendChatMessage({ sessionId, content: trigger, inputPayload })
+      if (result.chatSent) {
         toast.success('팀장 에이전트에게 시작 신호 전송됨')
-      } catch (chatError) {
-        console.error('sendChatMessage failed', chatError)
+      } else {
+        console.error('sendChatMessage failed', result.chatError)
         toast.warning('작업은 생성됐지만 채팅 메시지 실패. 채팅창에서 수동으로 시작하세요')
       }
     } catch (error) {
