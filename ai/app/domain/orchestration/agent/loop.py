@@ -945,6 +945,16 @@ class TaskEngine:
                     "ok": False,
                     "error": {"code": "child_work_not_found", "message": "child work was not found"},
                 }
+            parent_input = dict(task.input_payload or {})
+            workflow_execution = parent_input.get("workflowExecution") or parent_input.get("workflow_execution")
+            workflow_event_payload = {}
+            if isinstance(workflow_execution, dict):
+                workflow_event_payload = {
+                    "workflowExecutionMode": workflow_execution.get("mode"),
+                    "workflowRole": "child",
+                    "rootWorkId": workflow_execution.get("rootWorkId") or workflow_execution.get("root_work_id") or work.parent_id,
+                    "parentWorkId": work.parent_id,
+                }
 
             task_run_id = new_id("task")
             service = WorkService(self.work_repository)
@@ -976,6 +986,7 @@ class TaskEngine:
                         "taskRunStatus": child_task.status,
                         "workStatus": "in_progress",
                         "status": child_task.status,
+                        **workflow_event_payload,
                     },
                     summary_message=f"{work.identifier} 세션 에이전트 실행 중",
                 )
@@ -1002,6 +1013,7 @@ class TaskEngine:
                         "taskRunStatus": "FAILED",
                         "workStatus": failed_work.status,
                         "status": "FAILED",
+                        **workflow_event_payload,
                     },
                     summary_message=f"{work.identifier} 세션 에이전트 실행 실패",
                 )
@@ -1035,6 +1047,7 @@ class TaskEngine:
                     "taskRunStatus": child_status,
                     "workStatus": final_work.status,
                     "status": child_status,
+                    **workflow_event_payload,
                 },
                 summary_message=f"{work.identifier} 세션 에이전트 실행 완료",
             )
@@ -1069,6 +1082,17 @@ class TaskEngine:
             "max_iterations": self._work_execution_max_iterations(),
             "parentWorkId": work.parent_id,
         }
+        workflow_execution = parent_input.get("workflowExecution") or parent_input.get("workflow_execution")
+        if isinstance(workflow_execution, dict):
+            payload["workflowExecution"] = {
+                **workflow_execution,
+                "role": "child",
+                "childWorkId": work.work_id,
+                "parentWorkId": work.parent_id,
+                "rootWorkId": workflow_execution.get("rootWorkId") or workflow_execution.get("root_work_id") or work.parent_id,
+            }
+            payload["workflowRole"] = "child"
+            payload["rootWorkId"] = payload["workflowExecution"]["rootWorkId"]
         self._attach_session_agent_profile(payload, work=work)
         transcript_session_id = self._create_work_transcript_session(parent_task=parent_task, work=work, model=payload.get("model"))
         if transcript_session_id:
