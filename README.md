@@ -194,6 +194,20 @@ HeyGent는 이 문제를 "대화형 AI"가 아니라 "AI 작업 실행 플랫폼
         <sub><b>작업 상태 변경</b></sub>
       </td>
     </tr>
+    <tr>
+      <td width="33%" align="center">
+        <img src="docs/image/demo/GMAIL및MM.gif" width="280" alt="GMAIL및MM"><br/>
+        <sub><b>GMAIL 및 MM 연동(외부 서비스)</b></sub>
+      </td>
+      <td width="33%" align="center">
+        <img src="docs/image/demo/노션.gif" width="280" alt="노션"><br/>
+        <sub><b>노션 연동(외부 서비스)</b></sub>
+      </td>
+      <td width="33%" align="center">
+        <img src="docs/image/demo/API키.gif" width="280" alt="API키"><br/>
+        <sub><b>API 키 입력</b></sub>
+      </td>
+    </tr>
   </table>
 
 
