@@ -165,10 +165,6 @@ HeyGent는 이 문제를 "대화형 AI"가 아니라 "AI 작업 실행 플랫폼
         <img src="docs/image/demo/dashboard.gif" width="280" alt="대시보드"><br/>
         <sub><b>대시보드 및 대화 세션</b></sub>
       </td>
-      <td width="33%" align="center">
-        <img src="docs/image/demo/카카오_로그인.gif" width="280" alt="새 채팅"><br/>
-        <sub><b>카카오 로그인</b></sub>
-      </td>
     </tr>
     <tr>
       <td width="33%" align="center">
