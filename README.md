@@ -158,8 +158,8 @@ HeyGent는 이 문제를 "대화형 AI"가 아니라 "AI 작업 실행 플랫폼
         <sub><b>로그인 페이지</b></sub>
       </td>
       <td width="33%" align="center">
-        <img src="docs/image/demo/02-dashboard.gif" width="280" alt="대시보드"><br/>
-        <sub><b>예시</b></sub>
+        <img src="docs/image/demo/dashboard.gif" width="280" alt="대시보드"><br/>
+        <sub><b>대시보드</b></sub>
       </td>
       <td width="33%" align="center">
         <img src="docs/image/demo/03-new-chat.gif" width="280" alt="새 채팅"><br/>
