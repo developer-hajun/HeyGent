@@ -153,41 +153,31 @@ HeyGent는 이 문제를 "대화형 AI"가 아니라 "AI 작업 실행 플랫폼
 
   <table width="100%">
     <tr>
-      <td width="50%" align="center">
-        <img src="docs/image/demo/로그인_페이지.gif" width="420" alt="로그인 페이지 데모"><br/>
+      <td width="33%" align="center">
+        <img src="docs/image/demo/01-login-page.gif" width="280" alt="로그인 페이지"><br/>
         <sub><b>로그인 페이지</b></sub>
       </td>
-      <td width="50%" align="center">
-        <img src="docs/image/demo/02-new-chat-ai-chat.gif" width="420" alt="새 채팅과 AI 채팅 데모"><br/>
-        <sub><b>새 채팅 및 AI 응답</b></sub>
+      <td width="33%" align="center">
+        <img src="docs/image/demo/02-dashboard.gif" width="280" alt="대시보드"><br/>
+        <sub><b>예시</b></sub>
+      </td>
+      <td width="33%" align="center">
+        <img src="docs/image/demo/03-new-chat.gif" width="280" alt="새 채팅"><br/>
+        <sub><b>예시</b></sub>
       </td>
     </tr>
     <tr>
-      <td width="50%" align="center">
-        <img src="docs/image/demo/03-work-board.gif" width="420" alt="작업 보드 데모"><br/>
-        <sub><b>작업 보드</b></sub>
+      <td width="33%" align="center">
+        <img src="docs/image/demo/04-ai-chat.gif" width="280" alt="AI 채팅"><br/>
+        <sub><b>예시</b></sub>
       </td>
-      <td width="50%" align="center">
-        <img src="docs/image/demo/04-workflow-routine.gif" width="420" alt="워크플로우와 루틴 등록 데모"><br/>
-        <sub><b>워크플로우 설계 및 루틴 등록</b></sub>
+      <td width="33%" align="center">
+        <img src="docs/image/demo/05-taskrun-status.gif" width="280" alt="TaskRun 상태"><br/>
+        <sub><b>예시</b></sub>
       </td>
-    </tr>
-        <img src="docs/image/demo/05-agent-workspace-skills.gif" width="420" alt="에이전트 워크스페이스 데모"><br/>
-        <sub><b>에이전트 설정 및 스킬 관리</b></sub>
-      </td>
-      <td width="50%" align="center">
-        <img src="docs/image/demo/06-long-term-memory.gif" width="420" alt="장기기억 데모"><br/>
-        <sub><b>장기기억 기반 개인화</b></sub>
-      </td>
-    </tr>
-    <tr>
-      <td width="50%" align="center">
-        <img src="docs/image/demo/07-visualization-devices.gif" width="420" alt="시각화와 디바이스 연동 데모"><br/>
-        <sub><b>에이전트 시각화 및 디바이스 연동</b></sub>
-      </td>
-      <td width="50%" align="center">
-        <img src="docs/image/demo/08-dashboard.gif" width="420" alt="대시보드 데모"><br/>
-        <sub><b>대시보드</b></sub>
+      <td width="33%" align="center">
+        <img src="docs/image/demo/06-work-board.gif" width="280" alt="작업 보드"><br/>
+        <sub><b>예시</b></sub>
       </td>
     </tr>
   </table>
