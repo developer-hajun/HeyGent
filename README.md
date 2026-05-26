@@ -173,7 +173,7 @@ HeyGent는 이 문제를 "대화형 AI"가 아니라 "AI 작업 실행 플랫폼
       </td>
       <td width="33%" align="center">
         <img src="docs/image/demo/agent_config.gif" width="280" alt="에이전트 설정"><br/>
-        <sub><b>예시</b></sub>
+        <sub><b>에이전트 설정</b></sub>
       </td>
       <td width="33%" align="center">
         <img src="docs/image/demo/06-work-board.gif" width="280" alt="작업 보드"><br/>
