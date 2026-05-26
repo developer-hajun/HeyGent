@@ -1,5 +1,5 @@
 # Codex Device OAuth 전환 설계
-
+[memory-recall-performance-benchmark.md](../../../../../S14P31E105_new/backend/notes/memory-recall-performance-benchmark.md)
 ## 목적
 
 현재 구현된 Codex PKCE OAuth 방식은 로컬에서는 정상 동작하지만, 배포 서버에서는 `localhost:1455` callback URL을 사용자가 복사해서 `/complete` API에 붙여넣어야 한다. 이 UX는 최종 사용자용으로 부적합하므로, Codex/OpenClaw CLI 기반 Device OAuth 방식으로 전환한다.
