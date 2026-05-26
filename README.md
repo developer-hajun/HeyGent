@@ -208,6 +208,20 @@ HeyGent는 이 문제를 "대화형 AI"가 아니라 "AI 작업 실행 플랫폼
         <sub><b>API 키 입력</b></sub>
       </td>
     </tr>
+    <tr>
+      <td width="33%" align="center">
+        <img src="docs/image/demo/사무실_에이전트_시각화.gif" width="280" alt="사무실 에이전트 실시간 시각화"><br/>
+        <sub><b>사무실 에이전트 실시간 시각화</b></sub>
+      </td>
+      <td width="33%" align="center">
+        <img src="docs/image/demo/건물_층간_탐색.gif" width="280" alt="건물 층간 세션 탐색"><br/>
+        <sub><b>건물 층간 세션 탐색</b></sub>
+      </td>
+      <td width="33%" align="center">
+        <img src="docs/image/demo/로컬_브릿지_페어링.gif" width="280" alt="로컬 브릿지 연결"><br/>
+        <sub><b>로컬 브릿지 연결</b></sub>
+      </td>
+    </tr>
   </table>
 
 
