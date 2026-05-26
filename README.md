@@ -176,7 +176,7 @@ HeyGent는 이 문제를 "대화형 AI"가 아니라 "AI 작업 실행 플랫폼
         <sub><b>에이전트 스킬 및 세부 설정</b></sub>
       </td>
       <td width="33%" align="center">
-        <img src="docs/image/demo/06-work-board.gif" width="280" alt="작업 보드"><br/>
+        <img src="docs/image/demo/workboard/댓글.gif" width="280" alt="댓글 등록"><br/>
         <sub><b>예시</b></sub>
       </td>
     </tr>
@@ -190,7 +190,7 @@ HeyGent는 이 문제를 "대화형 AI"가 아니라 "AI 작업 실행 플랫폼
         <sub><b>워크플로우 루틴 등록</b></sub>
       </td>
       <td width="33%" align="center">
-        <img src="docs/image/demo/workboard/답변완료.gif" width="280" alt="작업 보드"><br/>
+        <img src="docs/image/demo/workboard/답변완료.gif" width="280" alt="작업 상태 변경"><br/>
         <sub><b>예시</b></sub>
       </td>
     </tr>
