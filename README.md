@@ -89,7 +89,7 @@
 | <img src="docs/image/profiles/lee-hajun.jpg" height="130" alt="이하준 profile"><br>**이하준**<br><sub>Mobile / Health / Realtime Sync / FCM</sub> | - Android 모바일 앱 구조와 화면 흐름 구현<br>- Kakao/dev 로그인, 채팅 API, 세션 목록, 메시지 송수신 연동<br>- Galaxy Watch / Samsung Health 데이터 수집 및 backend 전송 흐름 구현<br>- Health dashboard 화면과 건강 데이터 조회/표시 기능 개발<br>- WebSocket + FCM(푸시 알림) 기반 모바일 실시간 채팅 동기화 구현<br>- Whisper STT(음성을 텍스트로 바꾸는 기능), WakeWord, 녹음/전사 흐름 구현 및 race condition(동시에 처리되며 꼬이는 문제) 수정<br>- AI 응답 지연 개선을 위한 스트리밍 응답, Redis/DB 연결, credential cache 성능 이슈 보강 |
 | <img src="docs/image/profiles/jeon-yeonsu.jpg" height="130" alt="전연수 profile"><br>**전연수**<br><sub>Frontend / Agent Visualization</sub> | - 웹 초기 퍼블리싱, 로그인 화면, 전역 상태 설계, 주요 UI 배치 작업<br>- 에이전트 시각화 화면의 배경 맵, 캐릭터 스프라이트, CEO/서브에이전트 이동 로직 구현<br>- 단일 시각화 화면 WebSocket 연동, task run 목록/상태/snapshot 조회 연동<br>- 에이전트 클릭 시 상세 패널, 화이트보드 상세 팝업, 말풍선 연동 구현<br>- 층/세션 이동 버튼, 목적지 매핑, 클릭 좌표 제거 등 시각화 UX 안정화<br>- API key 저장 UI와 설정 패널 관련 프론트 버그 수정 |
 | <img src="docs/image/profiles/choi-seokwon.jpg" height="130" alt="최석원 profile"><br>**최석원**<br><sub>Mobile UI / Web UI Design / Branding</sub> | - Android 모바일 앱 초기 세팅, 화면 퍼블리싱, 로그인 API 연동, 앱 아이콘 구성<br>- HeyGent 리브랜딩, 로고/좌측 사이드바/대시보드/로그인 화면 등 시각 디자인 수정<br>- 웹 UI 톤 정리, 외부 서비스 연동 탭, 설정 화면, 에이전트 설정 UI 개선<br>- 브릿지 연결 확인창, 툴팁, 서브에이전트 생성/상세/작업 보드 UI 보정<br>- FCM/첨부파일 컨텍스트 관련 모바일/AI 프롬프트 표시 흐름 보강<br>- 사용자에게 보이는 문구와 설정 화면의 사용성을 개선 |
-| <img src="docs/image/profiles/lee-seungyeop.jpg" height="130" alt="이승엽 profile"><br>**이승엽**<br><sub>Infra / Local Bridge / Workflow / Building Mapping</sub> | - Docker Compose, frontend/backend/AI Dockerfile, Postgres/Redis/pgvector 개발 환경 구성<br>- 프론트 운영 포트, Vite allowedHosts, 빌드 캐시 최적화 등 배포/개발 환경 정리<br>- 로컬 브릿지 PoC와 사용자별 페어링 인증 구조 구현<br>- 브릿지 온라인 상태 표시, workspace 동적 변경, 배포 환경 동작 지원<br>- workflow template(반복 가능한 작업 흐름 템플릿)과 Gmail Composio OAuth 연동<br>- 내 사무실/건물 페이지의 층-세션 매핑 API와 프론트 화면 구현<br>- 시각화 stuck 문제, 세션 로딩 최적화, Gmail 통합과 AGENTS 저장 버그 수정 |
+| <img src="docs/image/profiles/lee-seungyeop.jpg" height="130" alt="이승엽 profile"><br>**이승엽**<br><sub>Team Leader / Infra / Local Bridge / Workflow / Building Mapping</sub> | - Docker Compose, frontend/backend/AI Dockerfile, Postgres/Redis/pgvector 개발 환경 구성<br>- 프론트 운영 포트, Vite allowedHosts, 빌드 캐시 최적화 등 배포/개발 환경 정리<br>- 로컬 브릿지 PoC와 사용자별 페어링 인증 구조 구현<br>- 브릿지 온라인 상태 표시, workspace 동적 변경, 배포 환경 동작 지원<br>- workflow template(반복 가능한 작업 흐름 템플릿)과 Gmail Composio OAuth 연동<br>- 내 사무실/건물 페이지의 층-세션 매핑 API와 프론트 화면 구현<br>- 시각화 stuck 문제, 세션 로딩 최적화, Gmail 통합과 AGENTS 저장 버그 수정 |
 
 <br/>
 
@@ -242,19 +242,24 @@ HeyGent는 이 문제를 "대화형 AI"가 아니라 "AI 작업 실행 플랫폼
         <sub><b>프로젝트 chat</b></sub>
       </td>
       <td width="33%" align="center">
-        <img src="docs/image/demo/iot.gif" width="280" alt="로컬 브릿지 연결"><br/>
-        <sub><b>iot chat</b></sub>
+        <img src="docs/image/demo/모바일_앱_시연.gif" height="200" alt="모바일 앱 시연"><br/>
+        <sub><b>모바일 앱 시연</b></sub>
       </td>
       <td width="33%" align="center">
-        <img src="docs/image/demo/circuit.jpg" width="280" alt="로컬 브릿지 연결"><br/>
-        <sub><b>srt chat</b></sub>
+        <img src="docs/image/demo/iot.gif" width="280" alt="iot chat"><br/>
+        <sub><b>iot chat</b></sub>
       </td>
     </tr>
     <tr>
       <td width="33%" align="center">
-        <img src="docs/image/demo/iot_device.jpg" width="280" alt="로컬 브릿지 연결"><br/>
+        <img src="docs/image/demo/circuit.jpg" width="280" alt="circuit"><br/>
+        <sub><b>srt chat</b></sub>
+      </td>
+      <td width="33%" align="center">
+        <img src="docs/image/demo/iot_device.jpg" width="280" alt="iot device"><br/>
         <sub><b>iot device</b></sub>
       </td>
+      <td width="33%" align="center"></td>
     </tr>
   </table>
 
