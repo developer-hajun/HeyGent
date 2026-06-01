@@ -265,8 +265,16 @@ HeyGent는 이 문제를 "대화형 AI"가 아니라 "AI 작업 실행 플랫폼
 
 <br/>
 
-| <div align="center"><a href="docs/image/demo/iot_live_chat_mv.mp4"><b>iot device 작동 시연</b></a></div> | <div align="center"><a href="docs/image/demo/14기_자율PJT_영상 포트폴리오_E105.mp4"><b>영상 포트폴리오</b></a></div> |
-|:---:|:---:|
+<table width="100%">
+  <tr>
+    <td width="50%" align="center">
+      <a href="docs/image/demo/iot_live_chat_mv.mp4"><b>iot device 작동 시연</b></a>
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/image/demo/14기_자율PJT_영상 포트폴리오_E105.mp4"><b>영상 포트폴리오</b></a>
+    </td>
+  </tr>
+</table>
 
 <br/>
 
