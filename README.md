@@ -252,17 +252,13 @@ HeyGent는 이 문제를 "대화형 AI"가 아니라 "AI 작업 실행 플랫폼
     </tr>
     <tr>
       <td width="33%" align="center">
-        <img src="docs/image/demo/circuit.jpg" width="280" alt="srt chat"><br/>
+        <img src="docs/image/demo/circuit.jpg" width="280" alt="circuit"><br/>
         <sub><b>srt chat</b></sub>
       </td>
       <td width="33%" align="center">
         <img src="docs/image/demo/iot_device.jpg" width="280" alt="iot device"><br/>
         <sub><b>iot device</b></sub>
       </td>
-      <td width="33%" align="center">
-        <img src="docs/image/demo/iot.gif" width="280" alt="iot live chat"><br/>
-        <sub><b>iot live chat</b></sub>
-        </td>
     </tr>
   </table>
 
