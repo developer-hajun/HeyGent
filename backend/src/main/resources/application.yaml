@@ -1,0 +1,106 @@
+spring:
+  config:
+    import: optional:file:.env[.properties]
+  application:
+    name: heygent
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+  profiles:
+    default: local
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://127.0.0.1:5432/heygent}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+    show-sql: true
+
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+
+server:
+  tomcat:
+    uri-encoding: UTF-8
+
+springdoc:
+  swagger-ui:
+    persistAuthorization: true
+
+kakao:
+  client-id: ${KAKAO_CLIENT_ID}
+  client-secret: ${KAKAO_CLIENT_SECRET}
+  redirect-uri: ${KAKAO_REDIRECT_URI:http://localhost:5173/auth/kakao/callback}
+
+composio:
+  api-key: ${COMPOSIO_API_KEY}
+  notion:
+    redirect-uri: ${COMPOSIO_NOTION_REDIRECT_URI:http://localhost:5173/auth/notion/callback}
+    integration-id: ${COMPOSIO_NOTION_INTEGRATION_ID}
+  gmail:
+    redirect-uri: ${COMPOSIO_GMAIL_REDIRECT_URI:http://localhost:5173/auth/gmail/callback}
+    integration-id: ${COMPOSIO_GMAIL_INTEGRATION_ID}
+
+jwt:
+  secret: ${JWT_SECRET}
+
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+
+ai:
+  internal:
+    token: ${AI_INTERNAL_TOKEN:}
+    online-users-url: ${AI_INTERNAL_ONLINE_USERS_URL:http://ai:8000/ai/api/v1/internal/bridge/online-users}
+    credential-cache-invalidate-url: ${AI_INTERNAL_CREDENTIAL_CACHE_INVALIDATE_URL:http://ai:8000/ai/api/v1/internal/ai/credential-cache/invalidate}
+
+iot:
+  mqtt:
+    enabled: ${IOT_MQTT_ENABLED:false}
+    host: ${IOT_MQTT_HOST:localhost}
+    port: ${IOT_MQTT_PORT:1883}
+    username: ${IOT_MQTT_USERNAME:}
+    password: ${IOT_MQTT_PASSWORD:}
+    client-id: ${IOT_MQTT_CLIENT_ID:heygent-backend}
+    connection-timeout-seconds: ${IOT_MQTT_CONNECTION_TIMEOUT_SECONDS:5}
+    publish-timeout-seconds: ${IOT_MQTT_PUBLISH_TIMEOUT_SECONDS:3}
+    default-qos: ${IOT_MQTT_DEFAULT_QOS:0}
+    topic-prefix: ${IOT_MQTT_TOPIC_PREFIX:devices}
+
+memory:
+  embedding:
+    enabled: ${MEMORY_EMBEDDING_ENABLED:true}
+    base-url: ${MEMORY_EMBEDDING_BASE_URL:https://api.openai.com/v1}
+    api-key: ${MEMORY_EMBEDDING_API_KEY:}
+    model: ${MEMORY_EMBEDDING_MODEL:text-embedding-3-small}
+    dimensions: ${MEMORY_EMBEDDING_DIMENSIONS:1536}
+    timeout-seconds: ${MEMORY_EMBEDDING_TIMEOUT_SECONDS:10}
+
+openai:
+  api-key: ${OPENAI_API_KEY:}
+  rest-api-base-url: ${OPENAI_REST_API_BASE_URL:https://api.openai.com/v1}
+  usage-api-base-url: ${OPENAI_USAGE_API_BASE_URL:https://api.openai.com/v1}
+  default-model: ${OPENAI_DEFAULT_MODEL:gpt-5.4}
+  allowed-models: ${OPENAI_ALLOWED_MODELS:gpt-5.4,gpt-5.4-mini,gpt-5.2}
+  embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+  timeout-seconds: ${OPENAI_TIMEOUT_SECONDS:60}
+  credential-encryption-key: ${OPENAI_CREDENTIAL_ENCRYPTION_KEY:}
+  codex-oauth:
+    client-id: ${OPENAI_CODEX_OAUTH_CLIENT_ID:app_EMoamEEZ73f0CkXaXp7hrann}
+    token-url: ${OPENAI_CODEX_OAUTH_TOKEN_URL:https://auth.openai.com/oauth/token}
+    refresh-skew-seconds: ${OPENAI_CODEX_OAUTH_REFRESH_SKEW_SECONDS:300}
+  codex-device-oauth:
+    command: ${OPENAI_CODEX_DEVICE_OAUTH_COMMAND:codex}
+    workspace-root: ${OPENAI_CODEX_DEVICE_OAUTH_WORKSPACE_ROOT:}
+    start-timeout-seconds: ${OPENAI_CODEX_DEVICE_OAUTH_START_TIMEOUT_SECONDS:30}
+    auth-timeout-seconds: ${OPENAI_CODEX_DEVICE_OAUTH_AUTH_TIMEOUT_SECONDS:900}

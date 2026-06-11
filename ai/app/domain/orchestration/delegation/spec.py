@@ -1,0 +1,23 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass(slots=True)
+class ChildSessionSpec:
+    parent_task_run_id: str
+    parent_step_run_id: str
+    summary_prompt: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    worker_session_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ChildSessionLaunchResult:
+    agent_id: str
+    status: str
+    summary: str | None
+    result_payload: dict[str, Any] = field(default_factory=dict)
+    output_payload: dict[str, Any] = field(default_factory=dict)
+    duration_seconds: float | None = None

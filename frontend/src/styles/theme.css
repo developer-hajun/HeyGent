@@ -1,0 +1,304 @@
+@custom-variant dark (&:is(.dark *));
+
+/* ──────────────────────────────────────────────────────────
+   Light Mode — Monochrome Neutral
+────────────────────────────────────────────────────────── */
+:root {
+  --font-size: 16px;
+  --font-display: 'Syne', sans-serif;
+  --font-body: 'Manrope', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --background: #f5f5f5;
+  --foreground: #111111;
+  --card: #ffffff;
+  --card-foreground: #111111;
+  --popover: #ffffff;
+  --popover-foreground: #111111;
+  --primary: #1f1f1f;
+  --primary-foreground: #ffffff;
+  --secondary: #f0f0f0;
+  --secondary-foreground: #333333;
+  --muted: #efefef;
+  --muted-foreground: #6b7280;
+  --accent: #d9d9d9;
+  --accent-foreground: #111111;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: rgba(0, 0, 0, 0.08);
+  --input: #f0f0f0;
+  --input-background: #f7f7f7;
+  --switch-background: #d1d5db;
+  --switch-on: #059669;
+  --switch-on-hover: #047857;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --ring: #6b7280;
+  --chart-1: #4f46e5;
+  --chart-2: #10b981;
+  --chart-3: #f59e0b;
+  --chart-4: #8b5cf6;
+  --chart-5: #06b6d4;
+  --radius: 0.625rem;
+  --sidebar: #ebebeb;
+  --sidebar-foreground: #111111;
+  --sidebar-primary: #1f1f1f;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #d4d4d4;
+  --sidebar-accent-foreground: #111111;
+  --sidebar-border: rgba(0, 0, 0, 0.07);
+  --sidebar-ring: #6b7280;
+  --syntax-background: #f8fafc;
+  --syntax-foreground: #1f2937;
+  --syntax-muted: #64748b;
+  --syntax-keyword: #7c3aed;
+  --syntax-string: #047857;
+  --syntax-function: #2563eb;
+  --syntax-number: #c2410c;
+  --syntax-operator: #475569;
+  --syntax-border: rgba(15, 23, 42, 0.1);
+  --chat-user-bubble: #e4e4e7;
+  --chat-user-foreground: #18181b;
+  --chat-user-border: rgba(0, 0, 0, 0.08);
+  --agent-idle: #9ca3af;
+  --agent-analyzing: #f59e0b;
+  --agent-running: #4f46e5;
+  --agent-completed: #10b981;
+  --agent-failed: #ef4444;
+  --agent-scheduled: #8b5cf6;
+}
+
+/* ──────────────────────────────────────────────────────────
+   Dark Mode — Layered Graphite
+   (4-tier surface 시스템으로 답답함을 줄이고 시각 계층을 명확히 함)
+   - background  (가장 깊은 베이스)
+   - sidebar     (살짝 분리된 사이드 영역)
+   - card        (살짝 떠 있는 컨테이너)
+   - popover     (가장 떠 있는 플로팅 요소)
+────────────────────────────────────────────────────────── */
+.dark {
+  /* Surface tiers — 한 단계 더 밝은 graphite */
+  --background: #171a21;
+  --sidebar: #1b1f27;
+  --card: #252a34;
+  --popover: #303642;
+
+  /* Text */
+  --foreground: #fbfcfe;
+  --card-foreground: #fafbfe;
+  --popover-foreground: #fbfcfe;
+  --sidebar-foreground: #f8fafc;
+  --secondary-foreground: #f6f8fb;
+  --accent-foreground: #ffffff;
+  --muted-foreground: #d4dae4;
+  --primary-foreground: #171a21;
+  --sidebar-primary-foreground: #171a21;
+
+  /* Interactive */
+  --primary: #f3f6fa;
+  --secondary: rgba(255, 255, 255, 0.125);
+  --muted: rgba(255, 255, 255, 0.11);
+  --accent: rgba(255, 255, 255, 0.16);
+  --sidebar-primary: #f3f6fa;
+  --sidebar-accent: rgba(255, 255, 255, 0.16);
+
+  /* Borders / inputs */
+  --border: rgba(255, 255, 255, 0.2);
+  --sidebar-border: rgba(255, 255, 255, 0.18);
+  --input: rgba(255, 255, 255, 0.2);
+  --input-background: rgba(255, 255, 255, 0.11);
+
+  /* Switch / ring */
+  --switch-background: rgba(255, 255, 255, 0.18);
+  --switch-on: #10b981;
+  --switch-on-hover: #34d399;
+  --ring: rgba(255, 255, 255, 0.3);
+  --sidebar-ring: rgba(255, 255, 255, 0.28);
+  --syntax-background: #1d222a;
+  --syntax-foreground: #e4e9f1;
+  --syntax-muted: #aeb8c6;
+  --syntax-keyword: #c4b5fd;
+  --syntax-string: #86efac;
+  --syntax-function: #93c5fd;
+  --syntax-number: #fdba74;
+  --syntax-operator: #cbd5e1;
+  --syntax-border: rgba(255, 255, 255, 0.14);
+  --chat-user-bubble: #363e4b;
+  --chat-user-foreground: #fbfcfe;
+  --chat-user-border: rgba(255, 255, 255, 0.2);
+
+  /* Destructive */
+  --destructive: #f87171;
+  --destructive-foreground: #16181c;
+
+  /* Charts / agent status (시각화는 유색 유지) */
+  --chart-1: #818cf8;
+  --chart-2: #34d399;
+  --chart-3: #fbbf24;
+  --chart-4: #a78bfa;
+  --chart-5: #22d3ee;
+  --agent-idle: #6b7280;
+  --agent-analyzing: #fbbf24;
+  --agent-running: #818cf8;
+  --agent-completed: #34d399;
+  --agent-failed: #f87171;
+  --agent-scheduled: #a78bfa;
+}
+
+/* ──────────────────────────────────────────────────────────
+   Tailwind theme token mappings (do not modify)
+────────────────────────────────────────────────────────── */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-switch-on: var(--switch-on);
+  --color-switch-on-hover: var(--switch-on-hover);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    user-select: none;
+  }
+
+  /* 텍스트 입력이 필요한 요소에서는 선택 허용 */
+  input,
+  textarea,
+  [contenteditable='true'] {
+    user-select: text;
+  }
+
+  .selectable-text,
+  .selectable-text * {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-body);
+    /* 스크롤바 너비를 CSS 변수로 노출 — RightPanel fixed 위치 보정에 사용 */
+    --scrollbar-width: calc(100vw - 100%);
+  }
+
+  /* Dark mode: ambient radial layers — 빈 공간에 미세한 깊이감 추가 */
+  .dark body {
+    background-image:
+      radial-gradient(ellipse 70% 50% at 10% 0%, rgba(255, 255, 255, 0.07) 0%, transparent 65%),
+      radial-gradient(ellipse 60% 45% at 95% 20%, rgba(255, 255, 255, 0.05) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 40% at 50% 100%, rgba(255, 255, 255, 0.04) 0%, transparent 70%);
+    background-attachment: fixed;
+  }
+
+  /* Dark mode: 떠 있는 surface 의 outline 강조 (floating panel 느낌) */
+  .dark [data-slot='popover-content'],
+  .dark [data-slot='dialog-content'] {
+    backdrop-filter: blur(24px) saturate(150%);
+    -webkit-backdrop-filter: blur(24px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow:
+      0 10px 32px rgba(0, 0, 0, 0.55),
+      0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+  }
+
+  /* Dark mode: glass panels — 명시적으로 .glass 클래스 적용 시 */
+  .dark .glass {
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+  }
+
+  /* Dark mode: 하드코딩된 흰색 표면을 유리 패널로 변환 */
+  .dark [class*='bg-white'] {
+    background-color: rgba(255, 255, 255, 0.06) !important;
+    backdrop-filter: blur(12px) saturate(140%);
+    -webkit-backdrop-filter: blur(12px) saturate(140%);
+  }
+
+  /* Dark mode color-scheme hint for browser chrome elements */
+  .dark {
+    color-scheme: dark;
+  }
+
+  html {
+    font-size: var(--font-size);
+  }
+
+  h1 {
+    font-size: var(--text-2xl);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  h2 {
+    font-size: var(--text-xl);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  h3 {
+    font-size: var(--text-lg);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  h4 {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  label {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  button {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  input {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-normal);
+    line-height: 1.5;
+  }
+}

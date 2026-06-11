@@ -1,0 +1,31 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+*.iml
+.idea/
+
+# Local temp
+tmp/
+reference/
+
+# Python 캐시
+__pycache__/
+*.pyc
+
+# Claude Code 작업용 메모 (개인 작업 기록, push 대상 아님)
+.claude/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# PyInstaller 빌드 산출물 (커밋 대상 아님)
+/dist/
+/build/
+/HeyGentBridge.spec
+
+# frontend/public/downloads/ 는 의도적으로 포함 — 빌드한 .exe 를 git 으로 같이 배포한다.
+# 사용자가 웹에서 받을 수 있게 하려면 frontend 와 같이 따라가야 한다.

@@ -1,0 +1,19 @@
+.gradle
+.idea
+.kotlin
+local.properties
+build
+**/build
+captures
+.externalNativeBuild
+.cxx
+*.iml
+.claude
+<<<<<<< Updated upstream
+secrets.properties
+<<<<<<< Updated upstream
+=======
+secrets.properties
+>>>>>>> Stashed changes
+=======
+>>>>>>> Stashed changes

@@ -1,0 +1,2 @@
+docs/image/demo/iot.gif filter=lfs diff=lfs merge=lfs -text
+docs/image/demo/*.mp4 filter=lfs diff=lfs merge=lfs -text
